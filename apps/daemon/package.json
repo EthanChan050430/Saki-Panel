@@ -1,0 +1,23 @@
+{
+  "name": "@webops/daemon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fastify/multipart": "^10.0.0",
+    "@fastify/websocket": "^11.2.0",
+    "@webops/shared": "file:../../packages/shared",
+    "7zip-bin": "^5.2.0",
+    "dotenv": "^16.5.0",
+    "fastify": "^5.3.2",
+    "node-unrar-js": "^2.0.2",
+    "systeminformation": "^5.25.11"
+  }
+}

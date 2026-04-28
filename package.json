@@ -1,0 +1,30 @@
+{
+  "name": "saki-panel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @webops/shared && npm run build -w @webops/panel && npm run build -w @webops/daemon && npm run build -w @webops/web",
+    "check": "npm run build -w @webops/shared && npm run typecheck -w @webops/panel && npm run typecheck -w @webops/daemon && npm run typecheck -w @webops/web",
+    "db:generate": "prisma generate",
+    "db:push": "node scripts/prepare-db.mjs && prisma db push",
+    "dev": "npm run build -w @webops/shared && concurrently -n panel,daemon,web -c cyan,green,magenta \"npm run dev -w @webops/panel\" \"npm run dev -w @webops/daemon\" \"npm run dev -w @webops/web\"",
+    "dev:panel": "npm run dev -w @webops/panel",
+    "dev:daemon": "npm run dev -w @webops/daemon",
+    "dev:web": "npm run dev -w @webops/web"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^9.1.2",
+    "prisma": "^6.6.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.4"
+  }
+}

@@ -1,0 +1,18 @@
+[Unit]
+Description=Saki Panel
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/saki-panel
+Environment=NODE_ENV=production
+Environment=PANEL_HOST=0.0.0.0
+Environment=PANEL_PORT=23333
+ExecStart=/usr/bin/node apps/panel/dist/index.js
+Restart=always
+RestartSec=5
+User=webops
+Group=webops
+
+[Install]
+WantedBy=multi-user.target

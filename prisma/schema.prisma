@@ -1,0 +1,229 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:../data/panel/dev.db"
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum NodeStatus {
+  UNKNOWN
+  ONLINE
+  OFFLINE
+}
+
+enum OperationResult {
+  SUCCESS
+  FAILURE
+}
+
+enum InstanceStatus {
+  CREATED
+  STARTING
+  RUNNING
+  STOPPING
+  STOPPED
+  CRASHED
+  UNKNOWN
+}
+
+model User {
+  id            String         @id @default(cuid())
+  username      String         @unique
+  passwordHash  String
+  displayName   String
+  avatarDataUrl String?
+  status        UserStatus     @default(ACTIVE)
+  lastLoginAt   DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  roles         UserRole[]
+  logs          OperationLog[]
+  createdInstances  Instance[] @relation("InstanceCreator")
+  assignedInstances Instance[] @relation("InstanceAssignee")
+
+  @@map("users")
+}
+
+model Role {
+  id          String           @id @default(cuid())
+  name        String           @unique
+  description String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(cuid())
+  code        String           @unique
+  description String?
+  createdAt   DateTime         @default(now())
+  roles       RolePermission[]
+
+  @@map("permissions")
+}
+
+model UserRole {
+  userId String
+  roleId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model Node {
+  id         String          @id @default(cuid())
+  name       String
+  host       String
+  port       Int
+  protocol   String          @default("http")
+  tokenHash  String
+  tokenLast4 String
+  status     NodeStatus      @default(UNKNOWN)
+  os         String?
+  arch       String?
+  version    String?
+  remarks    String?
+  groupName  String?
+  tags       String?
+  lastSeenAt DateTime?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  metrics    NodeMetric[]
+  instances  Instance[]
+  tasks      ScheduledTask[]
+
+  @@index([host, port])
+  @@map("nodes")
+}
+
+model NodeMetric {
+  id            String   @id @default(cuid())
+  nodeId        String
+  cpuUsage      Float
+  memoryUsage   Float
+  diskUsage     Float
+  totalMemoryMb Int?
+  usedMemoryMb  Int?
+  totalDiskGb   Float?
+  usedDiskGb    Float?
+  uptimeSeconds Int?
+  loadAverage1m Float?
+  createdAt     DateTime @default(now())
+  node          Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([nodeId, createdAt])
+  @@map("node_metrics")
+}
+
+model OperationLog {
+  id           String          @id @default(cuid())
+  userId       String?
+  action       String
+  resourceType String
+  resourceId   String?
+  ip           String?
+  userAgent    String?
+  payload      String?
+  result       OperationResult @default(SUCCESS)
+  createdAt    DateTime        @default(now())
+  user         User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([action, createdAt])
+  @@index([resourceType, resourceId])
+  @@map("operation_logs")
+}
+
+model Instance {
+  id                String          @id @default(cuid())
+  nodeId            String
+  name              String
+  type              String          @default("generic_command")
+  workingDirectory  String
+  startCommand      String
+  stopCommand       String?
+  status            InstanceStatus  @default(CREATED)
+  autoStart         Boolean         @default(false)
+  restartPolicy     String          @default("never")
+  restartMaxRetries Int             @default(0)
+  runAsUser         String?
+  memoryLimit       Int?
+  cpuLimit          Float?
+  description       String?
+  createdById       String?
+  assignedToId      String?
+  lastStartedAt     DateTime?
+  lastStoppedAt     DateTime?
+  lastExitCode      Int?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  node              Node            @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  createdBy         User?           @relation("InstanceCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  assignedTo        User?           @relation("InstanceAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  tasks             ScheduledTask[]
+
+  @@index([nodeId])
+  @@index([status])
+  @@index([createdById])
+  @@index([assignedToId])
+  @@map("instances")
+}
+
+model ScheduledTask {
+  id         String    @id
+  nodeId     String?
+  instanceId String?
+  name       String
+  type       String
+  cron       String
+  payload    String?
+  enabled    Boolean   @default(true)
+  lastRunAt  DateTime?
+  nextRunAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  node       Node?     @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+  instance   Instance? @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  runs       TaskRun[]
+
+  @@index([enabled, nextRunAt])
+  @@index([instanceId])
+  @@map("scheduled_tasks")
+}
+
+model TaskRun {
+  id         String        @id
+  taskId     String
+  status     String
+  output     String?
+  error      String?
+  startedAt  DateTime      @default(now())
+  finishedAt DateTime?
+  task       ScheduledTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId, startedAt])
+  @@map("task_runs")
+}
