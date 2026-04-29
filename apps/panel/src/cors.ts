@@ -1,5 +1,4 @@
-import type { FastifyRequest } from "fastify";
-import { panelConfig } from "./config.js";
+import type { FastifyReply, FastifyRequest } from "fastify";
 
 export const panelCorsMethods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"];
 
@@ -20,46 +19,23 @@ function normalizeOrigin(value: string | undefined): string | null {
   }
 }
 
-function hostNameFromHeader(value: string | string[] | undefined): string | null {
-  const host = firstHeaderValue(value).split(",")[0]?.trim();
-  if (!host) return null;
-  try {
-    return new URL(`http://${host}`).hostname;
-  } catch {
-    return null;
-  }
-}
-
-const configuredOrigins = new Set<string>();
-let allowAnyOrigin = false;
-
-for (const value of panelConfig.corsOrigins) {
-  const origin = normalizeOrigin(value);
-  if (!origin) continue;
-  if (origin === "*") {
-    allowAnyOrigin = true;
-  } else {
-    configuredOrigins.add(origin);
-  }
-}
-
-function hasSameHostnameAsApi(origin: string, request: FastifyRequest): boolean {
-  let originHost = "";
-  try {
-    originHost = new URL(origin).hostname;
-  } catch {
-    return false;
-  }
-
-  const forwardedHost = hostNameFromHeader(request.headers["x-forwarded-host"]);
-  const requestHost = hostNameFromHeader(request.headers.host);
-  return originHost === forwardedHost || originHost === requestHost;
-}
-
 export function resolvePanelCorsOrigin(request: FastifyRequest): string | false {
   const origin = normalizeOrigin(firstHeaderValue(request.headers.origin));
   if (!origin || origin === "*") return false;
-  if (allowAnyOrigin || configuredOrigins.has(origin) || hasSameHostnameAsApi(origin, request)) return origin;
-  if (!panelConfig.hasExplicitCorsOrigins) return origin;
-  return false;
+  return origin;
+}
+
+export function applyPanelCorsHeaders(request: FastifyRequest, reply: FastifyReply): void {
+  const origin = resolvePanelCorsOrigin(request);
+  if (origin) {
+    reply.header("Access-Control-Allow-Origin", origin);
+    reply.header("Vary", "Origin");
+  }
+  reply.header("Access-Control-Allow-Credentials", "true");
+  reply.header("Access-Control-Allow-Methods", panelCorsMethods.join(", "));
+  reply.header(
+    "Access-Control-Allow-Headers",
+    firstHeaderValue(request.headers["access-control-request-headers"]) || "authorization, content-type"
+  );
+  reply.header("Access-Control-Max-Age", "86400");
 }

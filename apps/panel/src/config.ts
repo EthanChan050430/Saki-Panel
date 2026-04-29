@@ -8,6 +8,14 @@ function numberFromEnv(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function booleanFromEnv(value: string | undefined, fallback = false): boolean {
+  if (!value) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
 function listFromEnv(value: string | undefined): string[] {
   if (!value) return [];
   return value
@@ -33,6 +41,7 @@ export const panelConfig = {
   hasExplicitCorsOrigins: configuredCorsOrigins.length > 0,
   databaseUrl: process.env.DATABASE_URL ?? "file:../data/panel/dev.db",
   jwtSecret: process.env.JWT_SECRET ?? "dev-panel-secret-change-me",
+  disableAuth: booleanFromEnv(process.env.DISABLE_AUTH),
   sessionTimeoutMinutes: numberFromEnv(process.env.SESSION_TIMEOUT_MINUTES, 120),
   adminUsername: process.env.ADMIN_USERNAME ?? "admin",
   adminPassword: process.env.ADMIN_PASSWORD ?? "admin123456",

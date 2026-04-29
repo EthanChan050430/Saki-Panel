@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { LoginRequest, UpdateCurrentUserRequest } from "@webops/shared";
 import { prisma } from "../db.js";
-import { loadCurrentUser } from "../auth.js";
+import { isAuthDisabled, loadAuthDisabledCurrentUser, loadCurrentUser } from "../auth.js";
 import { hashPassword, verifyPassword } from "../security.js";
 import { writeAuditLog } from "../audit.js";
 import { createLoginResponse } from "../session.js";
@@ -61,6 +61,10 @@ function normalizeAvatarDataUrl(value: unknown): string | null | undefined {
 
 export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/auth/login", async (request, reply) => {
+    if (isAuthDisabled()) {
+      return createLoginResponse(app, await loadAuthDisabledCurrentUser());
+    }
+
     const body = request.body as Partial<LoginRequest>;
     if (!body.username || !body.password) {
       reply.code(400).send({ message: "Username and password are required" });
@@ -137,6 +141,10 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post("/api/auth/refresh", { preHandler: app.authenticate }, async (request, reply) => {
+    if (isAuthDisabled()) {
+      return createLoginResponse(app, await loadAuthDisabledCurrentUser());
+    }
+
     const currentUser = await loadCurrentUser(request.user.sub);
     if (!currentUser || currentUser.status !== "ACTIVE") {
       reply.code(401).send({ message: "Unauthorized" });
@@ -147,6 +155,10 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/auth/me", { preHandler: app.authenticate }, async (request, reply) => {
+    if (isAuthDisabled()) {
+      return loadAuthDisabledCurrentUser();
+    }
+
     const user = await loadCurrentUser(request.user.sub);
     if (!user || user.status !== "ACTIVE") {
       reply.code(401).send({ message: "Unauthorized" });
@@ -156,6 +168,10 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.put("/api/auth/profile", { preHandler: app.authenticate }, async (request, reply) => {
+    if (isAuthDisabled()) {
+      return loadAuthDisabledCurrentUser();
+    }
+
     const body = request.body as Partial<UpdateCurrentUserRequest>;
     const existing = await prisma.user.findUnique({ where: { id: request.user.sub } });
     if (!existing || existing.status !== "ACTIVE") {

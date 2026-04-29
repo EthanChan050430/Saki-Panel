@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { CurrentUser, TerminalClientMessage, TerminalServerMessage } from "@webops/shared";
 import { WebSocket } from "ws";
-import { loadCurrentUser, type JwtUser } from "../auth.js";
+import { isAuthDisabled, loadAuthDisabledCurrentUser, loadCurrentUser, type JwtUser } from "../auth.js";
 import { writeAuditLog } from "../audit.js";
 import { loadVisibleInstance } from "../instance-access.js";
 import { findDangerousCommandReason } from "../security.js";
@@ -45,6 +45,10 @@ async function authenticateTerminalUser(
   socket: WebSocket,
   token: string
 ): Promise<CurrentUser | null> {
+  if (isAuthDisabled()) {
+    return loadAuthDisabledCurrentUser();
+  }
+
   let payload: JwtUser;
   try {
     payload = app.jwt.verify<JwtUser>(token);

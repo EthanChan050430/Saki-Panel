@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { PermissionCode, CurrentUser } from "@webops/shared";
-import { noRolePermissionRoleName } from "@webops/shared";
+import { noRolePermissionRoleName, permissions as allPermissions } from "@webops/shared";
+import { panelConfig } from "./config.js";
 import { prisma } from "./db.js";
 import { classifyInstanceUser, roleNamesFromUser } from "./instance-access.js";
 
@@ -10,6 +11,9 @@ export interface JwtUser {
   permissions: PermissionCode[];
 }
 
+const authDisabledUserId = "auth-disabled";
+const authDisabledPermissions = [...allPermissions] as PermissionCode[];
+
 declare module "@fastify/jwt" {
   interface FastifyJWT {
     payload: JwtUser;
@@ -18,6 +22,11 @@ declare module "@fastify/jwt" {
 }
 
 export async function authenticate(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  if (panelConfig.disableAuth) {
+    (request as FastifyRequest & { user: JwtUser }).user = await loadAuthDisabledJwtUser();
+    return;
+  }
+
   try {
     await request.jwtVerify();
   } catch {
@@ -25,10 +34,56 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
   }
 }
 
+export function isAuthDisabled(): boolean {
+  return panelConfig.disableAuth;
+}
+
+async function loadAuthDisabledJwtUser(): Promise<JwtUser> {
+  const user = await prisma.user.findFirst({
+    where: { status: "ACTIVE" },
+    orderBy: { createdAt: "asc" }
+  });
+
+  return {
+    sub: user?.id ?? authDisabledUserId,
+    username: user?.username ?? "auth-disabled",
+    permissions: authDisabledPermissions
+  };
+}
+
+export async function loadAuthDisabledCurrentUser(): Promise<CurrentUser> {
+  const jwtUser = await loadAuthDisabledJwtUser();
+  if (jwtUser.sub !== authDisabledUserId) {
+    const user = await loadCurrentUser(jwtUser.sub);
+    if (user) {
+      return {
+        ...user,
+        permissions: authDisabledPermissions,
+        roleNames: Array.from(new Set([...user.roleNames, "auth-disabled"])),
+        isAdmin: true,
+        isSuperAdmin: true
+      };
+    }
+  }
+
+  return {
+    id: authDisabledUserId,
+    username: "auth-disabled",
+    displayName: "Auth Disabled",
+    avatarDataUrl: null,
+    status: "ACTIVE",
+    permissions: authDisabledPermissions,
+    roleNames: ["auth-disabled"],
+    isAdmin: true,
+    isSuperAdmin: true
+  };
+}
+
 export function requirePermission(permission: PermissionCode) {
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     await authenticate(request, reply);
     if (reply.sent) return;
+    if (panelConfig.disableAuth) return;
     if (!request.user.permissions.includes(permission)) {
       reply.code(403).send({ message: "Forbidden" });
     }
@@ -39,6 +94,7 @@ export function requireAnyPermission(allowedPermissions: readonly PermissionCode
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     await authenticate(request, reply);
     if (reply.sent) return;
+    if (panelConfig.disableAuth) return;
     if (!allowedPermissions.some((permission) => request.user.permissions.includes(permission))) {
       reply.code(403).send({ message: "Forbidden" });
     }
@@ -49,6 +105,7 @@ export function requireSuperAdmin() {
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     await authenticate(request, reply);
     if (reply.sent) return;
+    if (panelConfig.disableAuth) return;
 
     const user = await loadCurrentUser(request.user.sub);
     if (!user || user.status !== "ACTIVE" || !user.isSuperAdmin) {
