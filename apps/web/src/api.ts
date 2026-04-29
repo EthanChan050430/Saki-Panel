@@ -28,6 +28,7 @@ import type {
   ManagedUser,
   PanelAppearanceSettings,
   PanelSessionSettings,
+  RegisterRequest,
   SakiChatRequest,
   SakiChatResponse,
   SakiConfigResponse,
@@ -115,7 +116,7 @@ async function requestJson<T>(path: string, options: RequestInit = {}, token?: s
   const response = await fetch(new URL(path, API_BASE), {
     ...options,
     headers: {
-      "content-type": "application/json",
+      ...(options.body !== undefined ? { "content-type": "application/json" } : {}),
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...options.headers
     }
@@ -337,6 +338,12 @@ function readFileAsBase64(file: File, onProgress?: (progress: UploadProgressUpda
 export const api = {
   login(input: LoginRequest) {
     return requestJson<LoginResponse>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify(input)
+    });
+  },
+  register(input: RegisterRequest) {
+    return requestJson<LoginResponse>("/api/auth/register", {
       method: "POST",
       body: JSON.stringify(input)
     });

@@ -263,7 +263,7 @@ npm run dev
 | 机制 | 细节 |
 |:-----|:-----|
 | 鉴权 | JWT Token + bcrypt 密码哈希 |
-| 权限 | RBAC，41 个权限码，3 个内置角色 |
+| 权限 | RBAC，41 个权限码，5 个内置角色 + 无角色权限目标 |
 | 限流 | 登录失败 5 次/10 分钟锁定 |
 | 命令拦截 | 4 级风险分级（low → critical），critical 直接拦截 |
 | Agent 审批 | high 风险操作需人工 approve，支持 reject 和 rollback |

@@ -1,16 +1,22 @@
 import type { FastifyInstance } from "fastify";
-import type { LoginRequest, UpdateCurrentUserRequest } from "@webops/shared";
+import type { LoginRequest, RegisterRequest, RegistrationIdentity, UpdateCurrentUserRequest } from "@webops/shared";
 import { prisma } from "../db.js";
 import { isAuthDisabled, loadAuthDisabledCurrentUser, loadCurrentUser } from "../auth.js";
 import { hashPassword, verifyPassword } from "../security.js";
 import { writeAuditLog } from "../audit.js";
-import { createLoginResponse } from "../session.js";
+import { createLoginResponse, readPanelSessionSettings } from "../session.js";
 
 const loginFailures = new Map<string, { count: number; blockedUntil?: number; firstFailureAt: number }>();
 const maxLoginFailures = 5;
 const loginWindowMs = 10 * 60 * 1000;
 const loginBlockMs = 10 * 60 * 1000;
 const maxAvatarDataUrlLength = 1_000_000;
+const registrationRoleNames: Record<RegistrationIdentity, string[]> = {
+  none: [],
+  user: ["user"],
+  admin: ["admin"],
+  super_admin: ["super_admin"]
+};
 
 function loginKey(requestIp: string, username: string): string {
   return `${requestIp}:${username.toLowerCase()}`;
@@ -42,6 +48,41 @@ function clearLoginFailures(key: string): void {
   loginFailures.delete(key);
 }
 
+function normalizeRequiredText(value: unknown, label: string): string {
+  if (typeof value !== "string") {
+    throw Object.assign(new Error(`${label} is required`), { statusCode: 400 });
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw Object.assign(new Error(`${label} is required`), { statusCode: 400 });
+  }
+  return trimmed;
+}
+
+function errorStatus(error: unknown): number {
+  return typeof error === "object" && error !== null && "statusCode" in error && typeof error.statusCode === "number"
+    ? error.statusCode
+    : 500;
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
+}
+
+async function registrationRoleIds(identity: RegistrationIdentity): Promise<string[]> {
+  const names = registrationRoleNames[identity];
+  if (names.length === 0) return [];
+  const roles = await prisma.role.findMany({
+    where: { name: { in: names } },
+    select: { id: true, name: true }
+  });
+  if (roles.length !== names.length) {
+    throw Object.assign(new Error("Registration role is not available"), { statusCode: 500 });
+  }
+  const idByName = new Map(roles.map((role) => [role.name, role.id]));
+  return names.map((name) => idByName.get(name)).filter((id): id is string => Boolean(id));
+}
+
 function normalizeAvatarDataUrl(value: unknown): string | null | undefined {
   if (value === undefined) return undefined;
   if (value === null || value === "") return null;
@@ -60,6 +101,77 @@ function normalizeAvatarDataUrl(value: unknown): string | null | undefined {
 }
 
 export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
+  app.post("/api/auth/register", async (request, reply) => {
+    if (isAuthDisabled()) {
+      reply.code(403).send({ message: "Registration is unavailable while authentication is disabled" });
+      return;
+    }
+
+    const body = request.body as Partial<RegisterRequest>;
+    let username: string;
+    let displayName: string;
+    let password: string;
+    try {
+      username = normalizeRequiredText(body.username, "Username");
+      displayName = normalizeRequiredText(body.displayName, "Display name");
+      password = normalizeRequiredText(body.password, "Password");
+      if (password.length < 8) {
+        throw Object.assign(new Error("Password must be at least 8 characters"), { statusCode: 400 });
+      }
+    } catch (error) {
+      reply.code(errorStatus(error)).send({ message: error instanceof Error ? error.message : "Invalid registration" });
+      return;
+    }
+
+    try {
+      const settings = await readPanelSessionSettings();
+      const roleIds = await registrationRoleIds(settings.registrationIdentity);
+      const user = await prisma.user.create({
+        data: {
+          username,
+          displayName,
+          passwordHash: await hashPassword(password),
+          status: "ACTIVE",
+          lastLoginAt: new Date(),
+          roles: {
+            create: roleIds.map((roleId) => ({ roleId }))
+          }
+        }
+      });
+
+      const currentUser = await loadCurrentUser(user.id);
+      if (!currentUser) {
+        reply.code(500).send({ message: "Unable to load user" });
+        return;
+      }
+
+      await writeAuditLog({
+        request,
+        userId: user.id,
+        action: "auth.register",
+        resourceType: "user",
+        resourceId: user.id,
+        payload: { username: user.username, registrationIdentity: settings.registrationIdentity },
+        result: "SUCCESS"
+      });
+
+      return createLoginResponse(app, currentUser);
+    } catch (error) {
+      if (isUniqueConstraintError(error)) {
+        await writeAuditLog({
+          request,
+          action: "auth.register",
+          resourceType: "user",
+          payload: { username },
+          result: "FAILURE"
+        });
+        reply.code(409).send({ message: "Username is already in use" });
+        return;
+      }
+      reply.code(errorStatus(error)).send({ message: error instanceof Error ? error.message : "Registration failed" });
+    }
+  });
+
   app.post("/api/auth/login", async (request, reply) => {
     if (isAuthDisabled()) {
       return createLoginResponse(app, await loadAuthDisabledCurrentUser());

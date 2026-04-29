@@ -27,6 +27,10 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
 
     try {
       const body = (request.body ?? {}) as UpdatePanelSessionSettingsRequest;
+      if ((body.registrationIdentity === "admin" || body.registrationIdentity === "super_admin") && !user.isSuperAdmin) {
+        reply.code(403).send({ message: "Super administrator privileges are required to set elevated registration identity" });
+        return;
+      }
       const saved = await savePanelSessionSettings(body);
       await writeAuditLog({
         request,
@@ -34,7 +38,8 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
         action: "system.session_settings.update",
         resourceType: "system",
         payload: {
-          sessionTimeoutMinutes: saved.sessionTimeoutMinutes
+          sessionTimeoutMinutes: saved.sessionTimeoutMinutes,
+          registrationIdentity: saved.registrationIdentity
         }
       });
       return saved;

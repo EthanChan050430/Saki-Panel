@@ -19,7 +19,7 @@ export async function ensureBootstrapData(): Promise<void> {
     });
   }
 
-  const adminRole = await prisma.role.upsert({
+  const superAdminRole = await prisma.role.upsert({
     where: { name: "super_admin" },
     update: {
       description: "Full access to the panel"
@@ -53,18 +53,38 @@ export async function ensureBootstrapData(): Promise<void> {
     await prisma.rolePermission.upsert({
       where: {
         roleId_permissionId: {
-          roleId: adminRole.id,
+          roleId: superAdminRole.id,
           permissionId: permission.id
         }
       },
       update: {},
       create: {
-        roleId: adminRole.id,
+        roleId: superAdminRole.id,
         permissionId: permission.id
       }
     });
   }
 
+  const adminRole = await prisma.role.upsert({
+    where: { name: "admin" },
+    update: {
+      description: "Administrator access for regular operations"
+    },
+    create: {
+      name: "admin",
+      description: "Administrator access for regular operations"
+    }
+  });
+  const userRole = await prisma.role.upsert({
+    where: { name: "user" },
+    update: {
+      description: "Standard user access"
+    },
+    create: {
+      name: "user",
+      description: "Standard user access"
+    }
+  });
   const operatorRole = await prisma.role.upsert({
     where: { name: "operator" },
     update: {
@@ -138,6 +158,8 @@ export async function ensureBootstrapData(): Promise<void> {
   ]);
 
   for (const role of [
+    { id: adminRole.id, allowed: operatorPermissions },
+    { id: userRole.id, allowed: readonlyPermissions },
     { id: operatorRole.id, allowed: operatorPermissions },
     { id: readonlyRole.id, allowed: readonlyPermissions }
   ]) {
@@ -178,13 +200,13 @@ export async function ensureBootstrapData(): Promise<void> {
     where: {
       userId_roleId: {
         userId: adminUser.id,
-        roleId: adminRole.id
+        roleId: superAdminRole.id
       }
     },
     update: {},
     create: {
       userId: adminUser.id,
-      roleId: adminRole.id
+      roleId: superAdminRole.id
     }
   });
 }

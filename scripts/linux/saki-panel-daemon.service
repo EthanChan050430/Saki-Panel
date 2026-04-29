@@ -7,8 +7,9 @@ Type=simple
 WorkingDirectory=/opt/saki-panel
 Environment=NODE_ENV=production
 Environment=DAEMON_HOST=127.0.0.1
-Environment=DAEMON_PORT=24444
+Environment=DAEMON_PORT=5480
 Environment=DAEMON_PANEL_URL=http://127.0.0.1:5479
+Environment=DAEMON_IDENTITY_FILE=/opt/saki-panel/data/daemon/identity-5480.json
 ExecStart=/usr/bin/node apps/daemon/dist/index.js
 Restart=always
 RestartSec=5

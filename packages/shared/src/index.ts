@@ -2,6 +2,8 @@ export const PANEL_VERSION = "0.1.0";
 
 export const noRolePermissionRoleName = "__no_role__";
 
+export const registrationIdentities = ["none", "user", "admin", "super_admin"] as const;
+
 export const permissions = [
   "dashboard.view",
   "node.view",
@@ -53,6 +55,7 @@ export type NodeStatus = "UNKNOWN" | "ONLINE" | "OFFLINE";
 export type InstanceStatus = "CREATED" | "STARTING" | "RUNNING" | "STOPPING" | "STOPPED" | "CRASHED" | "UNKNOWN";
 export type RestartPolicy = "never" | "on_failure" | "always" | "fixed_interval";
 export type InstanceOwnerRole = "super_admin" | "admin" | "user";
+export type RegistrationIdentity = (typeof registrationIdentities)[number];
 export type InstanceType =
   | "generic_command"
   | "nodejs"
@@ -129,6 +132,12 @@ export interface LoginRequest {
   password: string;
 }
 
+export interface RegisterRequest {
+  username: string;
+  password: string;
+  displayName: string;
+}
+
 export interface LoginResponse {
   token: string;
   user: CurrentUser;
@@ -137,10 +146,12 @@ export interface LoginResponse {
 
 export interface PanelSessionSettings {
   sessionTimeoutMinutes: number;
+  registrationIdentity: RegistrationIdentity;
 }
 
 export interface UpdatePanelSessionSettingsRequest {
   sessionTimeoutMinutes?: number;
+  registrationIdentity?: RegistrationIdentity;
 }
 
 export interface PanelAppearanceSettings {

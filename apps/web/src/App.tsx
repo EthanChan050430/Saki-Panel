@@ -102,6 +102,8 @@ import type {
   ManagedUser,
   PanelAppearanceSettings,
   PermissionCode,
+  RegisterRequest,
+  RegistrationIdentity,
   RestartPolicy,
   SakiChatMessage,
   SakiAgentAction,
@@ -368,6 +370,7 @@ const auditActionLabels: Record<string, string> = {
   "auth.login.rate_limited": "登录限流",
   "auth.logout": "退出登录",
   "auth.profile.update": "更新账户",
+  "auth.register": "用户注册",
   "daemon.register": "节点注册",
   "file.delete": "删除文件",
   "file.download": "下载文件",
@@ -1532,6 +1535,8 @@ async function appearanceFileToDataUrl(file: File): Promise<string> {
   });
 }
 
+type AuthMode = "login" | "register";
+
 function LoginView({
   appearance,
   onLogin
@@ -1540,27 +1545,71 @@ function LoginView({
   onLogin: (token: string, user: CurrentUser) => void;
 }) {
   const rememberedLogin = useMemo(() => readRememberedLogin(), []);
+  const [mode, setMode] = useState<AuthMode>("login");
   const [username, setUsername] = useState(rememberedLogin?.username ?? "admin");
+  const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState(rememberedLogin?.password ?? "");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [rememberPassword, setRememberPassword] = useState(Boolean(rememberedLogin));
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const isRegister = mode === "register";
+
+  function switchMode(nextMode: AuthMode) {
+    if (nextMode === mode) return;
+    setMode(nextMode);
+    setError("");
+    setPassword("");
+    setConfirmPassword("");
+    if (nextMode === "register") {
+      setUsername("");
+      setDisplayName("");
+      return;
+    }
+    setUsername(rememberedLogin?.username ?? "admin");
+    setDisplayName("");
+  }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const trimmedUsername = username.trim();
+    const trimmedDisplayName = displayName.trim();
+    if (isRegister) {
+      if (!trimmedUsername || !trimmedDisplayName || !password) {
+        setError("请填写用户名、昵称和密码");
+        return;
+      }
+      if (password.length < 8) {
+        setError("密码至少 8 位");
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError("两次密码不一致");
+        return;
+      }
+    }
     setLoading(true);
     setError("");
     try {
-      const response = await api.login({ username, password });
+      const response = isRegister
+        ? await api.register({
+            username: trimmedUsername,
+            displayName: trimmedDisplayName,
+            password
+          } satisfies RegisterRequest)
+        : await api.login({
+            username: trimmedUsername,
+            password
+          });
       if (rememberPassword) {
-        saveRememberedLogin(username, password);
+        saveRememberedLogin(trimmedUsername, password);
       } else {
         clearRememberedLogin();
       }
       localStorage.setItem(tokenKey, response.token);
       onLogin(response.token, response.user);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "登录失败");
+      setError(err instanceof Error ? err.message : isRegister ? "注册失败" : "登录失败");
     } finally {
       setLoading(false);
     }
@@ -1572,15 +1621,26 @@ function LoginView({
         <div className="login-visual" aria-hidden="true">
           <img className="login-cover-img" src={appearance.loginCoverSrc} alt="" draggable={false} />
         </div>
-        <form className="login-panel" onSubmit={submit}>
+        <form className={`login-panel ${isRegister ? "register-panel" : ""}`} onSubmit={submit}>
           <div className="login-header">
             <div className="brand-mark" aria-hidden="true">
               <img className="app-logo-img" src={appearance.appLogoSrc} alt="" draggable={false} />
             </div>
             <div>
               <h1>{appearance.appTitle}</h1>
-              {appearance.appSubtitle ? <p>{appearance.appSubtitle}</p> : null}
+              {appearance.appSubtitle || isRegister ? <p>{isRegister ? "创建新账户" : appearance.appSubtitle}</p> : null}
             </div>
+          </div>
+
+          <div className="auth-mode-tabs" role="group" aria-label="认证方式">
+            <button className={!isRegister ? "active" : ""} type="button" onClick={() => switchMode("login")}>
+              <LogIn size={16} />
+              登录
+            </button>
+            <button className={isRegister ? "active" : ""} type="button" onClick={() => switchMode("register")}>
+              <UserCheck size={16} />
+              注册
+            </button>
           </div>
 
           <div className="form-group">
@@ -1591,11 +1651,27 @@ function LoginView({
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
                   autoComplete="username"
-                  placeholder="Enter your username"
+                  placeholder={isRegister ? "设置登录用户名" : "Enter your username"}
                 />
               </div>
             </label>
           </div>
+
+          {isRegister ? (
+            <div className="form-group">
+              <label>
+                <span className="label-text">昵称</span>
+                <div className="input-with-icon">
+                  <input
+                    value={displayName}
+                    onChange={(event) => setDisplayName(event.target.value)}
+                    autoComplete="name"
+                    placeholder="显示在面板里的名字"
+                  />
+                </div>
+              </label>
+            </div>
+          ) : null}
 
           <div className="form-group">
             <label>
@@ -1605,12 +1681,29 @@ function LoginView({
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   type="password"
-                  autoComplete="current-password"
-                  placeholder="Enter your password"
+                  autoComplete={isRegister ? "new-password" : "current-password"}
+                  placeholder={isRegister ? "至少 8 位密码" : "Enter your password"}
                 />
               </div>
             </label>
           </div>
+
+          {isRegister ? (
+            <div className="form-group">
+              <label>
+                <span className="label-text">确认密码</span>
+                <div className="input-with-icon">
+                  <input
+                    value={confirmPassword}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder="再次输入密码"
+                  />
+                </div>
+              </label>
+            </div>
+          ) : null}
 
           <label className="remember-password">
             <input
@@ -1621,14 +1714,14 @@ function LoginView({
                 if (!event.target.checked) clearRememberedLogin();
               }}
             />
-            <span>记住密码</span>
+            <span>{isRegister ? "注册后记住密码" : "记住密码"}</span>
           </label>
 
           {error ? <div className="form-error">{error}</div> : null}
 
           <button className="primary-button login-btn" type="submit" disabled={loading}>
-            {loading ? "验证中..." : "登录系统"}
-            {!loading && <KeyRound size={18} />}
+            {loading ? (isRegister ? "注册中..." : "验证中...") : isRegister ? "注册并进入" : "登录系统"}
+            {!loading && (isRegister ? <UserCheck size={18} /> : <KeyRound size={18} />)}
           </button>
         </form>
       </div>
@@ -1818,7 +1911,7 @@ function compactPathLabel(pathname: string): string {
 
 function AccessEmptyView({ user, onOpenAccount }: { user: CurrentUser; onOpenAccount: () => void }) {
   const hasNoPermissions = user.permissions.length === 0;
-  const roleLabel = user.roleNames.length > 0 ? user.roleNames.join(", ") : "无角色";
+  const roleLabel = roleNamesDisplay(user.roleNames);
 
   return (
     <section className="panel-block access-empty-panel">
@@ -7816,8 +7909,23 @@ function isNoRolePermissionRole(role: ManagedRole): boolean {
   return role.name === noRolePermissionRoleName;
 }
 
+function roleNameDisplayName(roleName: string): string {
+  const labels: Record<string, string> = {
+    super_admin: "超级管理员",
+    admin: "管理员",
+    user: "用户",
+    operator: "运维管理员",
+    readonly: "只读用户"
+  };
+  return labels[roleName] ?? roleName;
+}
+
 function roleDisplayName(role: ManagedRole): string {
-  return isNoRolePermissionRole(role) ? "无角色" : role.name;
+  return isNoRolePermissionRole(role) ? "无角色" : roleNameDisplayName(role.name);
+}
+
+function roleNamesDisplay(roleNames: readonly string[]): string {
+  return roleNames.length > 0 ? roleNames.map(roleNameDisplayName).join(", ") : "无角色";
 }
 
 function isElevatedManagedRole(role: ManagedRole): boolean {
@@ -8403,7 +8511,7 @@ function UsersView({
                         <tr key={user.id}>
                           <td>{user.username}</td>
                           <td>{user.displayName}</td>
-                          <td>{user.roleNames.join(", ") || "无角色"}</td>
+                          <td>{roleNamesDisplay(user.roleNames)}</td>
                           <td>{user.status === "ACTIVE" ? "启用" : "禁用"}</td>
                           <td>{formatDate(user.lastLoginAt)}</td>
                           <td>
@@ -9359,6 +9467,13 @@ function AboutView() {
 
 type SakiSettingsSection = "system" | "model" | "features" | "appearance" | "prompt" | "skills";
 
+const registrationIdentityOptions: Array<{ value: RegistrationIdentity; label: string }> = [
+  { value: "none", label: "无角色" },
+  { value: "user", label: "用户" },
+  { value: "admin", label: "管理员" },
+  { value: "super_admin", label: "超级管理员" }
+];
+
 function SettingsView({
   token,
   onLogout,
@@ -9374,6 +9489,7 @@ function SettingsView({
 }) {
   const [form, setForm] = useState<SakiConfigResponse>(emptySakiConfig);
   const [sessionTimeoutMinutes, setSessionTimeoutMinutes] = useState("120");
+  const [registrationIdentity, setRegistrationIdentity] = useState<RegistrationIdentity>("none");
   const [skillList, setSkillList] = useState<SakiSkillSummary[]>([]);
   const [skillCreatorOpen, setSkillCreatorOpen] = useState(false);
   const [skillDraft, setSkillDraft] = useState<SakiSkillDraft>(emptySakiSkillDraft);
@@ -9411,6 +9527,7 @@ function SettingsView({
       ]);
       setForm(nextConfig);
       setSessionTimeoutMinutes(formatSessionTimeoutMinutes(nextSessionSettings.sessionTimeoutMinutes));
+      setRegistrationIdentity(nextSessionSettings.registrationIdentity);
       onAppearanceChange(nextConfig.appearance);
       setSkillList(nextSkills);
       setModelOptions([]);
@@ -9595,15 +9712,17 @@ function SettingsView({
       const [saved, savedSessionSettings] = await Promise.all([
         api.updateSakiConfig(token, currentSakiConfigPayload()),
         api.updateSessionSettings(token, {
-          sessionTimeoutMinutes: nextSessionTimeoutMinutes
+          sessionTimeoutMinutes: nextSessionTimeoutMinutes,
+          registrationIdentity
         })
       ]);
       setForm(saved);
       setSessionTimeoutMinutes(formatSessionTimeoutMinutes(savedSessionSettings.sessionTimeoutMinutes));
+      setRegistrationIdentity(savedSessionSettings.registrationIdentity);
       onAppearanceChange(saved.appearance);
       const refreshed = await api.refreshSession(token);
       onSessionRefresh(refreshed.token, refreshed.user);
-      setNotice("设置已保存，登录超时策略已应用。");
+      setNotice("设置已保存，登录与注册策略已应用。");
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         onLogout();
@@ -9895,6 +10014,19 @@ function SettingsView({
                   onChange={(event) => setSessionTimeoutMinutes(event.target.value)}
                   placeholder="0 表示永不超时"
                 />
+              </label>
+              <label>
+                注册用户身份
+                <select
+                  value={registrationIdentity}
+                  onChange={(event) => setRegistrationIdentity(event.target.value as RegistrationIdentity)}
+                >
+                  {registrationIdentityOptions.map((option) => (
+                    <option value={option.value} key={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label>
                 请求超时 ms

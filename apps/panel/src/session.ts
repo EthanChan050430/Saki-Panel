@@ -1,11 +1,19 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
-import type { CurrentUser, LoginResponse, PanelSessionSettings, UpdatePanelSessionSettingsRequest } from "@webops/shared";
+import { registrationIdentities } from "@webops/shared";
+import type {
+  CurrentUser,
+  LoginResponse,
+  PanelSessionSettings,
+  RegistrationIdentity,
+  UpdatePanelSessionSettingsRequest
+} from "@webops/shared";
 import { panelConfig, panelPaths } from "./config.js";
 
 const minSessionTimeoutMinutes = 0;
 const maxSessionTimeoutMinutes = 525600;
+const defaultRegistrationIdentity: RegistrationIdentity = "none";
 
 class SessionSettingsError extends Error {
   readonly statusCode = 400;
@@ -49,6 +57,17 @@ function parseSessionTimeoutMinutes(value: unknown): number {
   return Number(value.toFixed(3));
 }
 
+function normalizeRegistrationIdentity(value: unknown, fallback: RegistrationIdentity): RegistrationIdentity {
+  return registrationIdentities.includes(value as RegistrationIdentity) ? (value as RegistrationIdentity) : fallback;
+}
+
+function parseRegistrationIdentity(value: unknown): RegistrationIdentity {
+  if (!registrationIdentities.includes(value as RegistrationIdentity)) {
+    throw new SessionSettingsError("注册用户身份无效。");
+  }
+  return value as RegistrationIdentity;
+}
+
 function sessionTimeoutSeconds(minutes: number): number | null {
   if (minutes <= 0) return null;
   return Math.max(1, Math.round(minutes * 60));
@@ -58,7 +77,8 @@ export async function readPanelSessionSettings(): Promise<PanelSessionSettings> 
   const defaultTimeout = normalizeSessionTimeoutMinutes(panelConfig.sessionTimeoutMinutes, 120);
   const settings = await readJsonFile<Partial<PanelSessionSettings>>(panelPaths.sessionSettingsFile, {});
   return {
-    sessionTimeoutMinutes: normalizeSessionTimeoutMinutes(settings.sessionTimeoutMinutes, defaultTimeout)
+    sessionTimeoutMinutes: normalizeSessionTimeoutMinutes(settings.sessionTimeoutMinutes, defaultTimeout),
+    registrationIdentity: normalizeRegistrationIdentity(settings.registrationIdentity, defaultRegistrationIdentity)
   };
 }
 
@@ -70,7 +90,11 @@ export async function savePanelSessionSettings(
     sessionTimeoutMinutes:
       input.sessionTimeoutMinutes === undefined
         ? current.sessionTimeoutMinutes
-        : parseSessionTimeoutMinutes(input.sessionTimeoutMinutes)
+        : parseSessionTimeoutMinutes(input.sessionTimeoutMinutes),
+    registrationIdentity:
+      input.registrationIdentity === undefined
+        ? current.registrationIdentity
+        : parseRegistrationIdentity(input.registrationIdentity)
   };
   await writeJsonFile(panelPaths.sessionSettingsFile, next);
   return next;
