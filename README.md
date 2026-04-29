@@ -332,7 +332,7 @@ sudo systemctl enable --now saki-panel-daemon
 
 ---
 
-## 🔍 为什么 Saki Panel 更香？（SEO 关键词轰炸区）
+## 🔍 为什么 Saki Panel 更香？
 
 **AI 服务器运维面板** · **AI Agent 运维** · **智能运维平台** · **Ollama 运维面板** · **LLM 服务器管理**
 
