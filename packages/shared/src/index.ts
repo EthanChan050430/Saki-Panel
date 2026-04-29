@@ -34,6 +34,7 @@ export const permissions = [
   "user.view",
   "user.create",
   "user.update",
+  "user.delete",
   "role.view",
   "role.update",
   "audit.view",

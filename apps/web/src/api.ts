@@ -640,6 +640,9 @@ export const api = {
   updateUser(token: string, id: string, input: UpdateUserRequest) {
     return requestJson<ManagedUser>(`/api/users/${id}`, { method: "PUT", body: JSON.stringify(input) }, token);
   },
+  deleteUser(token: string, id: string) {
+    return requestJson<{ ok: boolean }>(`/api/users/${id}`, { method: "DELETE" }, token);
+  },
   switchUser(token: string, id: string) {
     return requestJson<LoginResponse>(`/api/users/${id}/switch`, { method: "POST", body: JSON.stringify({}) }, token);
   },

@@ -10,6 +10,7 @@ const adminPermissionHints = new Set<PermissionCode>([
   "node.create",
   "node.update",
   "user.view",
+  "user.delete",
   "role.update"
 ]);
 

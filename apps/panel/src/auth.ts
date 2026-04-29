@@ -84,9 +84,15 @@ export function requirePermission(permission: PermissionCode) {
     await authenticate(request, reply);
     if (reply.sent) return;
     if (panelConfig.disableAuth) return;
-    if (!request.user.permissions.includes(permission)) {
+
+    const user = await loadCurrentUser(request.user.sub);
+    if (!user || user.status !== "ACTIVE" || !user.permissions.includes(permission)) {
       reply.code(403).send({ message: "Forbidden" });
+      return;
     }
+
+    request.user.username = user.username;
+    request.user.permissions = user.permissions;
   };
 }
 
@@ -95,9 +101,15 @@ export function requireAnyPermission(allowedPermissions: readonly PermissionCode
     await authenticate(request, reply);
     if (reply.sent) return;
     if (panelConfig.disableAuth) return;
-    if (!allowedPermissions.some((permission) => request.user.permissions.includes(permission))) {
+
+    const user = await loadCurrentUser(request.user.sub);
+    if (!user || user.status !== "ACTIVE" || !allowedPermissions.some((permission) => user.permissions.includes(permission))) {
       reply.code(403).send({ message: "Forbidden" });
+      return;
     }
+
+    request.user.username = user.username;
+    request.user.permissions = user.permissions;
   };
 }
 

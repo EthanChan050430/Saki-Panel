@@ -53,6 +53,7 @@ const elevatedPermissionHints = new Set<PermissionCode>([
   "user.view",
   "user.create",
   "user.update",
+  "user.delete",
   "role.view",
   "role.update",
   "system.view"
@@ -465,6 +466,45 @@ export async function registerUserRoutes(app: FastifyInstance): Promise<void> {
       include: userIncludeForManagement
     })) as UserWithRoles;
     return toManagedUser(updated);
+  });
+
+  app.delete("/api/users/:id", { preHandler: requirePermission("user.delete") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const [actor, existingUser] = await Promise.all([
+      loadManagementUser(request.user.sub),
+      prisma.user.findUnique({ where: { id }, include: userIncludeForManagement }) as Promise<UserWithRoles | null>
+    ]);
+    if (!actor) {
+      reply.code(401).send({ message: "Unauthorized" });
+      return;
+    }
+    if (!existingUser) {
+      reply.code(404).send({ message: "User not found" });
+      return;
+    }
+
+    const existing = await withNoRolePermissions(existingUser);
+    if (actor.id === existing.id) {
+      reply.code(400).send({ message: "You cannot delete your own account" });
+      return;
+    }
+    if (!canManageTarget(actor, existing)) {
+      reply.code(403).send({ message: "Cannot delete this user" });
+      return;
+    }
+
+    const target = toManagedUser(existing);
+    await prisma.user.delete({ where: { id } });
+    await writeAuditLog({
+      request,
+      userId: request.user.sub,
+      action: "user.delete",
+      resourceType: "user",
+      resourceId: id,
+      payload: { username: target.username, roleNames: target.roleNames }
+    });
+
+    return { ok: true };
   });
 
   app.post("/api/users/:id/switch", { preHandler: requireSuperAdmin() }, async (request, reply) => {

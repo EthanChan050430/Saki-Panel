@@ -399,6 +399,7 @@ const auditActionLabels: Record<string, string> = {
   "template.create": "创建模板",
   "terminal.input": "终端输入",
   "user.create": "创建用户",
+  "user.delete": "删除用户",
   "user.switch": "切换账号",
   "user.update": "更新用户"
 };
@@ -7779,6 +7780,7 @@ const PERMISSION_GROUPS: { group: string; items: { code: PermissionCode; label: 
       { code: "user.view", label: "查看用户" },
       { code: "user.create", label: "创建用户" },
       { code: "user.update", label: "编辑用户" },
+      { code: "user.delete", label: "删除用户" },
       { code: "role.view", label: "查看角色" },
       { code: "role.update", label: "编辑角色权限" }
     ]
@@ -7804,6 +7806,7 @@ const elevatedRolePermissionHintsForUi = new Set<PermissionCode>([
   "user.view",
   "user.create",
   "user.update",
+  "user.delete",
   "role.view",
   "role.update",
   "system.view"
@@ -7851,9 +7854,11 @@ function UsersView({
   const [editForm, setEditForm] = useState<UpdateUserRequest>({});
   const [savingUser, setSavingUser] = useState(false);
   const [switchingUserId, setSwitchingUserId] = useState<string | null>(null);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const canViewAccounts = currentUser.permissions.includes("user.view");
   const canUpdateAccounts = currentUser.permissions.includes("user.update");
   const canCreateUsers = currentUser.permissions.includes("user.create");
+  const canDeleteUsers = currentUser.permissions.includes("user.delete");
   const canManageRoles = currentUser.isSuperAdmin && currentUser.permissions.includes("role.view") && currentUser.permissions.includes("role.update");
   const canManageAccounts = currentUser.isAdmin && canViewAccounts && canUpdateAccounts;
   const canAssignInstances = currentUser.isAdmin && currentUser.permissions.includes("instance.update");
@@ -7972,6 +7977,54 @@ function UsersView({
     } catch (err) {
       setError(err instanceof Error ? err.message : "账号切换失败");
       setSwitchingUserId(null);
+    }
+  }
+
+  async function deleteUser(user: ManagedUser) {
+    if (user.id === currentUser.id) {
+      setError("不能删除当前登录账号");
+      return;
+    }
+    const label = user.displayName && user.displayName !== user.username ? `@${user.username}（${user.displayName}）` : `@${user.username}`;
+    if (!window.confirm(`确定删除用户 ${label} 吗？此操作无法撤销。`)) return;
+
+    setDeletingUserId(user.id);
+    setError("");
+    try {
+      await api.deleteUser(token, user.id);
+      setUsers((current) => current.filter((item) => item.id !== user.id));
+      setAssignableUsers((current) => current.filter((item) => item.id !== user.id));
+      setInstances((current) =>
+        current.map((instance) => ({
+          ...instance,
+          ...(instance.createdByUserId === user.id
+            ? {
+                createdByUserId: null,
+                createdByUsername: null,
+                createdByDisplayName: null,
+                createdByRole: null
+              }
+            : {}),
+          ...(instance.assignedToUserId === user.id
+            ? {
+                assignedToUserId: null,
+                assignedToUsername: null,
+                assignedToDisplayName: null,
+                assignedToRole: null
+              }
+            : {})
+        }))
+      );
+      if (editingUser?.id === user.id) closeUserEditor();
+      void refresh();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onLogout();
+        return;
+      }
+      setError(err instanceof Error ? err.message : "用户删除失败");
+    } finally {
+      setDeletingUserId(null);
     }
   }
 
@@ -8345,6 +8398,7 @@ function UsersView({
                         user.id !== currentUser.id &&
                         user.status === "ACTIVE" &&
                         !user.roleNames.includes("super_admin");
+                      const canDeleteAccount = canDeleteUsers && user.id !== currentUser.id;
                       return (
                         <tr key={user.id}>
                           <td>{user.username}</td>
@@ -8372,6 +8426,17 @@ function UsersView({
                                 >
                                   <LogIn size={14} />
                                   {switchingUserId === user.id ? "切换中" : "切换"}
+                                </button>
+                              ) : null}
+                              {canDeleteAccount ? (
+                                <button
+                                  className="small-button compact-button danger-action"
+                                  disabled={deletingUserId !== null}
+                                  type="button"
+                                  onClick={() => void deleteUser(user)}
+                                >
+                                  <Trash2 size={14} />
+                                  {deletingUserId === user.id ? "删除中" : "删除"}
                                 </button>
                               ) : null}
                             </div>

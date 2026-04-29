@@ -32,7 +32,7 @@ services:
       DAEMON_REGISTRATION_TOKEN: ${DAEMON_REGISTRATION_TOKEN:?DAEMON_REGISTRATION_TOKEN is required}
       DAEMON_WORKSPACE_ROOT: ${DAEMON_WORKSPACE_ROOT:-/workspace}
     ports:
-      - "${DAEMON_PORT:-24444}:${DAEMON_PORT:-24444}"
+      - "${DAEMON_PORT:-5480}:${DAEMON_PORT:-5480}"
     volumes:
       - ./data/daemon:/app/data/daemon
       - ./workspace:/workspace
