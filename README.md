@@ -333,6 +333,8 @@ docker compose build --no-cache panel web
 docker compose up -d
 ```
 
+如果浏览器控制台里仍然看到请求 `http://localhost:5479`，说明旧 Web 镜像或 `.env` 里还保留了本地 API 地址。把 `.env` 中的 `VITE_API_BASE_URL=http://localhost:5479` 删除、留空，或改成公网 API 地址后，重新执行上面的 `docker compose build --no-cache web && docker compose up -d`。
+
 ### systemd（Linux）
 
 ```bash

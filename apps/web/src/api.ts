@@ -51,7 +51,30 @@ import type {
   UpdateScheduledTaskRequest
 } from "@webops/shared";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:5479";
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
+}
+
+function defaultApiBase(): string {
+  return `${window.location.protocol}//${window.location.hostname}:5479`;
+}
+
+function resolveApiBase(): string {
+  const configured = import.meta.env.VITE_API_BASE_URL?.trim();
+  if (!configured) return defaultApiBase();
+
+  try {
+    const url = new URL(configured, window.location.origin);
+    if (isLoopbackHostname(url.hostname) && !isLoopbackHostname(window.location.hostname)) {
+      return defaultApiBase();
+    }
+    return url.toString();
+  } catch {
+    return defaultApiBase();
+  }
+}
+
+const API_BASE = resolveApiBase();
 
 function webSocketUrl(path: string, params: Record<string, string>): string {
   const url = new URL(path, API_BASE);
