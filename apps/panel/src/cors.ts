@@ -12,7 +12,9 @@ function normalizeOrigin(value: string | undefined): string | null {
   if (!value) return null;
   if (value === "*") return "*";
   try {
-    return new URL(value).origin;
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.origin;
   } catch {
     return null;
   }
@@ -58,5 +60,6 @@ export function resolvePanelCorsOrigin(request: FastifyRequest): string | false 
   const origin = normalizeOrigin(firstHeaderValue(request.headers.origin));
   if (!origin || origin === "*") return false;
   if (allowAnyOrigin || configuredOrigins.has(origin) || hasSameHostnameAsApi(origin, request)) return origin;
+  if (!panelConfig.hasExplicitCorsOrigins) return origin;
   return false;
 }

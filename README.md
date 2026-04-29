@@ -326,7 +326,7 @@ docker compose up -d
 ```bash
 export PANEL_PUBLIC_URL="http://38.165.23.56:5479"
 export WEB_ORIGIN="http://38.165.23.56:5478"
-export PANEL_CORS_ORIGINS="http://38.165.23.56:5478"
+export PANEL_CORS_ORIGINS="*"
 export VITE_API_BASE_URL="http://38.165.23.56:5479"
 
 docker compose build --no-cache panel web

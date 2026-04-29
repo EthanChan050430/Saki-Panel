@@ -21,7 +21,8 @@ dotenv.config({ path: path.resolve(rootDir, ".env") });
 
 const publicUrl = process.env.PANEL_PUBLIC_URL ?? "http://localhost:5479";
 const webOrigin = process.env.WEB_ORIGIN ?? "http://localhost:5478";
-const corsOrigins = Array.from(new Set([...listFromEnv(process.env.PANEL_CORS_ORIGINS), webOrigin, publicUrl]));
+const configuredCorsOrigins = listFromEnv(process.env.PANEL_CORS_ORIGINS);
+const corsOrigins = Array.from(new Set([...configuredCorsOrigins, webOrigin, publicUrl]));
 
 export const panelConfig = {
   host: process.env.PANEL_HOST ?? "0.0.0.0",
@@ -29,6 +30,7 @@ export const panelConfig = {
   publicUrl,
   webOrigin,
   corsOrigins,
+  hasExplicitCorsOrigins: configuredCorsOrigins.length > 0,
   databaseUrl: process.env.DATABASE_URL ?? "file:../data/panel/dev.db",
   jwtSecret: process.env.JWT_SECRET ?? "dev-panel-secret-change-me",
   sessionTimeoutMinutes: numberFromEnv(process.env.SESSION_TIMEOUT_MINUTES, 120),
