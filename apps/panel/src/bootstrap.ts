@@ -1,4 +1,4 @@
-import { permissions } from "@webops/shared";
+import { noRolePermissionRoleName, permissions } from "@webops/shared";
 import { panelConfig } from "./config.js";
 import { panelPaths } from "./config.js";
 import { prisma } from "./db.js";
@@ -27,6 +27,17 @@ export async function ensureBootstrapData(): Promise<void> {
     create: {
       name: "super_admin",
       description: "Full access to the panel"
+    }
+  });
+
+  await prisma.role.upsert({
+    where: { name: noRolePermissionRoleName },
+    update: {
+      description: "Permissions applied to users without any assigned role"
+    },
+    create: {
+      name: noRolePermissionRoleName,
+      description: "Permissions applied to users without any assigned role"
     }
   });
 
@@ -100,7 +111,12 @@ export async function ensureBootstrapData(): Promise<void> {
     "task.run",
     "template.view",
     "template.create",
+    "user.view",
+    "user.update",
+    "role.view",
     "saki.use",
+    "saki.chat",
+    "saki.agent",
     "saki.skills",
     "audit.view"
   ]);
@@ -115,6 +131,8 @@ export async function ensureBootstrapData(): Promise<void> {
     "task.view",
     "template.view",
     "saki.use",
+    "saki.chat",
+    "saki.agent",
     "saki.skills",
     "audit.view"
   ]);

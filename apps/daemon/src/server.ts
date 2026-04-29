@@ -10,7 +10,7 @@ export async function createDaemonServer() {
   const app = Fastify({
     bodyLimit: 16 * 1024 * 1024,
     logger: {
-      level: process.env.LOG_LEVEL ?? "info"
+      level: process.env.LOG_LEVEL ?? "warn"
     }
   });
 

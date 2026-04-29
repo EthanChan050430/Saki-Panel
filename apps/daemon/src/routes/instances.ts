@@ -45,11 +45,11 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
 
   app.post("/api/instances/:id/input", { preHandler: authenticatePanelRequest }, async (request) => {
     const { id } = request.params as { id: string };
-    const body = request.body as { data?: string };
+    const body = request.body as { data?: string; echo?: boolean };
     if (typeof body.data !== "string") {
       throw new Error("data is required");
     }
-    return instanceManager.writeInput(id, body.data);
+    return instanceManager.writeInput(id, body.data, { logInput: body.echo !== false });
   });
 
   app.post("/api/instances/:id/command", { preHandler: authenticatePanelRequest }, async (request) => {

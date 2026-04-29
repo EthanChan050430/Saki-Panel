@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import type { InstanceAssignee, InstanceOwnerRole, PermissionCode } from "@webops/shared";
+import { noRolePermissionRoleName } from "@webops/shared";
 import { prisma } from "./db.js";
 
 const adminRoleNames = new Set(["admin", "administrator", "operator"]);
@@ -48,7 +49,10 @@ export interface InstanceAccessProfile {
 }
 
 export function roleNamesFromUser(user: { roles: Array<{ role: { name: string } }> }): string[] {
-  return user.roles.map((item) => item.role.name).sort();
+  return user.roles
+    .map((item) => item.role.name)
+    .filter((name) => name !== noRolePermissionRoleName)
+    .sort();
 }
 
 function permissionCodesFromUser(user: {

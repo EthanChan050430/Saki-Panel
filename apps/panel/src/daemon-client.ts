@@ -125,10 +125,15 @@ export function killDaemonInstance(node: DaemonNodeCredentials, instanceId: stri
   });
 }
 
-export function sendDaemonInstanceInput(node: DaemonNodeCredentials, instanceId: string, data: string) {
+export function sendDaemonInstanceInput(
+  node: DaemonNodeCredentials,
+  instanceId: string,
+  data: string,
+  options: { echo?: boolean } = {}
+) {
   return requestDaemon<DaemonInstanceState>(node, `/api/instances/${instanceId}/input`, {
     method: "POST",
-    body: JSON.stringify({ data })
+    body: JSON.stringify({ data, echo: options.echo })
   });
 }
 

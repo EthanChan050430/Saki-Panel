@@ -26,6 +26,8 @@ import type {
   ManagedScheduledTask,
   ManagedTaskRun,
   ManagedUser,
+  PanelAppearanceSettings,
+  PanelSessionSettings,
   SakiChatRequest,
   SakiChatResponse,
   SakiConfigResponse,
@@ -41,6 +43,7 @@ import type {
   UpdateSakiSkillRequest,
   UpdateRolePermissionsRequest,
   UpdateCurrentUserRequest,
+  UpdatePanelSessionSettingsRequest,
   UpdateUserRequest,
   UpdateInstanceRequest,
   UpdateNodeRequest,
@@ -48,7 +51,7 @@ import type {
   UpdateScheduledTaskRequest
 } from "@webops/shared";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:23333";
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:5479";
 
 function webSocketUrl(path: string, params: Record<string, string>): string {
   const url = new URL(path, API_BASE);
@@ -78,6 +81,13 @@ export class ApiError extends Error {
   }
 }
 
+function normalizeApiErrorMessage(message: string, status: number): string {
+  if (status === 403 && message.trim().toLowerCase() === "forbidden") {
+    return "当前账号没有权限访问该功能";
+  }
+  return message;
+}
+
 async function requestJson<T>(path: string, options: RequestInit = {}, token?: string): Promise<T> {
   const response = await fetch(new URL(path, API_BASE), {
     ...options,
@@ -96,7 +106,7 @@ async function requestJson<T>(path: string, options: RequestInit = {}, token?: s
     } catch {
       // Keep the generic message when the response has no JSON body.
     }
-    throw new ApiError(message, response.status);
+    throw new ApiError(normalizeApiErrorMessage(message, response.status), response.status);
   }
 
   return (await response.json()) as T;
@@ -146,7 +156,7 @@ async function responseErrorMessage(response: Response): Promise<string> {
   } catch {
     // Keep the generic message when the response has no JSON body.
   }
-  return message;
+  return normalizeApiErrorMessage(message, response.status);
 }
 
 async function requestSakiChatStream(
@@ -314,6 +324,19 @@ export const api = {
   updateProfile(token: string, input: UpdateCurrentUserRequest) {
     return requestJson<CurrentUser>("/api/auth/profile", { method: "PUT", body: JSON.stringify(input) }, token);
   },
+  refreshSession(token: string) {
+    return requestJson<LoginResponse>("/api/auth/refresh", { method: "POST", body: JSON.stringify({}) }, token);
+  },
+  sessionSettings(token: string) {
+    return requestJson<PanelSessionSettings>("/api/system/session-settings", {}, token);
+  },
+  updateSessionSettings(token: string, input: UpdatePanelSessionSettingsRequest) {
+    return requestJson<PanelSessionSettings>(
+      "/api/system/session-settings",
+      { method: "PUT", body: JSON.stringify(input) },
+      token
+    );
+  },
   dashboard(token: string) {
     return requestJson<DashboardOverview>("/api/dashboard/overview", {}, token);
   },
@@ -478,7 +501,7 @@ export const api = {
             typeof payload.message === "string"
               ? payload.message
               : `Request failed with ${xhr.status}`;
-          reject(new ApiError(message, xhr.status));
+          reject(new ApiError(normalizeApiErrorMessage(message, xhr.status), xhr.status));
           return;
         }
 
@@ -594,6 +617,9 @@ export const api = {
   updateUser(token: string, id: string, input: UpdateUserRequest) {
     return requestJson<ManagedUser>(`/api/users/${id}`, { method: "PUT", body: JSON.stringify(input) }, token);
   },
+  switchUser(token: string, id: string) {
+    return requestJson<LoginResponse>(`/api/users/${id}/switch`, { method: "POST", body: JSON.stringify({}) }, token);
+  },
   roles(token: string) {
     return requestJson<ManagedRole[]>("/api/roles", {}, token);
   },
@@ -619,6 +645,9 @@ export const api = {
   },
   sakiStatus(token: string) {
     return requestJson<SakiStatusResponse>("/api/saki/status", {}, token);
+  },
+  sakiAppearance() {
+    return requestJson<PanelAppearanceSettings>("/api/saki/appearance");
   },
   sakiSkills(token: string, query = "") {
     return requestJson<SakiSkillSummary[]>(pathWithQuery("/api/saki/skills", { q: query || undefined }), {}, token);

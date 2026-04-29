@@ -17,5 +17,5 @@ COPY --from=build /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build /app/apps/panel/dist ./apps/panel/dist
 COPY prisma ./prisma
 RUN npm ci --omit=dev
-EXPOSE 23333
+EXPOSE 5479
 CMD ["node", "apps/panel/dist/index.js"]

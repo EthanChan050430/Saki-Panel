@@ -15,18 +15,24 @@ import {
   CornerUpLeft,
   Cpu,
   Download,
+  DownloadCloud,
   Eye,
   FileArchive,
   FilePlus,
   FileText,
   Folder,
   FolderPlus,
+  Github,
   HardDrive,
   Image as ImageIcon,
+  Info,
   KeyRound,
+  Layers,
   LayoutGrid,
   LayoutTemplate,
   List,
+  Loader2,
+  LogIn,
   LogOut,
   Maximize2,
   MemoryStick,
@@ -37,6 +43,8 @@ import {
   Paperclip,
   Play,
   Plus,
+  Power,
+  PowerOff,
   RefreshCw,
   RotateCw,
   Save,
@@ -49,6 +57,7 @@ import {
   Sparkles,
   Square,
   Terminal as TerminalIcon,
+  TextQuote,
   Trash2,
   Upload,
   UserCheck,
@@ -91,6 +100,7 @@ import type {
   ManagedScheduledTask,
   ManagedTaskRun,
   ManagedUser,
+  PanelAppearanceSettings,
   PermissionCode,
   RestartPolicy,
   SakiChatMessage,
@@ -103,21 +113,30 @@ import type {
   SakiProviderConfig,
   SakiSkillSummary,
   UpdateCurrentUserRequest,
+  UpdateUserRequest,
   UpdateSakiSkillRequest,
   UpdateNodeRequest,
   UpdateSakiConfigRequest,
   ScheduledTaskType,
   TerminalServerMessage
 } from "@webops/shared";
-import { permissions } from "@webops/shared";
+import { noRolePermissionRoleName, permissions } from "@webops/shared";
 import { ApiError, api, type SakiChatStreamEvent, type SakiChatWorkflowStatus, type UploadProgressUpdate } from "./api.js";
 
 const tokenKey = "webops.token";
+const rememberedLoginKey = "webops.rememberedLogin";
 const defaultStartCommand = "node -e \"let i=0; setInterval(()=>console.log('tick '+(++i)),1000)\"";
-const appName = "Saki Panel";
-const appIconSrc = "/assets/saki-panel-icon.png";
 
-type ViewMode = "dashboard" | "instances" | "nodes" | "templates" | "users" | "audit" | "settings";
+const defaultPanelAppearance: PanelAppearanceSettings = {
+  appTitle: "Saki Panel",
+  appSubtitle: "System Administration",
+  appLogoSrc: "/assets/saki-panel-icon.png",
+  loginCoverSrc: "/assets/cover.png",
+  backgroundSrc: "/assets/background.png",
+  mobileBackgroundSrc: "/assets/background_mobile.png"
+};
+
+type ViewMode = "dashboard" | "instances" | "nodes" | "templates" | "users" | "audit" | "settings" | "about";
 type InstanceDirectoryView = "cards" | "list" | "graph";
 
 interface SakiPromptSeed {
@@ -134,6 +153,71 @@ interface SakiPanelContext {
   label: string;
   detail: string;
   auditSearch?: boolean;
+}
+
+interface RememberedLogin {
+  username: string;
+  password: string;
+}
+
+function normalizePanelAppearance(input?: Partial<PanelAppearanceSettings> | null): PanelAppearanceSettings {
+  return {
+    ...defaultPanelAppearance,
+    ...(input ?? {}),
+    appTitle: input?.appTitle?.trim() || defaultPanelAppearance.appTitle,
+    appSubtitle: input?.appSubtitle ?? defaultPanelAppearance.appSubtitle,
+    appLogoSrc: input?.appLogoSrc?.trim() || defaultPanelAppearance.appLogoSrc,
+    loginCoverSrc: input?.loginCoverSrc?.trim() || defaultPanelAppearance.loginCoverSrc,
+    backgroundSrc: input?.backgroundSrc?.trim() || defaultPanelAppearance.backgroundSrc,
+    mobileBackgroundSrc: input?.mobileBackgroundSrc?.trim() || defaultPanelAppearance.mobileBackgroundSrc
+  };
+}
+
+function cssImageUrl(source: string): string {
+  return `url("${source.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}")`;
+}
+
+function applyPanelAppearance(appearance: PanelAppearanceSettings): void {
+  document.documentElement.style.setProperty("--app-background-image", cssImageUrl(appearance.backgroundSrc));
+  document.documentElement.style.setProperty("--mobile-background-image", cssImageUrl(appearance.mobileBackgroundSrc));
+  document.documentElement.style.setProperty("--login-cover-image", cssImageUrl(appearance.loginCoverSrc));
+  document.title = appearance.appTitle || defaultPanelAppearance.appTitle;
+}
+
+function tokenExpiresAt(token: string): number | null {
+  const payload = token.split(".")[1];
+  if (!payload) return null;
+  try {
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const decoded = JSON.parse(window.atob(padded)) as { exp?: unknown };
+    return typeof decoded.exp === "number" ? decoded.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+function readRememberedLogin(): RememberedLogin | null {
+  try {
+    const raw = window.localStorage.getItem(rememberedLoginKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<RememberedLogin>;
+    if (typeof parsed.username !== "string" || typeof parsed.password !== "string") return null;
+    return {
+      username: parsed.username,
+      password: parsed.password
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveRememberedLogin(username: string, password: string): void {
+  window.localStorage.setItem(rememberedLoginKey, JSON.stringify({ username, password }));
+}
+
+function clearRememberedLogin(): void {
+  window.localStorage.removeItem(rememberedLoginKey);
 }
 
 interface LocalSakiWorkflowStep {
@@ -159,6 +243,15 @@ interface LocalSakiMessage extends SakiChatMessage {
   streaming?: boolean;
 }
 
+interface SakiSubmitOverride {
+  message?: string;
+  panelError?: string | null;
+  contextTitle?: string | null;
+  contextText?: string | null;
+  mode?: SakiChatMode;
+  attachments?: SakiInputAttachment[];
+}
+
 function createSakiWelcomeMessage(content: string): LocalSakiMessage {
   return {
     id: "saki-welcome",
@@ -166,6 +259,15 @@ function createSakiWelcomeMessage(content: string): LocalSakiMessage {
     content,
     createdAt: new Date().toISOString()
   };
+}
+
+function isSakiModeAllowed(mode: SakiChatMode, canUseChat: boolean, canUseAgent: boolean): boolean {
+  return mode === "agent" ? canUseAgent : canUseChat;
+}
+
+function coerceSakiMode(mode: SakiChatMode | undefined, canUseChat: boolean, canUseAgent: boolean): SakiChatMode {
+  if (mode && isSakiModeAllowed(mode, canUseChat, canUseAgent)) return mode;
+  return canUseChat ? "chat" : "agent";
 }
 
 function formatSakiActionArgs(args: Record<string, unknown>): string {
@@ -297,6 +399,7 @@ const auditActionLabels: Record<string, string> = {
   "template.create": "创建模板",
   "terminal.input": "终端输入",
   "user.create": "创建用户",
+  "user.switch": "切换账号",
   "user.update": "更新用户"
 };
 
@@ -331,6 +434,93 @@ const sakiTextAttachmentLimit = 18000;
 const sakiImageMaxDimension = 1280;
 const sakiImageQuality = 0.82;
 const sakiInstanceFileDragMime = "application/x-webops-instance-file";
+const sakiSelectionContextLimit = 12000;
+
+interface SakiSelectionCapture {
+  source: "page" | "terminal";
+  title: string;
+  text: string;
+}
+
+let latestSakiTerminalSelectionText = "";
+
+function normalizeSakiSelectionText(value: string): string {
+  return value
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/g, ""))
+    .join("\n")
+    .trim();
+}
+
+function rememberSakiTerminalSelection(value: string): void {
+  latestSakiTerminalSelectionText = normalizeSakiSelectionText(value);
+}
+
+function clearRememberedSakiTerminalSelection(): void {
+  latestSakiTerminalSelectionText = "";
+}
+
+function targetIsInsideSelector(target: EventTarget | null, selector: string): boolean {
+  const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
+  return Boolean(element?.closest(selector));
+}
+
+function readEditableSelectionText(target: EventTarget | null): string {
+  const candidate =
+    target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement
+      ? target
+      : document.activeElement instanceof HTMLTextAreaElement || document.activeElement instanceof HTMLInputElement
+        ? document.activeElement
+        : null;
+  if (!candidate) return "";
+  const start = candidate.selectionStart;
+  const end = candidate.selectionEnd;
+  if (start === null || end === null || start === end) return "";
+  return normalizeSakiSelectionText(candidate.value.slice(Math.min(start, end), Math.max(start, end)));
+}
+
+function readBrowserSelectionText(target: EventTarget | null): string {
+  const editableSelection = readEditableSelectionText(target);
+  if (editableSelection) return editableSelection;
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed) return "";
+  return normalizeSakiSelectionText(selection.toString());
+}
+
+function readSakiSelectionCapture(target: EventTarget | null): SakiSelectionCapture | null {
+  const terminalSelected = latestSakiTerminalSelectionText;
+  const targetInsideTerminal = targetIsInsideSelector(target, ".xterm-host, .xterm");
+  const activeInsideTerminal = targetIsInsideSelector(document.activeElement, ".xterm-host, .xterm");
+  if (targetInsideTerminal && terminalSelected) {
+    return {
+      source: "terminal",
+      title: "选中的终端文本",
+      text: terminalSelected
+    };
+  }
+
+  const pageSelected = readBrowserSelectionText(target);
+  if (pageSelected) {
+    return {
+      source: "page",
+      title: "选中的页面文本",
+      text: pageSelected
+    };
+  }
+
+  if (activeInsideTerminal && terminalSelected) {
+    return {
+      source: "terminal",
+      title: "选中的终端文本",
+      text: terminalSelected
+    };
+  }
+
+  return null;
+}
 
 const sakiTextAttachmentExtensions = new Set([
   "c",
@@ -360,6 +550,26 @@ const sakiTextAttachmentExtensions = new Set([
   "yml"
 ]);
 
+const imageMimeTypesByExtension: Record<string, string> = {
+  apng: "image/apng",
+  avif: "image/avif",
+  bmp: "image/bmp",
+  gif: "image/gif",
+  ico: "image/x-icon",
+  jpe: "image/jpeg",
+  jpeg: "image/jpeg",
+  jepg: "image/jpeg",
+  jfif: "image/jpeg",
+  jpg: "image/jpeg",
+  pjpeg: "image/jpeg",
+  pjp: "image/jpeg",
+  png: "image/png",
+  svg: "image/svg+xml",
+  tif: "image/tiff",
+  tiff: "image/tiff",
+  webp: "image/webp"
+};
+
 interface SakiInstanceFileDragPayload {
   source: "webops-instance-file";
   instanceId: string;
@@ -368,6 +578,10 @@ interface SakiInstanceFileDragPayload {
   name: string;
   size: number;
   modifiedAt: string;
+}
+
+interface SakiInstanceFileDropRequest extends SakiInstanceFileDragPayload {
+  nonce: number;
 }
 
 interface BrowserSpeechRecognitionResult {
@@ -483,6 +697,9 @@ function parseSakiInstanceFileDragPayload(dataTransfer: DataTransfer): SakiInsta
 }
 
 function sakiMimeTypeFromPath(pathname: string): string {
+  const imageMimeType = imageMimeTypeFromPath(pathname);
+  if (imageMimeType) return imageMimeType;
+
   const extension = pathname.split(".").pop()?.toLowerCase() ?? "";
   const mimeTypes: Record<string, string> = {
     css: "text/css",
@@ -767,7 +984,15 @@ function MarkdownContent({ content }: { content: string }) {
   );
 }
 
-function FilePreview({ content, kind }: { content: string; kind: "html" | "markdown" }) {
+function FilePreview({ content, kind }: { content: string; kind: "html" | "markdown" | "image" }) {
+  if (kind === "image") {
+    return (
+      <div className="image-file-preview">
+        <img alt="" draggable={false} src={content} />
+      </div>
+    );
+  }
+
   if (kind === "html") {
     return <iframe className="html-file-preview" sandbox="" srcDoc={content} title="HTML preview" />;
   }
@@ -807,6 +1032,15 @@ function fileExtension(pathname: string): string {
   const fileName = pathname.split("/").pop()?.toLowerCase() ?? "";
   const dotIndex = fileName.lastIndexOf(".");
   return dotIndex >= 0 ? fileName.slice(dotIndex + 1) : "";
+}
+
+function imageMimeTypeFromPath(pathname: string | null | undefined): string | null {
+  if (!pathname) return null;
+  return imageMimeTypesByExtension[fileExtension(pathname)] ?? null;
+}
+
+function isImageFile(pathname: string | null | undefined): boolean {
+  return Boolean(imageMimeTypeFromPath(pathname));
 }
 
 function isArchiveFile(pathname: string): boolean {
@@ -855,8 +1089,9 @@ interface FileToast {
   detail: string;
 }
 
-function filePreviewKindFromPath(pathname: string | null): "html" | "markdown" | null {
+function filePreviewKindFromPath(pathname: string | null): "html" | "markdown" | "image" | null {
   if (!pathname) return null;
+  if (isImageFile(pathname)) return "image";
   const extension = fileExtension(pathname);
   if (extension === "html" || extension === "htm") return "html";
   if (extension === "md" || extension === "markdown" || extension === "mdx") return "markdown";
@@ -924,6 +1159,7 @@ const editorLanguageByExtension: Record<string, string> = {
 
 function editorLanguageFromPath(pathname: string | null): string {
   if (!pathname) return "text";
+  if (isImageFile(pathname)) return "image";
   const fileName = pathname.split("/").pop()?.toLowerCase() ?? "";
   if (!fileName) return "text";
   if (fileName === "dockerfile" || fileName.endsWith(".dockerfile")) return "dockerfile";
@@ -1200,13 +1436,13 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return window.btoa(binary);
 }
 
-function base64ToBlob(contentBase64: string): Blob {
+function base64ToBlob(contentBase64: string, type = ""): Blob {
   const binary = window.atob(contentBase64);
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) {
     bytes[index] = binary.charCodeAt(index);
   }
-  return new Blob([bytes]);
+  return new Blob([bytes], { type });
 }
 
 function accountInitials(displayName: string, username: string): string {
@@ -1273,9 +1509,39 @@ async function avatarFileToDataUrl(file: File): Promise<string> {
   }
 }
 
-function LoginView({ onLogin }: { onLogin: (token: string, user: CurrentUser) => void }) {
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("");
+async function appearanceFileToDataUrl(file: File): Promise<string> {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("请选择图片文件");
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    throw new Error("图片不能超过 10MB");
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("图片读取失败"));
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      if (!/^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(result)) {
+        reject(new Error("仅支持 PNG、JPG、WebP 或 GIF 图片"));
+        return;
+      }
+      resolve(result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function LoginView({
+  appearance,
+  onLogin
+}: {
+  appearance: PanelAppearanceSettings;
+  onLogin: (token: string, user: CurrentUser) => void;
+}) {
+  const rememberedLogin = useMemo(() => readRememberedLogin(), []);
+  const [username, setUsername] = useState(rememberedLogin?.username ?? "admin");
+  const [password, setPassword] = useState(rememberedLogin?.password ?? "");
+  const [rememberPassword, setRememberPassword] = useState(Boolean(rememberedLogin));
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -1285,6 +1551,11 @@ function LoginView({ onLogin }: { onLogin: (token: string, user: CurrentUser) =>
     setError("");
     try {
       const response = await api.login({ username, password });
+      if (rememberPassword) {
+        saveRememberedLogin(username, password);
+      } else {
+        clearRememberedLogin();
+      }
       localStorage.setItem(tokenKey, response.token);
       onLogin(response.token, response.user);
     } catch (err) {
@@ -1297,31 +1568,28 @@ function LoginView({ onLogin }: { onLogin: (token: string, user: CurrentUser) =>
   return (
     <main className="login-shell saki-login-shell">
       <div className="login-container">
-        <div className="login-visual">
-          <div className="visual-content">
-            <h2>Welcome Back</h2>
-            <p>Access your centralized Saki Panel dashboard</p>
-          </div>
+        <div className="login-visual" aria-hidden="true">
+          <img className="login-cover-img" src={appearance.loginCoverSrc} alt="" draggable={false} />
         </div>
         <form className="login-panel" onSubmit={submit}>
           <div className="login-header">
             <div className="brand-mark" aria-hidden="true">
-              <img className="app-logo-img" src={appIconSrc} alt="" draggable={false} />
+              <img className="app-logo-img" src={appearance.appLogoSrc} alt="" draggable={false} />
             </div>
             <div>
-              <h1>{appName}</h1>
-              <p>System Administration</p>
+              <h1>{appearance.appTitle}</h1>
+              {appearance.appSubtitle ? <p>{appearance.appSubtitle}</p> : null}
             </div>
           </div>
-          
+
           <div className="form-group">
             <label>
               <span className="label-text">用户名</span>
               <div className="input-with-icon">
-                <input 
-                  value={username} 
-                  onChange={(event) => setUsername(event.target.value)} 
-                  autoComplete="username" 
+                <input
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                  autoComplete="username"
                   placeholder="Enter your username"
                 />
               </div>
@@ -1343,8 +1611,20 @@ function LoginView({ onLogin }: { onLogin: (token: string, user: CurrentUser) =>
             </label>
           </div>
 
+          <label className="remember-password">
+            <input
+              type="checkbox"
+              checked={rememberPassword}
+              onChange={(event) => {
+                setRememberPassword(event.target.checked);
+                if (!event.target.checked) clearRememberedLogin();
+              }}
+            />
+            <span>记住密码</span>
+          </label>
+
           {error ? <div className="form-error">{error}</div> : null}
-          
+
           <button className="primary-button login-btn" type="submit" disabled={loading}>
             {loading ? "验证中..." : "登录系统"}
             {!loading && <KeyRound size={18} />}
@@ -1535,14 +1815,45 @@ function compactPathLabel(pathname: string): string {
   return `.../${parts.slice(-2).join("/")}`;
 }
 
+function AccessEmptyView({ user, onOpenAccount }: { user: CurrentUser; onOpenAccount: () => void }) {
+  const hasNoPermissions = user.permissions.length === 0;
+  const roleLabel = user.roleNames.length > 0 ? user.roleNames.join(", ") : "无角色";
+
+  return (
+    <section className="panel-block access-empty-panel">
+      <div className="access-empty-icon">
+        <Shield size={30} />
+      </div>
+      <div className="access-empty-copy">
+        <span className="access-empty-kicker">{roleLabel}</span>
+        <h2>{hasNoPermissions ? "暂无可用权限" : "暂无可打开的控制台模块"}</h2>
+        <p>
+          {hasNoPermissions
+            ? `当前账号 @${user.username} 还没有被分配任何权限。`
+            : `当前账号 @${user.username} 的权限暂时没有对应的侧边栏入口。`}
+          请联系管理员调整角色或权限后再回来。
+        </p>
+      </div>
+      <button className="primary-button access-empty-action" type="button" onClick={onOpenAccount}>
+        <UserRound size={18} />
+        账号设置
+      </button>
+    </section>
+  );
+}
+
 function DashboardView({
   token,
   onLogout,
-  refreshTick
+  refreshTick,
+  canViewNodes,
+  canTestNodes
 }: {
   token: string;
   onLogout: () => void;
   refreshTick: number;
+  canViewNodes: boolean;
+  canTestNodes: boolean;
 }) {
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
   const [nodes, setNodes] = useState<ManagedNode[]>([]);
@@ -1552,7 +1863,10 @@ function DashboardView({
   const refresh = useCallback(async () => {
     setError("");
     try {
-      const [nextOverview, nextNodes] = await Promise.all([api.dashboard(token), api.nodes(token)]);
+      const [nextOverview, nextNodes] = await Promise.all([
+        api.dashboard(token),
+        canViewNodes ? api.nodes(token) : Promise.resolve([])
+      ]);
       setOverview(nextOverview);
       setNodes(nextNodes);
     } catch (err) {
@@ -1562,7 +1876,7 @@ function DashboardView({
       }
       setError(err instanceof Error ? err.message : "刷新失败");
     }
-  }, [onLogout, token]);
+  }, [canViewNodes, onLogout, token]);
 
   useEffect(() => {
     void refresh();
@@ -1582,6 +1896,7 @@ function DashboardView({
   );
 
   async function testNode(id: string) {
+    if (!canTestNodes) return;
     setTestingNodeId(id);
     setError("");
     try {
@@ -1641,7 +1956,9 @@ function DashboardView({
             {(overview?.recentOperations ?? []).map((item) => (
               <div className="operation-row" key={item.id}>
                 <span>{item.action}</span>
-                <strong>{item.result === "SUCCESS" ? "成功" : "失败"}</strong>
+                <strong className={item.result === "SUCCESS" ? "success" : "failure"}>
+                  {item.result === "SUCCESS" ? "成功" : "失败"}
+                </strong>
                 <time>{formatDate(item.createdAt)}</time>
               </div>
             ))}
@@ -1650,64 +1967,68 @@ function DashboardView({
         </div>
       </section>
 
-      <section className="panel-block nodes-block">
-        <div className="section-heading">
-          <h2>节点</h2>
-          <span>{nodes.length} 台</span>
-        </div>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>名称</th>
-                <th>地址</th>
-                <th>状态</th>
-                <th>系统</th>
-                <th>资源</th>
-                <th>心跳</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {nodes.map((node) => (
-                <tr key={node.id}>
-                  <td>
-                    <strong>{node.name}</strong>
-                  </td>
-                  <td>{`${node.protocol}://${node.host}:${node.port}`}</td>
-                  <td>
-                    <NodeStatusPill status={node.status} />
-                  </td>
-                  <td>{[node.os, node.arch].filter(Boolean).join(" / ") || "-"}</td>
-                  <td>
-                    {node.latestMetric
-                      ? `${formatNumber(node.latestMetric.cpuUsage)} / ${formatNumber(node.latestMetric.memoryUsage)}`
-                      : "-"}
-                  </td>
-                  <td>{formatDate(node.lastSeenAt)}</td>
-                  <td>
-                    <button
-                      className="small-button"
-                      onClick={() => void testNode(node.id)}
-                      disabled={testingNodeId === node.id}
-                    >
-                      <RefreshCw size={15} />
-                      测试
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {nodes.length === 0 ? (
+      {canViewNodes ? (
+        <section className="panel-block nodes-block">
+          <div className="section-heading">
+            <h2>节点</h2>
+            <span>{nodes.length} 台</span>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
                 <tr>
-                  <td colSpan={7}>
-                    <div className="empty-state">暂无节点</div>
-                  </td>
+                  <th>名称</th>
+                  <th>地址</th>
+                  <th>状态</th>
+                  <th>系统</th>
+                  <th>资源</th>
+                  <th>心跳</th>
+                  {canTestNodes ? <th></th> : null}
                 </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
+              </thead>
+              <tbody>
+                {nodes.map((node) => (
+                  <tr key={node.id}>
+                    <td>
+                      <strong>{node.name}</strong>
+                    </td>
+                    <td>{`${node.protocol}://${node.host}:${node.port}`}</td>
+                    <td>
+                      <NodeStatusPill status={node.status} />
+                    </td>
+                    <td>{[node.os, node.arch].filter(Boolean).join(" / ") || "-"}</td>
+                    <td>
+                      {node.latestMetric
+                        ? `${formatNumber(node.latestMetric.cpuUsage)} / ${formatNumber(node.latestMetric.memoryUsage)}`
+                        : "-"}
+                    </td>
+                    <td>{formatDate(node.lastSeenAt)}</td>
+                    {canTestNodes ? (
+                      <td>
+                        <button
+                          className="small-button"
+                          onClick={() => void testNode(node.id)}
+                          disabled={testingNodeId === node.id}
+                        >
+                          <RefreshCw size={15} />
+                          测试
+                        </button>
+                      </td>
+                    ) : null}
+                  </tr>
+                ))}
+                {nodes.length === 0 ? (
+                  <tr>
+                    <td colSpan={canTestNodes ? 7 : 6}>
+                      <div className="empty-state">暂无节点</div>
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
     </>
   );
 }
@@ -2340,13 +2661,21 @@ function SakiFloatingChat({
   instance,
   seed,
   panelContext,
-  fileDragActive
+  fileDragActive,
+  instanceFileDropRequest,
+  canUseChat,
+  canUseAgent,
+  canUseSkills
 }: {
   token: string;
   instance: ManagedInstance | null;
   seed: SakiPromptSeed | null;
   panelContext: SakiPanelContext;
   fileDragActive: boolean;
+  instanceFileDropRequest: SakiInstanceFileDropRequest | null;
+  canUseChat: boolean;
+  canUseAgent: boolean;
+  canUseSkills: boolean;
 }) {
   const contextKey = instance ? `instance:${instance.id}` : `panel:${panelContext.label}:${panelContext.detail}`;
   const baseContextLabel = instance ? instance.name : panelContext.label;
@@ -2354,7 +2683,7 @@ function SakiFloatingChat({
   const [open, setOpen] = useState(false);
   const [messagesExpanded, setMessagesExpanded] = useState(false);
   const [draft, setDraft] = useState("");
-  const [mode, setMode] = useState<SakiChatMode>("chat");
+  const [mode, setMode] = useState<SakiChatMode>(() => coerceSakiMode("chat", canUseChat, canUseAgent));
   const [panelError, setPanelError] = useState<string | null>(null);
   const [contextTitle, setContextTitle] = useState<string | null>(null);
   const [contextText, setContextText] = useState<string | null>(null);
@@ -2378,6 +2707,7 @@ function SakiFloatingChat({
   const [composerBusy, setComposerBusy] = useState<"image" | "file" | "screenshot" | null>(null);
   const [sakiFileHoverActive, setSakiFileHoverActive] = useState(false);
   const [listening, setListening] = useState(false);
+  const [annotationMode, setAnnotationMode] = useState(false);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
@@ -2400,11 +2730,13 @@ function SakiFloatingChat({
   const previousContextKeyRef = useRef(contextKey);
   const restoringContextRef = useRef(false);
   const initialConversationLoadedRef = useRef(false);
+  const annotationModeRef = useRef(false);
 
   useEffect(() => {
     return () => {
       sakiStreamAbortRef.current?.abort();
       recognitionRef.current?.abort();
+      document.body.classList.remove("saki-selection-capture-active");
       if (composerNoticeTimerRef.current !== null) {
         window.clearTimeout(composerNoticeTimerRef.current);
       }
@@ -2412,7 +2744,16 @@ function SakiFloatingChat({
   }, []);
 
   useEffect(() => {
+    annotationModeRef.current = annotationMode;
+  }, [annotationMode]);
+
+  useEffect(() => {
+    setMode((current) => coerceSakiMode(current, canUseChat, canUseAgent));
+  }, [canUseAgent, canUseChat]);
+
+  useEffect(() => {
     function handleGlobalPointerDown(event: PointerEvent) {
+      if (annotationMode) return;
       if (open && panelRef.current && !panelRef.current.contains(event.target as Node)) {
         setOpen(false);
         setMessagesExpanded(false);
@@ -2422,7 +2763,7 @@ function SakiFloatingChat({
     return () => {
       document.removeEventListener("pointerdown", handleGlobalPointerDown);
     };
-  }, [open]);
+  }, [annotationMode, open]);
 
   useEffect(() => {
     function clearFileDragState() {
@@ -2436,6 +2777,44 @@ function SakiFloatingChat({
       window.removeEventListener("drop", clearFileDragState);
     };
   }, []);
+
+  useEffect(() => {
+    if (!annotationMode) return;
+
+    document.body.classList.add("saki-selection-capture-active");
+
+    const finishSelection = (target: EventTarget | null) => {
+      window.setTimeout(() => {
+        if (!annotationModeRef.current) return;
+        const capture = readSakiSelectionCapture(target);
+        if (!capture) return;
+        void submitSakiSelectionCapture(capture);
+      }, 0);
+    };
+
+    const handlePointerFinished = (event: MouseEvent | TouchEvent) => {
+      finishSelection(event.target);
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        stopSelectionAnnotation("已取消注释选择。");
+        return;
+      }
+      finishSelection(event.target);
+    };
+
+    document.addEventListener("mouseup", handlePointerFinished, true);
+    document.addEventListener("touchend", handlePointerFinished, true);
+    document.addEventListener("keyup", handleKeyUp, true);
+
+    return () => {
+      document.body.classList.remove("saki-selection-capture-active");
+      document.removeEventListener("mouseup", handlePointerFinished, true);
+      document.removeEventListener("touchend", handlePointerFinished, true);
+      document.removeEventListener("keyup", handleKeyUp, true);
+    };
+  }, [annotationMode]);
 
   useEffect(() => {
     if (initialConversationLoadedRef.current) return;
@@ -2468,8 +2847,8 @@ function SakiFloatingChat({
     setSelectedSkillIds([]);
     setAttachments([]);
     setComposerNotice(null);
-    setMode("chat");
-  }, [contextKey, instance, messages, panelContext.label]);
+    setMode(coerceSakiMode("chat", canUseChat, canUseAgent));
+  }, [canUseAgent, canUseChat, contextKey, instance, messages, panelContext.label]);
 
   useEffect(() => {
     if (restoringContextRef.current) {
@@ -2517,8 +2896,13 @@ function SakiFloatingChat({
     setPanelError(seed.panelError ?? null);
     setContextTitle(seed.contextTitle ?? null);
     setContextText(seed.contextText ?? null);
-    setMode(seed.mode ?? "chat");
-  }, [seed]);
+    setMode(coerceSakiMode(seed.mode, canUseChat, canUseAgent));
+  }, [canUseAgent, canUseChat, seed]);
+
+  useEffect(() => {
+    if (!instanceFileDropRequest) return;
+    void addInstanceFileToComposer(instanceFileDropRequest);
+  }, [instanceFileDropRequest]);
 
   useEffect(() => {
     if (!open) return;
@@ -2526,10 +2910,15 @@ function SakiFloatingChat({
     async function refreshSkills() {
       setSkillsLoading(true);
       try {
-        const [status, nextSkills] = await Promise.all([
-          api.sakiStatus(token),
-          api.sakiSkills(token, instance ? `${instance.name} ${instance.workingDirectory} coding agent` : "coding agent")
-        ]);
+        const status = await api.sakiStatus(token);
+        let nextSkills = status.skills;
+        if (canUseSkills) {
+          try {
+            nextSkills = await api.sakiSkills(token, instance ? `${instance.name} ${instance.workingDirectory} coding agent` : "coding agent");
+          } catch {
+            nextSkills = status.skills;
+          }
+        }
         if (disposed) return;
         setReachable(status.reachable);
         setSkills(nextSkills.length > 0 ? nextSkills : status.skills);
@@ -2548,7 +2937,7 @@ function SakiFloatingChat({
     return () => {
       disposed = true;
     };
-  }, [instance, open, token]);
+  }, [canUseSkills, instance, open, token]);
 
   useEffect(() => {
     function clampCurrentLauncherPosition() {
@@ -2646,6 +3035,10 @@ function SakiFloatingChat({
     setMessagesExpanded(false);
     setHistoryOpen(false);
     setFullscreen(false);
+  }
+
+  function selectSakiMode(nextMode: SakiChatMode) {
+    setMode(coerceSakiMode(nextMode, canUseChat, canUseAgent));
   }
 
   function toggleSakiHistory() {
@@ -2779,6 +3172,53 @@ function SakiFloatingChat({
     }, 3600);
   }
 
+  function stopSelectionAnnotation(notice?: string) {
+    annotationModeRef.current = false;
+    setAnnotationMode(false);
+    document.body.classList.remove("saki-selection-capture-active");
+    if (notice) showComposerNotice(notice);
+  }
+
+  function toggleSelectionAnnotation() {
+    if (loading) return;
+    if (annotationModeRef.current) {
+      stopSelectionAnnotation("已取消注释选择。");
+      return;
+    }
+
+    clearRememberedSakiTerminalSelection();
+    window.getSelection()?.removeAllRanges();
+    annotationModeRef.current = true;
+    setAnnotationMode(true);
+    setOpen(true);
+    showComposerNotice("请选择页面文本，松开鼠标后 Saki 会开始分析。按 Esc 取消。");
+  }
+
+  async function submitSakiSelectionCapture(capture: SakiSelectionCapture) {
+    if (loading) return;
+    const selectedText = compactContextText(capture.text, sakiSelectionContextLimit);
+    if (!selectedText) return;
+
+    stopSelectionAnnotation();
+    if (capture.source === "terminal") {
+      clearRememberedSakiTerminalSelection();
+    } else {
+      window.getSelection()?.removeAllRanges();
+    }
+
+    const title = capture.title;
+    const message = draft.trim() || "请分析这段选中的文本。";
+    setOpen(true);
+    setMessagesExpanded(true);
+    setContextTitle(title);
+    setContextText(selectedText);
+    await submit(undefined, {
+      message,
+      contextTitle: title,
+      contextText: selectedText
+    });
+  }
+
   function appendAttachments(nextAttachments: SakiInputAttachment[]) {
     if (nextAttachments.length === 0) return;
     const available = Math.max(0, sakiMaxInputAttachments - attachments.length);
@@ -2833,6 +3273,16 @@ function SakiFloatingChat({
     setMessagesExpanded(true);
     setComposerBusy("file");
     try {
+      if (isImageFile(payload.path || payload.name)) {
+        const response = await api.downloadInstanceFile(token, payload.instanceId, payload.path);
+        const mimeType = imageMimeTypeFromPath(response.path || payload.name) ?? imageMimeTypeFromPath(payload.path) ?? "image/png";
+        const file = new File([base64ToBlob(response.contentBase64, mimeType)], response.fileName || payload.name, {
+          type: mimeType
+        });
+        appendAttachments([await imageFileToSakiAttachment(file, "image")]);
+        return;
+      }
+
       const response = await api.readInstanceFile(token, payload.instanceId, payload.path);
       appendAttachments([
         {
@@ -3107,13 +3557,24 @@ function SakiFloatingChat({
     }
   }
 
-  async function submit(event?: React.FormEvent<HTMLFormElement>) {
+  async function submit(event?: React.FormEvent<HTMLFormElement>, override?: SakiSubmitOverride) {
     event?.preventDefault();
-    const submittedAttachments = attachments;
-    const value = draft.trim() || (submittedAttachments.length ? "请分析附件内容。" : "");
+    const submittedAttachments = override?.attachments ?? attachments;
+    const value = (override?.message ?? draft).trim() || (submittedAttachments.length ? "请分析附件内容。" : "");
     if ((!value && submittedAttachments.length === 0) || loading) return;
+    const requestMode = coerceSakiMode(override?.mode ?? mode, canUseChat, canUseAgent);
+    if (!isSakiModeAllowed(requestMode, canUseChat, canUseAgent)) {
+      setComposerNotice("当前账号没有可用的 Saki 权限。");
+      return;
+    }
+    if (requestMode !== mode) {
+      setMode(requestMode);
+    }
 
     setMessagesExpanded(true);
+    const requestPanelError = override?.panelError ?? panelError;
+    const requestContextTitle = override?.contextTitle ?? contextTitle;
+    const requestContextText = override?.contextText ?? contextText;
 
     const userMessage: LocalSakiMessage = {
       id: newClientId(),
@@ -3147,11 +3608,11 @@ function SakiFloatingChat({
         message: value,
         history,
         instanceId: (storedConversations.find((conversation) => conversation.id === activeConversationId)?.instanceId ?? instance?.id) || null,
-        panelError,
-        contextTitle,
-        contextText,
+        panelError: requestPanelError,
+        contextTitle: requestContextTitle,
+        contextText: requestContextText,
         auditSearch: !instance && panelContext.auditSearch ? value : null,
-        mode,
+        mode: requestMode,
         selectedSkillIds,
         attachments: submittedAttachments
       };
@@ -3434,10 +3895,17 @@ function SakiFloatingChat({
             <div className="saki-error-context">
               <Bug size={15} />
               <span>{panelError}</span>
-              <button className="small-button" type="button" onClick={() => setMode("agent")}>
-                <Wrench size={14} />
-                智能体
-              </button>
+              {canUseAgent ? (
+                <button className="small-button" type="button" onClick={() => selectSakiMode("agent")}>
+                  <Wrench size={14} />
+                  智能体
+                </button>
+              ) : canUseChat ? (
+                <button className="small-button" type="button" onClick={() => selectSakiMode("chat")}>
+                  <Sparkles size={14} />
+                  对话
+                </button>
+              ) : null}
             </div>
           ) : null}
 
@@ -3447,10 +3915,17 @@ function SakiFloatingChat({
                 <span>{contextTitle ?? "已附加上下文"}</span>
                 <p>{contextPreview}</p>
               </div>
-              <button className="small-button" type="button" onClick={() => setMode("chat")}>
-                <Sparkles size={14} />
-                对话
-              </button>
+              {canUseChat ? (
+                <button className="small-button" type="button" onClick={() => selectSakiMode("chat")}>
+                  <Sparkles size={14} />
+                  对话
+                </button>
+              ) : canUseAgent ? (
+                <button className="small-button" type="button" onClick={() => selectSakiMode("agent")}>
+                  <Wrench size={14} />
+                  智能体
+                </button>
+              ) : null}
               <button
                 className="icon-button mini"
                 type="button"
@@ -3686,12 +4161,16 @@ function SakiFloatingChat({
         )}
         <div className="saki-input-container">
           <div className="saki-mode-tabs">
-            <button className={mode === "chat" ? "active" : ""} type="button" onClick={() => setMode("chat")}>
-              对话
-            </button>
-            <button className={mode === "agent" ? "active" : ""} type="button" onClick={() => setMode("agent")}>
-              智能体
-            </button>
+            {canUseChat ? (
+              <button className={mode === "chat" ? "active" : ""} type="button" onClick={() => selectSakiMode("chat")}>
+                对话
+              </button>
+            ) : null}
+            {canUseAgent ? (
+              <button className={mode === "agent" ? "active" : ""} type="button" onClick={() => selectSakiMode("agent")}>
+                智能体
+              </button>
+            ) : null}
           </div>
           <div className="saki-input-row">
             <textarea
@@ -3733,6 +4212,16 @@ function SakiFloatingChat({
                   onClick={toggleSpeechInput}
                 >
                   <Mic size={15} />
+                </button>
+                <button
+                  className={`icon-button mini ${annotationMode ? "active" : ""}`}
+                  type="button"
+                  title={annotationMode ? "取消注释选择" : "注释选中文本"}
+                  aria-pressed={annotationMode}
+                  disabled={loading}
+                  onClick={toggleSelectionAnnotation}
+                >
+                  <TextQuote size={15} />
                 </button>
                 <button
                   className={`icon-button mini ${composerBusy === "image" ? "active" : ""}`}
@@ -3816,7 +4305,7 @@ function WebTerminal({
   token: string;
   instance: ManagedInstance | null;
   onStatus: (instanceId: string, status: InstanceStatus, exitCode?: number | null) => void;
-  onAskSaki?: (seed: Omit<SakiPromptSeed, "nonce">) => void;
+  onAskSaki?: ((seed: Omit<SakiPromptSeed, "nonce">) => void) | undefined;
 }) {
   const terminalElementRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
@@ -3856,6 +4345,7 @@ function WebTerminal({
     terminal.loadAddon(fitAddon);
     terminal.open(terminalElementRef.current);
     const inputSubscription = terminal.onData((data) => terminalDataHandlerRef.current(data));
+    const selectionSubscription = terminal.onSelectionChange(() => rememberSakiTerminalSelection(terminal.getSelection()));
     fitAddon.fit();
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
@@ -3866,6 +4356,8 @@ function WebTerminal({
     return () => {
       window.removeEventListener("resize", resize);
       inputSubscription.dispose();
+      selectionSubscription.dispose();
+      clearRememberedSakiTerminalSelection();
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -3876,6 +4368,7 @@ function WebTerminal({
   useEffect(() => {
     setLastIssue("");
     directInputBufferRef.current = "";
+    clearRememberedSakiTerminalSelection();
     if (!terminalReady || !instanceId) {
       setConnectionState("idle");
       socketRef.current?.close(1000, "No instance selected");
@@ -3966,6 +4459,7 @@ function WebTerminal({
     return () => {
       disposed = true;
       clearReconnectTimer();
+      clearRememberedSakiTerminalSelection();
       socketRef.current?.close(1000, "Terminal view changed");
       socketRef.current = null;
     };
@@ -4061,7 +4555,15 @@ function WebTerminal({
           {terminalStateLabel(connectionState)}
         </div>
         <div className="terminal-toolbar-actions">
-          <button className="icon-button mini" title="清空" type="button" onClick={() => terminalRef.current?.clear()}>
+          <button
+            className="icon-button mini"
+            title="清空"
+            type="button"
+            onClick={() => {
+              terminalRef.current?.clear();
+              clearRememberedSakiTerminalSelection();
+            }}
+          >
             <Trash2 size={15} />
           </button>
           <button
@@ -4100,20 +4602,22 @@ function WebTerminal({
       {lastIssue ? (
         <div className="terminal-issue">
           <span>{lastIssue}</span>
-          <button
-            className="small-button"
-            type="button"
-            onClick={() =>
-              onAskSaki?.({
-                message: `请解释这个终端报错，并基于当前实例工作区给出修复方案：\n${lastIssue}`,
-                panelError: lastIssue,
-                mode: "agent"
-              })
-            }
-          >
-            <Sparkles size={14} />
-            问 Saki
-          </button>
+          {onAskSaki ? (
+            <button
+              className="small-button"
+              type="button"
+              onClick={() =>
+                onAskSaki({
+                  message: `请解释这个终端报错，并基于当前实例工作区给出修复方案：\n${lastIssue}`,
+                  panelError: lastIssue,
+                  mode: "agent"
+                })
+              }
+            >
+              <Sparkles size={14} />
+              问 Saki
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -4123,17 +4627,29 @@ function WebTerminal({
 function FileManager({
   token,
   instance,
-  onSakiFileDragChange
+  onSakiFileDragChange,
+  onSakiInstanceFileDrop
 }: {
   token: string;
   instance: ManagedInstance | null;
   onSakiFileDragChange: (active: boolean) => void;
+  onSakiInstanceFileDrop?: ((payload: SakiInstanceFileDragPayload) => void) | undefined;
 }) {
   const instanceId = instance?.id ?? null;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const conflictResolveRef = useRef<((choice: FileConflictChoice | null) => void) | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const mobileFileLongPressRef = useRef<{
+    pointerId: number;
+    entry: InstanceFileEntry;
+    payload: SakiInstanceFileDragPayload;
+    startX: number;
+    startY: number;
+    timerId: number;
+    active: boolean;
+  } | null>(null);
+  const suppressMobileFileClickRef = useRef(false);
   const [currentPath, setCurrentPath] = useState("");
   const [entries, setEntries] = useState<InstanceFileEntry[]>([]);
   const [fileSearchQuery, setFileSearchQuery] = useState("");
@@ -4149,6 +4665,13 @@ function FileManager({
   const [fileConflictPrompt, setFileConflictPrompt] = useState<FileConflictPrompt | null>(null);
   const [uploadProgress, setUploadProgress] = useState<(UploadProgressUpdate & { fileName: string }) | null>(null);
   const [fileToast, setFileToast] = useState<FileToast | null>(null);
+  const [mobileFileDrag, setMobileFileDrag] = useState<{
+    name: string;
+    path: string;
+    x: number;
+    y: number;
+    overSaki: boolean;
+  } | null>(null);
   const [mobileBrowserOpen, setMobileBrowserOpen] = useState(false);
   const [mobileEditorOpen, setMobileEditorOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -4163,7 +4686,13 @@ function FileManager({
   const selectedEntry = entries.find((entry) => entry.path === selectedPath) ?? null;
   const editorLanguage = useMemo(() => editorLanguageFromPath(editorPath), [editorPath]);
   const editorPreviewKind = useMemo(() => filePreviewKindFromPath(editorPath), [editorPath]);
-  const findMatches = useMemo(() => collectFindMatches(editorContent, findQuery), [editorContent, findQuery]);
+  const editorIsImage = editorPreviewKind === "image";
+  const editorCanEdit = Boolean(editorPath && !editorIsImage);
+  const editorCanTogglePreview = editorPreviewKind === "html" || editorPreviewKind === "markdown";
+  const findMatches = useMemo(
+    () => (editorCanEdit ? collectFindMatches(editorContent, findQuery) : []),
+    [editorCanEdit, editorContent, findQuery]
+  );
   const activeFindIndex = findMatches.length > 0 ? Math.min(findActiveIndex, findMatches.length - 1) : -1;
   const findResultLabel = !findQuery
     ? "输入关键词"
@@ -4219,6 +4748,9 @@ function FileManager({
       if (toastTimerRef.current !== null) {
         window.clearTimeout(toastTimerRef.current);
       }
+      if (mobileFileLongPressRef.current) {
+        window.clearTimeout(mobileFileLongPressRef.current.timerId);
+      }
     };
   }, []);
 
@@ -4229,13 +4761,17 @@ function FileManager({
   }, [editorPath]);
 
   useEffect(() => {
+    if (editorIsImage && editorMode !== "preview") {
+      setEditorMode("preview");
+      return;
+    }
     if (!editorPreviewKind && editorMode !== "edit") {
       setEditorMode("edit");
     }
     if (editorMode === "preview") {
       setFindVisible(false);
     }
-  }, [editorMode, editorPreviewKind]);
+  }, [editorIsImage, editorMode, editorPreviewKind]);
 
   useEffect(() => {
     setFindActiveIndex(0);
@@ -4300,7 +4836,7 @@ function FileManager({
   }
 
   function openEditorFind() {
-    if (!editorPath) return;
+    if (!editorCanEdit) return;
     setFindVisible(true);
   }
 
@@ -4322,7 +4858,7 @@ function FileManager({
   }
 
   function handleFileManagerKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
-    if (!editorPath || editorMode !== "edit") return;
+    if (!editorCanEdit || editorMode !== "edit") return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
       event.preventDefault();
       openEditorFind();
@@ -4334,12 +4870,9 @@ function FileManager({
     }
   }
 
-  function handleEntryDragStart(event: React.DragEvent<HTMLElement>, entry: InstanceFileEntry) {
-    if (!instanceId || entry.type !== "file") {
-      event.preventDefault();
-      return;
-    }
-    const payload: SakiInstanceFileDragPayload = {
+  function sakiPayloadForEntry(entry: InstanceFileEntry): SakiInstanceFileDragPayload | null {
+    if (!instanceId || entry.type !== "file") return null;
+    return {
       source: "webops-instance-file",
       instanceId,
       instanceName: instance?.name ?? "",
@@ -4348,6 +4881,14 @@ function FileManager({
       size: entry.size,
       modifiedAt: entry.modifiedAt
     };
+  }
+
+  function handleEntryDragStart(event: React.DragEvent<HTMLElement>, entry: InstanceFileEntry) {
+    const payload = sakiPayloadForEntry(entry);
+    if (!payload) {
+      event.preventDefault();
+      return;
+    }
     event.dataTransfer.effectAllowed = "copy";
     event.dataTransfer.setData(sakiInstanceFileDragMime, JSON.stringify(payload));
     event.dataTransfer.setData("text/plain", entry.path);
@@ -4358,6 +4899,121 @@ function FileManager({
   function handleEntryDragEnd() {
     setDraggingFilePath(null);
     onSakiFileDragChange(false);
+  }
+
+  function isSakiDropTargetAt(clientX: number, clientY: number): boolean {
+    const element = document.elementFromPoint(clientX, clientY);
+    return Boolean(element?.closest(".saki-launcher, .saki-panel"));
+  }
+
+  function cancelMobileFileLongPress() {
+    const drag = mobileFileLongPressRef.current;
+    if (drag) {
+      window.clearTimeout(drag.timerId);
+    }
+    mobileFileLongPressRef.current = null;
+    setMobileFileDrag(null);
+    setDraggingFilePath(null);
+    onSakiFileDragChange(false);
+  }
+
+  function handleEntryPointerDown(event: React.PointerEvent<HTMLTableRowElement>, entry: InstanceFileEntry) {
+    if (!isMobileFileLayout() || event.pointerType === "mouse" || (event.target as HTMLElement).closest(".row-actions")) {
+      return;
+    }
+    const payload = sakiPayloadForEntry(entry);
+    if (!payload || !onSakiInstanceFileDrop) return;
+
+    const target = event.currentTarget;
+    const timerId = window.setTimeout(() => {
+      const drag = mobileFileLongPressRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      drag.active = true;
+      setDraggingFilePath(entry.path);
+      onSakiFileDragChange(true);
+      setMobileFileDrag({
+        name: entry.name,
+        path: entry.path,
+        x: drag.startX,
+        y: drag.startY,
+        overSaki: isSakiDropTargetAt(drag.startX, drag.startY)
+      });
+    }, 420);
+
+    mobileFileLongPressRef.current = {
+      pointerId: event.pointerId,
+      entry,
+      payload,
+      startX: event.clientX,
+      startY: event.clientY,
+      timerId,
+      active: false
+    };
+    try {
+      target.setPointerCapture(event.pointerId);
+    } catch {
+    }
+  }
+
+  function handleEntryPointerMove(event: React.PointerEvent<HTMLTableRowElement>) {
+    const drag = mobileFileLongPressRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+    if (!drag.active && distance > 12) {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      cancelMobileFileLongPress();
+      return;
+    }
+
+    if (!drag.active) return;
+    event.preventDefault();
+    setMobileFileDrag({
+      name: drag.entry.name,
+      path: drag.entry.path,
+      x: event.clientX,
+      y: event.clientY,
+      overSaki: isSakiDropTargetAt(event.clientX, event.clientY)
+    });
+  }
+
+  function finishMobileFileDrag(event: React.PointerEvent<HTMLTableRowElement>) {
+    const drag = mobileFileLongPressRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    const shouldDrop = drag.active && isSakiDropTargetAt(event.clientX, event.clientY);
+    const payload = drag.payload;
+    if (drag.active) {
+      suppressMobileFileClickRef.current = true;
+      window.setTimeout(() => {
+        suppressMobileFileClickRef.current = false;
+      }, 500);
+    }
+    cancelMobileFileLongPress();
+    if (shouldDrop && onSakiInstanceFileDrop) {
+      onSakiInstanceFileDrop(payload);
+    }
+  }
+
+  function handleEntryPointerCancel(event: React.PointerEvent<HTMLTableRowElement>) {
+    const drag = mobileFileLongPressRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    cancelMobileFileLongPress();
+  }
+
+  function handleEntryContextMenu(event: React.MouseEvent<HTMLTableRowElement>, entry: InstanceFileEntry) {
+    if (entry.type === "file" && isMobileFileLayout()) {
+      event.preventDefault();
+    }
   }
 
   function showFileToast(title: string, detail: string) {
@@ -4426,6 +5082,18 @@ function FileManager({
 
     if (!instanceId || entry.type !== "file") return;
     try {
+      if (isImageFile(entry.path)) {
+        const response = await api.downloadInstanceFile(token, instanceId, entry.path);
+        const mimeType = imageMimeTypeFromPath(response.path) ?? imageMimeTypeFromPath(entry.path) ?? "image/png";
+        setEditorPath(response.path);
+        setEditorContent(`data:${mimeType};base64,${response.contentBase64}`);
+        setEditorMode("preview");
+        if (isMobileFileLayout()) {
+          setMobileEditorOpen(true);
+        }
+        return;
+      }
+
       const response = await api.readInstanceFile(token, instanceId, entry.path);
       setEditorPath(response.path);
       setEditorContent(response.content);
@@ -4439,7 +5107,7 @@ function FileManager({
   }
 
   async function saveEditor() {
-    if (!instanceId || !editorPath) return;
+    if (!instanceId || !editorPath || !editorCanEdit) return;
     setSaving(true);
     setError("");
     try {
@@ -4497,12 +5165,10 @@ function FileManager({
     const nextPath = joinFilePath(parentFilePath(entry.path), nextName);
     setError("");
     try {
-      await api.renameInstancePath(token, instanceId, entry.path, nextPath);
+      const response = await api.renameInstancePath(token, instanceId, entry.path, nextPath);
       await loadDirectory(currentPath);
       if (editorPath === entry.path) {
-        setEditorPath(nextPath);
-        setSelectedPath(nextPath);
-        setEditorMode(filePreviewKindFromPath(nextPath) ? editorMode : "edit");
+        await openEntry(response);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "重命名失败");
@@ -4641,6 +5307,16 @@ function FileManager({
       {mobileEditorOpen ? (
         <div className="mobile-file-editor-scrim" role="presentation" onMouseDown={closeMobileEditorModal} />
       ) : null}
+      {mobileFileDrag ? (
+        <div
+          className={`mobile-file-drag-ghost ${mobileFileDrag.overSaki ? "over-saki" : ""}`}
+          style={{ left: `${mobileFileDrag.x}px`, top: `${mobileFileDrag.y}px` }}
+          aria-hidden="true"
+        >
+          <FileText size={16} />
+          <span>{mobileFileDrag.name}</span>
+        </div>
+      ) : null}
       <div className="file-manager-modal-chrome">
         <div className="mobile-file-modal-header">
           <div>
@@ -4741,12 +5417,23 @@ function FileManager({
                   key={entry.path || entry.name}
                   onDragStart={(event) => handleEntryDragStart(event, entry)}
                   onDragEnd={handleEntryDragEnd}
+                  onPointerDown={(event) => handleEntryPointerDown(event, entry)}
+                  onPointerMove={handleEntryPointerMove}
+                  onPointerUp={finishMobileFileDrag}
+                  onPointerCancel={handleEntryPointerCancel}
+                  onContextMenu={(event) => handleEntryContextMenu(event, entry)}
                 >
                   <td>
                     <button
                       className="file-name-button"
                       draggable={entry.type === "file"}
-                      onClick={() => void openEntry(entry)}
+                      onClick={() => {
+                        if (suppressMobileFileClickRef.current) {
+                          suppressMobileFileClickRef.current = false;
+                          return;
+                        }
+                        void openEntry(entry);
+                      }}
                       onDragStart={(event) => {
                         event.stopPropagation();
                         handleEntryDragStart(event, entry);
@@ -4758,6 +5445,8 @@ function FileManager({
                     >
                       {entry.type === "directory" ? (
                         <Folder size={16} />
+                      ) : isImageFile(entry.path) ? (
+                        <ImageIcon size={16} />
                       ) : isArchiveFile(entry.path) ? (
                         <FileArchive size={16} />
                       ) : (
@@ -4822,7 +5511,7 @@ function FileManager({
               </button>
             </div>
             <div className="file-editor-actions">
-              {editorPreviewKind ? (
+              {editorCanTogglePreview ? (
                 <div className="editor-view-toggle" aria-label="文件视图">
                   <button
                     className={editorMode === "edit" ? "active" : ""}
@@ -4848,12 +5537,12 @@ function FileManager({
               <button
                 className="icon-button mini"
                 title="查找 Ctrl+F"
-                disabled={!editorPath || editorMode !== "edit"}
+                disabled={!editorCanEdit || editorMode !== "edit"}
                 onClick={openEditorFind}
               >
                 <Search size={15} />
               </button>
-              <button className="primary-button save-file-button" disabled={!editorPath || saving} onClick={() => void saveEditor()}>
+              <button className="primary-button save-file-button" disabled={!editorCanEdit || saving} onClick={() => void saveEditor()}>
                 <Save size={16} />
                 {saving ? "保存中" : "保存"}
               </button>
@@ -5311,15 +6000,17 @@ function InstancesView({
   onOpenTemplates,
   onInstanceFocus,
   onAskSaki,
-  onSakiFileDragChange
+  onSakiFileDragChange,
+  onSakiInstanceFileDrop
 }: {
   token: string;
   onLogout: () => void;
   refreshTick: number;
   onOpenTemplates: () => void;
   onInstanceFocus: (instance: ManagedInstance | null) => void;
-  onAskSaki: (seed: Omit<SakiPromptSeed, "nonce">) => void;
+  onAskSaki?: ((seed: Omit<SakiPromptSeed, "nonce">) => void) | undefined;
   onSakiFileDragChange: (active: boolean) => void;
+  onSakiInstanceFileDrop?: ((payload: SakiInstanceFileDragPayload) => void) | undefined;
 }) {
   const [nodes, setNodes] = useState<ManagedNode[]>([]);
   const [instances, setInstances] = useState<ManagedInstance[]>([]);
@@ -5537,6 +6228,16 @@ function InstancesView({
     onInstanceFocus(selectedInstance);
   }, [onInstanceFocus, selectedInstance]);
 
+  const handleSakiInstanceFileDrop = useCallback(
+    (payload: SakiInstanceFileDragPayload) => {
+      if (selectedInstance) {
+        onInstanceFocus(selectedInstance);
+      }
+      onSakiInstanceFileDrop?.(payload);
+    },
+    [onInstanceFocus, onSakiInstanceFileDrop, selectedInstance]
+  );
+
   useEffect(() => {
     setToolsCollapsed(false);
     setShowTaskModal(false);
@@ -5647,108 +6348,120 @@ function InstancesView({
       }}
     >
       <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="create-instance-title">
-        <div className="section-heading modal-heading">
-          <h2 id="create-instance-title">创建实例</h2>
-          <button className="icon-button mini" title="关闭" type="button" onClick={() => setShowCreateForm(false)}>
-            <X size={15} />
-          </button>
+        <div className="modal-header">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <h2 id="create-instance-title">创建实例</h2>
+              <p>配置新的服务实例运行参数</p>
+            </div>
+            <button className="icon-button mini" title="关闭" type="button" onClick={() => setShowCreateForm(false)}>
+              <X size={18} />
+            </button>
+          </div>
         </div>
-        <form className="instance-form modal-form" onSubmit={createInstance}>
-          <label>
-            节点
-            <select
-              value={form.nodeId}
-              onChange={(event) => setForm((current) => ({ ...current, nodeId: event.target.value }))}
-              required
-            >
-              <option value="" disabled>
-                选择节点
-              </option>
-              {nodes.map((node) => (
-                <option value={node.id} key={node.id}>
-                  {node.name}
+        <div className="modal-body">
+          <form id="create-instance-form" className="instance-form modal-form" onSubmit={createInstance}>
+            <label>
+              节点
+              <select
+                value={form.nodeId}
+                onChange={(event) => setForm((current) => ({ ...current, nodeId: event.target.value }))}
+                required
+              >
+                <option value="" disabled>
+                  选择节点
                 </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            名称
-            <input
-              value={form.name}
-              onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-              required
-            />
-          </label>
-          <label>
-            工作目录
-            <input
-              value={form.workingDirectory}
-              onChange={(event) => setForm((current) => ({ ...current, workingDirectory: event.target.value }))}
-              placeholder="留空自动创建"
-            />
-          </label>
-          <label className="wide-field">
-            启动命令
-            <input
-              value={form.startCommand}
-              onChange={(event) => setForm((current) => ({ ...current, startCommand: event.target.value }))}
-              required
-            />
-          </label>
-          <label className="wide-field">
-            停止命令
-            <input
-              value={form.stopCommand}
-              onChange={(event) => setForm((current) => ({ ...current, stopCommand: event.target.value }))}
-              placeholder="可选"
-            />
-          </label>
-          <label className="wide-field">
-            描述
-            <input
-              value={form.description}
-              onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
-              placeholder="可选"
-            />
-          </label>
-          <label className="checkbox-field">
-            <input
-              type="checkbox"
-              checked={form.autoStart}
-              onChange={(event) => setForm((current) => ({ ...current, autoStart: event.target.checked }))}
-            />
-            自启动
-          </label>
-          <label>
-            重启策略
-            <select
-              value={form.restartPolicy}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, restartPolicy: event.target.value as RestartPolicy }))
-              }
-            >
-              <option value="never">不自动重启</option>
-              <option value="on_failure">异常退出重启</option>
-              <option value="always">总是重启</option>
-            </select>
-          </label>
-          <label>
-            最大重试
-            <input
-              type="number"
-              min={0}
-              max={99}
-              value={form.restartMaxRetries}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, restartMaxRetries: Number(event.target.value) || 0 }))
-              }
-            />
-          </label>
-          <button className="primary-button form-submit" type="submit" disabled={creating || nodes.length === 0}>
+                {nodes.map((node) => (
+                  <option value={node.id} key={node.id}>
+                    {node.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              名称
+              <input
+                value={form.name}
+                onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+                required
+              />
+            </label>
+            <label>
+              工作目录
+              <input
+                value={form.workingDirectory}
+                onChange={(event) => setForm((current) => ({ ...current, workingDirectory: event.target.value }))}
+                placeholder="留空自动创建"
+              />
+            </label>
+            <label className="wide-field">
+              启动命令
+              <input
+                value={form.startCommand}
+                onChange={(event) => setForm((current) => ({ ...current, startCommand: event.target.value }))}
+                required
+              />
+            </label>
+            <label className="wide-field">
+              停止命令
+              <input
+                value={form.stopCommand}
+                onChange={(event) => setForm((current) => ({ ...current, stopCommand: event.target.value }))}
+                placeholder="可选"
+              />
+            </label>
+            <label className="wide-field">
+              描述
+              <input
+                value={form.description}
+                onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
+                placeholder="可选"
+              />
+            </label>
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={form.autoStart}
+                onChange={(event) => setForm((current) => ({ ...current, autoStart: event.target.checked }))}
+              />
+              自启动
+            </label>
+            <label>
+              重启策略
+              <select
+                value={form.restartPolicy}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, restartPolicy: event.target.value as RestartPolicy }))
+                }
+              >
+                <option value="never">不自动重启</option>
+                <option value="on_failure">异常退出重启</option>
+                <option value="always">总是重启</option>
+              </select>
+            </label>
+            <label>
+              最大重试
+              <input
+                type="number"
+                min={0}
+                max={99}
+                value={form.restartMaxRetries}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, restartMaxRetries: Number(event.target.value) || 0 }))
+                }
+              />
+            </label>
+          </form>
+        </div>
+        <div className="modal-footer">
+          <button className="ghost-button" type="button" onClick={() => setShowCreateForm(false)}>
+            取消
+          </button>
+          <button className="primary-button" type="submit" form="create-instance-form" disabled={creating || nodes.length === 0}>
             <Plus size={18} />
             {creating ? "创建中" : "创建"}
           </button>
-        </form>
+        </div>
       </div>
     </div>
   ) : null;
@@ -5808,20 +6521,22 @@ function InstancesView({
         {error ? (
           <div className="page-error action-error">
             <span>{error}</span>
-            <button
-              className="small-button"
-              type="button"
-              onClick={() =>
-                onAskSaki({
-                  message: `请解释并修复当前实例面板报错：\n${error}`,
-                  panelError: error,
-                  mode: "agent"
-                })
-              }
-            >
-              <Sparkles size={14} />
-              问 Saki
-            </button>
+            {onAskSaki ? (
+              <button
+                className="small-button"
+                type="button"
+                onClick={() =>
+                  onAskSaki({
+                    message: `请解释并修复当前实例面板报错：\n${error}`,
+                    panelError: error,
+                    mode: "agent"
+                  })
+                }
+              >
+                <Sparkles size={14} />
+                问 Saki
+              </button>
+            ) : null}
           </div>
         ) : null}
         {createDialog}
@@ -5897,24 +6612,31 @@ function InstancesView({
               <h2>文件管理</h2>
               <span className="glass-subtitle">{selectedInstance.workingDirectory || "未设置工作目录"}</span>
             </div>
-            <FileManager token={token} instance={selectedInstance} onSakiFileDragChange={onSakiFileDragChange} />
+            <FileManager
+              token={token}
+              instance={selectedInstance}
+              onSakiFileDragChange={onSakiFileDragChange}
+              onSakiInstanceFileDrop={handleSakiInstanceFileDrop}
+            />
           </div>
 
           <aside className={`glass-panel console-tools-panel ${toolsCollapsed ? "collapsed" : ""}`}>
             <div className="glass-panel-heading console-tools-heading">
               <div className="console-tools-title">
-                <h2>控制中枢</h2>
                 {!toolsCollapsed ? (
-                  <span className="glass-subtitle">{restartPolicyLabel(selectedInstance.restartPolicy)}</span>
+                  <>
+                    <h2>控制中枢</h2>
+                    <span className="glass-subtitle">{restartPolicyLabel(selectedInstance.restartPolicy)}</span>
+                  </>
                 ) : null}
               </div>
               <button
-                className="icon-button mini"
+                className="tools-toggle-btn"
                 type="button"
                 title={toolsCollapsed ? "展开控制中枢" : "折叠控制中枢"}
                 onClick={() => setToolsCollapsed((current) => !current)}
               >
-                {toolsCollapsed ? <ChevronLeft size={15} /> : <ChevronRight size={15} />}
+                {toolsCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
               </button>
             </div>
             {!toolsCollapsed ? (
@@ -6077,7 +6799,54 @@ function InstancesView({
                 </dl>
               </div>
             </div>
-            ) : null}
+            ) : (
+              <div className="collapsed-tools-icons">
+                <button
+                  className="collapsed-tool-btn"
+                  type="button"
+                  disabled={busy || running}
+                  onClick={() => void runAction(selectedInstance, "start")}
+                  title="启动"
+                >
+                  <Play size={18} />
+                </button>
+                <button
+                  className="collapsed-tool-btn"
+                  type="button"
+                  disabled={busy || !running}
+                  onClick={() => void runAction(selectedInstance, "stop")}
+                  title="停止"
+                >
+                  <Square size={18} />
+                </button>
+                <button
+                  className="collapsed-tool-btn"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void runAction(selectedInstance, "restart")}
+                  title="重启"
+                >
+                  <RotateCw size={18} />
+                </button>
+                <button
+                  className="collapsed-tool-btn danger"
+                  type="button"
+                  disabled={busy || !running}
+                  onClick={() => void runAction(selectedInstance, "kill")}
+                  title="强杀"
+                >
+                  <XOctagon size={18} />
+                </button>
+                <button
+                  className="collapsed-tool-btn"
+                  type="button"
+                  onClick={() => setShowTaskModal(true)}
+                  title="计划任务"
+                >
+                  <Clock size={18} />
+                </button>
+              </div>
+            )}
           </aside>
         </section>
       </>
@@ -6089,20 +6858,22 @@ function InstancesView({
       {error ? (
         <div className="page-error action-error">
           <span>{error}</span>
-          <button
-            className="small-button"
-            type="button"
-            onClick={() =>
-              onAskSaki({
-                message: `请解释并修复实例管理面板报错：\n${error}`,
-                panelError: error,
-                mode: "agent"
-              })
-            }
-          >
-            <Sparkles size={14} />
-            问 Saki
-          </button>
+          {onAskSaki ? (
+            <button
+              className="small-button"
+              type="button"
+              onClick={() =>
+                onAskSaki({
+                  message: `请解释并修复实例管理面板报错：\n${error}`,
+                  panelError: error,
+                  mode: "agent"
+                })
+              }
+            >
+              <Sparkles size={14} />
+              问 Saki
+            </button>
+          ) : null}
         </div>
       ) : null}
       {createDialog}
@@ -7015,22 +7786,53 @@ const PERMISSION_GROUPS: { group: string; items: { code: PermissionCode; label: 
   {
     group: "Saki 助手",
     items: [
-      { code: "saki.use", label: "使用 Saki 助手" },
+      { code: "saki.chat", label: "使用对话" },
+      { code: "saki.agent", label: "使用智能体" },
       { code: "saki.skills", label: "管理 Saki 技能" },
       { code: "saki.configure", label: "配置 Saki 助手" }
     ]
   }
 ];
 
+const elevatedRoleNamesForUi = new Set(["super_admin", "admin", "administrator", "operator"]);
+const elevatedRolePermissionHintsForUi = new Set<PermissionCode>([
+  "instance.update",
+  "instance.delete",
+  "node.create",
+  "node.update",
+  "node.delete",
+  "user.view",
+  "user.create",
+  "user.update",
+  "role.view",
+  "role.update",
+  "system.view"
+]);
+
+function isNoRolePermissionRole(role: ManagedRole): boolean {
+  return role.name === noRolePermissionRoleName;
+}
+
+function roleDisplayName(role: ManagedRole): string {
+  return isNoRolePermissionRole(role) ? "无角色" : role.name;
+}
+
+function isElevatedManagedRole(role: ManagedRole): boolean {
+  if (isNoRolePermissionRole(role)) return false;
+  return elevatedRoleNamesForUi.has(role.name) || role.permissions.some((permission) => elevatedRolePermissionHintsForUi.has(permission));
+}
+
 function UsersView({
   token,
   currentUser,
   onLogout,
+  onSwitchUser,
   refreshTick
 }: {
   token: string;
   currentUser: CurrentUser;
   onLogout: () => void;
+  onSwitchUser: (token: string, user: CurrentUser) => void;
   refreshTick: number;
 }) {
   const [users, setUsers] = useState<ManagedUser[]>([]);
@@ -7045,8 +7847,24 @@ function UsersView({
   const [savingRole, setSavingRole] = useState(false);
   const [creatingUser, setCreatingUser] = useState(false);
   const [savingAssignment, setSavingAssignment] = useState(false);
-  const canManageAccounts = currentUser.isSuperAdmin;
+  const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
+  const [editForm, setEditForm] = useState<UpdateUserRequest>({});
+  const [savingUser, setSavingUser] = useState(false);
+  const [switchingUserId, setSwitchingUserId] = useState<string | null>(null);
+  const canViewAccounts = currentUser.permissions.includes("user.view");
+  const canUpdateAccounts = currentUser.permissions.includes("user.update");
+  const canCreateUsers = currentUser.permissions.includes("user.create");
+  const canManageRoles = currentUser.isSuperAdmin && currentUser.permissions.includes("role.view") && currentUser.permissions.includes("role.update");
+  const canManageAccounts = currentUser.isAdmin && canViewAccounts && canUpdateAccounts;
   const canAssignInstances = currentUser.isAdmin && currentUser.permissions.includes("instance.update");
+  const assignableRoles = useMemo(
+    () =>
+      roles.filter((role) => {
+        if (isNoRolePermissionRole(role)) return false;
+        return currentUser.isSuperAdmin || !isElevatedManagedRole(role);
+      }),
+    [currentUser.isSuperAdmin, roles]
+  );
   const [form, setForm] = useState<CreateUserRequest>({
     username: "",
     password: "",
@@ -7060,7 +7878,7 @@ function UsersView({
     try {
       const [nextUsers, nextRoles, nextAssignees, nextInstances] = await Promise.all([
         canManageAccounts ? api.users(token) : Promise.resolve([]),
-        canManageAccounts ? api.roles(token) : Promise.resolve([]),
+        currentUser.permissions.includes("role.view") ? api.roles(token) : Promise.resolve([]),
         canAssignInstances ? api.instanceAssignees(token) : Promise.resolve([]),
         canAssignInstances ? api.instances(token) : Promise.resolve([])
       ]);
@@ -7076,7 +7894,7 @@ function UsersView({
       }
       setError(err instanceof Error ? err.message : "用户读取失败");
     }
-  }, [canAssignInstances, canManageAccounts, onLogout, token]);
+  }, [canAssignInstances, canManageAccounts, currentUser.permissions, onLogout, token]);
 
   const selectedRole = roles.find((role) => role.id === selectedRoleId) ?? null;
   const assignableUserIds = useMemo(() => new Set(assignableUsers.map((user) => user.id)), [assignableUsers]);
@@ -7104,15 +7922,56 @@ function UsersView({
     }
   }
 
-  async function toggleUser(user: ManagedUser) {
+  function openUserEditor(user: ManagedUser) {
+    setEditingUser(user);
+    setEditForm({
+      username: user.username,
+      displayName: user.displayName,
+      status: user.status,
+      roleIds: user.roleIds
+    });
+  }
+
+  function closeUserEditor() {
+    setEditingUser(null);
+    setEditForm({});
+  }
+
+  async function saveEditedUser(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingUser) return;
+    setSavingUser(true);
     setError("");
     try {
-      const updated = await api.updateUser(token, user.id, {
-        status: user.status === "ACTIVE" ? "DISABLED" : "ACTIVE"
-      });
-      setUsers((current) => current.map((item) => (item.id === user.id ? updated : item)));
+      const payload: UpdateUserRequest = {
+        username: editForm.username ?? editingUser.username,
+        displayName: editForm.displayName ?? editingUser.displayName,
+        status: editForm.status ?? editingUser.status,
+        roleIds: editForm.roleIds ?? editingUser.roleIds
+      };
+      if (editForm.password?.trim()) {
+        payload.password = editForm.password;
+      }
+      const updated = await api.updateUser(token, editingUser.id, payload);
+      setUsers((current) => current.map((item) => (item.id === editingUser.id ? updated : item)));
+      closeUserEditor();
+      void refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "用户状态更新失败");
+      setError(err instanceof Error ? err.message : "用户保存失败");
+    } finally {
+      setSavingUser(false);
+    }
+  }
+
+  async function switchToUser(user: ManagedUser) {
+    setSwitchingUserId(user.id);
+    setError("");
+    try {
+      const result = await api.switchUser(token, user.id);
+      onSwitchUser(result.token, result.user);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "账号切换失败");
+      setSwitchingUserId(null);
     }
   }
 
@@ -7265,6 +8124,114 @@ function UsersView({
         </div>
       ) : null}
 
+      {editingUser ? (
+        <div className="modal-backdrop">
+          <div className="modal-panel user-edit-modal" role="dialog" aria-modal="true" aria-labelledby="user-edit-title">
+            <div className="section-heading modal-heading">
+              <div className="role-heading-info">
+                <h2 id="user-edit-title">编辑用户</h2>
+                <p>{editingUser.username} 的资料、角色和状态会在保存后立即生效。</p>
+              </div>
+              <button className="icon-button mini" disabled={savingUser} title="关闭" type="button" onClick={closeUserEditor}>
+                <X size={18} />
+              </button>
+            </div>
+            <form className="modal-form user-edit-form" onSubmit={saveEditedUser}>
+              <div className="user-edit-grid">
+                <label>
+                  用户名
+                  <input
+                    value={editForm.username ?? ""}
+                    onChange={(event) => setEditForm((current) => ({ ...current, username: event.target.value }))}
+                    required
+                  />
+                </label>
+                <label>
+                  昵称
+                  <input
+                    value={editForm.displayName ?? ""}
+                    onChange={(event) => setEditForm((current) => ({ ...current, displayName: event.target.value }))}
+                    required
+                  />
+                </label>
+                <label>
+                  状态
+                  <select
+                    value={editForm.status ?? "ACTIVE"}
+                    onChange={(event) => setEditForm((current) => ({ ...current, status: event.target.value as ManagedUser["status"] }))}
+                  >
+                    <option value="ACTIVE">启用</option>
+                    <option value="DISABLED">禁用</option>
+                  </select>
+                </label>
+                <label>
+                  新密码
+                  <input
+                    type="password"
+                    value={editForm.password ?? ""}
+                    onChange={(event) => setEditForm((current) => ({ ...current, password: event.target.value }))}
+                    placeholder="留空则不修改"
+                  />
+                </label>
+              </div>
+              <div className="user-role-editor">
+                <span className="user-role-editor-title">用户角色</span>
+                <div className="permission-group-items user-role-options">
+                  <label className={`permission-chip ${(editForm.roleIds ?? []).length === 0 ? "active" : ""}`}>
+                    <input
+                      className="hidden-checkbox"
+                      type="checkbox"
+                      checked={(editForm.roleIds ?? []).length === 0}
+                      onChange={() => setEditForm((current) => ({ ...current, roleIds: [] }))}
+                    />
+                    <div className="permission-chip-content">
+                      {(editForm.roleIds ?? []).length === 0 ? <ShieldCheck size={17} /> : <div className="permission-chip-dot" />}
+                      <span className="permission-label">无角色</span>
+                    </div>
+                  </label>
+                  {assignableRoles.map((role) => {
+                    const isActive = (editForm.roleIds ?? []).includes(role.id);
+                    return (
+                      <label className={`permission-chip ${isActive ? "active" : ""}`} key={role.id}>
+                        <input
+                          className="hidden-checkbox"
+                          type="checkbox"
+                          checked={isActive}
+                          onChange={(event) =>
+                            setEditForm((current) => {
+                              const currentRoleIds = current.roleIds ?? [];
+                              return {
+                                ...current,
+                                roleIds: event.target.checked
+                                  ? [...new Set([...currentRoleIds, role.id])]
+                                  : currentRoleIds.filter((id) => id !== role.id)
+                              };
+                            })
+                          }
+                        />
+                        <div className="permission-chip-content">
+                          {isActive ? <ShieldCheck size={17} /> : <div className="permission-chip-dot" />}
+                          <span className="permission-label">{roleDisplayName(role)}</span>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="assignment-actions">
+                <button className="small-button" disabled={savingUser} type="button" onClick={closeUserEditor}>
+                  取消
+                </button>
+                <button className="primary-button" disabled={savingUser} type="submit">
+                  <Save size={18} />
+                  {savingUser ? "保存中..." : "保存用户"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
       {!canManageAccounts && canAssignInstances ? (
         <section className="panel-block users-panel">
           <div className="section-heading">
@@ -7310,44 +8277,46 @@ function UsersView({
 
       {canManageAccounts ? (
         <>
-          <section className="user-layout">
-            <div className="panel-block user-form-panel">
-              <div className="section-heading">
-                <h2>创建用户</h2>
+          <section className={`user-layout ${canCreateUsers ? "" : "single-column"}`}>
+            {canCreateUsers ? (
+              <div className="panel-block user-form-panel">
+                <div className="section-heading">
+                  <h2>创建用户</h2>
+                </div>
+                <form className="task-form" onSubmit={createUser}>
+                  <label>
+                    用户名
+                    <input value={form.username} onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))} required />
+                  </label>
+                  <label>
+                    昵称
+                    <input value={form.displayName} onChange={(event) => setForm((current) => ({ ...current, displayName: event.target.value }))} required />
+                  </label>
+                  <label>
+                    密码
+                    <input type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} required />
+                  </label>
+                  <label>
+                    角色
+                    <select
+                      value={form.roleIds?.[0] ?? ""}
+                      onChange={(event) => setForm((current) => ({ ...current, roleIds: event.target.value ? [event.target.value] : [] }))}
+                    >
+                      <option value="">无角色</option>
+                      {assignableRoles.map((role) => (
+                        <option value={role.id} key={role.id}>
+                          {roleDisplayName(role)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button className="primary-button form-submit" disabled={creatingUser} type="submit">
+                    <UserCog size={18} />
+                    {creatingUser ? "创建中" : "创建用户"}
+                  </button>
+                </form>
               </div>
-              <form className="task-form" onSubmit={createUser}>
-                <label>
-                  用户名
-                  <input value={form.username} onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))} required />
-                </label>
-                <label>
-                  昵称
-                  <input value={form.displayName} onChange={(event) => setForm((current) => ({ ...current, displayName: event.target.value }))} required />
-                </label>
-                <label>
-                  密码
-                  <input type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} required />
-                </label>
-                <label>
-                  角色
-                  <select
-                    value={form.roleIds?.[0] ?? ""}
-                    onChange={(event) => setForm((current) => ({ ...current, roleIds: event.target.value ? [event.target.value] : [] }))}
-                  >
-                    <option value="">无角色</option>
-                    {roles.map((role) => (
-                      <option value={role.id} key={role.id}>
-                        {role.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button className="primary-button form-submit" disabled={creatingUser} type="submit">
-                  <UserCog size={18} />
-                  {creatingUser ? "创建中" : "创建用户"}
-                </button>
-              </form>
-            </div>
+            ) : null}
 
             <div className="panel-block users-panel">
               <div className="section-heading">
@@ -7371,21 +8340,38 @@ function UsersView({
                       const assignee = managedUserAssignee(user);
                       const canOpenAssignment =
                         canAssignInstances && user.status === "ACTIVE" && assignee !== null && assignableUserIds.has(user.id);
+                      const canSwitchAccount =
+                        currentUser.isSuperAdmin &&
+                        user.id !== currentUser.id &&
+                        user.status === "ACTIVE" &&
+                        !user.roleNames.includes("super_admin");
                       return (
                         <tr key={user.id}>
                           <td>{user.username}</td>
                           <td>{user.displayName}</td>
-                          <td>{user.roleNames.join(", ") || "-"}</td>
+                          <td>{user.roleNames.join(", ") || "无角色"}</td>
                           <td>{user.status === "ACTIVE" ? "启用" : "禁用"}</td>
                           <td>{formatDate(user.lastLoginAt)}</td>
                           <td>
                             <div className="user-row-actions">
-                              <button className="small-button compact-button" onClick={() => void toggleUser(user)}>
-                                {user.status === "ACTIVE" ? "禁用" : "启用"}
+                              <button className="small-button compact-button" type="button" onClick={() => openUserEditor(user)}>
+                                <UserCog size={14} />
+                                编辑
                               </button>
                               {canOpenAssignment && assignee ? (
                                 <button className="small-button compact-button" type="button" onClick={() => openAssignmentModal(assignee)}>
                                   分配实例
+                                </button>
+                              ) : null}
+                              {canSwitchAccount ? (
+                                <button
+                                  className="small-button compact-button"
+                                  disabled={switchingUserId === user.id}
+                                  type="button"
+                                  onClick={() => void switchToUser(user)}
+                                >
+                                  <LogIn size={14} />
+                                  {switchingUserId === user.id ? "切换中" : "切换"}
                                 </button>
                               ) : null}
                             </div>
@@ -7399,16 +8385,17 @@ function UsersView({
             </div>
           </section>
 
+          {canManageRoles ? (
           <section className="panel-block role-panel">
             <div className="section-heading role-heading-wrap">
               <div className="role-heading-info">
                 <h2>角色与权限分配</h2>
-                <p>为不同职能的角色分配专属操作权限，确保业务安全。</p>
+                <p>为角色以及未分配角色的用户配置操作权限。</p>
               </div>
               <select className="role-select-box" value={selectedRoleId} onChange={(event) => setSelectedRoleId(event.target.value)}>
                 {roles.map((role) => (
                   <option value={role.id} key={role.id}>
-                    {role.name}
+                    {roleDisplayName(role)}
                   </option>
                 ))}
               </select>
@@ -7446,6 +8433,7 @@ function UsersView({
               </button>
             </div>
           </section>
+          ) : null}
         </>
       ) : null}
     </>
@@ -7462,7 +8450,7 @@ function AuditView({
   token: string;
   onLogout: () => void;
   refreshTick: number;
-  onAskSaki: (seed: Omit<SakiPromptSeed, "nonce">) => void;
+  onAskSaki?: ((seed: Omit<SakiPromptSeed, "nonce">) => void) | undefined;
   canDeleteLogs: boolean;
 }) {
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
@@ -7617,6 +8605,7 @@ function AuditView({
   }
 
   function askSakiAboutLog(log: AuditLogEntry) {
+    if (!onAskSaki) return;
     const payloadText = auditPayloadText(log.payload);
     onAskSaki({
       message: `请分析这条审计日志的风险，并在需要时继续查找相关记录：\n${log.action}`,
@@ -7636,6 +8625,7 @@ function AuditView({
   }
 
   function openAuditSaki() {
+    if (!onAskSaki) return;
     onAskSaki({
       message: "请查找最近失败或高风险的审计日志，说明风险并给出下一步处理建议。",
       mode: "agent",
@@ -7682,10 +8672,12 @@ function AuditView({
                 {visibleStart}-{visibleEnd} / {total}
               </span>
               <div className="audit-toolbar-actions">
-                <button className="small-button" type="button" onClick={openAuditSaki}>
-                  <Sparkles size={14} />
-                  智能体
-                </button>
+                {onAskSaki ? (
+                  <button className="small-button" type="button" onClick={openAuditSaki}>
+                    <Sparkles size={14} />
+                    问 Saki
+                  </button>
+                ) : null}
                 {canDeleteLogs ? (
                   <>
                     <button className="small-button" type="button" disabled={logs.length === 0 || deleting} onClick={toggleVisibleSelection}>
@@ -7807,10 +8799,12 @@ function AuditView({
                   <div className="audit-detail-section-title">
                     <FileText size={15} />
                     <span>Payload</span>
-                    <button className="small-button" type="button" onClick={() => askSakiAboutLog(activeLog)}>
-                      <Sparkles size={14} />
-                      交给 Saki
-                    </button>
+                    {onAskSaki ? (
+                      <button className="small-button" type="button" onClick={() => askSakiAboutLog(activeLog)}>
+                        <Sparkles size={14} />
+                        交给 Saki
+                      </button>
+                    ) : null}
                   </div>
                   {selectedPayloadText ? <pre>{selectedPayloadText}</pre> : <div className="audit-payload-empty">无载荷</div>}
                 </div>
@@ -7859,6 +8853,7 @@ const emptySakiConfig: SakiConfigResponse = {
   searchEnabled: true,
   mcpEnabled: false,
   systemPrompt: "",
+  appearance: defaultPanelAppearance,
   configPath: "",
   globalConfigPath: ""
 };
@@ -7966,8 +8961,354 @@ function sakiSkillDraftFromDetail(skill: SakiSkillDetail): SakiSkillDraft {
   };
 }
 
-function SettingsView({ token, onLogout, refreshTick }: { token: string; onLogout: () => void; refreshTick: number }) {
+function formatSessionTimeoutMinutes(value: number): string {
+  return Number.isFinite(value) ? String(value) : "120";
+}
+
+function parseSessionTimeoutMinutesDraft(value: string): number {
+  const trimmed = value.trim();
+  const parsed = Number(trimmed);
+  if (!trimmed || !Number.isFinite(parsed) || parsed < 0) {
+    throw new Error("登录超时时间必须是大于或等于 0 的数字。");
+  }
+  return Number(parsed.toFixed(3));
+}
+
+function AboutView() {
+  const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "available" | "up-to-date" | "updating" | "error">("idle");
+  const [updateMessage, setUpdateMessage] = useState("");
+  const currentVersion = "v0.1.0";
+  const projectLogoSrc = defaultPanelAppearance.appLogoSrc;
+  const [latestVersion, setLatestVersion] = useState("");
+  const [latestReleaseUrl, setLatestReleaseUrl] = useState("");
+
+  const checkForUpdates = useCallback(async () => {
+    setUpdateStatus("checking");
+    setUpdateMessage("正在检测更新...");
+    try {
+      const response = await fetch("https://api.github.com/repos/EthanChan050430/Saki-Panel/releases/latest");
+      if (response.ok) {
+        const data = (await response.json()) as { tag_name?: string; name?: string; html_url?: string };
+        const releaseVersion = data.tag_name || data.name || "";
+        setLatestVersion(releaseVersion);
+        setLatestReleaseUrl(data.html_url || "https://github.com/EthanChan050430/Saki-Panel/releases");
+        if (releaseVersion && releaseVersion !== currentVersion) {
+          setUpdateStatus("available");
+          setUpdateMessage(`发现新版本: ${releaseVersion}`);
+        } else {
+          setUpdateStatus("up-to-date");
+          setUpdateMessage("当前已是最新版本");
+        }
+      } else {
+        throw new Error("无法获取版本信息");
+      }
+    } catch (err) {
+      setUpdateStatus("error");
+      setUpdateMessage(err instanceof Error ? err.message : "检测更新失败");
+    }
+  }, [currentVersion]);
+
+  return (
+    <div className="about-page">
+      <div className="about-wiki-layout">
+        <article className="about-article">
+          <header className="about-article-header">
+            <div className="about-kicker">
+              <img className="about-kicker-logo" src={projectLogoSrc} alt="" draggable={false} />
+              项目百科
+            </div>
+            <h1>Saki Panel</h1>
+            <p>
+              Saki Panel 是一套面向服务器实例、节点、模板、用户权限与审计日志的 Web 管理面板。
+              它把日常运维中分散的启动、文件、终端、监控和权限动作收拢到一个清晰的工作台里。
+            </p>
+            <div className="about-meta-strip" aria-label="项目摘要">
+              <span>版本 {currentVersion}</span>
+              <span>Apache-2.0 License</span>
+              <span>React + TypeScript</span>
+              <span>Panel / Daemon 架构</span>
+            </div>
+          </header>
+
+          <section id="about-overview" className="about-wiki-section">
+            <h2>
+              <Info size={18} />
+              概览
+            </h2>
+            <p>
+              面板围绕“实例”组织工作：你可以创建服务实例、分配节点、查看运行状态、打开终端、
+              管理文件并追踪操作记录。界面侧重长期使用的可读性，信息密度适中，适合在桌面端持续管理，
+              也兼顾移动端临时查看与处理。
+            </p>
+            <dl className="about-definition-list">
+              <div>
+                <dt>定位</dt>
+                <dd>轻量级实例与节点运维面板</dd>
+              </div>
+              <div>
+                <dt>适用场景</dt>
+                <dd>个人服务器、小团队服务托管、模板化部署、远程文件管理</dd>
+              </div>
+              <div>
+                <dt>设计重点</dt>
+                <dd>清晰导航、权限隔离、可审计操作、低学习成本</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section id="about-architecture" className="about-wiki-section">
+            <h2>
+              <Layers size={18} />
+              系统组成
+            </h2>
+            <p>
+              项目由前端控制台、Panel 服务端、Daemon 节点代理与共享类型包组成。前端负责交互，
+              Panel 负责认证、权限、审计和 API 聚合，Daemon 则在目标节点上执行实例、文件与终端相关操作。
+            </p>
+            <div className="about-component-grid">
+              <div>
+                <Server size={18} />
+                <strong>Panel</strong>
+                <span>统一 API、用户会话、权限策略与审计入口。</span>
+              </div>
+              <div>
+                <TerminalIcon size={18} />
+                <strong>Daemon</strong>
+                <span>连接实际节点，执行实例生命周期、文件和终端任务。</span>
+              </div>
+              <div>
+                <FileText size={18} />
+                <strong>Web Console</strong>
+                <span>提供仪表盘、实例、模板、用户、设置与关于文档界面。</span>
+              </div>
+            </div>
+          </section>
+
+          <section id="about-features" className="about-wiki-section">
+            <h2>
+              <Wrench size={18} />
+              核心能力
+            </h2>
+            <div className="about-feature-table" role="table" aria-label="核心能力">
+              <div role="row">
+                <span role="columnheader">模块</span>
+                <span role="columnheader">用途</span>
+                <span role="columnheader">价值</span>
+              </div>
+              <div role="row">
+                <span role="cell">实例管理</span>
+                <span role="cell">创建、启动、停止、重启与查看运行日志。</span>
+                <span role="cell">把服务生命周期集中在一个入口。</span>
+              </div>
+              <div role="row">
+                <span role="cell">文件管理</span>
+                <span role="cell">浏览目录、上传下载、编辑文本文件与解压归档。</span>
+                <span role="cell">减少反复切换 SSH 与本地工具的成本。</span>
+              </div>
+              <div role="row">
+                <span role="cell">节点监控</span>
+                <span role="cell">查看节点连接状态、资源指标与连通性。</span>
+                <span role="cell">快速判断实例异常是否来自节点侧。</span>
+              </div>
+              <div role="row">
+                <span role="cell">模板系统</span>
+                <span role="cell">沉淀常用启动命令、环境变量与部署参数。</span>
+                <span role="cell">让重复部署更稳定，也便于团队复用。</span>
+              </div>
+              <div role="row">
+                <span role="cell">Saki 助手</span>
+                <span role="cell">基于当前页面上下文进行问答、排查与辅助操作。</span>
+                <span role="cell">把解释、诊断和执行连接到同一工作流。</span>
+              </div>
+            </div>
+          </section>
+
+          <section id="about-workflow" className="about-wiki-section">
+            <h2>
+              <ClipboardList size={18} />
+              典型流程
+            </h2>
+            <ol className="about-flow-list">
+              <li>
+                <strong>接入节点</strong>
+                <span>在节点侧运行 Daemon，并在面板中确认连接状态。</span>
+              </li>
+              <li>
+                <strong>创建模板</strong>
+                <span>整理启动命令、工作目录和常用环境变量。</span>
+              </li>
+              <li>
+                <strong>部署实例</strong>
+                <span>基于模板创建实例，按角色分配可见范围与操作权限。</span>
+              </li>
+              <li>
+                <strong>观察与维护</strong>
+                <span>通过日志、终端、文件管理和审计记录完成日常维护。</span>
+              </li>
+            </ol>
+          </section>
+
+          <section id="about-security" className="about-wiki-section">
+            <h2>
+              <ShieldCheck size={18} />
+              安全与审计
+            </h2>
+            <p>
+              Saki Panel 使用基于角色的权限模型控制不同用户能看到和操作的资源。
+              关键操作会记录到审计日志中，便于回溯“谁在什么时间对什么资源做了什么事”。
+            </p>
+            <ul className="about-check-list">
+              <li>支持用户、角色与权限组合管理。</li>
+              <li>支持实例分配，降低无关资源暴露。</li>
+              <li>保留登录、文件、实例、模板、节点、任务等操作记录。</li>
+              <li>支持会话超时与面板外观等运行时配置。</li>
+            </ul>
+          </section>
+
+          <section id="about-stack" className="about-wiki-section">
+            <h2>
+              <Code2 size={18} />
+              技术栈
+            </h2>
+            <div className="about-stack-list">
+              <span>React 19</span>
+              <span>TypeScript</span>
+              <span>Vite</span>
+              <span>Fastify</span>
+              <span>Prisma</span>
+              <span>WebSocket</span>
+              <span>xterm.js</span>
+              <span>CodeMirror</span>
+            </div>
+          </section>
+
+          <section id="about-maintenance" className="about-wiki-section">
+            <h2>
+              <RefreshCw size={18} />
+              维护与更新
+            </h2>
+            <p>
+              发布版本以 GitHub Releases 为准。建议在更新前阅读发布说明，并备份数据库、
+              环境变量和自定义配置，尤其是涉及权限、会话或节点通信的版本。
+            </p>
+          </section>
+        </article>
+
+        <aside className="about-side-column" aria-label="关于页面侧栏">
+          <section className="about-infobox" aria-label="项目资料">
+            <div className="about-infobox-title">
+              <div className="about-icon">
+                <img className="about-project-logo" src={projectLogoSrc} alt="" draggable={false} />
+              </div>
+              <div>
+                <strong>Saki Panel</strong>
+                <span>系统管理面板</span>
+              </div>
+            </div>
+
+            <dl className="about-info-list">
+              <div>
+                <dt>当前版本</dt>
+                <dd>{currentVersion}</dd>
+              </div>
+              <div>
+                <dt>作者</dt>
+                <dd>帥気的男主角</dd>
+              </div>
+              <div>
+                <dt>联系方式</dt>
+                <dd>QQ: 3151815823</dd>
+              </div>
+              <div>
+                <dt>许可证</dt>
+                <dd>Apache-2.0</dd>
+              </div>
+              <div>
+                <dt>仓库</dt>
+                <dd>
+                  <a href="https://github.com/EthanChan050430/Saki-Panel" target="_blank" rel="noopener noreferrer">
+                    <Github size={15} />
+                    EthanChan050430/Saki-Panel
+                  </a>
+                </dd>
+              </div>
+            </dl>
+
+            <div className="about-update-panel">
+              <h2>
+                <RefreshCw size={16} />
+                更新检查
+              </h2>
+              <div className="update-status">
+                <div className={`status-indicator ${updateStatus}`}>
+                  {updateStatus === "checking" && <Loader2 size={16} className="status-spinner" />}
+                  {updateStatus === "available" && <DownloadCloud size={16} />}
+                  {updateStatus === "up-to-date" && <CheckCircle2 size={16} />}
+                  {updateStatus === "updating" && <Loader2 size={16} className="status-spinner" />}
+                  {updateStatus === "error" && <Bug size={16} />}
+                  {updateStatus === "idle" && <Clock size={16} />}
+                </div>
+                <span className="status-text">{updateMessage || "尚未检测更新"}</span>
+              </div>
+              <div className="update-actions">
+                <button
+                  className="update-btn check-btn"
+                  onClick={checkForUpdates}
+                  disabled={updateStatus === "checking" || updateStatus === "updating"}
+                >
+                  {updateStatus === "checking" ? "检测中..." : "检查更新"}
+                </button>
+                {updateStatus === "available" && (
+                  <a
+                    className="update-btn update-btn-primary"
+                    href={latestReleaseUrl || "https://github.com/EthanChan050430/Saki-Panel/releases"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <DownloadCloud size={15} />
+                    查看发布页
+                  </a>
+                )}
+              </div>
+              {latestVersion && (
+                <p className="latest-version-info">最新版本: {latestVersion}</p>
+              )}
+            </div>
+          </section>
+
+          <nav className="about-toc" aria-label="关于页面目录">
+            <div className="about-toc-heading">目录</div>
+            <a href="#about-overview">概览</a>
+            <a href="#about-architecture">系统组成</a>
+            <a href="#about-features">核心能力</a>
+            <a href="#about-workflow">典型流程</a>
+            <a href="#about-security">安全与审计</a>
+            <a href="#about-stack">技术栈</a>
+            <a href="#about-maintenance">维护与更新</a>
+          </nav>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+type SakiSettingsSection = "system" | "model" | "features" | "appearance" | "prompt" | "skills";
+
+function SettingsView({
+  token,
+  onLogout,
+  onSessionRefresh,
+  refreshTick,
+  onAppearanceChange
+}: {
+  token: string;
+  onLogout: () => void;
+  onSessionRefresh: (token: string, user: CurrentUser) => void;
+  refreshTick: number;
+  onAppearanceChange: (appearance: PanelAppearanceSettings) => void;
+}) {
   const [form, setForm] = useState<SakiConfigResponse>(emptySakiConfig);
+  const [sessionTimeoutMinutes, setSessionTimeoutMinutes] = useState("120");
   const [skillList, setSkillList] = useState<SakiSkillSummary[]>([]);
   const [skillCreatorOpen, setSkillCreatorOpen] = useState(false);
   const [skillDraft, setSkillDraft] = useState<SakiSkillDraft>(emptySakiSkillDraft);
@@ -7975,6 +9316,10 @@ function SettingsView({ token, onLogout, refreshTick }: { token: string; onLogou
   const [selectedSkill, setSelectedSkill] = useState<SakiSkillDetail | null>(null);
   const [skillEditDraft, setSkillEditDraft] = useState<SakiSkillDraft>(emptySakiSkillDraft);
   const [skillDownloadUrl, setSkillDownloadUrl] = useState("");
+  const [skillSearchQuery, setSkillSearchQuery] = useState("");
+  const [skillFilter, setSkillFilter] = useState<"all" | "enabled" | "disabled">("all");
+  const [activeSettingsSection, setActiveSettingsSection] = useState<SakiSettingsSection>("system");
+  const [settingsMenuCollapsed, setSettingsMenuCollapsed] = useState(false);
   const [modelOptions, setModelOptions] = useState<SakiModelOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -7984,14 +9329,24 @@ function SettingsView({ token, onLogout, refreshTick }: { token: string; onLogou
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const skillDetailRequestRef = useRef(0);
+  const appLogoInputRef = useRef<HTMLInputElement>(null);
+  const loginCoverInputRef = useRef<HTMLInputElement>(null);
+  const backgroundInputRef = useRef<HTMLInputElement>(null);
+  const mobileBackgroundInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
     setError("");
     setNotice("");
     setLoading(true);
     try {
-      const [nextConfig, nextSkills] = await Promise.all([api.sakiConfig(token), api.sakiAllSkills(token)]);
+      const [nextConfig, nextSkills, nextSessionSettings] = await Promise.all([
+        api.sakiConfig(token),
+        api.sakiAllSkills(token),
+        api.sessionSettings(token)
+      ]);
       setForm(nextConfig);
+      setSessionTimeoutMinutes(formatSessionTimeoutMinutes(nextSessionSettings.sessionTimeoutMinutes));
+      onAppearanceChange(nextConfig.appearance);
       setSkillList(nextSkills);
       setModelOptions([]);
     } catch (err) {
@@ -8003,7 +9358,7 @@ function SettingsView({ token, onLogout, refreshTick }: { token: string; onLogou
     } finally {
       setLoading(false);
     }
-  }, [onLogout, token]);
+  }, [onAppearanceChange, onLogout, token]);
 
   useEffect(() => {
     void refresh();
@@ -8058,7 +9413,8 @@ function SettingsView({ token, onLogout, refreshTick }: { token: string; onLogou
       providerConfigs,
       searchEnabled: form.searchEnabled,
       mcpEnabled: form.mcpEnabled,
-      systemPrompt: form.systemPrompt ?? ""
+      systemPrompt: form.systemPrompt ?? "",
+      appearance: form.appearance
     };
   }
 
@@ -8075,6 +9431,33 @@ function SettingsView({ token, onLogout, refreshTick }: { token: string; onLogou
         apiKey: nextConfig.apiKey ?? ""
       };
     });
+  }
+
+  function updateAppearance(patch: Partial<PanelAppearanceSettings>) {
+    setForm((current) => ({
+      ...current,
+      appearance: normalizePanelAppearance({
+        ...current.appearance,
+        ...patch
+      })
+    }));
+  }
+
+  async function chooseAppearanceImage(
+    field: "appLogoSrc" | "loginCoverSrc" | "backgroundSrc" | "mobileBackgroundSrc",
+    event: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setError("");
+    setNotice("");
+    try {
+      const dataUrl = await appearanceFileToDataUrl(file);
+      updateAppearance({ [field]: dataUrl });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "图片读取失败");
+    }
   }
 
   async function detectModels(silent = false) {
@@ -8143,10 +9526,25 @@ function SettingsView({ token, onLogout, refreshTick }: { token: string; onLogou
     setError("");
     setNotice("");
     try {
-      setForm(await api.updateSakiConfig(token, currentSakiConfigPayload()));
-      setNotice("Saki 设置已保存，下一次对话会使用新配置。");
+      const nextSessionTimeoutMinutes = parseSessionTimeoutMinutesDraft(sessionTimeoutMinutes);
+      const [saved, savedSessionSettings] = await Promise.all([
+        api.updateSakiConfig(token, currentSakiConfigPayload()),
+        api.updateSessionSettings(token, {
+          sessionTimeoutMinutes: nextSessionTimeoutMinutes
+        })
+      ]);
+      setForm(saved);
+      setSessionTimeoutMinutes(formatSessionTimeoutMinutes(savedSessionSettings.sessionTimeoutMinutes));
+      onAppearanceChange(saved.appearance);
+      const refreshed = await api.refreshSession(token);
+      onSessionRefresh(refreshed.token, refreshed.user);
+      setNotice("设置已保存，登录超时策略已应用。");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Saki 设置保存失败");
+      if (err instanceof ApiError && err.status === 401) {
+        onLogout();
+        return;
+      }
+      setError(err instanceof Error ? err.message : "设置保存失败");
     } finally {
       setSaving(false);
     }
@@ -8335,6 +9733,15 @@ function SettingsView({ token, onLogout, refreshTick }: { token: string; onLogou
     }
   }
 
+  const settingsNavItems: Array<{ id: SakiSettingsSection; label: string; detail: string; icon: React.ReactNode }> = [
+    { id: "system", label: "系统设置", detail: "基础配置", icon: <Settings size={17} /> },
+    { id: "model", label: "AI 模型", detail: "Provider & Model", icon: <Cpu size={17} /> },
+    { id: "features", label: "功能开关", detail: "扩展能力", icon: <Wrench size={17} /> },
+    { id: "appearance", label: "外观自定义", detail: "登录页与背景", icon: <ImageIcon size={17} /> },
+    { id: "prompt", label: "系统提示词", detail: "System Prompt", icon: <TextQuote size={17} /> },
+    { id: "skills", label: "Skills", detail: `${skillList.length} installed`, icon: <Layers size={17} /> }
+  ];
+
   return (
     <>
       {error ? <div className="page-error">{error}</div> : null}
@@ -8344,122 +9751,324 @@ function SettingsView({ token, onLogout, refreshTick }: { token: string; onLogou
           <h2>Saki 设置</h2>
           <span>{loading ? "读取中" : "运行时配置"}</span>
         </div>
-        <form className="settings-grid" onSubmit={(event) => void saveSettings(event)}>
-          <label>
-            Provider
-            <select
-              value={form.provider}
-              onChange={(event) => changeProvider(event.target.value)}
+        <div className={`settings-grid settings-wiki ${settingsMenuCollapsed ? "toc-collapsed" : ""}`}>
+          <input
+            ref={appLogoInputRef}
+            className="hidden-file-input"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            onChange={(event) => void chooseAppearanceImage("appLogoSrc", event)}
+          />
+          <input
+            ref={loginCoverInputRef}
+            className="hidden-file-input"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            onChange={(event) => void chooseAppearanceImage("loginCoverSrc", event)}
+          />
+          <input
+            ref={backgroundInputRef}
+            className="hidden-file-input"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            onChange={(event) => void chooseAppearanceImage("backgroundSrc", event)}
+          />
+          <input
+            ref={mobileBackgroundInputRef}
+            className="hidden-file-input"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            onChange={(event) => void chooseAppearanceImage("mobileBackgroundSrc", event)}
+          />
+          <nav className="settings-toc" aria-label="设置目录">
+            <button
+              className="settings-toc-toggle"
+              type="button"
+              title={settingsMenuCollapsed ? "展开目录" : "折叠目录"}
+              onClick={() => setSettingsMenuCollapsed((current) => !current)}
             >
-              {modelProviderOptions.map((option) => (
-                <option value={option.value} key={option.value}>
-                  {option.label}
-                </option>
+              {settingsMenuCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+              <span>设置目录</span>
+            </button>
+            <div className="settings-toc-list">
+              {settingsNavItems.map((item) => (
+                <button
+                  className={activeSettingsSection === item.id ? "active" : ""}
+                  key={item.id}
+                  type="button"
+                  title={`${item.label} - ${item.detail}`}
+                  onClick={() => setActiveSettingsSection(item.id)}
+                >
+                  <span className="settings-toc-icon">{item.icon}</span>
+                  <span className="settings-toc-copy">
+                    <strong>{item.label}</strong>
+                    <span>{item.detail}</span>
+                  </span>
+                </button>
               ))}
-            </select>
-          </label>
-          <label>
-            Model
-            {modelOptions.length > 0 ? (
-              <select
-                value={form.model}
-                onChange={(event) => updateActiveProviderConfig({ model: event.target.value })}
-                required
-              >
-                {modelOptions.map((model) => (
-                  <option value={model.id} key={`${model.provider}:${model.id}`}>
-                    {model.label}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input
-                value={form.model}
-                onChange={(event) => updateActiveProviderConfig({ model: event.target.value })}
-                placeholder={form.provider === "ollama" ? "llama3" : "点击检测模型后自动填充"}
-                required
-              />
-            )}
-          </label>
-          {isLocalProvider(form.provider) ? (
-            <label className="wide-field">
-              {form.provider === "lmstudio" ? "LM Studio URL" : "Ollama URL"}
-              <input
-                value={form.ollamaUrl}
-                onChange={(event) => {
-                  updateActiveProviderConfig({ ollamaUrl: event.target.value });
-                }}
-                placeholder={form.provider === "lmstudio" ? "http://localhost:1234" : "http://localhost:11434"}
-              />
-            </label>
-          ) : null}
-          {needsCloudApiFields(form.provider) ? (
-            <>
-              <label className="wide-field">
-                模型 API Base URL
+            </div>
+          </nav>
+          <div className="settings-wiki-content">
+          {activeSettingsSection !== "skills" ? (
+          <form className="settings-config-form" onSubmit={(event) => void saveSettings(event)}>
+          <div className={`settings-group ${activeSettingsSection === "system" ? "active" : "settings-section-hidden"}`} id="settings-system">
+            <div className="settings-group-title">
+              <div className="settings-group-icon">⚙️</div>
+              <div>
+                <h3>系统设置</h3>
+                <span>基础配置</span>
+              </div>
+            </div>
+            <div className="settings-group-content">
+              <label>
+                登录超时（分钟）
                 <input
-                  value={form.baseUrl}
-                  onChange={(event) => {
-                    updateActiveProviderConfig({ baseUrl: event.target.value });
-                  }}
-                  placeholder={providerBaseUrlDefaults[form.provider] || "https://api.example.com/v1"}
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  value={sessionTimeoutMinutes}
+                  onChange={(event) => setSessionTimeoutMinutes(event.target.value)}
+                  placeholder="0 表示永不超时"
                 />
               </label>
-              <label className="wide-field">
-                API Key
+              <label>
+                请求超时 ms
                 <input
-                  type="password"
-                  value={form.apiKey}
-                  onChange={(event) => {
-                    updateActiveProviderConfig({ apiKey: event.target.value });
-                  }}
-                  placeholder="sk-..."
+                  type="number"
+                  min={5000}
+                  max={600000}
+                  step={1000}
+                  value={form.requestTimeoutMs}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, requestTimeoutMs: Number(event.target.value) || 120000 }))
+                  }
                 />
               </label>
-            </>
-          ) : null}
-          <label>
-            请求超时 ms
-            <input
-              type="number"
-              min={5000}
-              max={600000}
-              step={1000}
-              value={form.requestTimeoutMs}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, requestTimeoutMs: Number(event.target.value) || 120000 }))
-              }
-            />
-          </label>
-          <label className="checkbox-field">
-            <input
-              type="checkbox"
-              checked={form.searchEnabled}
-              onChange={(event) => setForm((current) => ({ ...current, searchEnabled: event.target.checked }))}
-            />
-            启用联网搜索与网页爬取
-          </label>
-          <label className="checkbox-field">
-            <input
-              type="checkbox"
-              checked={form.mcpEnabled}
-              onChange={(event) => setForm((current) => ({ ...current, mcpEnabled: event.target.checked }))}
-            />
-            启用 MCP
-          </label>
-          <label className="wide-field">
-            System Prompt
-            <textarea
-              value={form.systemPrompt ?? ""}
-              onChange={(event) => setForm((current) => ({ ...current, systemPrompt: event.target.value }))}
-              rows={5}
-              placeholder="Saki 的人格、约束和默认工作方式"
-            />
-          </label>
-          <div className="settings-paths wide-field">
-            <span>Panel: {form.configPath || "-"}</span>
+            </div>
           </div>
-          <div className="settings-actions wide-field">
+          <div className={`settings-group ${activeSettingsSection === "model" ? "active" : "settings-section-hidden"}`} id="settings-model">
+            <div className="settings-group-title">
+              <div className="settings-group-icon">🤖</div>
+              <div>
+                <h3>AI 模型配置</h3>
+                <span>Provider & Model</span>
+              </div>
+            </div>
+            <div className="settings-group-content">
+              <label>
+                Provider
+                <select
+                  value={form.provider}
+                  onChange={(event) => changeProvider(event.target.value)}
+                >
+                  {modelProviderOptions.map((option) => (
+                    <option value={option.value} key={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Model
+                {modelOptions.length > 0 ? (
+                  <select
+                    value={form.model}
+                    onChange={(event) => updateActiveProviderConfig({ model: event.target.value })}
+                    required
+                  >
+                    {modelOptions.map((model) => (
+                      <option value={model.id} key={`${model.provider}:${model.id}`}>
+                        {model.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    value={form.model}
+                    onChange={(event) => updateActiveProviderConfig({ model: event.target.value })}
+                    placeholder={form.provider === "ollama" ? "llama3" : "点击检测模型后自动填充"}
+                    required
+                  />
+                )}
+              </label>
+              {isLocalProvider(form.provider) ? (
+                <label>
+                  {form.provider === "lmstudio" ? "LM Studio URL" : "Ollama URL"}
+                  <input
+                    value={form.ollamaUrl}
+                    onChange={(event) => {
+                      updateActiveProviderConfig({ ollamaUrl: event.target.value });
+                    }}
+                    placeholder={form.provider === "lmstudio" ? "http://localhost:1234" : "http://localhost:11434"}
+                  />
+                </label>
+              ) : null}
+              {needsCloudApiFields(form.provider) ? (
+                <>
+                  <label>
+                    模型 API Base URL
+                    <input
+                      value={form.baseUrl}
+                      onChange={(event) => {
+                        updateActiveProviderConfig({ baseUrl: event.target.value });
+                      }}
+                      placeholder={providerBaseUrlDefaults[form.provider] || "https://api.example.com/v1"}
+                    />
+                  </label>
+                  <label>
+                    API Key
+                    <input
+                      type="password"
+                      value={form.apiKey}
+                      onChange={(event) => {
+                        updateActiveProviderConfig({ apiKey: event.target.value });
+                      }}
+                      placeholder="sk-..."
+                    />
+                  </label>
+                </>
+              ) : null}
+            </div>
+          </div>
+          <div className={`settings-group ${activeSettingsSection === "features" ? "active" : "settings-section-hidden"}`} id="settings-features">
+            <div className="settings-group-title">
+              <div className="settings-group-icon">🎯</div>
+              <div>
+                <h3>功能开关</h3>
+                <span>扩展能力</span>
+              </div>
+            </div>
+            <div className="settings-group-content">
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={form.searchEnabled ?? false}
+                  onChange={(event) => setForm((current) => ({ ...current, searchEnabled: event.target.checked }))}
+                />
+                启用联网搜索与网页爬取
+              </label>
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={form.mcpEnabled ?? false}
+                  onChange={(event) => setForm((current) => ({ ...current, mcpEnabled: event.target.checked }))}
+                />
+                启用 MCP
+              </label>
+            </div>
+          </div>
+          <div className={`settings-group ${activeSettingsSection === "appearance" ? "active" : "settings-section-hidden"}`} id="settings-appearance">
+            <div className="settings-group-title">
+              <div className="settings-group-icon">🎨</div>
+              <div>
+                <h3>外观自定义</h3>
+                <span>登录页、图标与全站背景</span>
+              </div>
+            </div>
+            <div className="settings-group-content">
+              <label>
+                登录标题
+                <input
+                  value={form.appearance?.appTitle ?? ""}
+                  onChange={(event) => updateAppearance({ appTitle: event.target.value })}
+                  placeholder="Saki Panel"
+                />
+              </label>
+              <label>
+                登录副标题
+                <input
+                  value={form.appearance?.appSubtitle ?? ""}
+                  onChange={(event) => updateAppearance({ appSubtitle: event.target.value })}
+                  placeholder="System Administration"
+                />
+              </label>
+              <div className="appearance-field">
+                <span>登录封面</span>
+                <div className="appearance-source-row">
+                  <input
+                    value={form.appearance?.loginCoverSrc ?? ""}
+                    onChange={(event) => updateAppearance({ loginCoverSrc: event.target.value })}
+                    placeholder="/assets/cover.png"
+                  />
+                  <button className="small-button" type="button" onClick={() => loginCoverInputRef.current?.click()}>
+                    <Upload size={15} />
+                    选择图片
+                  </button>
+                </div>
+                {form.appearance?.loginCoverSrc ? <img className="appearance-preview cover-preview" src={form.appearance.loginCoverSrc} alt="" /> : null}
+              </div>
+              <div className="appearance-field">
+                <span>应用图标</span>
+                <div className="appearance-source-row">
+                  <input
+                    value={form.appearance?.appLogoSrc ?? ""}
+                    onChange={(event) => updateAppearance({ appLogoSrc: event.target.value })}
+                    placeholder="/assets/saki-panel-icon.png"
+                  />
+                  <button className="small-button" type="button" onClick={() => appLogoInputRef.current?.click()}>
+                    <Upload size={15} />
+                    选择
+                  </button>
+                </div>
+                {form.appearance?.appLogoSrc ? <img className="appearance-preview logo-preview" src={form.appearance.appLogoSrc} alt="" /> : null}
+              </div>
+              <div className="appearance-field">
+                <span>网页背景</span>
+                <div className="appearance-source-row">
+                  <input
+                    value={form.appearance?.backgroundSrc ?? ""}
+                    onChange={(event) => updateAppearance({ backgroundSrc: event.target.value })}
+                    placeholder="/assets/background.png"
+                  />
+                  <button className="small-button" type="button" onClick={() => backgroundInputRef.current?.click()}>
+                    <Upload size={15} />
+                    选择
+                  </button>
+                </div>
+                {form.appearance?.backgroundSrc ? <img className="appearance-preview background-preview" src={form.appearance.backgroundSrc} alt="" /> : null}
+              </div>
+              <div className="appearance-field">
+                <span>移动端背景</span>
+                <div className="appearance-source-row">
+                  <input
+                    value={form.appearance?.mobileBackgroundSrc ?? ""}
+                    onChange={(event) => updateAppearance({ mobileBackgroundSrc: event.target.value })}
+                    placeholder="/assets/background_mobile.png"
+                  />
+                  <button className="small-button" type="button" onClick={() => mobileBackgroundInputRef.current?.click()}>
+                    <Upload size={15} />
+                    选择
+                  </button>
+                </div>
+                {form.appearance?.mobileBackgroundSrc ? <img className="appearance-preview background-preview" src={form.appearance.mobileBackgroundSrc} alt="" /> : null}
+              </div>
+            </div>
+          </div>
+          <div className={`settings-group ${activeSettingsSection === "prompt" ? "active" : "settings-section-hidden"}`} id="settings-prompt">
+            <div className="settings-group-title">
+              <div className="settings-group-icon">📝</div>
+              <div>
+                <h3>系统提示词</h3>
+                <span>System Prompt</span>
+              </div>
+            </div>
+            <div className="settings-group-content">
+              <label>
+                System Prompt
+                <textarea
+                  value={form.systemPrompt ?? ""}
+                  onChange={(event) => setForm((current) => ({ ...current, systemPrompt: event.target.value }))}
+                  rows={5}
+                  placeholder="Saki 的人格、约束和默认工作方式"
+                />
+              </label>
+            </div>
+          </div>
+            <div className="settings-wiki-footer">
+              <div className="settings-paths">
+                <span>Panel: {form.configPath || "-"}</span>
+              </div>
+              <div className="settings-actions wide-field">
             <button className="primary-button settings-save" disabled={saving || loading} type="submit">
               <Save size={17} />
               {saving ? "保存中" : "保存设置"}
@@ -8473,223 +10082,317 @@ function SettingsView({ token, onLogout, refreshTick }: { token: string; onLogou
               <RefreshCw size={17} />
               {detectingModels ? "检测中" : "检测模型 API"}
             </button>
-          </div>
-        </form>
-      </section>
-      <section className="panel-block settings-panel saki-skill-settings-panel">
+              </div>
+            </div>
+          </form>
+          ) : (
+          <div className="settings-skills-page saki-skill-settings-panel">
         <div className="section-heading saki-skill-heading">
-          <div>
-            <h2>Saki Skills</h2>
-            <span>{skillList.length} installed</span>
+          <div className="saki-skill-title">
+            <div>
+              <h2>Saki Skills</h2>
+              <span>{skillList.length} installed</span>
+            </div>
           </div>
-          <button className="ghost-button" type="button" onClick={() => setSkillCreatorOpen((current) => !current)}>
-            {skillCreatorOpen ? <X size={17} /> : <Plus size={17} />}
-            {skillCreatorOpen ? "收起添加" : "添加 Skill"}
-          </button>
+          <div className="saki-skill-header-actions">
+            <button className="ghost-button" type="button" onClick={() => setSkillCreatorOpen((current) => !current)}>
+              {skillCreatorOpen ? <X size={17} /> : <Plus size={17} />}
+              {skillCreatorOpen ? "收起添加" : "添加 Skill"}
+            </button>
+          </div>
         </div>
-        <div className="saki-skill-settings-grid">
-          <div className="saki-skill-main">
-            {skillCreatorOpen ? (
-              <form className="saki-skill-editor saki-skill-editor-panel" onSubmit={(event) => void createSkill(event)}>
-                <div className="saki-skill-editor-heading wide-field">
-                  <div>
-                    <strong>添加 Skill</strong>
-                    <span>Local SKILL.md</span>
-                  </div>
+
+        {skillCreatorOpen ? (
+          <div className="saki-skill-creator-section">
+            <form className="saki-skill-editor saki-skill-editor-panel" onSubmit={(event) => void createSkill(event)}>
+              <div className="saki-skill-editor-heading">
+                <div>
+                  <strong>添加 Skill</strong>
+                  <span>Local SKILL.md</span>
                 </div>
-                <label>
-                  Skill name
+                <button type="button" className="icon-button" onClick={() => setSkillCreatorOpen(false)}>
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="saki-skill-form-grid">
+                <label className="saki-skill-form-field">
+                  <span className="saki-skill-form-label">Skill name</span>
                   <input
                     value={skillDraft.name}
                     onChange={(event) => setSkillDraft((current) => ({ ...current, name: event.target.value }))}
                     placeholder="my-framework-helper"
                   />
                 </label>
-                <label>
-                  Tags
+                <label className="saki-skill-form-field">
+                  <span className="saki-skill-form-label">Tags</span>
                   <input
                     value={skillDraft.tags}
                     onChange={(event) => setSkillDraft((current) => ({ ...current, tags: event.target.value }))}
                     placeholder="python, plugin, review"
                   />
                 </label>
-                <label className="wide-field">
-                  Description
+                <label className="saki-skill-form-field saki-skill-form-wide">
+                  <span className="saki-skill-form-label">Description</span>
                   <input
                     value={skillDraft.description}
                     onChange={(event) => setSkillDraft((current) => ({ ...current, description: event.target.value }))}
                     placeholder="When this Skill should be used"
                   />
                 </label>
-                <label className="wide-field">
-                  SKILL.md
+                <label className="saki-skill-form-field saki-skill-form-wide">
+                  <span className="saki-skill-form-label">SKILL.md</span>
                   <textarea
                     value={skillDraft.content}
                     onChange={(event) => setSkillDraft((current) => ({ ...current, content: event.target.value }))}
-                    rows={7}
+                    rows={8}
                     placeholder="# Skill instructions"
                   />
                 </label>
-                <label className="checkbox-field wide-field">
+                <label className="saki-skill-form-field saki-skill-form-checkbox">
                   <input
                     type="checkbox"
                     checked={skillDraft.enabled}
                     onChange={(event) => setSkillDraft((current) => ({ ...current, enabled: event.target.checked }))}
                   />
-                  Enabled
+                  <span>Enabled</span>
                 </label>
-                <div className="settings-actions wide-field">
-                  <button className="primary-button settings-save" disabled={skillBusy === "create"} type="submit">
-                    <Plus size={17} />
-                    {skillBusy === "create" ? "Saving" : "Add Skill"}
-                  </button>
-                </div>
-              </form>
-            ) : null}
-
-            {skillDetailLoading ? (
-              <div className="saki-skill-detail-empty">
-                <FileText size={22} />
-                <span>Loading Skill...</span>
               </div>
-            ) : selectedSkill ? (
-              <form className="saki-skill-editor saki-skill-editor-panel" onSubmit={(event) => void saveSelectedSkill(event)}>
-                <div className="saki-skill-editor-heading wide-field">
-                  <div>
-                    <strong>{selectedSkill.name}</strong>
-                    <span>{selectedSkill.id}</span>
-                  </div>
-                  <span className="saki-skill-source">{selectedSkill.sourceType ?? "local"}</span>
-                </div>
-                <label>
-                  Skill name
-                  <input
-                    value={skillEditDraft.name}
-                    onChange={(event) => setSkillEditDraft((current) => ({ ...current, name: event.target.value }))}
-                    placeholder="my-framework-helper"
-                  />
-                </label>
-                <label>
-                  Tags
-                  <input
-                    value={skillEditDraft.tags}
-                    onChange={(event) => setSkillEditDraft((current) => ({ ...current, tags: event.target.value }))}
-                    placeholder="python, plugin, review"
-                  />
-                </label>
-                <label className="wide-field">
-                  Description
-                  <input
-                    value={skillEditDraft.description}
-                    onChange={(event) => setSkillEditDraft((current) => ({ ...current, description: event.target.value }))}
-                    placeholder="When this Skill should be used"
-                  />
-                </label>
-                <label className="wide-field">
-                  SKILL.md
-                  <textarea
-                    value={skillEditDraft.content}
-                    onChange={(event) => setSkillEditDraft((current) => ({ ...current, content: event.target.value }))}
-                    rows={10}
-                    placeholder="# Skill instructions"
-                  />
-                </label>
-                <label className="checkbox-field wide-field">
-                  <input
-                    type="checkbox"
-                    checked={skillEditDraft.enabled}
-                    onChange={(event) => setSkillEditDraft((current) => ({ ...current, enabled: event.target.checked }))}
-                  />
-                  Enabled
-                </label>
-                <div className="settings-actions wide-field">
-                  <button className="primary-button settings-save" disabled={skillBusy === selectedSkill.id} type="submit">
-                    <Save size={17} />
-                    {skillBusy === selectedSkill.id ? "Saving" : "Save Skill"}
-                  </button>
-                  <button className="ghost-button" disabled={skillBusy === selectedSkill.id} type="button" onClick={() => void toggleSkillEnabled(selectedSkill)}>
-                    {selectedSkill.enabled === false ? "Enable" : "Disable"}
-                  </button>
-                  {selectedSkill.builtin ? null : (
-                    <button className="ghost-button danger-action" disabled={skillBusy === selectedSkill.id} type="button" onClick={() => void deleteSkill(selectedSkill)}>
-                      <Trash2 size={16} />
-                      Delete
-                    </button>
-                  )}
-                </div>
-                {selectedSkill.path || selectedSkill.sourceUrl ? (
-                  <div className="settings-paths wide-field">
-                    <span>{selectedSkill.path ? `Path: ${selectedSkill.path}` : `Source: ${selectedSkill.sourceUrl}`}</span>
-                  </div>
-                ) : null}
-              </form>
-            ) : (
-              <div className="saki-skill-detail-empty">
-                <FileText size={22} />
-                <span>未选择 Skill</span>
+              <div className="saki-skill-form-actions">
+                <button className="primary-button" disabled={skillBusy === "create"} type="submit">
+                  <Plus size={17} />
+                  {skillBusy === "create" ? "Saving" : "Add Skill"}
+                </button>
               </div>
-            )}
+            </form>
           </div>
+        ) : null}
 
-          <div className="saki-skill-side">
-            <form className="saki-skill-download" onSubmit={(event) => void downloadSkill(event)}>
-              <label>
-                OpenClaw Skill URL
+        <div className="saki-skill-workspace">
+          <div className="saki-skill-sidebar">
+            <div className="saki-skill-sidebar-header">
+              <div className="saki-skill-search">
+                <Search size={15} />
                 <input
-                  value={skillDownloadUrl}
-                  onChange={(event) => setSkillDownloadUrl(event.target.value)}
-                  placeholder="https://github.com/org/repo/blob/main/SKILL.md"
+                  type="text"
+                  value={skillSearchQuery}
+                  onChange={(event) => setSkillSearchQuery(event.target.value)}
+                  placeholder="Search skills..."
                 />
-              </label>
+              </div>
+              <div className="saki-skill-filter">
+                {[
+                  { value: "all", label: "All" },
+                  { value: "enabled", label: "Enabled" },
+                  { value: "disabled", label: "Disabled" }
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    className={skillFilter === option.value ? "active" : ""}
+                    type="button"
+                    onClick={() => setSkillFilter(option.value as typeof skillFilter)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <form className="saki-skill-download" onSubmit={(event) => void downloadSkill(event)}>
+              <div className="saki-skill-download-header">
+                <DownloadCloud size={15} />
+                <span>Install from URL</span>
+              </div>
+              <input
+                value={skillDownloadUrl}
+                onChange={(event) => setSkillDownloadUrl(event.target.value)}
+                placeholder="https://github.com/org/repo/SKILL.md"
+              />
               <button className="ghost-button" disabled={skillBusy === "download"} type="submit">
-                <Download size={17} />
-                {skillBusy === "download" ? "Downloading" : "Download"}
+                <Download size={15} />
+                {skillBusy === "download" ? "Downloading" : "Install"}
               </button>
             </form>
 
-            <div className="saki-skill-admin-list">
-              {skillList.map((skill) => {
-                const skillCardClassName = [
-                  "saki-skill-admin-card",
-                  skill.enabled === false ? "disabled" : "",
-                  selectedSkillId === skill.id ? "active" : ""
-                ]
-                  .filter(Boolean)
-                  .join(" ");
-                return (
-                  <article className={skillCardClassName} key={skill.id}>
-                    <button className="saki-skill-admin-open" type="button" onClick={() => void selectSkill(skill)}>
-                      <div className="saki-skill-admin-head">
-                        <div>
-                          <strong>{skill.name}</strong>
-                          <span>{skill.id}</span>
+            <div className="saki-skill-list">
+              {skillList
+                .filter((skill) => {
+                  const matchesSearch = skill.name.toLowerCase().includes(skillSearchQuery.toLowerCase()) ||
+                    skill.description?.toLowerCase().includes(skillSearchQuery.toLowerCase()) ||
+                    skill.tags?.some((tag) => tag.toLowerCase().includes(skillSearchQuery.toLowerCase()));
+                  const matchesFilter = skillFilter === "all" ||
+                    (skillFilter === "enabled" && skill.enabled) ||
+                    (skillFilter === "disabled" && skill.enabled === false);
+                  return matchesSearch && matchesFilter;
+                })
+                .map((skill) => {
+                  const skillCardClassName = [
+                    "saki-skill-card",
+                    skill.enabled === false ? "disabled" : "",
+                    selectedSkillId === skill.id ? "active" : ""
+                  ].filter(Boolean).join(" ");
+                  return (
+                    <article className={skillCardClassName} key={skill.id}>
+                      <button className="saki-skill-card-main" type="button" onClick={() => void selectSkill(skill)}>
+                        <div className="saki-skill-card-status">
+                          <span className={skill.enabled ? "status-active" : "status-inactive"}></span>
                         </div>
-                        <span className="saki-skill-source">{skill.sourceType ?? "local"}</span>
-                      </div>
-                      {skill.description ? <p>{skill.description}</p> : null}
-                      {skill.tags?.length ? (
-                        <div className="saki-skill-admin-tags">
-                          {skill.tags.slice(0, 6).map((tag) => (
-                            <span key={`${skill.id}-${tag}`}>{tag}</span>
-                          ))}
+                        <div className="saki-skill-card-content">
+                          <div className="saki-skill-card-header">
+                            <strong>{skill.name}</strong>
+                            {skill.builtin && <span className="saki-skill-builtin">Built-in</span>}
+                          </div>
+                          {skill.description ? <p>{skill.description}</p> : null}
+                          {skill.tags?.length ? (
+                            <div className="saki-skill-card-tags">
+                              {skill.tags.slice(0, 4).map((tag) => (
+                                <span key={`${skill.id}-${tag}`}>{tag}</span>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
-                      ) : null}
-                    </button>
-                    <div className="saki-skill-admin-actions">
-                      <button className="small-button" disabled={skillBusy === skill.id} type="button" onClick={() => void toggleSkillEnabled(skill)}>
-                        {skill.enabled === false ? "Enable" : "Disable"}
+                        <div className="saki-skill-card-source">
+                          <span>{skill.sourceType ?? "local"}</span>
+                        </div>
                       </button>
-                      {skill.builtin ? null : (
-                        <button className="small-button danger-action" disabled={skillBusy === skill.id} type="button" onClick={() => void deleteSkill(skill)}>
-                          <Trash2 size={14} />
-                          Delete
+                      <div className="saki-skill-card-actions">
+                        <button
+                          className={`icon-button ${skill.enabled ? "action-disable" : "action-enable"}`}
+                          disabled={skillBusy === skill.id}
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); void toggleSkillEnabled(skill); }}
+                          title={skill.enabled ? "Disable" : "Enable"}
+                        >
+                          {skill.enabled ? <PowerOff size={14} /> : <Power size={14} />}
                         </button>
-                      )}
-                    </div>
-                  </article>
-                );
-              })}
+                        {skill.builtin ? null : (
+                          <button
+                            className="icon-button action-delete"
+                            disabled={skillBusy === skill.id}
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); void deleteSkill(skill); }}
+                            title="Delete"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
             </div>
+          </div>
+
+          <div className="saki-skill-detail">
+            {skillDetailLoading ? (
+              <div className="saki-skill-loading">
+                <Loader2 size={28} className="spin" />
+                <span>Loading Skill...</span>
+              </div>
+            ) : selectedSkill ? (
+              <form className="saki-skill-detail-panel" onSubmit={(event) => void saveSelectedSkill(event)}>
+                <div className="saki-skill-detail-header">
+                  <div className="saki-skill-detail-title">
+                    <h3>{selectedSkill.name}</h3>
+                    <span className="saki-skill-detail-id">{selectedSkill.id}</span>
+                  </div>
+                  <div className="saki-skill-detail-meta">
+                    <span className="saki-skill-detail-source">{selectedSkill.sourceType ?? "local"}</span>
+                    {selectedSkill.builtin && <span className="saki-skill-detail-builtin">Built-in</span>}
+                  </div>
+                </div>
+
+                <div className="saki-skill-detail-body">
+                  <div className="saki-skill-detail-row">
+                    <label className="saki-skill-detail-field">
+                      <span className="saki-skill-detail-label">Skill name</span>
+                      <input
+                        value={skillEditDraft.name}
+                        onChange={(event) => setSkillEditDraft((current) => ({ ...current, name: event.target.value }))}
+                        placeholder="my-framework-helper"
+                      />
+                    </label>
+                    <label className="saki-skill-detail-field">
+                      <span className="saki-skill-detail-label">Tags</span>
+                      <input
+                        value={skillEditDraft.tags}
+                        onChange={(event) => setSkillEditDraft((current) => ({ ...current, tags: event.target.value }))}
+                        placeholder="python, plugin, review"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="saki-skill-detail-field saki-skill-detail-wide">
+                    <span className="saki-skill-detail-label">Description</span>
+                    <input
+                      value={skillEditDraft.description}
+                      onChange={(event) => setSkillEditDraft((current) => ({ ...current, description: event.target.value }))}
+                      placeholder="When this Skill should be used"
+                    />
+                  </label>
+
+                  <label className="saki-skill-detail-field saki-skill-detail-wide saki-skill-detail-textarea">
+                    <span className="saki-skill-detail-label">SKILL.md</span>
+                    <textarea
+                      value={skillEditDraft.content}
+                      onChange={(event) => setSkillEditDraft((current) => ({ ...current, content: event.target.value }))}
+                      rows={12}
+                      placeholder="# Skill instructions"
+                    />
+                  </label>
+
+                  <label className="saki-skill-detail-field saki-skill-detail-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={skillEditDraft.enabled}
+                      onChange={(event) => setSkillEditDraft((current) => ({ ...current, enabled: event.target.checked }))}
+                    />
+                    <span>Enabled</span>
+                  </label>
+                </div>
+
+                <div className="saki-skill-detail-footer">
+                  <div className="saki-skill-detail-info">
+                    {selectedSkill.path && <span>Path: {selectedSkill.path}</span>}
+                    {selectedSkill.sourceUrl && <span>Source: {selectedSkill.sourceUrl}</span>}
+                  </div>
+                  <div className="saki-skill-detail-actions">
+                    <button className="primary-button" disabled={skillBusy === selectedSkill.id} type="submit">
+                      <Save size={17} />
+                      {skillBusy === selectedSkill.id ? "Saving" : "Save Skill"}
+                    </button>
+                    <button
+                      className="ghost-button"
+                      disabled={skillBusy === selectedSkill.id}
+                      type="button"
+                      onClick={() => void toggleSkillEnabled(selectedSkill)}
+                    >
+                      {selectedSkill.enabled === false ? "Enable" : "Disable"}
+                    </button>
+                    {selectedSkill.builtin ? null : (
+                      <button
+                        className="ghost-button danger-action"
+                        disabled={skillBusy === selectedSkill.id}
+                        type="button"
+                        onClick={() => void deleteSkill(selectedSkill)}
+                      >
+                        <Trash2 size={16} />
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </form>
+            ) : (
+              <div className="saki-skill-detail-empty">
+                <Layers size={48} />
+                <h3>Select a Skill</h3>
+                <p>Choose a skill from the list to view and edit its details</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+          )}
           </div>
         </div>
       </section>
@@ -8932,46 +10635,106 @@ function UserAccountModal({
 function Workspace({
   token,
   user,
+  appearance,
   onLogout,
-  onUserChange
+  onSwitchUser,
+  onUserChange,
+  onAppearanceChange
 }: {
   token: string;
   user: CurrentUser;
+  appearance: PanelAppearanceSettings;
   onLogout: () => void;
+  onSwitchUser: (token: string, user: CurrentUser) => void;
   onUserChange: (user: CurrentUser) => void;
+  onAppearanceChange: (appearance: PanelAppearanceSettings) => void;
 }) {
   const [activeView, setActiveView] = useState<ViewMode>("dashboard");
   const [refreshTick, setRefreshTick] = useState(0);
   const [sakiInstance, setSakiInstance] = useState<ManagedInstance | null>(null);
   const [sakiSeed, setSakiSeed] = useState<SakiPromptSeed | null>(null);
   const [sakiFileDragActive, setSakiFileDragActive] = useState(false);
+  const [sakiFileDropRequest, setSakiFileDropRequest] = useState<SakiInstanceFileDropRequest | null>(null);
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const sidebarRef = useRef<HTMLElement | null>(null);
+  const floatingSidebarToggleRef = useRef<HTMLButtonElement | null>(null);
+  const shouldFocusFloatingSidebarToggleRef = useRef(false);
+  const canUseSakiChat = user.permissions.includes("saki.chat");
+  const canUseSakiAgent = user.permissions.includes("saki.agent");
+  const canUseSaki = canUseSakiChat || canUseSakiAgent;
+  const canUseSakiSkills = user.permissions.includes("saki.skills");
   const canConfigureSaki = user.permissions.includes("saki.configure");
-  const canOpenUsers = user.isAdmin && user.permissions.includes("instance.update");
+  const canOpenDashboard = user.permissions.includes("dashboard.view");
+  const canOpenInstances = user.permissions.includes("instance.view");
+  const canViewNodes = user.permissions.includes("node.view");
+  const canTestNodes = user.permissions.includes("node.test");
+  const hasAssignedRole = user.roleNames.length > 0;
+  const canOpenNodes = hasAssignedRole && user.isAdmin && canViewNodes;
+  const canOpenTemplates = user.permissions.includes("template.view");
+  const canOpenUsers = user.permissions.includes("user.view") || (user.isAdmin && user.permissions.includes("instance.update"));
+  const canOpenAudit = hasAssignedRole && user.isAdmin && user.permissions.includes("audit.view");
+  const canOpenAbout = true;
+  const availableViews = useMemo<ViewMode[]>(() => {
+    const views: ViewMode[] = [];
+    if (canOpenDashboard) views.push("dashboard");
+    if (canOpenInstances) views.push("instances");
+    if (canOpenNodes) views.push("nodes");
+    if (canOpenTemplates) views.push("templates");
+    if (canOpenUsers) views.push("users");
+    if (canOpenAudit) views.push("audit");
+    if (canConfigureSaki) views.push("settings");
+    if (canOpenAbout) views.push("about");
+    return views;
+  }, [
+    canConfigureSaki,
+    canOpenAbout,
+    canOpenAudit,
+    canOpenDashboard,
+    canOpenInstances,
+    canOpenNodes,
+    canOpenTemplates,
+    canOpenUsers
+  ]);
+  const hasAnyAccessibleView = availableViews.length > 0;
+  const effectiveView = availableViews.includes(activeView) ? activeView : availableViews[0] ?? activeView;
   const panelContext = useMemo<SakiPanelContext>(() => {
-    if (activeView === "audit") {
+    if (effectiveView === "audit") {
       return { label: "审计日志", detail: "可检索全部记录", auditSearch: true };
     }
-    if (activeView === "instances") {
+    if (effectiveView === "instances") {
       return { label: "实例管理", detail: "选择实例后切换工作区" };
     }
-    if (activeView === "nodes") return { label: "节点管理", detail: "节点连接与状态" };
-    if (activeView === "templates") return { label: "模板", detail: "实例模板上下文" };
-    if (activeView === "users") return { label: "用户权限", detail: "用户与角色上下文" };
-    if (activeView === "settings") return { label: "Saki 设置", detail: "运行时模型配置" };
+    if (effectiveView === "nodes") return { label: "节点管理", detail: "节点连接与状态" };
+    if (effectiveView === "templates") return { label: "模板", detail: "实例模板上下文" };
+    if (effectiveView === "users") return { label: "用户权限", detail: "用户与角色上下文" };
+    if (effectiveView === "settings") return { label: "Saki 设置", detail: "运行时模型配置" };
     return { label: "控制台", detail: "全局上下文" };
-  }, [activeView]);
+  }, [effectiveView]);
 
   const openSaki = useCallback((seed: Omit<SakiPromptSeed, "nonce">) => {
+    if (!canUseSaki) return;
     if (seed.clearInstance) {
       setSakiInstance(null);
     }
     setSakiSeed({
       ...seed,
+      mode: coerceSakiMode(seed.mode, canUseSakiChat, canUseSakiAgent),
       nonce: Date.now()
     });
-  }, []);
+  }, [canUseSaki, canUseSakiAgent, canUseSakiChat]);
+
+  const attachInstanceFileToSaki = useCallback(
+    (payload: SakiInstanceFileDragPayload) => {
+      if (!canUseSaki) return;
+      setSakiFileDragActive(false);
+      setSakiFileDropRequest({
+        ...payload,
+        nonce: Date.now()
+      });
+    },
+    [canUseSaki]
+  );
 
   useEffect(() => {
     if (activeView !== "instances") {
@@ -8992,6 +10755,27 @@ function Workspace({
     };
   }, []);
 
+  const hideSidebar = useCallback(() => {
+    const activeElement = document.activeElement;
+    if (sidebarRef.current && activeElement instanceof HTMLElement && sidebarRef.current.contains(activeElement)) {
+      activeElement.blur();
+      shouldFocusFloatingSidebarToggleRef.current = true;
+    }
+    setSidebarHidden(true);
+  }, []);
+
+  useEffect(() => {
+    if (!sidebarHidden) {
+      shouldFocusFloatingSidebarToggleRef.current = false;
+      return;
+    }
+    if (!shouldFocusFloatingSidebarToggleRef.current) return;
+    shouldFocusFloatingSidebarToggleRef.current = false;
+    window.requestAnimationFrame(() => {
+      floatingSidebarToggleRef.current?.focus({ preventScroll: true });
+    });
+  }, [sidebarHidden]);
+
   useEffect(() => {
     const media = window.matchMedia("(max-width: 760px)");
     const syncSidebar = () => setSidebarHidden(media.matches);
@@ -9001,26 +10785,47 @@ function Workspace({
   }, []);
 
   useEffect(() => {
-    if (activeView === "users" && !canOpenUsers) {
-      setActiveView("dashboard");
+    function handleClickOutside(e: MouseEvent) {
+      const sidebar = document.getElementById("workspace-sidebar");
+      const floatingToggle = document.querySelector(".sidebar-floating-toggle");
+      if (
+        sidebar &&
+        floatingToggle &&
+        !sidebar.contains(e.target as Node) &&
+        !floatingToggle.contains(e.target as Node) &&
+        !sidebarHidden &&
+        window.matchMedia("(max-width: 760px)").matches
+      ) {
+        hideSidebar();
+      }
     }
-  }, [activeView, canOpenUsers]);
+    document.addEventListener("click", handleClickOutside);
+    return () => document.removeEventListener("click", handleClickOutside);
+  }, [sidebarHidden, hideSidebar]);
+
+  useEffect(() => {
+    if (hasAnyAccessibleView && !availableViews.includes(activeView)) {
+      const nextView = availableViews[0];
+      if (nextView) setActiveView(nextView);
+    }
+  }, [activeView, availableViews, hasAnyAccessibleView]);
 
   const selectView = useCallback((view: ViewMode) => {
+    if (!availableViews.includes(view)) return;
     setActiveView(view);
     if (window.matchMedia("(max-width: 760px)").matches) {
-      setSidebarHidden(true);
+      hideSidebar();
     }
-  }, []);
+  }, [availableViews, hideSidebar]);
 
   return (
     <>
       <div className={`app-shell ${sidebarHidden ? "sidebar-hidden" : ""}`}>
-        <aside id="workspace-sidebar" className="sidebar glass-sidebar" aria-hidden={sidebarHidden || undefined} inert={sidebarHidden || undefined}>
+        <aside id="workspace-sidebar" ref={sidebarRef} className="sidebar glass-sidebar" inert={sidebarHidden || undefined}>
           <div className="sidebar-brand">
             <div className="sidebar-logo">
-              <img className="app-logo-img sidebar-app-logo" src={appIconSrc} alt="" draggable={false} />
-              <span>{appName}</span>
+              <img className="app-logo-img sidebar-app-logo" src={appearance.appLogoSrc} alt="" draggable={false} />
+              <span>{appearance.appTitle}</span>
             </div>
             <button
               className="sidebar-inline-toggle"
@@ -9029,49 +10834,71 @@ function Workspace({
               aria-controls="workspace-sidebar"
               aria-expanded={!sidebarHidden}
               title="折叠侧边栏"
-              onClick={(e) => {
-                e.currentTarget.blur();
-                setSidebarHidden(true);
+              onClick={() => {
+                hideSidebar();
               }}
             >
               <PanelLeftClose size={18} aria-hidden="true" />
             </button>
           </div>
-          <nav>
-            <button className={activeView === "dashboard" ? "active" : ""} onClick={() => selectView("dashboard")}>
-              <Activity size={18} />
-              概览
-            </button>
-            <button className={activeView === "instances" ? "active" : ""} onClick={() => selectView("instances")}>
-              <TerminalIcon size={18} />
-              实例
-            </button>
-            <button className={activeView === "nodes" ? "active" : ""} onClick={() => selectView("nodes")}>
-              <Server size={18} />
-              节点
-            </button>
-            <button className={activeView === "templates" ? "active" : ""} onClick={() => selectView("templates")}>
-              <LayoutTemplate size={18} />
-              模板
-            </button>
-            {canOpenUsers ? (
-              <button className={activeView === "users" ? "active" : ""} onClick={() => selectView("users")}>
-                <UserCog size={18} />
-                用户
-              </button>
-            ) : null}
-            <button className={activeView === "audit" ? "active" : ""} onClick={() => selectView("audit")}>
-              <ClipboardList size={18} />
-              审计
-            </button>
-            {canConfigureSaki ? (
-              <button className={activeView === "settings" ? "active" : ""} onClick={() => selectView("settings")}>
-                <Settings size={18} />
-                设置
-              </button>
-            ) : null}
-          </nav>
-          
+          {hasAnyAccessibleView ? (
+            <nav>
+              {canOpenDashboard ? (
+                <button className={`nav-item-dashboard ${effectiveView === "dashboard" ? "active" : ""}`} onClick={() => selectView("dashboard")}>
+                  <Activity size={18} />
+                  概览
+                </button>
+              ) : null}
+              {canOpenInstances ? (
+                <button className={`nav-item-instances ${effectiveView === "instances" ? "active" : ""}`} onClick={() => selectView("instances")}>
+                  <TerminalIcon size={18} />
+                  实例
+                </button>
+              ) : null}
+              {canOpenNodes ? (
+                <button className={`nav-item-nodes ${effectiveView === "nodes" ? "active" : ""}`} onClick={() => selectView("nodes")}>
+                  <Server size={18} />
+                  节点
+                </button>
+              ) : null}
+              {canOpenTemplates ? (
+                <button className={`nav-item-templates ${effectiveView === "templates" ? "active" : ""}`} onClick={() => selectView("templates")}>
+                  <LayoutTemplate size={18} />
+                  模板
+                </button>
+              ) : null}
+              {canOpenUsers ? (
+                <button className={`nav-item-users ${effectiveView === "users" ? "active" : ""}`} onClick={() => selectView("users")}>
+                  <UserCog size={18} />
+                  用户
+                </button>
+              ) : null}
+              {canOpenAudit ? (
+                <button className={`nav-item-audit ${effectiveView === "audit" ? "active" : ""}`} onClick={() => selectView("audit")}>
+                  <ClipboardList size={18} />
+                  审计
+                </button>
+              ) : null}
+              {canConfigureSaki ? (
+                <button className={`nav-item-settings ${effectiveView === "settings" ? "active" : ""}`} onClick={() => selectView("settings")}>
+                  <Settings size={18} />
+                  设置
+                </button>
+              ) : null}
+              {canOpenAbout ? (
+                <button className={`nav-item-about ${effectiveView === "about" ? "active" : ""}`} onClick={() => selectView("about")}>
+                  <Info size={18} />
+                  关于
+                </button>
+              ) : null}
+            </nav>
+          ) : (
+            <div className="sidebar-empty">
+              <Shield size={18} />
+              <span>等待分配权限</span>
+            </div>
+          )}
+
           <div className="sidebar-account">
             <button className="sidebar-account-button" type="button" onClick={() => setAccountOpen(true)}>
               <AccountAvatar avatarDataUrl={user.avatarDataUrl} displayName={user.displayName} username={user.username} />
@@ -9085,12 +10912,12 @@ function Workspace({
         </aside>
 
         <button
+          ref={floatingSidebarToggleRef}
           className="sidebar-floating-toggle"
           type="button"
           aria-label="展开侧边栏"
           aria-controls="workspace-sidebar"
           aria-expanded={!sidebarHidden}
-          aria-hidden={!sidebarHidden || undefined}
           inert={!sidebarHidden || undefined}
           tabIndex={sidebarHidden ? 0 : -1}
           title="展开侧边栏"
@@ -9102,62 +10929,85 @@ function Workspace({
           <PanelLeftOpen size={20} aria-hidden="true" />
         </button>
 
-        <main className="workspace view-transition-enter" key={activeView}>
+        <main className="workspace view-transition-enter" key={hasAnyAccessibleView ? effectiveView : "access-empty"}>
           <header className="topbar">
             <div className="topbar-inner">
               <div className="topbar-title">
                 <span className="topbar-context">控制台面板</span>
                 <ChevronRight size={14} className="topbar-separator" />
                 <h1>
-                  {activeView === "dashboard"
-                    ? "概览"
-                    : activeView === "instances"
-                      ? "实例管理"
-                      : activeView === "nodes"
-                        ? "节点管理"
-                        : activeView === "templates"
-                          ? "模板"
-                          : activeView === "settings"
-                            ? "Saki 设置"
-                            : activeView === "users"
-                              ? "用户与权限"
-                              : "审计日志"}
+                  {!hasAnyAccessibleView
+                    ? "权限待分配"
+                    : effectiveView === "dashboard"
+                      ? "概览"
+                      : effectiveView === "instances"
+                        ? "实例管理"
+                        : effectiveView === "nodes"
+                          ? "节点管理"
+                          : effectiveView === "templates"
+                            ? "模板"
+                            : effectiveView === "settings"
+                              ? "Saki 设置"
+                              : effectiveView === "users"
+                                ? "用户与权限"
+                                : effectiveView === "about"
+                                  ? "关于"
+                                  : "审计日志"}
                 </h1>
               </div>
               <div className="topbar-actions">
-                <button className="icon-button mini" onClick={() => setRefreshTick((value) => value + 1)} title="刷新">
-                  <RefreshCw size={14} />
-                </button>
+                {hasAnyAccessibleView ? (
+                  <button className="icon-button mini" onClick={() => setRefreshTick((value) => value + 1)} title="刷新">
+                    <RefreshCw size={14} />
+                  </button>
+                ) : null}
               </div>
             </div>
           </header>
 
-          {activeView === "dashboard" ? (
-            <DashboardView token={token} onLogout={onLogout} refreshTick={refreshTick} />
-          ) : activeView === "instances" ? (
+          {!hasAnyAccessibleView ? (
+            <AccessEmptyView user={user} onOpenAccount={() => setAccountOpen(true)} />
+          ) : effectiveView === "dashboard" ? (
+            <DashboardView
+              token={token}
+              onLogout={onLogout}
+              refreshTick={refreshTick}
+              canViewNodes={canViewNodes}
+              canTestNodes={canTestNodes}
+            />
+          ) : effectiveView === "instances" ? (
             <InstancesView
               token={token}
               onLogout={onLogout}
               refreshTick={refreshTick}
               onOpenTemplates={() => selectView("templates")}
               onInstanceFocus={setSakiInstance}
-              onAskSaki={openSaki}
+              onAskSaki={canUseSaki ? openSaki : undefined}
               onSakiFileDragChange={setSakiFileDragActive}
+              onSakiInstanceFileDrop={canUseSaki ? attachInstanceFileToSaki : undefined}
             />
-          ) : activeView === "nodes" ? (
+          ) : effectiveView === "nodes" ? (
             <NodesView token={token} onLogout={onLogout} refreshTick={refreshTick} />
-          ) : activeView === "templates" ? (
+          ) : effectiveView === "templates" ? (
             <TemplatesView token={token} onLogout={onLogout} refreshTick={refreshTick} />
-          ) : activeView === "users" ? (
-            <UsersView token={token} currentUser={user} onLogout={onLogout} refreshTick={refreshTick} />
-          ) : activeView === "settings" ? (
-            <SettingsView token={token} onLogout={onLogout} refreshTick={refreshTick} />
+          ) : effectiveView === "users" ? (
+            <UsersView token={token} currentUser={user} onLogout={onLogout} onSwitchUser={onSwitchUser} refreshTick={refreshTick} />
+          ) : effectiveView === "settings" ? (
+            <SettingsView
+              token={token}
+              onLogout={onLogout}
+              onSessionRefresh={onSwitchUser}
+              refreshTick={refreshTick}
+              onAppearanceChange={onAppearanceChange}
+            />
+          ) : effectiveView === "about" ? (
+            <AboutView />
           ) : (
             <AuditView
               token={token}
               onLogout={onLogout}
               refreshTick={refreshTick}
-              onAskSaki={openSaki}
+              onAskSaki={canUseSaki ? openSaki : undefined}
               canDeleteLogs={user.isSuperAdmin}
             />
           )}
@@ -9171,13 +11021,19 @@ function Workspace({
         onLogout={onLogout}
         onUserChange={onUserChange}
       />
-      <SakiFloatingChat
-        token={token}
-        instance={sakiInstance}
-        seed={sakiSeed}
-        panelContext={panelContext}
-        fileDragActive={sakiFileDragActive}
-      />
+      {canUseSaki ? (
+        <SakiFloatingChat
+          token={token}
+          instance={sakiInstance}
+          seed={sakiSeed}
+          panelContext={panelContext}
+          fileDragActive={sakiFileDragActive}
+          instanceFileDropRequest={sakiFileDropRequest}
+          canUseChat={canUseSakiChat}
+          canUseAgent={canUseSakiAgent}
+          canUseSkills={canUseSakiSkills}
+        />
+      ) : null}
     </>
   );
 }
@@ -9186,6 +11042,11 @@ export function App() {
   const [token, setToken] = useState(() => localStorage.getItem(tokenKey));
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [booting, setBooting] = useState(Boolean(token));
+  const [appearance, setAppearance] = useState<PanelAppearanceSettings>(defaultPanelAppearance);
+
+  const updateAppearanceState = useCallback((nextAppearance: PanelAppearanceSettings) => {
+    setAppearance(normalizePanelAppearance(nextAppearance));
+  }, []);
 
   const logout = useCallback(() => {
     const currentToken = localStorage.getItem(tokenKey);
@@ -9197,6 +11058,23 @@ export function App() {
     setUser(null);
   }, []);
 
+  const switchSession = useCallback((nextToken: string, nextUser: CurrentUser) => {
+    localStorage.setItem(tokenKey, nextToken);
+    setToken(nextToken);
+    setUser(nextUser);
+  }, []);
+
+  useEffect(() => {
+    api
+      .sakiAppearance()
+      .then(updateAppearanceState)
+      .catch(() => undefined);
+  }, [updateAppearanceState]);
+
+  useEffect(() => {
+    applyPanelAppearance(appearance);
+  }, [appearance]);
+
   useEffect(() => {
     if (!token) return;
     api
@@ -9204,6 +11082,27 @@ export function App() {
       .then(setUser)
       .catch(logout)
       .finally(() => setBooting(false));
+  }, [logout, token]);
+
+  useEffect(() => {
+    if (!token) return;
+    const expiresAt = tokenExpiresAt(token);
+    if (!expiresAt) return;
+
+    let timer: number | undefined;
+    const scheduleLogout = () => {
+      const remainingMs = expiresAt - Date.now();
+      if (remainingMs <= 0) {
+        logout();
+        return;
+      }
+      timer = window.setTimeout(scheduleLogout, Math.min(remainingMs, 60000));
+    };
+
+    scheduleLogout();
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, [logout, token]);
 
   if (booting) {
@@ -9220,6 +11119,7 @@ export function App() {
   if (!token || !user) {
     return (
       <LoginView
+        appearance={appearance}
         onLogin={(nextToken, nextUser) => {
           setToken(nextToken);
           setUser(nextUser);
@@ -9228,5 +11128,15 @@ export function App() {
     );
   }
 
-  return <Workspace token={token} user={user} onLogout={logout} onUserChange={setUser} />;
+  return (
+    <Workspace
+      token={token}
+      user={user}
+      appearance={appearance}
+      onLogout={logout}
+      onSwitchUser={switchSession}
+      onUserChange={setUser}
+      onAppearanceChange={updateAppearanceState}
+    />
+  );
 }

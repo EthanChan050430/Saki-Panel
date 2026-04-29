@@ -7,7 +7,7 @@ Type=simple
 WorkingDirectory=/opt/saki-panel
 Environment=NODE_ENV=production
 Environment=PANEL_HOST=0.0.0.0
-Environment=PANEL_PORT=23333
+Environment=PANEL_PORT=5479
 ExecStart=/usr/bin/node apps/panel/dist/index.js
 Restart=always
 RestartSec=5

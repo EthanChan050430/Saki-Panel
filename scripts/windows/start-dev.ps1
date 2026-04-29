@@ -1,6 +1,6 @@
 param(
-  [int]$WebPort = 5173,
-  [int]$PanelPort = 23333,
+  [int]$WebPort = 5478,
+  [int]$PanelPort = 5479,
   [int]$DaemonPort = 24444,
   [switch]$SkipInstall,
   [switch]$SkipBuild,

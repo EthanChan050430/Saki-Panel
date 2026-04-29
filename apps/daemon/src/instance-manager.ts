@@ -223,6 +223,15 @@ function validateCommandInput(input: string): void {
   }
 }
 
+function validateTerminalInput(input: string): void {
+  if (input.length > maxCommandInputChars) {
+    throw new Error("Terminal input is too long");
+  }
+  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(input)) {
+    throw new Error("Terminal input contains unsupported control characters");
+  }
+}
+
 function waitForExit(runtime: RuntimeState, timeoutMs: number): Promise<boolean> {
   const child = runtime.child;
   if (!child) return Promise.resolve(true);
@@ -600,6 +609,7 @@ export class InstanceManager {
     if (data === "\u0003") {
       return this.interrupt(instanceId);
     }
+    validateTerminalInput(data);
 
     const runtime = getRuntime(instanceId);
     const stdin = runtime.child?.stdin;

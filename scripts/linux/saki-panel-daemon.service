@@ -8,7 +8,7 @@ WorkingDirectory=/opt/saki-panel
 Environment=NODE_ENV=production
 Environment=DAEMON_HOST=127.0.0.1
 Environment=DAEMON_PORT=24444
-Environment=DAEMON_PANEL_URL=http://127.0.0.1:23333
+Environment=DAEMON_PANEL_URL=http://127.0.0.1:5479
 ExecStart=/usr/bin/node apps/daemon/dist/index.js
 Restart=always
 RestartSec=5

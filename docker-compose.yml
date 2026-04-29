@@ -5,16 +5,16 @@ services:
       dockerfile: apps/panel/Dockerfile
     environment:
       PANEL_HOST: ${PANEL_HOST:-0.0.0.0}
-      PANEL_PORT: ${PANEL_PORT:-23333}
-      PANEL_PUBLIC_URL: ${PANEL_PUBLIC_URL:-http://localhost:23333}
-      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
+      PANEL_PORT: ${PANEL_PORT:-5479}
+      PANEL_PUBLIC_URL: ${PANEL_PUBLIC_URL:-http://localhost:5479}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5478}
       DATABASE_URL: ${DATABASE_URL:-file:../data/panel/dev.db}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
       DAEMON_REGISTRATION_TOKEN: ${DAEMON_REGISTRATION_TOKEN:?DAEMON_REGISTRATION_TOKEN is required}
     ports:
-      - "${PANEL_PORT:-23333}:${PANEL_PORT:-23333}"
+      - "${PANEL_PORT:-5479}:${PANEL_PORT:-5479}"
     volumes:
       - ./data/panel:/app/data/panel
 
@@ -26,7 +26,7 @@ services:
       DAEMON_HOST: ${DAEMON_HOST:-daemon}
       DAEMON_PORT: ${DAEMON_PORT:-24444}
       DAEMON_PROTOCOL: ${DAEMON_PROTOCOL:-http}
-      DAEMON_PANEL_URL: ${DAEMON_PANEL_URL:-http://panel:23333}
+      DAEMON_PANEL_URL: ${DAEMON_PANEL_URL:-http://panel:5479}
       DAEMON_REGISTRATION_TOKEN: ${DAEMON_REGISTRATION_TOKEN:?DAEMON_REGISTRATION_TOKEN is required}
       DAEMON_WORKSPACE_ROOT: ${DAEMON_WORKSPACE_ROOT:-/workspace}
     ports:
@@ -43,8 +43,8 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
       args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:23333}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:5479}
     ports:
-      - "5173:80"
+      - "5478:80"
     depends_on:
       - panel

@@ -17,7 +17,7 @@ export const daemonConfig = {
   host: process.env.DAEMON_HOST ?? "127.0.0.1",
   port: numberFromEnv(process.env.DAEMON_PORT, 24444),
   protocol: process.env.DAEMON_PROTOCOL ?? "http",
-  panelUrl: process.env.DAEMON_PANEL_URL ?? "http://localhost:23333",
+  panelUrl: process.env.DAEMON_PANEL_URL ?? "http://localhost:5479",
   registrationToken: process.env.DAEMON_REGISTRATION_TOKEN ?? "dev-registration-token",
   heartbeatSeconds: numberFromEnv(process.env.DAEMON_HEARTBEAT_SECONDS, 10),
   version: process.env.DAEMON_VERSION ?? "0.1.0",

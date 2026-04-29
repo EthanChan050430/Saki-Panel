@@ -10,7 +10,7 @@ function numberFromEnv(value: string | undefined, fallback: number): number {
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: numberFromEnv(process.env.VITE_PORT ?? process.env.PORT, 5173),
+    port: numberFromEnv(process.env.VITE_PORT ?? process.env.PORT, 5478),
     strictPort: true
   }
 });

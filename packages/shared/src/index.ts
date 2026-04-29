@@ -1,5 +1,7 @@
 export const PANEL_VERSION = "0.1.0";
 
+export const noRolePermissionRoleName = "__no_role__";
+
 export const permissions = [
   "dashboard.view",
   "node.view",
@@ -36,6 +38,8 @@ export const permissions = [
   "role.update",
   "audit.view",
   "saki.use",
+  "saki.chat",
+  "saki.agent",
   "saki.skills",
   "saki.configure",
   "system.view"
@@ -101,6 +105,7 @@ export interface CreateUserRequest {
 }
 
 export interface UpdateUserRequest {
+  username?: string;
   displayName?: string;
   password?: string;
   status?: UserStatus;
@@ -126,6 +131,24 @@ export interface LoginRequest {
 export interface LoginResponse {
   token: string;
   user: CurrentUser;
+  sessionTimeoutMinutes: number;
+}
+
+export interface PanelSessionSettings {
+  sessionTimeoutMinutes: number;
+}
+
+export interface UpdatePanelSessionSettingsRequest {
+  sessionTimeoutMinutes?: number;
+}
+
+export interface PanelAppearanceSettings {
+  appTitle: string;
+  appSubtitle: string;
+  appLogoSrc: string;
+  loginCoverSrc: string;
+  backgroundSrc: string;
+  mobileBackgroundSrc: string;
 }
 
 export interface NodeMetricSnapshot {
@@ -717,6 +740,7 @@ export interface SakiConfigResponse {
   searchEnabled: boolean;
   mcpEnabled: boolean;
   systemPrompt?: string | null;
+  appearance: PanelAppearanceSettings;
   configPath: string;
   globalConfigPath: string;
 }
@@ -732,6 +756,7 @@ export interface UpdateSakiConfigRequest {
   searchEnabled?: boolean;
   mcpEnabled?: boolean;
   systemPrompt?: string | null;
+  appearance?: Partial<PanelAppearanceSettings>;
 }
 
 export interface SakiModelOption {

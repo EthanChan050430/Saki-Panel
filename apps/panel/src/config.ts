@@ -13,11 +13,12 @@ dotenv.config({ path: path.resolve(rootDir, ".env") });
 
 export const panelConfig = {
   host: process.env.PANEL_HOST ?? "0.0.0.0",
-  port: numberFromEnv(process.env.PANEL_PORT, 23333),
-  publicUrl: process.env.PANEL_PUBLIC_URL ?? "http://localhost:23333",
-  webOrigin: process.env.WEB_ORIGIN ?? "http://localhost:5173",
+  port: numberFromEnv(process.env.PANEL_PORT, 5479),
+  publicUrl: process.env.PANEL_PUBLIC_URL ?? "http://localhost:5479",
+  webOrigin: process.env.WEB_ORIGIN ?? "http://localhost:5478",
   databaseUrl: process.env.DATABASE_URL ?? "file:../data/panel/dev.db",
   jwtSecret: process.env.JWT_SECRET ?? "dev-panel-secret-change-me",
+  sessionTimeoutMinutes: numberFromEnv(process.env.SESSION_TIMEOUT_MINUTES, 120),
   adminUsername: process.env.ADMIN_USERNAME ?? "admin",
   adminPassword: process.env.ADMIN_PASSWORD ?? "admin123456",
   daemonRegistrationToken: process.env.DAEMON_REGISTRATION_TOKEN ?? "dev-registration-token",
@@ -31,6 +32,7 @@ export const panelConfig = {
 
 export const panelPaths = {
   dataDir: path.resolve(rootDir, "data", "panel"),
+  sessionSettingsFile: path.resolve(rootDir, "data", "panel", "session-settings.json"),
   sakiConfigFile: path.resolve(rootDir, "data", "panel", "saki-settings.json"),
   sakiSkillsDir: path.resolve(rootDir, "data", "panel", "saki-skills")
 };

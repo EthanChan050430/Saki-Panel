@@ -17,6 +17,7 @@ import { registerTerminalRoutes } from "./routes/terminal.js";
 import { registerAuditRoutes } from "./routes/audit.js";
 import { registerUserRoutes } from "./routes/users.js";
 import { registerSakiRoutes } from "./routes/saki.js";
+import { registerSystemRoutes } from "./routes/system.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -28,12 +29,12 @@ export async function createPanelServer() {
   const app = Fastify({
     bodyLimit: 16 * 1024 * 1024,
     logger: {
-      level: process.env.LOG_LEVEL ?? "info"
+      level: process.env.LOG_LEVEL ?? "warn"
     }
   });
 
   await app.register(cors, {
-    origin: [panelConfig.webOrigin, panelConfig.publicUrl, "http://localhost:5173"],
+    origin: [panelConfig.webOrigin, panelConfig.publicUrl, "http://localhost:5478"],
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true
   });
@@ -73,6 +74,7 @@ export async function createPanelServer() {
   await registerTemplateRoutes(app);
   await registerAuditRoutes(app);
   await registerUserRoutes(app);
+  await registerSystemRoutes(app);
   await registerSakiRoutes(app);
   await registerTerminalRoutes(app);
 

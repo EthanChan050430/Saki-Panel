@@ -38,8 +38,8 @@ find_free_port() {
   echo "$port"
 }
 
-WEB_PORT=${WEB_PORT:-5173}
-PANEL_PORT=${PANEL_PORT:-23333}
+WEB_PORT=${WEB_PORT:-5478}
+PANEL_PORT=${PANEL_PORT:-5479}
 DAEMON_PORT=${DAEMON_PORT:-24444}
 
 echo ""

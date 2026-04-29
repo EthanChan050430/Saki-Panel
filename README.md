@@ -150,8 +150,8 @@ RBAC（42 个权限码）· 审计日志 · 登录限流 · 危险命令拦截
 │   🌐 Web     │       JWT            │   📋 Panel   │     Node Token       │   🔧 Daemon  │
 │   React SPA  │                      │   Fastify    │                      │   Fastify    │
 │   + Saki UI  │                      │   + Saki AI  │                      │              │
-│   :5173      │                      │   + SQLite   │                      │   :24444     │
-│              │                      │   :23333     │                      │              │
+│   :5478      │                      │   + SQLite   │                      │   :24444     │
+│              │                      │   :5479      │                      │              │
 └──────────────┘                      └──────────────┘                      └──────┬───────┘
                                                                                    │ spawn
                                                                                    ▼
@@ -227,8 +227,8 @@ npm run dev
 
 | 服务 | 地址 |
 |:-----|:-----|
-| Web 界面 | http://localhost:5173 |
-| Panel API | http://localhost:23333 |
+| Web 界面 | http://localhost:5478 |
+| Panel API | http://localhost:5479 |
 | Daemon | http://localhost:24444 |
 
 ### 默认管理员

@@ -4,6 +4,7 @@ import { prisma } from "../db.js";
 import { loadCurrentUser } from "../auth.js";
 import { hashPassword, verifyPassword } from "../security.js";
 import { writeAuditLog } from "../audit.js";
+import { createLoginResponse } from "../session.js";
 
 const loginFailures = new Map<string, { count: number; blockedUntil?: number; firstFailureAt: number }>();
 const maxLoginFailures = 5;
@@ -123,15 +124,6 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       return;
     }
 
-    const token = app.jwt.sign(
-      {
-        sub: currentUser.id,
-        username: currentUser.username,
-        permissions: currentUser.permissions
-      },
-      { expiresIn: "2h" }
-    );
-
     await writeAuditLog({
       request,
       userId: user.id,
@@ -141,10 +133,17 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       result: "SUCCESS"
     });
 
-    return {
-      token,
-      user: currentUser
-    };
+    return createLoginResponse(app, currentUser);
+  });
+
+  app.post("/api/auth/refresh", { preHandler: app.authenticate }, async (request, reply) => {
+    const currentUser = await loadCurrentUser(request.user.sub);
+    if (!currentUser || currentUser.status !== "ACTIVE") {
+      reply.code(401).send({ message: "Unauthorized" });
+      return;
+    }
+
+    return createLoginResponse(app, currentUser);
   });
 
   app.get("/api/auth/me", { preHandler: app.authenticate }, async (request, reply) => {
