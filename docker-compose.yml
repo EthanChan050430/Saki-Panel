@@ -8,6 +8,7 @@ services:
       PANEL_PORT: ${PANEL_PORT:-5479}
       PANEL_PUBLIC_URL: ${PANEL_PUBLIC_URL:-http://localhost:5479}
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5478}
+      PANEL_CORS_ORIGINS: ${PANEL_CORS_ORIGINS:-}
       DATABASE_URL: ${DATABASE_URL:-file:../data/panel/dev.db}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}

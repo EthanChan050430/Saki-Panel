@@ -321,6 +321,18 @@ export DAEMON_REGISTRATION_TOKEN="your-token-here"
 docker compose up -d
 ```
 
+如果前端和 API 用公网 IP/域名的不同端口访问，需要同时设置浏览器看到的地址，并重新构建 Web 镜像：
+
+```bash
+export PANEL_PUBLIC_URL="http://38.165.23.56:5479"
+export WEB_ORIGIN="http://38.165.23.56:5478"
+export PANEL_CORS_ORIGINS="http://38.165.23.56:5478"
+export VITE_API_BASE_URL="http://38.165.23.56:5479"
+
+docker compose build --no-cache panel web
+docker compose up -d
+```
+
 ### systemd（Linux）
 
 ```bash

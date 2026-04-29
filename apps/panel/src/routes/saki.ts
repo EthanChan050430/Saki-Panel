@@ -37,6 +37,7 @@ import { prisma } from "../db.js";
 import { requireAnyPermission, requirePermission } from "../auth.js";
 import { writeAuditLog } from "../audit.js";
 import { panelConfig, panelPaths } from "../config.js";
+import { resolvePanelCorsOrigin } from "../cors.js";
 import { classifyCommandRisk, findDangerousCommandReason } from "../security.js";
 import {
   instanceAccessInclude,
@@ -5045,14 +5046,7 @@ interface SakiStreamWriter {
 }
 
 function sakiCorsOrigin(request: FastifyRequest): string | null {
-  const origin = trimString(request.headers.origin);
-  if (!origin) return null;
-  const allowedOrigins = new Set(
-    [panelConfig.webOrigin, panelConfig.publicUrl, "http://localhost:5478"]
-      .map(trimString)
-      .filter(Boolean)
-  );
-  return allowedOrigins.has(origin) ? origin : null;
+  return resolvePanelCorsOrigin(request) || null;
 }
 
 function startSakiEventStream(request: FastifyRequest, reply: FastifyReply): SakiStreamWriter {

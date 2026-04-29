@@ -1,8 +1,9 @@
 import Fastify from "fastify";
-import cors from "@fastify/cors";
+import fastifyCors from "@fastify/cors";
 import jwt from "@fastify/jwt";
 import websocket from "@fastify/websocket";
 import multipart from "@fastify/multipart";
+import { panelCorsMethods, resolvePanelCorsOrigin } from "./cors.js";
 import { panelConfig } from "./config.js";
 import { authenticate } from "./auth.js";
 import { registerAuthRoutes } from "./routes/auth.js";
@@ -33,10 +34,14 @@ export async function createPanelServer() {
     }
   });
 
-  await app.register(cors, {
-    origin: [panelConfig.webOrigin, panelConfig.publicUrl, "http://localhost:5478"],
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    credentials: true
+  await app.register(fastifyCors, {
+    delegator: (request, callback) => {
+      callback(null, {
+        origin: resolvePanelCorsOrigin(request),
+        methods: panelCorsMethods,
+        credentials: true
+      });
+    }
   });
 
   await app.register(jwt, {

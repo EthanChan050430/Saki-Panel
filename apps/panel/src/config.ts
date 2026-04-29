@@ -8,14 +8,27 @@ function numberFromEnv(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function listFromEnv(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(/[,\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 dotenv.config({ path: path.resolve(rootDir, ".env") });
+
+const publicUrl = process.env.PANEL_PUBLIC_URL ?? "http://localhost:5479";
+const webOrigin = process.env.WEB_ORIGIN ?? "http://localhost:5478";
+const corsOrigins = Array.from(new Set([...listFromEnv(process.env.PANEL_CORS_ORIGINS), webOrigin, publicUrl]));
 
 export const panelConfig = {
   host: process.env.PANEL_HOST ?? "0.0.0.0",
   port: numberFromEnv(process.env.PANEL_PORT, 5479),
-  publicUrl: process.env.PANEL_PUBLIC_URL ?? "http://localhost:5479",
-  webOrigin: process.env.WEB_ORIGIN ?? "http://localhost:5478",
+  publicUrl,
+  webOrigin,
+  corsOrigins,
   databaseUrl: process.env.DATABASE_URL ?? "file:../data/panel/dev.db",
   jwtSecret: process.env.JWT_SECRET ?? "dev-panel-secret-change-me",
   sessionTimeoutMinutes: numberFromEnv(process.env.SESSION_TIMEOUT_MINUTES, 120),
