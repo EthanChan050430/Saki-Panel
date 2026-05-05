@@ -147,8 +147,8 @@ RBAC (41 permission codes) · Audit logs · Login rate limits · Dangerous comma
 
 ```
 ┌──────────────┐       HTTP/WS        ┌──────────────┐       HTTP/WS        ┌──────────────┐
-│              │  ◄─────────────────►  │              │  ◄─────────────────►  │              │
-│   🌐 Web     │       JWT            │   📋 Panel   │     Node Token       │   🔧 Daemon  │
+│              │  ◄─────────────────► │              │ ◄─────────────────►  │              │
+│   🌐 Web     │       JWT           │   📋 Panel   │     Node Token       │   🔧 Daemon  │
 │   React SPA  │                      │   Fastify    │                      │   Fastify    │
 │   + Saki UI  │                      │   + Saki AI  │                      │              │
 │   :5478      │                      │   + SQLite   │                      │   :24444     │
@@ -156,9 +156,9 @@ RBAC (41 permission codes) · Audit logs · Login rate limits · Dangerous comma
 └──────────────┘                      └──────────────┘                      └──────┬───────┘
                                                                                    │ spawn
                                                                                    ▼
-                                                                            ┌──────────────┐
-                                                                            │   📦 Instance Processes │
-                                                                            └──────────────┘
+                                                                            ┌──────────────────────────┐
+                                                                            │   📦 Instance Processes  │
+                                                                            └──────────────────────────┘
 ```
 
 | Component | Responsibility | Tech Stack |
