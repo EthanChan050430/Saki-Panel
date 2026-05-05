@@ -11,8 +11,11 @@ import { prisma } from "../db.js";
 import { requirePermission } from "../auth.js";
 import {
   classifyInstanceUser,
+  instanceAssignedUserIds,
+  instanceAssignedUserSummaries,
   instanceAccessInclude,
   resolveAssignableUserId,
+  resolveAssignableUserIds,
   type InstanceWithAccess
 } from "../instance-access.js";
 import { writeAuditLog } from "../audit.js";
@@ -84,6 +87,8 @@ function normalizeRestartPolicy(value: unknown): RestartPolicy {
 }
 
 function toManagedInstance(instance: InstanceWithAccess): ManagedInstance {
+  const assignees = instanceAssignedUserSummaries(instance);
+  const primaryAssignee = assignees[0] ?? null;
   return {
     id: instance.id,
     nodeId: instance.nodeId,
@@ -105,10 +110,11 @@ function toManagedInstance(instance: InstanceWithAccess): ManagedInstance {
     createdByUsername: instance.createdBy?.username ?? null,
     createdByDisplayName: instance.createdBy?.displayName ?? null,
     createdByRole: instance.createdBy ? classifyInstanceUser(instance.createdBy) : null,
-    assignedToUserId: instance.assignedToId,
-    assignedToUsername: instance.assignedTo?.username ?? null,
-    assignedToDisplayName: instance.assignedTo?.displayName ?? null,
-    assignedToRole: instance.assignedTo ? classifyInstanceUser(instance.assignedTo) : null,
+    assignedToUserId: primaryAssignee?.userId ?? null,
+    assignedToUsername: primaryAssignee?.username ?? null,
+    assignedToDisplayName: primaryAssignee?.displayName ?? null,
+    assignedToRole: primaryAssignee?.role ?? null,
+    assignees,
     lastStartedAt: instance.lastStartedAt?.toISOString() ?? null,
     lastStoppedAt: instance.lastStoppedAt?.toISOString() ?? null,
     lastExitCode: instance.lastExitCode,
@@ -156,9 +162,14 @@ export async function registerTemplateRoutes(app: FastifyInstance): Promise<void
       return;
     }
 
-    let assignedToId: string | null | undefined;
+    let assignedUserIds: string[] | undefined;
     try {
-      assignedToId = await resolveAssignableUserId(request.user.sub, body.assignedToUserId);
+      if (body.assignedToUserIds !== undefined) {
+        assignedUserIds = await resolveAssignableUserIds(request.user.sub, body.assignedToUserIds);
+      } else {
+        const assignedToId = await resolveAssignableUserId(request.user.sub, body.assignedToUserId);
+        assignedUserIds = assignedToId === undefined ? undefined : assignedToId ? [assignedToId] : [];
+      }
     } catch (error) {
       const statusCode =
         typeof error === "object" && error !== null && "statusCode" in error && typeof error.statusCode === "number"
@@ -169,6 +180,7 @@ export async function registerTemplateRoutes(app: FastifyInstance): Promise<void
     }
 
     const instanceId = randomUUID();
+    const initialAssignedUserIds = assignedUserIds ?? [];
     const instance = await prisma.instance.create({
       data: {
         id: instanceId,
@@ -187,7 +199,14 @@ export async function registerTemplateRoutes(app: FastifyInstance): Promise<void
         restartPolicy: normalizeRestartPolicy(body.restartPolicy),
         restartMaxRetries: Math.max(0, Math.min(Math.floor(body.restartMaxRetries ?? 0), 99)),
         createdById: request.user.sub,
-        assignedToId: assignedToId ?? null,
+        assignedToId: initialAssignedUserIds[0] ?? null,
+        ...(initialAssignedUserIds.length
+          ? {
+              assignedUsers: {
+                create: initialAssignedUserIds.map((userId) => ({ userId }))
+              }
+            }
+          : {}),
         status: "CREATED"
       },
       include: instanceAccessInclude
@@ -199,7 +218,7 @@ export async function registerTemplateRoutes(app: FastifyInstance): Promise<void
       action: "template.instance.create",
       resourceType: "instance",
       resourceId: instance.id,
-      payload: { templateId: template.id, name: instance.name, assignedToId: instance.assignedToId }
+      payload: { templateId: template.id, name: instance.name, assignedUserIds: instanceAssignedUserIds(instance) }
     });
 
     return toManagedInstance(instance);

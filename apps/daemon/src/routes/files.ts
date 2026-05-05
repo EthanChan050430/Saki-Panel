@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { Stats } from "node:fs";
+import type { Dirent, Stats } from "node:fs";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
@@ -44,6 +44,7 @@ const execFileAsync = promisify(execFile);
 interface FileQuery {
   workingDirectory?: string;
   path?: string;
+  limit?: string;
 }
 
 interface FileBody {
@@ -185,6 +186,44 @@ async function toFileEntry(root: string, target: string, name: string): Promise<
     size: stats.isFile() ? stats.size : 0,
     modifiedAt: stats.mtime.toISOString()
   };
+}
+
+function parseDirectoryListLimit(value: string | undefined): number | null {
+  if (value === undefined || value.trim() === "") return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.max(1, Math.min(Math.floor(parsed), 1000));
+}
+
+function direntTypeWeight(dirent: Dirent): number {
+  if (dirent.isDirectory()) return 0;
+  if (dirent.isFile()) return 1;
+  if (dirent.isSymbolicLink()) return 2;
+  return 3;
+}
+
+function compareDirents(left: Dirent, right: Dirent): number {
+  const typeDelta = direntTypeWeight(left) - direntTypeWeight(right);
+  if (typeDelta !== 0) return typeDelta;
+  return left.name.localeCompare(right.name, "zh-CN");
+}
+
+async function mapWithConcurrency<T, TResult>(
+  values: T[],
+  concurrency: number,
+  mapper: (value: T) => Promise<TResult>
+): Promise<TResult[]> {
+  const results = new Array<TResult>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(values[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 function assertRegularFile(stats: Stats): void {
@@ -437,23 +476,19 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       throw new Error("Path is not a directory");
     }
 
-    const dirents = await fs.readdir(resolved.target, { withFileTypes: true });
-    const entries = await Promise.all(
-      dirents.map((dirent) => toFileEntry(resolved.root, path.join(resolved.target, dirent.name), dirent.name))
+    const limit = parseDirectoryListLimit(query.limit);
+    const dirents = (await fs.readdir(resolved.target, { withFileTypes: true })).sort(compareDirents);
+    const visibleDirents = limit ? dirents.slice(0, limit) : dirents;
+    const entries = await mapWithConcurrency(visibleDirents, 32, (dirent) =>
+      toFileEntry(resolved.root, path.join(resolved.target, dirent.name), dirent.name)
     );
-
-    entries.sort((left, right) => {
-      if (left.type !== right.type) {
-        if (left.type === "directory") return -1;
-        if (right.type === "directory") return 1;
-      }
-      return left.name.localeCompare(right.name, "zh-CN");
-    });
 
     return {
       instanceId: id,
       path: resolved.relativePath,
-      entries
+      entries,
+      totalEntries: dirents.length,
+      truncated: visibleDirents.length < dirents.length
     } satisfies InstanceFileListResponse;
   });
 

@@ -3,6 +3,8 @@ import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { TextDecoder } from "node:util";
+import * as nodePty from "@homebridge/node-pty-prebuilt-multiarch";
+import type { IDisposable, IPty } from "@homebridge/node-pty-prebuilt-multiarch";
 import type { InstanceCommandResponse, InstanceLogLine, InstanceStatus, InstanceType, RestartPolicy } from "@webops/shared";
 import { daemonPaths } from "./config.js";
 import { loadRuntimeState, saveRuntimeState, type PersistedInstance } from "./state-persist.js";
@@ -26,7 +28,7 @@ export interface DaemonInstanceState {
 }
 
 interface RuntimeState {
-  child: ChildProcess | null;
+  child: RuntimeChild | null;
   status: InstanceStatus;
   exitCode?: number | null;
   logs: InstanceLogLine[];
@@ -37,6 +39,30 @@ interface RuntimeState {
   restartAttempts: number;
   restartTimer?: NodeJS.Timeout;
 }
+
+type RuntimeExit = {
+  code: number | null;
+  signal?: NodeJS.Signals | string | number | null;
+};
+
+type RuntimeExitListener = (exit: RuntimeExit) => void;
+
+interface ProcessRuntimeChild {
+  type: "process";
+  process: ChildProcess;
+}
+
+interface PtyRuntimeChild {
+  type: "pty";
+  pty: IPty;
+  exited: boolean;
+  exit?: RuntimeExit;
+  exitListeners: Set<RuntimeExitListener>;
+  dataSubscription: IDisposable;
+  exitSubscription: IDisposable;
+}
+
+type RuntimeChild = ProcessRuntimeChild | PtyRuntimeChild;
 
 const runtimes = new Map<string, RuntimeState>();
 const maxLogLines = 1000;
@@ -63,8 +89,20 @@ function decodeProcessOutput(chunk: Buffer): string {
 }
 
 function commandEnvironment(): NodeJS.ProcessEnv {
+  const colorEnvironment =
+    process.env.NO_COLOR === undefined
+      ? {
+          FORCE_COLOR: process.env.FORCE_COLOR ?? "1",
+          CLICOLOR: process.env.CLICOLOR ?? "1",
+          CLICOLOR_FORCE: process.env.CLICOLOR_FORCE ?? "1"
+        }
+      : {};
+
   return {
     ...process.env,
+    TERM: process.env.TERM ?? "xterm-256color",
+    COLORTERM: process.env.COLORTERM ?? "truecolor",
+    ...colorEnvironment,
     LANG: process.env.LANG ?? "C.UTF-8",
     LC_ALL: process.env.LC_ALL ?? "C.UTF-8",
     PYTHONUTF8: "1",
@@ -208,6 +246,106 @@ function commandLauncher(command: string): { file: string; args: string[] } {
   };
 }
 
+function runtimeChildPid(child: RuntimeChild | null): number | undefined {
+  if (!child) return undefined;
+  return child.type === "pty" ? child.pty.pid : child.process.pid ?? undefined;
+}
+
+function runtimeChildExited(child: RuntimeChild): boolean {
+  if (child.type === "pty") return child.exited;
+  return child.process.exitCode !== null || child.process.killed;
+}
+
+function runtimeChildCanWrite(child: RuntimeChild): boolean {
+  if (child.type === "pty") return !child.exited;
+  const stdin = child.process.stdin;
+  return Boolean(stdin && !stdin.destroyed && stdin.writable);
+}
+
+function writeRuntimeChild(child: RuntimeChild, data: string): void {
+  if (child.type === "pty") {
+    child.pty.write(data);
+    return;
+  }
+  child.process.stdin?.write(data);
+}
+
+function onRuntimeChildExit(child: RuntimeChild, listener: RuntimeExitListener): () => void {
+  if (child.type === "pty") {
+    if (child.exited) {
+      queueMicrotask(() => listener(child.exit ?? { code: null }));
+      return () => undefined;
+    }
+    child.exitListeners.add(listener);
+    return () => child.exitListeners.delete(listener);
+  }
+
+  const handler = (code: number | null, signal: NodeJS.Signals | null) => listener(signal ? { code, signal } : { code });
+  child.process.once("exit", handler);
+  return () => child.process.off("exit", handler);
+}
+
+function disposeRuntimeChild(child: RuntimeChild): void {
+  if (child.type !== "pty") return;
+  child.dataSubscription.dispose();
+  child.exitSubscription.dispose();
+  child.exitListeners.clear();
+}
+
+function startPtyRuntimeChild(
+  launcher: { file: string; args: string[] },
+  cwd: string,
+  onData: (text: string) => void
+): RuntimeChild {
+  let managed: PtyRuntimeChild;
+  const pty = nodePty.spawn(launcher.file, launcher.args, {
+    name: "xterm-256color",
+    cols: 160,
+    rows: 40,
+    cwd,
+    env: commandEnvironment(),
+    encoding: "utf8",
+    useConpty: process.platform === "win32"
+  });
+
+  managed = {
+    type: "pty",
+    pty,
+    exited: false,
+    exitListeners: new Set<RuntimeExitListener>(),
+    dataSubscription: pty.onData(onData),
+    exitSubscription: pty.onExit((event) => {
+      managed.exited = true;
+      managed.exit = typeof event.signal === "number" ? { code: event.exitCode, signal: event.signal } : { code: event.exitCode };
+      for (const listener of [...managed.exitListeners]) {
+        listener(managed.exit);
+      }
+      managed.exitListeners.clear();
+    })
+  };
+
+  return managed;
+}
+
+function startProcessRuntimeChild(
+  launcher: { file: string; args: string[] },
+  cwd: string,
+  onStdout: (chunk: Buffer) => void,
+  onStderr: (chunk: Buffer) => void,
+  onError: (error: Error) => void
+): RuntimeChild {
+  const child = spawn(launcher.file, launcher.args, {
+    cwd,
+    env: commandEnvironment(),
+    detached: process.platform !== "win32",
+    windowsHide: true
+  });
+  child.stdout?.on("data", onStdout);
+  child.stderr?.on("data", onStderr);
+  child.on("error", onError);
+  return { type: "process", process: child };
+}
+
 function appendCapturedText(current: string, next: string): string {
   if (current.length >= maxCommandCaptureChars) return current;
   const remaining = maxCommandCaptureChars - current.length;
@@ -227,7 +365,7 @@ function validateTerminalInput(input: string): void {
   if (input.length > maxCommandInputChars) {
     throw new Error("Terminal input is too long");
   }
-  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(input)) {
+  if (/\u0000/.test(input)) {
     throw new Error("Terminal input contains unsupported control characters");
   }
 }
@@ -235,21 +373,19 @@ function validateTerminalInput(input: string): void {
 function waitForExit(runtime: RuntimeState, timeoutMs: number): Promise<boolean> {
   const child = runtime.child;
   if (!child) return Promise.resolve(true);
+  if (runtimeChildExited(child)) return Promise.resolve(true);
 
   return new Promise((resolve) => {
     const finish = () => {
       clearTimeout(timer);
-      child.off("exit", finish);
-      child.off("close", finish);
+      unsubscribe();
       resolve(true);
     };
     const timer = setTimeout(() => {
-      child.off("exit", finish);
-      child.off("close", finish);
+      unsubscribe();
       resolve(runtime.child !== child);
     }, timeoutMs);
-    child.once("exit", finish);
-    child.once("close", finish);
+    const unsubscribe = onRuntimeChildExit(child, finish);
   });
 }
 
@@ -278,32 +414,52 @@ function runTaskkill(pid: number, force: boolean): Promise<void> {
 }
 
 async function signalProcessTree(
-  child: ChildProcess,
+  child: RuntimeChild,
   signal: NodeJS.Signals,
   force: boolean,
   onError: (message: string) => void
 ): Promise<void> {
-  if (!child.pid) {
-    child.kill(signal);
+  if (child.type === "pty") {
+    const pid = runtimeChildPid(child);
+    if (process.platform === "win32" && pid) {
+      try {
+        await runTaskkill(pid, force);
+        return;
+      } catch (error) {
+        onError(`PTY signal failed: ${error instanceof Error ? error.message : "unknown error"}`);
+      }
+    }
+
+    try {
+      child.pty.kill(process.platform === "win32" ? undefined : signal);
+    } catch (error) {
+      onError(`PTY signal failed: ${error instanceof Error ? error.message : "unknown error"}`);
+    }
+    return;
+  }
+
+  const processChild = child.process;
+  if (!processChild.pid) {
+    processChild.kill(signal);
     return;
   }
 
   if (process.platform === "win32") {
     try {
-      await runTaskkill(child.pid, true);
+      await runTaskkill(processChild.pid, true);
       return;
     } catch (error) {
       onError(`Process tree signal failed: ${error instanceof Error ? error.message : "unknown error"}`);
-      child.kill(signal);
+      processChild.kill(signal);
       return;
     }
   }
 
   try {
-    process.kill(-child.pid, signal);
+    process.kill(-processChild.pid, signal);
   } catch (error) {
     onError(`Process group signal failed: ${error instanceof Error ? error.message : "unknown error"}`);
-    child.kill(signal);
+    processChild.kill(signal);
   }
 }
 
@@ -336,7 +492,7 @@ export class InstanceManager {
         exitCode: runtime.exitCode ?? null,
         cwd: runtime.cwd,
         restartAttempts: runtime.restartAttempts,
-        lastPid: runtime.child?.pid ?? undefined
+        lastPid: runtimeChildPid(runtime.child)
       });
     }
     try {
@@ -401,7 +557,7 @@ export class InstanceManager {
 
   private async startInternal(spec: DaemonInstanceSpec, resetRestartAttempts: boolean): Promise<DaemonInstanceState> {
     const runtime = getRuntime(spec.id);
-    if (runtime.child && !runtime.child.killed && runtime.status === "RUNNING") {
+    if (runtime.child && !runtimeChildExited(runtime.child) && runtime.status === "RUNNING") {
       appendLog(spec.id, runtime, "system", "Start requested while instance is already running.");
       return this.state(spec.id);
     }
@@ -424,27 +580,40 @@ export class InstanceManager {
     appendLog(spec.id, runtime, "system", `Starting: ${spec.startCommand}`);
 
     const launcher = commandLauncher(spec.startCommand);
-    const child = spawn(launcher.file, launcher.args, {
-      cwd,
-      env: commandEnvironment(),
-      detached: process.platform !== "win32",
-      windowsHide: true
-    });
+    const handleProcessError = (error: Error) => {
+      runtime.status = "CRASHED";
+      runtime.exitCode = null;
+      emitStatus(spec.id, runtime);
+      appendLog(spec.id, runtime, `system`, `Process error: ${error.message}`);
+    };
+
+    let child: RuntimeChild;
+    try {
+      child = startPtyRuntimeChild(launcher, cwd, (text) => appendLog(spec.id, runtime, "stdout", text));
+    } catch (error) {
+      appendLog(
+        spec.id,
+        runtime,
+        "system",
+        `PTY launch failed, falling back to pipe mode: ${error instanceof Error ? error.message : "unknown error"}`
+      );
+      child = startProcessRuntimeChild(
+        launcher,
+        cwd,
+        (chunk) => appendLog(spec.id, runtime, "stdout", decodeProcessOutput(chunk)),
+        (chunk) => appendLog(spec.id, runtime, "stderr", decodeProcessOutput(chunk)),
+        handleProcessError
+      );
+    }
 
     runtime.child = child;
     runtime.status = "RUNNING";
     emitStatus(spec.id, runtime);
-    appendLog(spec.id, runtime, "system", `Process started with pid ${child.pid ?? "unknown"}.`);
+    appendLog(spec.id, runtime, "system", `Process started in ${child.type === "pty" ? "PTY" : "pipe"} mode with pid ${runtimeChildPid(child) ?? "unknown"}.`);
 
-    child.stdout?.on("data", (chunk: Buffer) => appendLog(spec.id, runtime, "stdout", decodeProcessOutput(chunk)));
-    child.stderr?.on("data", (chunk: Buffer) => appendLog(spec.id, runtime, "stderr", decodeProcessOutput(chunk)));
-    child.on("error", (error) => {
-      runtime.status = "CRASHED";
-      runtime.exitCode = null;
-      emitStatus(spec.id, runtime);
-      appendLog(spec.id, runtime, "system", `Process error: ${error.message}`);
-    });
-    child.on("exit", (code, signal) => {
+    onRuntimeChildExit(child, ({ code, signal }) => {
+      if (runtime.child !== child) return;
+      disposeRuntimeChild(child);
       runtime.child = null;
       runtime.exitCode = code;
       runtime.status = runtime.stopping || code === 0 ? "STOPPED" : "CRASHED";
@@ -582,7 +751,11 @@ export class InstanceManager {
     emitStatus(instanceId, runtime);
     appendLog(instanceId, runtime, "stdin", "^C");
     appendLog(instanceId, runtime, "system", "Sending interrupt signal.");
-    await signalProcessTree(runtime.child, "SIGINT", false, (message) => appendLog(instanceId, runtime, "system", message));
+    if (runtime.child.type === "pty") {
+      runtime.child.pty.write("\u0003");
+    } else {
+      await signalProcessTree(runtime.child, "SIGINT", false, (message) => appendLog(instanceId, runtime, "system", message));
+    }
     let exited = await waitForExit(runtime, 5000);
 
     if (!exited && runtime.child && process.platform === "win32") {
@@ -612,13 +785,12 @@ export class InstanceManager {
     validateTerminalInput(data);
 
     const runtime = getRuntime(instanceId);
-    const stdin = runtime.child?.stdin;
-    if (!runtime.child || runtime.status !== "RUNNING" || !stdin || stdin.destroyed || !stdin.writable) {
+    if (!runtime.child || runtime.status !== "RUNNING" || !runtimeChildCanWrite(runtime.child)) {
       appendLog(instanceId, runtime, "system", "Terminal input rejected because the instance is not running.");
       throw new Error("Instance is not accepting terminal input");
     }
 
-    stdin.write(data);
+    writeRuntimeChild(runtime.child, data);
     const visibleInput = data.replace(/\r/g, "").replace(/\n$/, "");
     if (options.logInput !== false && visibleInput.length > 0) {
       appendLog(instanceId, runtime, "stdin", visibleInput);
@@ -665,7 +837,7 @@ export class InstanceManager {
       const timer = setTimeout(() => {
         timedOut = true;
         appendLog(instanceId, runtime, "system", `Agent command timed out after ${timeoutMs}ms; stopping it.`);
-        void signalProcessTree(child, "SIGKILL", true, (message) => appendLog(instanceId, runtime, "system", message)).catch((error) => {
+        void signalProcessTree({ type: "process", process: child }, "SIGKILL", true, (message) => appendLog(instanceId, runtime, "system", message)).catch((error) => {
           appendLog(instanceId, runtime, "system", `Agent command kill failed: ${error instanceof Error ? error.message : "unknown error"}`);
         });
       }, timeoutMs);

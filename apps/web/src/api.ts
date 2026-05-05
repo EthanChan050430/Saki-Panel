@@ -31,6 +31,8 @@ import type {
   RegisterRequest,
   SakiChatRequest,
   SakiChatResponse,
+  SakiCopilotAuthStatusResponse,
+  SakiCopilotLoginResponse,
   SakiConfigResponse,
   SakiModelListResponse,
   SakiAgentAction,
@@ -76,6 +78,82 @@ function resolveApiBase(): string {
 }
 
 const API_BASE = resolveApiBase();
+
+function sakiBrowserDebugEnabled(): boolean {
+  try {
+    const configured = window.localStorage.getItem("saki.debug");
+    if (configured === "0" || configured === "false") return false;
+    if (configured === "1" || configured === "true") return true;
+    return Boolean(import.meta.env.DEV) || isLoopbackHostname(new URL(API_BASE).hostname);
+  } catch {
+    return Boolean(import.meta.env.DEV);
+  }
+}
+
+function compactDebugText(value: string, maxLength = 180): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
+}
+
+function summarizeSakiRequest(input: SakiChatRequest): Record<string, unknown> {
+  return {
+    mode: input.mode ?? "chat",
+    agentPermissionMode: input.agentPermissionMode ?? null,
+    instanceId: input.instanceId ?? null,
+    messageChars: input.message.length,
+    messagePreview: compactDebugText(input.message),
+    historyCount: input.history?.length ?? 0,
+    attachmentCount: input.attachments?.length ?? 0,
+    selectedSkillCount: input.selectedSkillIds?.length ?? 0
+  };
+}
+
+function summarizeSakiStreamEvent(event: SakiChatStreamEvent): Record<string, unknown> {
+  if (event.type === "heartbeat") {
+    return { type: event.type, ts: event.ts ?? null };
+  }
+  if (event.type === "delta") {
+    return { type: event.type, chars: event.text.length, preview: compactDebugText(event.text, 120) };
+  }
+  if (event.type === "workflow") {
+    return {
+      type: event.type,
+      stage: event.stage,
+      status: event.status,
+      tool: event.tool ?? null,
+      message: compactDebugText(event.message, 160)
+    };
+  }
+  if (event.type === "action") {
+    return {
+      type: event.type,
+      tool: event.action.tool,
+      ok: event.action.ok,
+      status: event.action.status ?? null,
+      risk: event.action.approval?.risk ?? null
+    };
+  }
+  if (event.type === "done") {
+    return {
+      type: event.type,
+      source: event.response.source,
+      messageChars: event.response.message.length,
+      actionCount: event.response.actions?.length ?? 0
+    };
+  }
+  return {
+    type: event.type,
+    source: event.source,
+    mode: event.mode ?? null,
+    agentPermissionMode: event.agentPermissionMode ?? null,
+    skillCount: event.skills?.length ?? 0
+  };
+}
+
+function logSakiBrowserDebug(event: string, details: Record<string, unknown>): void {
+  if (!sakiBrowserDebugEnabled()) return;
+  console.info(`[Saki model] ${event}`, details);
+}
 
 function webSocketUrl(path: string, params: Record<string, string>): string {
   const url = new URL(path, API_BASE);
@@ -154,9 +232,11 @@ export type SakiChatStreamEvent =
       type: "meta";
       source: SakiChatResponse["source"];
       mode?: SakiChatRequest["mode"];
+      agentPermissionMode?: SakiChatRequest["agentPermissionMode"];
       workspace?: SakiChatResponse["workspace"];
       skills?: SakiSkillSummary[];
     }
+  | { type: "heartbeat"; ts?: number }
   | ({ type: "workflow" } & SakiChatWorkflowUpdate)
   | { type: "delta"; text: string }
   | { type: "action"; action: SakiAgentAction }
@@ -169,7 +249,19 @@ function parseSakiStreamFrame(frame: string): SakiChatStreamEvent | null {
     .map((line) => line.slice(5).replace(/^ /, ""))
     .join("\n");
   if (!data) return null;
-  return JSON.parse(data) as SakiChatStreamEvent;
+  try {
+    return JSON.parse(data) as SakiChatStreamEvent;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeStreamError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error || "");
+  if (/network\s*error|failed to fetch|load failed|fetch failed|terminated|body stream|stream ended/i.test(message)) {
+    return "Saki 流式连接中断";
+  }
+  return message || "Saki 流式连接中断";
 }
 
 async function responseErrorMessage(response: Response): Promise<string> {
@@ -189,6 +281,8 @@ async function requestSakiChatStream(
   onEvent: (event: SakiChatStreamEvent) => void,
   signal?: AbortSignal
 ): Promise<SakiChatResponse> {
+  const startedAt = performance.now();
+  logSakiBrowserDebug("stream.start", summarizeSakiRequest(input));
   const requestInit: RequestInit = {
     method: "POST",
     headers: {
@@ -217,6 +311,9 @@ async function requestSakiChatStream(
   const dispatch = (frame: string) => {
     const event = parseSakiStreamFrame(frame);
     if (!event) return;
+    if (event.type !== "heartbeat") {
+      logSakiBrowserDebug("stream.event", summarizeSakiStreamEvent(event));
+    }
     onEvent(event);
     if (event.type === "done") {
       finalResponse = event.response;
@@ -238,14 +335,34 @@ async function requestSakiChatStream(
     const tail = decoder.decode();
     if (tail) buffer += tail.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     if (buffer.trim()) dispatch(buffer);
+  } catch (error) {
+    if (finalResponse) return finalResponse;
+    logSakiBrowserDebug("stream.error", {
+      ...summarizeSakiRequest(input),
+      durationMs: Math.round(performance.now() - startedAt),
+      error: error instanceof Error ? error.message : String(error)
+    });
+    throw new ApiError(normalizeStreamError(error), 0);
   } finally {
     reader.releaseLock();
   }
 
-  if (!finalResponse) {
+  const completedResponse = finalResponse as SakiChatResponse | null;
+  if (!completedResponse) {
+    logSakiBrowserDebug("stream.incomplete", {
+      ...summarizeSakiRequest(input),
+      durationMs: Math.round(performance.now() - startedAt)
+    });
     throw new ApiError("Saki stream ended before completion", 0);
   }
-  return finalResponse;
+  logSakiBrowserDebug("stream.done", {
+    ...summarizeSakiRequest(input),
+    durationMs: Math.round(performance.now() - startedAt),
+    source: completedResponse.source,
+    messageChars: completedResponse.message.length,
+    actionCount: completedResponse.actions?.length ?? 0
+  });
+  return completedResponse;
 }
 
 export interface PaginatedResult<T> {
@@ -719,12 +836,31 @@ export const api = {
       token
     );
   },
-  sakiChat(token: string, input: SakiChatRequest) {
-    return requestJson<SakiChatResponse>(
-      "/api/saki/chat",
-      { method: "POST", body: JSON.stringify(input) },
-      token
-    );
+  async sakiChat(token: string, input: SakiChatRequest) {
+    const startedAt = performance.now();
+    logSakiBrowserDebug("http.start", summarizeSakiRequest(input));
+    try {
+      const response = await requestJson<SakiChatResponse>(
+        "/api/saki/chat",
+        { method: "POST", body: JSON.stringify(input) },
+        token
+      );
+      logSakiBrowserDebug("http.done", {
+        ...summarizeSakiRequest(input),
+        durationMs: Math.round(performance.now() - startedAt),
+        source: response.source,
+        messageChars: response.message.length,
+        actionCount: response.actions?.length ?? 0
+      });
+      return response;
+    } catch (error) {
+      logSakiBrowserDebug("http.error", {
+        ...summarizeSakiRequest(input),
+        durationMs: Math.round(performance.now() - startedAt),
+        error: error instanceof Error ? error.message : String(error)
+      });
+      throw error;
+    }
   },
   sakiChatStream(token: string, input: SakiChatRequest, onEvent: (event: SakiChatStreamEvent) => void, signal?: AbortSignal) {
     return requestSakiChatStream(token, input, onEvent, signal);
@@ -752,6 +888,19 @@ export const api = {
       { method: "POST", body: JSON.stringify(input) },
       token
     );
+  },
+  sakiCopilotStatus(token: string) {
+    return requestJson<SakiCopilotAuthStatusResponse>("/api/saki/copilot/status", {}, token);
+  },
+  sakiCopilotLogin(token: string) {
+    return requestJson<SakiCopilotLoginResponse>(
+      "/api/saki/copilot/login",
+      { method: "POST", body: JSON.stringify({}) },
+      token
+    );
+  },
+  sakiCopilotLoginState(token: string) {
+    return requestJson<SakiCopilotLoginResponse>("/api/saki/copilot/login", {}, token);
   },
   testNode(token: string, id: string) {
     return requestJson<{ ok: boolean; statusCode?: number; error?: string }>(

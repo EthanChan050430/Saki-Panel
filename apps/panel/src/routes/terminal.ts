@@ -72,8 +72,18 @@ async function authenticateTerminalUser(
 }
 
 function inputPreview(input: string): string {
-  if (input === "\u0003") return "^C";
-  return input.replace(/\r/g, "").replace(/\n$/, "").slice(0, 200);
+  return input
+    .replace(/\r/g, "")
+    .replace(/\n$/, "")
+    .replace(/[\u0000-\u001F\u007F]/g, (char) => {
+      if (char === "\n") return "\\n";
+      if (char === "\t") return "\\t";
+      if (char === "\u001b") return "^[";
+      if (char === "\u007f") return "^?";
+      const code = char.charCodeAt(0);
+      return `^${String.fromCharCode(code + 64)}`;
+    })
+    .slice(0, 200);
 }
 
 export async function registerTerminalRoutes(app: FastifyInstance): Promise<void> {

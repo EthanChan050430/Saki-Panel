@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { LoginRequest, RegisterRequest, RegistrationIdentity, UpdateCurrentUserRequest } from "@webops/shared";
 import { prisma } from "../db.js";
 import { isAuthDisabled, loadAuthDisabledCurrentUser, loadCurrentUser } from "../auth.js";
+import { normalizeAvatarDataUrl } from "../avatar.js";
 import { hashPassword, verifyPassword } from "../security.js";
 import { writeAuditLog } from "../audit.js";
 import { createLoginResponse, readPanelSessionSettings } from "../session.js";
@@ -10,7 +11,6 @@ const loginFailures = new Map<string, { count: number; blockedUntil?: number; fi
 const maxLoginFailures = 5;
 const loginWindowMs = 10 * 60 * 1000;
 const loginBlockMs = 10 * 60 * 1000;
-const maxAvatarDataUrlLength = 1_000_000;
 const registrationRoleNames: Record<RegistrationIdentity, string[]> = {
   none: [],
   user: ["user"],
@@ -81,23 +81,6 @@ async function registrationRoleIds(identity: RegistrationIdentity): Promise<stri
   }
   const idByName = new Map(roles.map((role) => [role.name, role.id]));
   return names.map((name) => idByName.get(name)).filter((id): id is string => Boolean(id));
-}
-
-function normalizeAvatarDataUrl(value: unknown): string | null | undefined {
-  if (value === undefined) return undefined;
-  if (value === null || value === "") return null;
-  if (typeof value !== "string") {
-    throw new Error("Avatar must be an image data URL");
-  }
-
-  const trimmed = value.trim();
-  if (trimmed.length > maxAvatarDataUrlLength) {
-    throw new Error("Avatar image is too large");
-  }
-  if (!/^data:image\/(?:png|jpe?g|webp|gif);base64,[a-z0-9+/=]+$/i.test(trimmed)) {
-    throw new Error("Avatar must be a PNG, JPG, WebP or GIF data URL");
-  }
-  return trimmed;
 }
 
 export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {

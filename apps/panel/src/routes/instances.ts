@@ -17,11 +17,14 @@ import { prisma } from "../db.js";
 import { requirePermission } from "../auth.js";
 import {
   classifyInstanceUser,
+  instanceAssignedUserIds,
+  instanceAssignedUserSummaries,
   instanceAccessInclude,
   listInstanceAssignees,
   listVisibleInstances,
   loadVisibleInstance,
   resolveAssignableUserId,
+  resolveAssignableUserIds,
   type InstanceWithAccess
 } from "../instance-access.js";
 import { writeAuditLog } from "../audit.js";
@@ -38,6 +41,8 @@ import {
 } from "../daemon-client.js";
 
 function toManagedInstance(instance: InstanceWithAccess): ManagedInstance {
+  const assignees = instanceAssignedUserSummaries(instance);
+  const primaryAssignee = assignees[0] ?? null;
   return {
     id: instance.id,
     nodeId: instance.nodeId,
@@ -59,10 +64,11 @@ function toManagedInstance(instance: InstanceWithAccess): ManagedInstance {
     createdByUsername: instance.createdBy?.username ?? null,
     createdByDisplayName: instance.createdBy?.displayName ?? null,
     createdByRole: instance.createdBy ? classifyInstanceUser(instance.createdBy) : null,
-    assignedToUserId: instance.assignedToId,
-    assignedToUsername: instance.assignedTo?.username ?? null,
-    assignedToDisplayName: instance.assignedTo?.displayName ?? null,
-    assignedToRole: instance.assignedTo ? classifyInstanceUser(instance.assignedTo) : null,
+    assignedToUserId: primaryAssignee?.userId ?? null,
+    assignedToUsername: primaryAssignee?.username ?? null,
+    assignedToDisplayName: primaryAssignee?.displayName ?? null,
+    assignedToRole: primaryAssignee?.role ?? null,
+    assignees,
     lastStartedAt: instance.lastStartedAt?.toISOString() ?? null,
     lastStoppedAt: instance.lastStoppedAt?.toISOString() ?? null,
     lastExitCode: instance.lastExitCode,
@@ -98,6 +104,10 @@ function normalizeRestartPolicy(value: unknown, fallback: RestartPolicy): Restar
 function normalizeRetryCount(value: unknown, fallback: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Math.max(0, Math.min(Math.floor(value), 99));
+}
+
+function trimmedString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function statusPatch(status: InstanceStatus, exitCode?: number | null): Prisma.InstanceUpdateInput {
@@ -254,33 +264,41 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
 
   app.post("/api/instances", { preHandler: requirePermission("instance.create") }, async (request, reply) => {
     const body = request.body as Partial<CreateInstanceRequest>;
-    if (!body.nodeId || !body.name || !body.startCommand) {
+    const nodeId = trimmedString(body.nodeId);
+    const name = trimmedString(body.name);
+    const startCommand = trimmedString(body.startCommand);
+    if (!nodeId || !name || !startCommand) {
       reply.code(400).send({ message: "nodeId, name and startCommand are required" });
       return;
     }
-    const blocked = findDangerousCommandReason(body.startCommand);
+    const blocked = findDangerousCommandReason(startCommand);
     if (blocked) {
       await writeAuditLog({
         request,
         userId: request.user.sub,
         action: "security.command_blocked",
         resourceType: "instance",
-        payload: { commandPreview: body.startCommand.slice(0, 200), reason: blocked },
+        payload: { commandPreview: startCommand.slice(0, 200), reason: blocked },
         result: "FAILURE"
       });
       reply.code(400).send({ message: blocked });
       return;
     }
 
-    const node = await prisma.node.findUnique({ where: { id: body.nodeId } });
+    const node = await prisma.node.findUnique({ where: { id: nodeId } });
     if (!node) {
       reply.code(404).send({ message: "Node not found" });
       return;
     }
 
-    let assignedToId: string | null | undefined;
+    let assignedUserIds: string[] | undefined;
     try {
-      assignedToId = await resolveAssignableUserId(request.user.sub, body.assignedToUserId);
+      if (body.assignedToUserIds !== undefined) {
+        assignedUserIds = await resolveAssignableUserIds(request.user.sub, body.assignedToUserIds);
+      } else {
+        const assignedToId = await resolveAssignableUserId(request.user.sub, body.assignedToUserId);
+        assignedUserIds = assignedToId === undefined ? undefined : assignedToId ? [assignedToId] : [];
+      }
     } catch (error) {
       const statusCode =
         typeof error === "object" && error !== null && "statusCode" in error && typeof error.statusCode === "number"
@@ -291,21 +309,29 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     }
 
     const id = randomUUID();
+    const initialAssignedUserIds = assignedUserIds ?? [];
     const instance = await prisma.instance.create({
       data: {
         id,
-        nodeId: body.nodeId,
-        name: body.name,
+        nodeId,
+        name,
         type: body.type ?? "generic_command",
         workingDirectory: body.workingDirectory?.trim() || `instances/${id}`,
-        startCommand: body.startCommand,
+        startCommand,
         stopCommand: body.stopCommand?.trim() || null,
         description: body.description?.trim() || null,
         autoStart: body.autoStart ?? false,
         restartPolicy: normalizeRestartPolicy(body.restartPolicy, "never"),
         restartMaxRetries: normalizeRetryCount(body.restartMaxRetries, 0),
         createdById: request.user.sub,
-        assignedToId: assignedToId ?? null,
+        assignedToId: initialAssignedUserIds[0] ?? null,
+        ...(initialAssignedUserIds.length
+          ? {
+              assignedUsers: {
+                create: initialAssignedUserIds.map((userId) => ({ userId }))
+              }
+            }
+          : {}),
         status: "CREATED"
       },
       include: instanceAccessInclude
@@ -317,7 +343,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       action: "instance.create",
       resourceType: "instance",
       resourceId: instance.id,
-      payload: { name: instance.name, nodeId: instance.nodeId, assignedToId: instance.assignedToId }
+      payload: { name: instance.name, nodeId: instance.nodeId, assignedUserIds: instanceAssignedUserIds(instance) }
     });
 
     return toManagedInstance(instance);
@@ -331,8 +357,26 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       await sendNotFound(reply);
       return;
     }
-    if (body.startCommand) {
-      const blocked = findDangerousCommandReason(body.startCommand);
+
+    const nextName = body.name === undefined ? existing.name : trimmedString(body.name);
+    if (!nextName) {
+      reply.code(400).send({ message: "name cannot be empty" });
+      return;
+    }
+    const nextWorkingDirectory =
+      body.workingDirectory === undefined ? existing.workingDirectory : trimmedString(body.workingDirectory);
+    if (!nextWorkingDirectory) {
+      reply.code(400).send({ message: "workingDirectory cannot be empty" });
+      return;
+    }
+    const nextStartCommand =
+      body.startCommand === undefined ? existing.startCommand : trimmedString(body.startCommand);
+    if (!nextStartCommand) {
+      reply.code(400).send({ message: "startCommand cannot be empty" });
+      return;
+    }
+    if (body.startCommand !== undefined) {
+      const blocked = findDangerousCommandReason(nextStartCommand);
       if (blocked) {
         await writeAuditLog({
           request,
@@ -340,7 +384,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
           action: "security.command_blocked",
           resourceType: "instance",
           resourceId: id,
-          payload: { commandPreview: body.startCommand.slice(0, 200), reason: blocked },
+          payload: { commandPreview: nextStartCommand.slice(0, 200), reason: blocked },
           result: "FAILURE"
         });
         reply.code(400).send({ message: blocked });
@@ -366,9 +410,14 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     }
     const nodeChanged = nextNodeId !== undefined;
 
-    let assignedToId: string | null | undefined;
+    let assignedUserIds: string[] | undefined;
     try {
-      assignedToId = await resolveAssignableUserId(request.user.sub, body.assignedToUserId);
+      if (body.assignedToUserIds !== undefined) {
+        assignedUserIds = await resolveAssignableUserIds(request.user.sub, body.assignedToUserIds);
+      } else {
+        const assignedToId = await resolveAssignableUserId(request.user.sub, body.assignedToUserId);
+        assignedUserIds = assignedToId === undefined ? undefined : assignedToId ? [assignedToId] : [];
+      }
     } catch (error) {
       const statusCode =
         typeof error === "object" && error !== null && "statusCode" in error && typeof error.statusCode === "number"
@@ -379,17 +428,21 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     }
 
     const updateData: Prisma.InstanceUpdateInput = {
-      name: body.name ?? existing.name,
-      workingDirectory: body.workingDirectory ?? existing.workingDirectory,
-      startCommand: body.startCommand ?? existing.startCommand,
-      stopCommand: body.stopCommand === undefined ? existing.stopCommand : body.stopCommand,
-      description: body.description === undefined ? existing.description : body.description,
+      name: nextName,
+      workingDirectory: nextWorkingDirectory,
+      startCommand: nextStartCommand,
+      stopCommand: body.stopCommand === undefined ? existing.stopCommand : body.stopCommand?.trim() || null,
+      description: body.description === undefined ? existing.description : body.description?.trim() || null,
       autoStart: body.autoStart ?? existing.autoStart,
       restartPolicy: normalizeRestartPolicy(body.restartPolicy, existing.restartPolicy as RestartPolicy),
       restartMaxRetries: normalizeRetryCount(body.restartMaxRetries, existing.restartMaxRetries)
     };
-    if (assignedToId !== undefined) {
-      updateData.assignedTo = assignedToId ? { connect: { id: assignedToId } } : { disconnect: true };
+    if (assignedUserIds !== undefined) {
+      updateData.assignedTo = assignedUserIds[0] ? { connect: { id: assignedUserIds[0] } } : { disconnect: true };
+      updateData.assignedUsers = {
+        deleteMany: {},
+        create: assignedUserIds.map((userId) => ({ userId }))
+      };
     }
     if (nodeChanged && nextNodeId) {
       updateData.node = { connect: { id: nextNodeId } };
@@ -412,7 +465,9 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       resourceId: id,
       payload: {
         ...(nodeChanged ? { previousNodeId: existing.nodeId, nodeId: instance.nodeId } : {}),
-        ...(assignedToId !== undefined ? { previousAssignedToId: existing.assignedToId, assignedToId } : {})
+        ...(assignedUserIds !== undefined
+          ? { previousAssignedUserIds: instanceAssignedUserIds(existing), assignedUserIds }
+          : {})
       }
     });
 

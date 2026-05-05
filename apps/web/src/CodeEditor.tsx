@@ -22,6 +22,7 @@ interface CodeEditorProps {
   onChange?: (value: string) => void;
   readOnly?: boolean;
   darkMode?: boolean;
+  lineWrapping?: boolean;
   className?: string;
 }
 
@@ -51,7 +52,7 @@ function languageFromFileName(fileName?: string): string | undefined {
 }
 
 export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEditor(
-  { value, language, onChange, readOnly = false, darkMode = false, className },
+  { value, language, onChange, readOnly = false, darkMode = false, lineWrapping = false, className },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -103,6 +104,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
         updateListener,
         EditorView.editable.of(!readOnly),
         EditorState.readOnly.of(readOnly),
+        ...(lineWrapping ? [EditorView.lineWrapping] : []),
         ...langExt,
         ...(darkMode ? [oneDark] : []),
         EditorView.theme({
@@ -123,7 +125,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       view.destroy();
       viewRef.current = null;
     };
-  }, [language, readOnly, darkMode]);
+  }, [language, readOnly, darkMode, lineWrapping]);
 
   useEffect(() => {
     const view = viewRef.current;

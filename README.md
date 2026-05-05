@@ -4,7 +4,7 @@
 
 # 🌸 Saki Panel
 
-**首个深度融合 AI Agent 的服务器运维面板 · 用自然语言管服务器**
+**The First AI-Powered Server Management Panel · Manage Servers with Natural Language**
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6.svg)](https://www.typescriptlang.org/)
@@ -12,62 +12,63 @@
 [![Fastify](https://img.shields.io/badge/Fastify-5-000000.svg)](https://fastify.dev/)
 [![Node](https://img.shields.io/badge/Node-%3E%3D18-339933.svg)](https://nodejs.org/)
 
-> “帮我重启一下那个 Node 服务”  
-> “磁盘又他妈快满了，帮我看看哪些日志能删”  
-> “MC 服务器升个最新版，别给爷整崩了”
+> "Hey, restart that Node service for me."<br>
+> "The disk is almost full again, check which logs can be deleted."<br>
+> "Update the MC server to the latest version, and don't you dare break it."
 
-**—— 说人话，Saki 帮你干。**
+**—— Just tell it what you want, Saki gets it done.**
 
-[🤖 Saki Agent](#-saki-agent--不是聊天机器人是真干活的) · [🚀 快速开始](#-快速开始3-分钟上手) · [🏗️ 架构](#️-架构) · [✨ 功能](#-功能一览硬核到飞起) · [🐳 部署](#-部署) · [⚖️ 许可](#️-许可)
+[🤖 Saki Agent](#-saki-agent--not-a-chatbot-real-automation) · [🚀 Quick Start](#-quick-start-up-and-running-in-3-minutes) · [🏗️ Architecture](#️-architecture) · [✨ Features](#-features-ridiculously-powerful) · [🐳 Deploy](#-deployment) · [⚖️ License](#️-license)
 
 </div>
 
 ---
 
-## 为什么又要造一个运维面板？
+## Yet Another Ops Panel? Why?
 
-市面上面板不要太多：**宝塔**、**1Panel**、**Pterodactyl**、**MCSManager**……都挺好用。
+Look, there are plenty of panels out there: **BaoTa**, **1Panel**, **Pterodactyl**, **MCSManager**. Sure, they work. They do the job. They're solid.
 
-但它们有一个致命共同点：
+But here's the problem:
 
-> **你让它干啥，它才干啥。点按钮、敲命令、你当工具人，它当执行机。真的是唐完了，兄弟。**
+> **You tell it what to do → it does it → you babysit the whole thing → boom, done. You're basically the operator and it's just a glorified button-pusher. That's the game. That's always been the game. Cringe, bro.**
 
-Saki Panel 不一样。
+Saki Panel? Completely different beast.
 
-Bro 不是"传统面板 + 一个聊天框"的低能缝合怪，而是**从架构底层就把 AI Agent 深度融合**进整个运维工作流：
+This isn't just another "bolt a chatbox onto a traditional panel and call it AI" (gross). Instead, **AI is woven into the actual DNA of the architecture**—it's not an afterthought, it's the foundation:
 
-- **真·上下文感知**：自动读取实例状态、实时日志、文件列表、系统指标，不用你再复制粘贴一堆屎山
-- **真·会动手**：能直接启停服务、读写文件、执行命令，不是只会嘴炮的 AI 嘴替
-- **审批机制护体**：高危操作（比如 `rm -rf` 级别的）必须你点头，否则直接拦截，永别了手滑删库跑路
-- **技能系统**：把常用运维套路封装成 Skill，一键套娃，团队共享
-- **MCP 协议支持**：想接外部工具就接，理论上能力能膨胀到无上限
+- **True Context Awareness**: It automatically grabs instance state, real-time logs, file trees, CPU/memory/disk metrics. You don't have to manually copy-paste walls of text anymore—Saki sees it all.
+- **Real Execution**: Actually starts/stops/restarts services, reads/writes files, runs commands. It's not just chatting at you—it *does the work*.
+- **Approval Safeguards**: When it comes to dangerous stuff (think `rm -rf` territory), it asks for your sign-off before proceeding. High-risk ops get human approval, critical stuff is straight-up blocked. No surprise data loss.
+- **Skill System**: Bundle your common ops workflows into reusable Skills, share them with your team, deploy with one click. Collective ops knowledge, packaged and shared.
+- **MCP Protocol Support**: Hook up external tools whenever you need them. Theoretically unlimited capability expansion—the door's wide open.
 
-**别的面板是工具，Saki Panel 是你 24 小时在线的运维同事。**
+**This isn't just software. This is your ops teammate working 24/7.**
 
-终于不用再半夜三点被"服务器又挂了"微信轰炸了，兄弟们，赛博 AI 牛马时代来了！
-
-What can I say, man, it's Saki Panel. 🗿
+No more waking up to "server is down" alerts at 3 AM. The era of intelligent automation is already here. 🗿
 
 ---
 
-## 🤖 Saki Agent — 不是聊天机器人，是真·干活的
+## 🤖 Saki Agent — Not a Chatbot. Real Automation.
+
+Here's the difference:
 
 ```text
-普通面板的 AI： 你问 → 它答 → 你去手动操作 → 它在旁边优雅看戏 → 🤡
-Saki Agent：    你说 → 它思考 → 它直接干 → 高危操作找你确认 → 完事收工 → 😎
+Traditional Panel AI:  You ask → it talks at you → you manually execute → it watches → ???  → 🤡
+Saki Agent:           You speak → it thinks → it executes → asks for sign-off on risky stuff → done → 😎
 ```
 
-| 核心能力 | 说明 |
+| Core Capability | Description |
 |:---------|:-----|
-| 🧠 **上下文感知** | 自动拉取实例状态、实时日志、文件结构、CPU/内存/磁盘数据，不用你当复读机 |
-| 🎬 **操作执行** | 直接启停重启实例、读写文件、跑终端命令——是真的会动手，不是 PPT 级 Agent |
-| 🛡️ **风险审批** | 4 级风险分级（low / medium / high / critical），high 以上必须人工 approve，critical 直接干掉 |
-| 🎯 **技能系统** | 常用运维骚操作封装成 Skill（prompt 模板），一键复用，团队共享 |
-| 📎 **多模态输入** | 甩张报错截图、丢个日志文件，Saki 都能看懂 |
-| 🔌 **MCP 支持** | Model Context Protocol，接外部工具，能力直接起飞 |
-| 🎭 **Live2D 交互** | 调酒、跳舞、戳一戳、打招呼，打工之余还能调戏一下（bushi） |
+| 🧠 **Context Awareness** | Sees the full picture: instance state, real-time logs, file structure, CPU/memory/disk metrics. No manual data gathering. It just *knows*. |
+| 🎬 **Real Execution** | Starts/stops/restarts instances, reads/writes files, runs terminal commands. It doesn't just talk—it actually *does*. |
+| 🛡️ **Risk Approval** | 4-tier risk levels (low / medium / high / critical). High-risk ops need your thumbs-up. Critical stuff? Auto-blocked. You're protected. |
+| 🎯 **Skill System** | Bundle your ops patterns into reusable Skills, share across teams, deploy instantly. Collective knowledge, distributed. |
+| 📎 **Multimodal Input** | Paste error screenshots, dump log files, ramble about what's wrong. Saki parses it all. |
+| 🔌 **MCP Support** | Model Context Protocol = plug in external tools as needed. Limitless expansion, your rules. |
+| 🎭 **Live2D Interaction** | Mix drinks, dance, greet—productivity meets personality. Ops work doesn't have to be boring. |
 
-### 配置超级简单（本地零成本）
+
+### Ultra-Simple Configuration (Totally Free Locally)
 
 ```env
 SAKI_PROVIDER=ollama
@@ -75,66 +76,66 @@ SAKI_MODEL=llama3.2
 SAKI_OLLAMA_URL=http://localhost:11434
 ```
 
-本地 [Ollama](https://ollama.com/) 一键跑，**完全免费**。也支持 OpenAI、DeepSeek、通义千问、Gemini 等所有兼容接口，**不锁模**，想用啥模型用啥模型。本地跑不动了？直接接个 API Key 就行，灵活到飞起。
+That's literally it. Spin up [Ollama](https://ollama.com/) on your machine—**completely free**. Also works with OpenAI, DeepSeek, Alibaba Qwen, Gemini, or any compatible LLM interface. **Zero lock-in**, pick whatever model you want. Weak hardware? No sweat, just throw an API key at it.
 
 ---
 
-## ✨ 功能一览（硬核到飞起）
+## ✨ Features (Ridiculously Powerful)
 
 <table>
 <tr>
 <td width="50%">
 
 ### 🤖 Saki Agent
-上下文感知 · 真实操作执行 · 风险审批 · 技能系统 · MCP 扩展 · 多模态 · Live2D
+Context-aware · Real execution · Approval gates · Skills · MCP extensions · Multimodal · Live2D
 
 </td>
 <td width="50%">
 
-### 📊 仪表盘
-节点在线状态 · 实时 CPU/内存/磁盘曲线 · 最近操作 & 登录记录
-
-</td>
-</tr>
-<tr>
-<td width="50%">
-
-### ⚙️ 实例管理
-9 种实例类型 · 启停重启强杀 · 实时日志 · 崩溃自动重启 · **Agent 可直接操控**
-
-</td>
-<td width="50%">
-
-### 💻 网页终端
-xterm.js + WebSocket · 断线重连 · **Agent 能帮你敲命令**
+### 📊 Dashboard
+Node status · Real-time CPU/memory/disk graphs · Recent actions & logins
 
 </td>
 </tr>
 <tr>
 <td width="50%">
 
-### 📁 文件管理
-目录浏览 · CodeMirror 在线编辑 · 上传下载 · 智能解压（zip/rar/7z）· **Agent 可读写文件**
+### ⚙️ Instance Management
+9 instance types · Start/stop/restart/kill · Real-time logs · Auto-restart on crash · **Agent-controlled**
 
 </td>
 <td width="50%">
 
-### ⏰ 计划任务
-Cron 定时 · 手动触发 · 运行历史 · 实例自启动 + 崩溃重启策略
+### 💻 Web Terminal
+xterm.js + WebSocket · Auto-reconnect · **Agent can execute commands**
 
 </td>
 </tr>
 <tr>
 <td width="50%">
 
-### 🖥️ 节点管理
-Daemon 自动注册 · 心跳保活 · 连通性测试 · 系统指标采集
+### 📁 File Manager
+Browse directories · CodeMirror editor · Upload/download · Smart decompression (zip/rar/7z) · **Agent can read/write**
 
 </td>
 <td width="50%">
 
-### 🔒 安全与权限
-RBAC（41 个权限码）· 审计日志 · 登录限流 · 危险命令拦截
+### ⏰ Scheduled Tasks
+Cron scheduling · Manual triggers · Run history · Auto-start + crash recovery policies
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+### 🖥️ Node Management
+Auto daemon registration · Heartbeat keep-alive · Connectivity testing · System metrics collection
+
+</td>
+<td width="50%">
+
+### 🔒 Security & Access Control
+RBAC (41 permission codes) · Audit logs · Login rate limits · Dangerous command blocks
 
 </td>
 </tr>
@@ -142,7 +143,7 @@ RBAC（41 个权限码）· 审计日志 · 登录限流 · 危险命令拦截
 
 ---
 
-## 🏗️ 架构
+## 🏗️ Architecture
 
 ```
 ┌──────────────┐       HTTP/WS        ┌──────────────┐       HTTP/WS        ┌──────────────┐
@@ -156,162 +157,164 @@ RBAC（41 个权限码）· 审计日志 · 登录限流 · 危险命令拦截
                                                                                    │ spawn
                                                                                    ▼
                                                                             ┌──────────────┐
-                                                                            │   📦 实例进程  │
+                                                                            │   📦 Instance Processes │
                                                                             └──────────────┘
 ```
 
-| 组件 | 职责 | 技术栈 |
+| Component | Responsibility | Tech Stack |
 |:-----|:-----|:-------|
-| **Web** | 前端管理界面 + Saki 交互 UI | React 19 · Vite 6 · CodeMirror 6 · xterm.js 6 · Recharts |
-| **Panel** | 中央控制 + Saki Agent 引擎 | Fastify 5 · Prisma 6 · SQLite · JWT · LLM API |
-| **Daemon** | 节点代理，执行实际操作 | Fastify 5 · systeminformation · 7zip-bin |
-| **Shared** | 前后端共享类型 | 纯 TypeScript，零依赖 |
+| **Web** | Frontend admin panel + Saki interaction UI | React 19 · Vite 6 · CodeMirror 6 · xterm.js 6 · Recharts |
+| **Panel** | Central control hub + Saki Agent engine | Fastify 5 · Prisma 6 · SQLite · JWT · LLM APIs |
+| **Daemon** | Node proxy, executes real operations | Fastify 5 · systeminformation · 7zip-bin |
+| **Shared** | Shared types for frontend and backend | Pure TypeScript, zero dependencies |
 
-> 💡 **一句话理解：** Panel 是大脑（Saki 住在这里），Daemon 是手脚，Web 是脸，Shared 是共同语言。
+> 💡 **In one sentence:** Panel is the brain (Saki lives here), Daemon is the hands, Web is the face, Shared is the common language.
 
 ---
 
-## 🗂️ 项目结构
+## 🗂️ Project Structure
+
+Clean monorepo setup. Everything you need, nothing you don't:
 
 ```
 Saki Panel/
 ├── apps/
-│   ├── web/                  # 前端 SPA（React 19 + Vite 6）
-│   ├── panel/                # 后端控制面板 + Saki Agent 引擎
-│   └── daemon/               # 节点守护进程
+│   ├── web/                  # Frontend SPA (React 19 + Vite 6)
+│   ├── panel/                # Backend control panel + Saki Agent engine
+│   └── daemon/               # Node daemon process
 ├── packages/
-│   └── shared/               # 前后端共享类型定义
+│   └── shared/               # Shared type definitions
 ├── prisma/
-│   └── schema.prisma         # 数据库模型（9 张表）
+│   └── schema.prisma         # Database models (9 tables)
 ├── scripts/
-│   ├── windows/              # Windows 一键启动（PowerShell）
-│   ├── linux/                # Linux 启动 + systemd 服务
-│   └── macos/                # macOS 一键启动（双击即跑）
+│   ├── windows/              # Windows one-click startup (PowerShell)
+│   ├── linux/                # Linux startup + systemd services
+│   └── macos/                # macOS one-click startup (double-click to run)
 ├── docker-compose.yml
 └── .env.example
 ```
 
 ---
 
-## 🚀 快速开始（3 分钟上手）
+## 🚀 Quick Start (3 Minutes)
 
-### 前置要求
+### Prerequisites
 
 - Node.js >= 18
 - npm >= 9
-- （强烈推荐）[Ollama](https://ollama.com/) 用于本地运行 Saki Agent
+- (Strongly Recommended) [Ollama](https://ollama.com/) for local Saki Agent execution
 
-### 本地开发
+### Local Development
 
 ```bash
-# 1. 克隆 + 安装依赖
+# 1. Clone repository + install dependencies
 git clone https://github.com/EthanChan050430/Saki-Panel.git && cd Saki-Panel
 npm install
 
-# 2. 初始化数据库
+# 2. Initialize database
 npx prisma db push --skip-generate
 
-# 3. 一键启动开发模式
+# 3. Start development mode (one command)
 npm run dev
 ```
 
-### 一键启动脚本（自动避让端口）
+### One-Click Startup Scripts (Auto Port Management)
 
-| 平台 | 命令 | 说明 |
+| Platform | Command | Details |
 |:-----|:-----|:-----|
-| 🪟 Windows | 双击 `scripts/windows/start-dev.ps1` | PowerShell 自动避让端口 |
-| 🐧 Linux | `bash scripts/linux/start-dev.sh` | 同样智能避让 |
-| 🍎 macOS | 双击 `scripts/macos/start-dev.command` | 双击即跑，爽 |
+| 🪟 Windows | Double-click `scripts/windows/start-dev.ps1` | PowerShell automatically manages port conflicts |
+| 🐧 Linux | `bash scripts/linux/start-dev.sh` | Same intelligent port management |
+| 🍎 macOS | Double-click `scripts/macos/start-dev.command` | Double-click to run |
 
-### 默认访问
+### Default Access
 
-| 服务 | 地址 |
+| Service | URL |
 |:-----|:-----|
-| Web 界面 | http://localhost:5478 |
+| Web Interface | http://localhost:5478 |
 | Panel API | http://localhost:5479 |
 | Daemon | http://localhost:24444 |
 
-### 默认管理员
+### Default Administrator
 
-| 字段 | 值 |
+| Field | Value |
 |:-----|:---|
-| 用户名 | `admin` |
-| 密码 | `admin123456` |
+| Username | `admin` |
+| Password | `admin123456` |
 
-> ⚠️ **生产环境务必修改** `JWT_SECRET`、`ADMIN_PASSWORD`、`DAEMON_REGISTRATION_TOKEN`。别问为什么，问就是安全。
+> ⚠️ **Production Requirements:** Always change `JWT_SECRET`, `ADMIN_PASSWORD`, and `DAEMON_REGISTRATION_TOKEN`. Security comes first.
 
 ---
 
-## 🎯 实例类型支持
+## 🎯 Supported Instance Types
 
-| 类型 | 说明 |
+| Type | Description |
 |:-----|:-----|
-| `generic_command` | 通用命令行 |
-| `nodejs` | Node.js 应用 |
-| `python` | Python 脚本 |
-| `java_jar` | Java JAR 包 |
-| `shell_script` | Shell 脚本 |
-| `docker_container` | Docker 容器 |
-| `docker_compose` | Docker Compose 编排 |
-| `minecraft` | Minecraft 服务器 |
-| `steam_game_server` | Steam 游戏服务器 |
+| `generic_command` | Generic command-line |
+| `nodejs` | Node.js applications |
+| `python` | Python scripts |
+| `java_jar` | Java JAR packages |
+| `shell_script` | Shell scripts |
+| `docker_container` | Docker containers |
+| `docker_compose` | Docker Compose orchestration |
+| `minecraft` | Minecraft servers |
+| `steam_game_server` | Steam game servers |
 
 ---
 
-## 🔐 安全
+## 🔐 Security
 
-| 机制 | 细节 |
+| Mechanism | Details |
 |:-----|:-----|
-| 鉴权 | JWT Token + bcrypt 密码哈希 |
-| 权限 | RBAC，41 个权限码，5 个内置角色 + 无角色权限目标 |
-| 限流 | 登录失败 5 次/10 分钟锁定 |
-| 命令拦截 | 4 级风险分级（low → critical），critical 直接拦截 |
-| Agent 审批 | high 风险操作需人工 approve，支持 reject 和 rollback |
-| 审计 | 全操作日志记录（用户/IP/动作/结果） |
-| 路径隔离 | 文件操作限制在 workspace 内，防路径逃逸 |
-| 解压防护 | 条目数 ≤ 5000，解压大小 ≤ 512MB |
+| Authentication | JWT Token + bcrypt password hashing |
+| Authorization | RBAC with 41 permission codes, 5 built-in roles + custom role targets |
+| Rate Limiting | Account lockout after 5 failed login attempts in 10 minutes |
+| Command Interception | 4-tier risk levels (low → critical), critical operations blocked automatically |
+| Agent Approval | High-risk operations require manual approval, with reject and rollback support |
+| Audit | Comprehensive operation logs (user/IP/action/result) |
+| Path Isolation | File operations restricted to workspace, preventing path traversal |
+| Extraction Protection | Max 5,000 items, max extraction size 512MB |
 
 ---
 
-## 🛠️ 技术栈
+## 🖥️ Tech Stack
 
-| 层 | 技术 |
+| Layer | Technology |
 |:---|:-----|
-| 语言 | TypeScript（全栈，没有 JS 的位置） |
+| Language | TypeScript (full-stack, no JavaScript anywhere) |
 | Monorepo | npm workspaces |
-| 前端 | React 19 · Vite 6 · CodeMirror 6 · xterm.js 6 · Recharts · Lucide |
-| 后端 | Fastify 5 · Prisma 6 · SQLite |
-| AI Agent | LLM API（Ollama / OpenAI 兼容）· MCP · Skill System · Approval Flow |
-| 终端 | xterm.js + WebSocket 代理 |
-| 部署 | Docker Compose · systemd |
+| Frontend | React 19 · Vite 6 · CodeMirror 6 · xterm.js 6 · Recharts · Lucide |
+| Backend | Fastify 5 · Prisma 6 · SQLite |
+| AI Agent | LLM APIs (Ollama / OpenAI-compatible) · MCP · Skill System · Approval Flow |
+| Terminal | xterm.js + WebSocket proxy |
+| Deployment | Docker Compose · systemd |
 
 ---
 
-## 📋 开发命令
+## 📋 Development Commands
 
 ```bash
-npm run dev          # 启动全部服务（panel + daemon + web）
-npm run dev:panel    # 仅启动 Panel
-npm run dev:daemon   # 仅启动 Daemon
-npm run dev:web      # 仅启动 Web
-npm run build        # 构建全部
-npm run check        # 类型检查全部
-npm run db:push      # 同步数据库 schema
+npm run dev          # Start all services (panel + daemon + web)
+npm run dev:panel    # Start Panel only
+npm run dev:daemon   # Start Daemon only
+npm run dev:web      # Start Web only
+npm run build        # Build all
+npm run check        # Type check all
+npm run db:push      # Sync database schema
 ```
 
 ---
 
-## 🐳 部署
+## 🐳 Deployment
 
-### Docker Compose（推荐生产环境）
+### Docker Compose (Recommended for Production)
 
 ```bash
-# 构建并启动
+# Build and start
 docker compose build
 docker compose up -d
 ```
 
-生产环境需要设置环境变量：
+For production, set environment variables:
 
 ```bash
 export JWT_SECRET="your-secret-here"
@@ -321,23 +324,27 @@ export DAEMON_REGISTRATION_TOKEN="your-token-here"
 docker compose up -d
 ```
 
-如果前端和 API 用公网 IP/域名的不同端口访问，需要同时设置浏览器看到的地址，并重新构建 Web 镜像：
+If frontend and API are accessed via different public IPs/ports/domains, configure the browser-visible addresses and rebuild the Web image:
 
 ```bash
-export PANEL_PUBLIC_URL="http://38.165.23.56:5479"
-export WEB_ORIGIN="http://38.165.23.56:5478"
+export PANEL_PUBLIC_URL="http://XX.XX.XX.XX:5479"
+export WEB_ORIGIN="http://XX.XX.XX.XX:5478"
 export PANEL_CORS_ORIGINS="*"
-export VITE_API_BASE_URL="http://38.165.23.56:5479"
+export VITE_API_BASE_URL="http://XX.XX.XX.XX:5479"
 
 docker compose build --no-cache panel web
 docker compose up -d
 ```
 
-如果浏览器控制台里仍然看到请求 `http://localhost:5479`，说明旧 Web 镜像或 `.env` 里还保留了本地 API 地址。把 `.env` 中的 `VITE_API_BASE_URL=http://localhost:5479` 删除、留空，或改成公网 API 地址后，重新执行上面的 `docker compose build --no-cache web && docker compose up -d`。
+If the browser console still shows requests to `http://localhost:5479`, remove or update `VITE_API_BASE_URL` in `.env` to your public API address, then rebuild:
 
-临时跑通时可以设置 `DISABLE_AUTH=1` 关闭面板鉴权。公网环境只建议短时间排障使用，确认链路正常后改回 `DISABLE_AUTH=0` 并重新启动。
+```bash
+docker compose build --no-cache web && docker compose up -d
+```
 
-### systemd（Linux）
+For temporary troubleshooting, set `DISABLE_AUTH=1` to disable panel authentication. This should only be used for short-term debugging on public networks; revert to `DISABLE_AUTH=0` when done.
+
+### systemd (Linux)
 
 ```bash
 sudo cp scripts/linux/saki-panel.service /etc/systemd/system/
@@ -348,21 +355,22 @@ sudo systemctl enable --now saki-panel-daemon
 
 ---
 
-## 🔍 为什么 Saki Panel 更香？
+## 🔍 Why Saki Panel is the Move?
 
-**AI 服务器运维面板** · **AI Agent 运维** · **智能运维平台** · **Ollama 运维面板** · **LLM 服务器管理**
-
-**MCP 运维工具** · **自然语言服务器管理** · **AI 自动化运维** · **服务器面板** · **运维自动化**
-
-告别传统面板手动运维，**智能运维** 时代来了！本地 Ollama 部署零 API 费用，高危命令拦截防删库跑路，技能系统 + MCP 能力无限扩展，多模态输入甩图问问题也能懂。
-
-不管你是搜 **宝塔替代**、**1Panel 替代**、**Pterodactyl 替代**、**MCSManager 替代**，还是搜 **AI 运维面板**、**AI Agent 服务器管理**、**Ollama 面板**，Saki Panel 都是你最好的选择。
-
-Bro 都是这么牛逼的字母哥了，你还奢求啥传统面板？赶紧上车 Saki Panel，和 AI Agent 一起开黑运维！🚀
+**AI Server Management Panel** · **AI Agent Operations** · **Intelligent DevOps** · **Ollama-Powered Ops** · **LLM Server Management**<br>
+**MCP for Automation** · **Natural Language DevOps** · **Smart Server Control** · **No More Manual Ops** · **Autonomous Workflows**
 
 ---
 
-## ⚖️ 许可
+Say goodbye to manual ops with traditional panels. The **Smart Ops**​ era is here! Zero API cost with local Ollama deployment. Dangerous command blocking prevents data disasters. Skill system + MCP for limitless expansion. Multimodal input understands your screenshots and files.
+
+Whether you're searching for a **BT Panel alternative, 1Panel alternative, Pterodactyl alternative, MCSManager alternative**, or searching for an **AI Ops Panel, AI Agent Server Management, Ollama Panel**, Saki Panel is your best choice.
+
+The thing is built different, bro. What more could you ask for from a traditional panel? Hop on the Saki Panel train and start ops-ing with your AI Agent! 🚀
+
+---
+
+## ⚖️ License
 
 ```
 Copyright 2024-2026 DreamStarryRobot Contributors
@@ -384,6 +392,6 @@ limitations under the License.
 
 <div align="center">
 
-卧槽这破玩意浪费了我整整12个小时高强度vibe coding，不点个Star良心不会痛的，兄弟们！🙏
+Damn, this thing cost me 12 straight hours of intense vibe coding. A star would heal my soul, bros! 🙏
 
 </div>

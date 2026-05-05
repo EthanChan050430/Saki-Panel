@@ -92,6 +92,7 @@ export interface ManagedUser {
   id: string;
   username: string;
   displayName: string;
+  avatarDataUrl?: string | null | undefined;
   status: UserStatus;
   roleIds: string[];
   roleNames: string[];
@@ -111,6 +112,7 @@ export interface CreateUserRequest {
 export interface UpdateUserRequest {
   username?: string;
   displayName?: string;
+  avatarDataUrl?: string | null;
   password?: string;
   status?: UserStatus;
   roleIds?: string[];
@@ -288,6 +290,13 @@ export interface InstanceAssignee {
   role: InstanceOwnerRole;
 }
 
+export interface InstanceAssignedUser {
+  userId: string;
+  username: string;
+  displayName: string;
+  role: InstanceOwnerRole;
+}
+
 export interface ManagedInstance {
   id: string;
   nodeId: string;
@@ -313,6 +322,7 @@ export interface ManagedInstance {
   assignedToUsername?: string | null | undefined;
   assignedToDisplayName?: string | null | undefined;
   assignedToRole?: InstanceOwnerRole | null | undefined;
+  assignees: InstanceAssignedUser[];
   lastStartedAt?: string | null | undefined;
   lastStoppedAt?: string | null | undefined;
   lastExitCode?: number | null | undefined;
@@ -332,6 +342,7 @@ export interface CreateInstanceRequest {
   restartPolicy?: RestartPolicy;
   restartMaxRetries?: number;
   assignedToUserId?: string | null;
+  assignedToUserIds?: string[] | null;
 }
 
 export interface InstanceTemplate {
@@ -363,6 +374,7 @@ export interface CreateInstanceFromTemplateRequest {
   restartPolicy?: RestartPolicy;
   restartMaxRetries?: number;
   assignedToUserId?: string | null;
+  assignedToUserIds?: string[] | null;
 }
 
 export interface UpdateInstanceRequest {
@@ -376,6 +388,7 @@ export interface UpdateInstanceRequest {
   restartPolicy?: RestartPolicy;
   restartMaxRetries?: number;
   assignedToUserId?: string | null;
+  assignedToUserIds?: string[] | null;
 }
 
 export interface InstanceLogLine {
@@ -428,6 +441,8 @@ export interface InstanceFileListResponse {
   instanceId: string;
   path: string;
   entries: InstanceFileEntry[];
+  totalEntries?: number;
+  truncated?: boolean;
 }
 
 export interface InstanceFileContentResponse {
@@ -659,6 +674,7 @@ export interface SakiChatMessage {
 }
 
 export type SakiChatMode = "chat" | "agent";
+export type SakiAgentPermissionMode = "ask" | "acceptEdits" | "plan" | "bypassPermissions";
 export type SakiInputAttachmentKind = "image" | "file" | "screenshot";
 
 export interface SakiInputAttachment {
@@ -701,6 +717,7 @@ export interface SakiAgentAction {
 export interface SakiActionDecisionResponse {
   action: SakiAgentAction;
   message: string;
+  response?: SakiChatResponse;
 }
 
 export interface SakiChatRequest {
@@ -712,6 +729,7 @@ export interface SakiChatRequest {
   contextText?: string | null;
   auditSearch?: string | null;
   mode?: SakiChatMode;
+  agentPermissionMode?: SakiAgentPermissionMode;
   selectedSkillIds?: string[];
   attachments?: SakiInputAttachment[];
 }
@@ -720,6 +738,7 @@ export interface SakiChatResponse {
   message: string;
   source: "direct-model" | "local-fallback";
   workspace?: SakiWorkspaceContext | null;
+  agentPermissionMode?: SakiAgentPermissionMode;
   skills?: SakiSkillSummary[];
   diagnostics?: string[];
   actions?: SakiAgentAction[];
@@ -787,4 +806,24 @@ export interface SakiModelListResponse {
     message: string;
   }>;
   message?: string;
+}
+
+export interface SakiCopilotAuthStatusResponse {
+  available: boolean;
+  authenticated: boolean;
+  authType?: string;
+  host?: string;
+  login?: string;
+  message?: string;
+}
+
+export interface SakiCopilotLoginResponse {
+  status: "idle" | "running" | "completed" | "failed";
+  command: string;
+  startedAt?: string;
+  finishedAt?: string;
+  verificationUri?: string;
+  userCode?: string;
+  message?: string;
+  output?: string;
 }

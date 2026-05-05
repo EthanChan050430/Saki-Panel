@@ -51,7 +51,9 @@ export const panelConfig = {
   sakiProvider: process.env.SAKI_PROVIDER,
   sakiModel: process.env.SAKI_MODEL,
   sakiOllamaUrl: process.env.SAKI_OLLAMA_URL,
-  sakiRequestTimeoutMs: numberFromEnv(process.env.SAKI_REQUEST_TIMEOUT_MS, 120000)
+  sakiRequestTimeoutMs: numberFromEnv(process.env.SAKI_REQUEST_TIMEOUT_MS, 180000),
+  githubOAuthClientId: process.env.GITHUB_OAUTH_CLIENT_ID,
+  githubOAuthScope: process.env.GITHUB_OAUTH_SCOPE ?? "read:user"
 };
 
 export const panelPaths = {

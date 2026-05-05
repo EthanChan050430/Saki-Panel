@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import type { InstanceAssignee, InstanceOwnerRole, PermissionCode } from "@webops/shared";
+import type { InstanceAssignedUser, InstanceAssignee, InstanceOwnerRole, PermissionCode } from "@webops/shared";
 import { noRolePermissionRoleName } from "@webops/shared";
 import { prisma } from "./db.js";
 
@@ -37,6 +37,16 @@ export const instanceAccessInclude = {
   },
   assignedTo: {
     include: instanceUserInclude
+  },
+  assignedUsers: {
+    orderBy: {
+      assignedAt: "asc"
+    },
+    include: {
+      user: {
+        include: instanceUserInclude
+      }
+    }
   }
 } as const;
 
@@ -78,14 +88,36 @@ export function classifyInstanceUser(user: {
   return "user";
 }
 
-function instanceAccessUserIds(instance: InstanceWithAccess): { createdById: string | null; assignedToId: string | null } {
+export function instanceAssignedUsers(instance: InstanceWithAccess): InstanceUserWithRoles[] {
+  const assigned = new Map<string, InstanceUserWithRoles>();
+  for (const assignment of instance.assignedUsers ?? []) {
+    assigned.set(assignment.user.id, assignment.user);
+  }
+  if (instance.assignedTo) {
+    assigned.set(instance.assignedTo.id, instance.assignedTo);
+  }
+  return [...assigned.values()];
+}
+
+export function instanceAssignedUserIds(instance: InstanceWithAccess): string[] {
+  return instanceAssignedUsers(instance).map((user) => user.id);
+}
+
+export function instanceAssignedUserSummaries(instance: InstanceWithAccess): InstanceAssignedUser[] {
+  return instanceAssignedUsers(instance).map((user) => ({
+    userId: user.id,
+    username: user.username,
+    displayName: user.displayName,
+    role: classifyInstanceUser(user)
+  }));
+}
+
+function instanceAccessUserIds(instance: InstanceWithAccess): { createdById: string | null } {
   const value = instance as InstanceWithAccess & {
     createdById?: string | null;
-    assignedToId?: string | null;
   };
   return {
-    createdById: value.createdById ?? null,
-    assignedToId: value.assignedToId ?? null
+    createdById: value.createdById ?? null
   };
 }
 
@@ -103,15 +135,16 @@ export async function loadInstanceAccessProfile(userId: string): Promise<Instanc
 }
 
 export function canAccessInstance(profile: InstanceAccessProfile, instance: InstanceWithAccess): boolean {
-  const { createdById, assignedToId } = instanceAccessUserIds(instance);
-  if (createdById === profile.userId || assignedToId === profile.userId) {
+  const { createdById } = instanceAccessUserIds(instance);
+  const assignees = instanceAssignedUsers(instance);
+  if (createdById === profile.userId || assignees.some((user) => user.id === profile.userId)) {
     return true;
   }
 
   if (profile.role === "super_admin") {
     const creatorRole = instance.createdBy ? classifyInstanceUser(instance.createdBy) : null;
-    const assigneeRole = instance.assignedTo ? classifyInstanceUser(instance.assignedTo) : null;
-    return creatorRole === "super_admin" || creatorRole === "admin" || assigneeRole === "admin";
+    const hasAdminAssignee = assignees.some((user) => classifyInstanceUser(user) === "admin");
+    return creatorRole === "super_admin" || creatorRole === "admin" || hasAdminAssignee;
   }
 
   if (profile.role === "admin") {
@@ -179,26 +212,86 @@ export async function resolveAssignableUserId(
   value: string | null | undefined
 ): Promise<string | null | undefined> {
   if (value === undefined) return undefined;
-  const userId = value?.trim() || null;
-  if (!userId) return null;
+  const userIds = await resolveAssignableUserIds(actorUserId, value ? [value] : []);
+  if (userIds === undefined) return undefined;
+  return userIds[0] ?? null;
+}
 
-  const [profile, target] = await Promise.all([
+export async function resolveAssignableUserIds(
+  actorUserId: string,
+  value: unknown
+): Promise<string[] | undefined> {
+  if (value === undefined) return undefined;
+  if (value !== null && !Array.isArray(value)) {
+    throw Object.assign(new Error("assignedToUserIds must be an array"), { statusCode: 400 });
+  }
+  const userIds = Array.isArray(value)
+    ? [...new Set(value.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean))]
+    : [];
+
+  const [profile, targets] = await Promise.all([
     loadInstanceAccessProfile(actorUserId),
-    prisma.user.findUnique({
-      where: { id: userId },
-      include: instanceUserInclude
-    })
+    userIds.length
+      ? prisma.user.findMany({
+          where: { id: { in: userIds } },
+          include: instanceUserInclude
+        })
+      : Promise.resolve([])
   ]);
 
   if (!profile || profile.role === "user") {
     throw Object.assign(new Error("Instance assignment requires administrator privileges"), { statusCode: 403 });
   }
-  if (!target || target.status !== "ACTIVE") {
+  if (targets.length !== userIds.length) {
     throw Object.assign(new Error("Assignee not found"), { statusCode: 404 });
   }
-  if (classifyInstanceUser(target) === "super_admin") {
-    throw Object.assign(new Error("Instances can only be assigned to administrators or users"), { statusCode: 400 });
+
+  const targetsById = new Map(
+    targets.map((target) => [
+      target.id,
+      target
+    ])
+  );
+  for (const userId of userIds) {
+    const target = targetsById.get(userId);
+    if (!target || target.status !== "ACTIVE") {
+      throw Object.assign(new Error("Assignee not found"), { statusCode: 404 });
+    }
+    if (classifyInstanceUser(target) === "super_admin") {
+      throw Object.assign(new Error("Instances can only be assigned to administrators or users"), { statusCode: 400 });
+    }
   }
 
-  return target.id;
+  return userIds;
+}
+
+export async function ensureLegacyInstanceAssignments(): Promise<void> {
+  const legacyAssignments = await prisma.instance.findMany({
+    where: {
+      assignedToId: {
+        not: null
+      }
+    },
+    select: {
+      id: true,
+      assignedToId: true
+    }
+  });
+
+  for (const assignment of legacyAssignments) {
+    if (!assignment.assignedToId) continue;
+    await prisma.instanceAssignment.upsert({
+      where: {
+        instanceId_userId: {
+          instanceId: assignment.id,
+          userId: assignment.assignedToId
+        }
+      },
+      update: {},
+      create: {
+        instanceId: assignment.id,
+        userId: assignment.assignedToId
+      }
+    });
+  }
 }

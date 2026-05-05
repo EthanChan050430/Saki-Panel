@@ -47,6 +47,7 @@ model User {
   logs          OperationLog[]
   createdInstances  Instance[] @relation("InstanceCreator")
   assignedInstances Instance[] @relation("InstanceAssignee")
+  instanceAssignments InstanceAssignment[]
 
   @@map("users")
 }
@@ -182,6 +183,7 @@ model Instance {
   node              Node            @relation(fields: [nodeId], references: [id], onDelete: Cascade)
   createdBy         User?           @relation("InstanceCreator", fields: [createdById], references: [id], onDelete: SetNull)
   assignedTo        User?           @relation("InstanceAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  assignedUsers     InstanceAssignment[]
   tasks             ScheduledTask[]
 
   @@index([nodeId])
@@ -189,6 +191,18 @@ model Instance {
   @@index([createdById])
   @@index([assignedToId])
   @@map("instances")
+}
+
+model InstanceAssignment {
+  instanceId String
+  userId     String
+  assignedAt DateTime @default(now())
+  instance   Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([instanceId, userId])
+  @@index([userId])
+  @@map("instance_assignments")
 }
 
 model ScheduledTask {

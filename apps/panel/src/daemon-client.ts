@@ -156,13 +156,15 @@ export function listDaemonInstanceFiles(
   node: DaemonNodeCredentials,
   instanceId: string,
   workingDirectory: string,
-  relativePath: string
+  relativePath: string,
+  options: { limit?: number } = {}
 ) {
   return requestDaemon<InstanceFileListResponse>(
     node,
     pathWithQuery(`/api/instances/${instanceId}/files`, {
       workingDirectory,
-      path: relativePath
+      path: relativePath,
+      limit: options.limit
     })
   );
 }

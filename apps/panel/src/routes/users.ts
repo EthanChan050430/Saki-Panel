@@ -12,6 +12,7 @@ import type {
 import { noRolePermissionRoleName, permissions } from "@webops/shared";
 import { prisma } from "../db.js";
 import { loadCurrentUser, requirePermission, requireSuperAdmin } from "../auth.js";
+import { normalizeAvatarDataUrl } from "../avatar.js";
 import { hashPassword } from "../security.js";
 import { writeAuditLog } from "../audit.js";
 import { classifyInstanceUser } from "../instance-access.js";
@@ -30,6 +31,7 @@ type UserWithRoles = {
   id: string;
   username: string;
   displayName: string;
+  avatarDataUrl: string | null;
   status: UserStatus;
   lastLoginAt: Date | null;
   createdAt: Date;
@@ -100,6 +102,7 @@ function toManagedUser(user: UserWithRoles): ManagedUser {
     id: user.id,
     username: user.username,
     displayName: user.displayName,
+    avatarDataUrl: user.avatarDataUrl ?? null,
     status: user.status,
     roleIds: roles.map((item) => item.role.id),
     roleNames: roles.map((item) => item.role.name),
@@ -405,12 +408,15 @@ export async function registerUserRoutes(app: FastifyInstance): Promise<void> {
     const data: {
       username?: string;
       displayName?: string;
+      avatarDataUrl?: string | null;
       status?: UserStatus;
       passwordHash?: string;
     } = {};
     try {
       if (body.username !== undefined) data.username = normalizeRequiredText(body.username, "Username");
       if (body.displayName !== undefined) data.displayName = normalizeRequiredText(body.displayName, "Display name");
+      const avatarDataUrl = normalizeAvatarDataUrl(body.avatarDataUrl);
+      if (avatarDataUrl !== undefined) data.avatarDataUrl = avatarDataUrl;
       if (body.status !== undefined) {
         const status = normalizeOptionalStatus(body.status);
         if (status !== undefined) data.status = status;
@@ -455,6 +461,7 @@ export async function registerUserRoutes(app: FastifyInstance): Promise<void> {
       payload: {
         username: data.username !== undefined,
         displayName: data.displayName !== undefined,
+        avatar: data.avatarDataUrl !== undefined,
         status: data.status,
         password: data.passwordHash !== undefined,
         roleIds

@@ -2,6 +2,7 @@ import { noRolePermissionRoleName, permissions } from "@webops/shared";
 import { panelConfig } from "./config.js";
 import { panelPaths } from "./config.js";
 import { prisma } from "./db.js";
+import { ensureLegacyInstanceAssignments } from "./instance-access.js";
 import { hashPassword } from "./security.js";
 import fs from "node:fs/promises";
 
@@ -209,4 +210,6 @@ export async function ensureBootstrapData(): Promise<void> {
       roleId: superAdminRole.id
     }
   });
+
+  await ensureLegacyInstanceAssignments();
 }

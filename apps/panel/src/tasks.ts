@@ -14,7 +14,7 @@ import { prisma } from "./db.js";
 import { writeAuditLog } from "./audit.js";
 import {
   restartDaemonInstance,
-  sendDaemonInstanceInput,
+  runDaemonInstanceCommand,
   startDaemonInstance,
   stopDaemonInstance,
   type DaemonInstanceSpec
@@ -431,9 +431,15 @@ async function executeTaskOperation(task: ManagedScheduledTask): Promise<string>
   if (!command) {
     throw new Error("Task command is empty");
   }
-  const state = await sendDaemonInstanceInput(instance.node, instance.id, `${command}\n`);
-  await updateInstanceStatus(instance.id, state.status, state.exitCode);
-  return `Sent command to ${instance.name}: ${command.slice(0, 200)}`;
+  const result = await runDaemonInstanceCommand(instance.node, instance.id, {
+    command,
+    workingDirectory: instance.workingDirectory
+  });
+  const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n").slice(0, 2000);
+  if (result.exitCode !== 0) {
+    throw new Error(`Command exited with ${result.exitCode ?? "null"}${result.signal ? ` (${result.signal})` : ""}${output ? `\n${output}` : ""}`);
+  }
+  return `Ran command in ${result.workingDirectory}: ${command.slice(0, 200)}${output ? `\n${output}` : ""}`;
 }
 
 async function createTaskRun(taskId: string): Promise<string> {

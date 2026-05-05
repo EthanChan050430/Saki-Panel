@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { CodeEditor, languageFromFileName } from "./CodeEditor.js";
 import {
   Activity,
@@ -106,9 +107,13 @@ import type {
   RegistrationIdentity,
   RestartPolicy,
   SakiChatMessage,
+  SakiChatResponse,
   SakiAgentAction,
+  SakiAgentPermissionMode,
   SakiChatMode,
   SakiInputAttachment,
+  SakiCopilotAuthStatusResponse,
+  SakiCopilotLoginResponse,
   SakiConfigResponse,
   SakiSkillDetail,
   SakiModelOption,
@@ -127,7 +132,1224 @@ import { ApiError, api, type SakiChatStreamEvent, type SakiChatWorkflowStatus, t
 
 const tokenKey = "webops.token";
 const rememberedLoginKey = "webops.rememberedLogin";
+const panelLanguageKey = "webops.panelLanguage";
 const defaultStartCommand = "node -e \"let i=0; setInterval(()=>console.log('tick '+(++i)),1000)\"";
+const sakiStreamIdleFallbackMs = 45000;
+const defaultSakiRequestTimeoutMs = 180000;
+type PanelLanguage = "zh-CN" | "en-US";
+
+const panelLanguageOptions: Array<{ value: PanelLanguage; label: string }> = [
+  { value: "zh-CN", label: "中文" },
+  { value: "en-US", label: "English" }
+];
+
+const panelText = {
+  "zh-CN": {
+    "common.loading": "载入中",
+    "common.refresh": "刷新",
+    "common.save": "保存",
+    "common.saving": "保存中",
+    "common.close": "关闭",
+    "common.cancel": "取消",
+    "common.remove": "移除",
+    "nav.dashboard": "概览",
+    "nav.instances": "实例",
+    "nav.nodes": "节点",
+    "nav.templates": "模板",
+    "nav.users": "用户",
+    "nav.audit": "审计",
+    "nav.settings": "设置",
+    "nav.about": "关于",
+    "sidebar.collapse": "折叠侧边栏",
+    "sidebar.expand": "展开侧边栏",
+    "sidebar.waitingPermissions": "等待分配权限",
+    "topbar.context": "控制台面板",
+    "topbar.noAccess": "权限待分配",
+    "view.instances": "实例管理",
+    "view.nodes": "节点管理",
+    "view.settings": "Saki 设置",
+    "view.users": "用户与权限",
+    "view.audit": "审计日志",
+    "context.audit.label": "审计日志",
+    "context.audit.detail": "可检索全部记录",
+    "context.instances.label": "实例管理",
+    "context.instances.detail": "选择实例后切换工作区",
+    "context.nodes.label": "节点管理",
+    "context.nodes.detail": "节点连接与状态",
+    "context.templates.label": "模板",
+    "context.templates.detail": "实例模板上下文",
+    "context.users.label": "用户权限",
+    "context.users.detail": "用户与角色上下文",
+    "context.settings.label": "Saki 设置",
+    "context.settings.detail": "运行时模型配置",
+    "context.dashboard.label": "控制台",
+    "context.dashboard.detail": "全局上下文",
+    "settings.title": "Saki 设置",
+    "settings.loading": "读取中",
+    "settings.runtime": "运行时配置",
+    "settings.toc": "设置目录",
+    "settings.toc.expand": "展开目录",
+    "settings.toc.collapse": "折叠目录",
+    "settings.system": "系统设置",
+    "settings.system.detail": "基础配置",
+    "settings.model": "AI 模型",
+    "settings.model.title": "AI 模型配置",
+    "settings.model.detail": "Provider & Model",
+    "settings.features": "功能开关",
+    "settings.features.detail": "扩展能力",
+    "settings.appearance": "外观自定义",
+    "settings.appearance.detail": "登录页与背景",
+    "settings.appearance.titleDetail": "登录页、图标与全站背景",
+    "settings.prompt": "系统提示词",
+    "settings.prompt.detail": "System Prompt",
+    "settings.skills.detail": "installed",
+    "settings.language": "面板语言",
+    "settings.sessionTimeout": "登录超时（分钟）",
+    "settings.sessionTimeout.placeholder": "0 表示永不超时",
+    "settings.registrationIdentity": "注册用户身份",
+    "settings.requestTimeout": "请求超时 ms",
+    "settings.saved": "设置已保存，登录与注册策略已应用。",
+    "settings.saveFailed": "设置保存失败",
+    "settings.readFailed": "Saki 设置读取失败",
+    "settings.save": "保存设置",
+    "settings.detectModels": "检测模型 API",
+    "settings.detecting": "检测中",
+    "registration.none": "无角色",
+    "registration.user": "用户",
+    "registration.admin": "管理员",
+    "registration.super_admin": "超级管理员",
+    "auth.mode": "认证方式",
+    "auth.login": "登录",
+    "auth.register": "注册",
+    "auth.createAccount": "创建新账户",
+    "auth.username": "用户名",
+    "auth.username.registerPlaceholder": "设置登录用户名",
+    "auth.username.loginPlaceholder": "Enter your username",
+    "auth.displayName": "昵称",
+    "auth.displayName.placeholder": "显示在面板里的名字",
+    "auth.password": "密码",
+    "auth.password.registerPlaceholder": "至少 8 位密码",
+    "auth.password.loginPlaceholder": "Enter your password",
+    "auth.confirmPassword": "确认密码",
+    "auth.confirmPassword.placeholder": "再次输入密码",
+    "auth.rememberLogin": "记住密码",
+    "auth.rememberRegister": "注册后记住密码",
+    "auth.loggingIn": "验证中...",
+    "auth.registering": "注册中...",
+    "auth.loginSubmit": "登录系统",
+    "auth.registerSubmit": "注册并进入",
+    "auth.errorRequired": "请填写用户名、昵称和密码",
+    "auth.errorPasswordLength": "密码至少 8 位",
+    "auth.errorPasswordMismatch": "两次密码不一致",
+    "auth.errorLoginFailed": "登录失败",
+    "auth.errorRegisterFailed": "注册失败",
+    "account.dialog": "账户",
+    "account.uploadAvatar": "上传头像",
+    "account.displayName": "显示名",
+    "account.currentPassword": "当前密码",
+    "account.newPassword": "新密码",
+    "account.confirmPassword": "确认密码",
+    "account.logout": "退出登录",
+    "account.errorAvatarRead": "头像读取失败",
+    "account.errorDisplayNameRequired": "显示名不能为空",
+    "account.errorNewPasswordLength": "新密码至少 8 位",
+    "account.errorPasswordMismatch": "两次密码不一致",
+    "account.errorCurrentPasswordRequired": "请输入当前密码",
+    "account.errorCurrentPasswordWrong": "当前密码不正确",
+    "account.errorSaveFailed": "保存失败",
+    "account.noticeSynced": "已同步",
+    "account.noticeSaved": "已保存",
+    "users.errorReadFailed": "用户读取失败",
+    "users.errorCreateFailed": "用户创建失败",
+    "users.errorSaveFailed": "用户保存失败",
+    "users.errorSwitchFailed": "账号切换失败",
+    "users.errorDeleteSelf": "不能删除当前登录账号",
+    "users.errorDeleteFailed": "用户删除失败",
+    "users.errorRoleSaveFailed": "角色权限保存失败",
+    "users.errorAssignFailed": "实例分配失败",
+    "users.assignment.title": "分配实例",
+    "users.assignment.copy": "选择要分配给该用户的实例，保存后立即生效。",
+    "users.assignment.selected": "个实例已选择",
+    "users.assignment.available": "个可管理实例",
+    "users.assignment.empty": "当前没有可分配的实例",
+    "users.assignment.save": "保存分配",
+    "users.assignment.button": "分配实例",
+    "users.assignment.emptyUsers": "暂无可分配的管理员或用户",
+    "users.edit.title": "编辑用户",
+    "users.edit.copySuffix": "的资料、角色和状态会在保存后立即生效。",
+    "users.create.title": "创建用户",
+    "users.create.submit": "创建用户",
+    "users.create.creating": "创建中",
+    "users.title": "用户",
+    "users.assignableCount": "个可分配对象",
+    "users.countUnit": "个",
+    "users.username": "用户名",
+    "users.displayName": "昵称",
+    "users.role": "角色",
+    "users.assignedInstances": "已分配实例",
+    "users.status": "状态",
+    "users.status.active": "启用",
+    "users.status.disabled": "禁用",
+    "users.lastLogin": "最近登录",
+    "users.newPassword": "新密码",
+    "users.newPassword.placeholder": "留空则不修改",
+    "users.roles": "用户角色",
+    "users.noRole": "无角色",
+    "users.saveUser": "保存用户",
+    "users.edit.button": "编辑",
+    "users.switch.button": "切换",
+    "users.switching": "切换中",
+    "users.delete.button": "删除",
+    "users.deleting": "删除中",
+    "roles.super_admin": "超级管理员",
+    "roles.admin": "管理员",
+    "roles.user": "用户",
+    "roles.operator": "运维管理员",
+    "roles.readonly": "只读用户",
+    "roles.owner.super_admin": "超管",
+    "roles.owner.admin": "管理员",
+    "roles.owner.user": "用户",
+    "roles.permissions.title": "角色与权限分配",
+    "roles.permissions.copy": "为角色以及未分配角色的用户配置操作权限。",
+    "roles.permissions.save": "保存权限",
+    "permissions.group.dashboard": "仪表板与系统",
+    "permissions.group.nodes": "节点管理",
+    "permissions.group.instances": "实例与容器",
+    "permissions.group.terminal": "远程终端",
+    "permissions.group.files": "文件管理",
+    "permissions.group.tasks": "计划任务",
+    "permissions.group.templates": "模板管理",
+    "permissions.group.users": "用户与角色",
+    "permissions.group.saki": "Saki 助手",
+    "permissions.dashboard.view": "查看仪表板",
+    "permissions.system.view": "查看系统信息",
+    "permissions.audit.view": "查看审计日志",
+    "permissions.node.view": "查看节点",
+    "permissions.node.create": "创建节点",
+    "permissions.node.update": "编辑节点",
+    "permissions.node.delete": "删除节点",
+    "permissions.node.test": "测试节点",
+    "permissions.instance.view": "查看实例",
+    "permissions.instance.create": "创建实例",
+    "permissions.instance.update": "编辑实例",
+    "permissions.instance.delete": "删除实例",
+    "permissions.instance.start": "启动实例",
+    "permissions.instance.stop": "停止实例",
+    "permissions.instance.restart": "重启实例",
+    "permissions.instance.kill": "终止实例",
+    "permissions.instance.logs": "查看运行日志",
+    "permissions.terminal.view": "打开终端",
+    "permissions.terminal.input": "终端输入与交互",
+    "permissions.file.view": "查看文件列表",
+    "permissions.file.read": "读取文件内容",
+    "permissions.file.write": "修改 / 上传文件",
+    "permissions.file.delete": "删除文件",
+    "permissions.task.view": "查看任务",
+    "permissions.task.create": "创建任务",
+    "permissions.task.update": "编辑任务",
+    "permissions.task.delete": "删除任务",
+    "permissions.task.run": "手动执行任务",
+    "permissions.template.view": "查看模板",
+    "permissions.template.create": "创建模板",
+    "permissions.user.view": "查看用户",
+    "permissions.user.create": "创建用户",
+    "permissions.user.update": "编辑用户",
+    "permissions.user.delete": "删除用户",
+    "permissions.role.view": "查看角色",
+    "permissions.role.update": "编辑角色权限",
+    "permissions.saki.chat": "使用对话",
+    "permissions.saki.agent": "使用智能体",
+    "permissions.saki.skills": "管理 Saki 技能",
+    "permissions.saki.configure": "配置 Saki 助手",
+    "tasks.title": "计划任务",
+    "tasks.countUnit": "个",
+    "tasks.name": "名称",
+    "tasks.type": "类型",
+    "tasks.schedule": "计划",
+    "tasks.nextRun": "下次运行",
+    "tasks.status": "状态",
+    "tasks.command": "命令",
+    "tasks.enabled": "启用任务",
+    "tasks.create": "添加任务",
+    "tasks.creating": "创建中",
+    "tasks.run": "运行",
+    "tasks.enable": "启用",
+    "tasks.disable": "停用",
+    "tasks.empty": "暂无计划任务",
+    "tasks.runRecords": "运行记录",
+    "tasks.startTime": "开始时间",
+    "tasks.endTime": "结束时间",
+    "tasks.output": "输出",
+    "tasks.error": "错误",
+    "tasks.type.restart": "重启实例",
+    "tasks.type.start": "启动实例",
+    "tasks.type.stop": "停止实例",
+    "tasks.type.command": "执行命令",
+    "tasks.errorRefresh": "任务刷新失败",
+    "tasks.errorRuns": "任务记录读取失败",
+    "tasks.errorCreate": "任务创建失败",
+    "tasks.errorRun": "任务执行失败",
+    "tasks.errorUpdate": "任务状态更新失败",
+    "tasks.errorDelete": "任务删除失败",
+    "about.kicker": "项目百科",
+    "about.summary": "Saki Panel 是一套面向服务器实例、节点、模板、用户权限与审计日志的 Web 管理面板。它把日常运维中分散的启动、文件、终端、监控和权限动作收拢到一个清晰的工作台里。",
+    "about.meta.version": "版本",
+    "about.meta.architecture": "Panel / Daemon 架构",
+    "about.overview": "概览",
+    "about.overview.copy": "面板围绕“实例”组织工作：你可以创建服务实例、分配节点、查看运行状态、打开终端、管理文件并追踪操作记录。界面侧重长期使用的可读性，信息密度适中，适合在桌面端持续管理，也兼顾移动端临时查看与处理。",
+    "about.position": "定位",
+    "about.position.value": "轻量级实例与节点运维面板",
+    "about.scenario": "适用场景",
+    "about.scenario.value": "个人服务器、小团队服务托管、模板化部署、远程文件管理",
+    "about.design": "设计重点",
+    "about.design.value": "清晰导航、权限隔离、可审计操作、低学习成本",
+    "about.architecture": "系统组成",
+    "about.architecture.copy": "项目由前端控制台、Panel 服务端、Daemon 节点代理与共享类型包组成。前端负责交互，Panel 负责认证、权限、审计和 API 聚合，Daemon 则在目标节点上执行实例、文件与终端相关操作。",
+    "about.panel.copy": "统一 API、用户会话、权限策略与审计入口。",
+    "about.daemon.copy": "连接实际节点，执行实例生命周期、文件和终端任务。",
+    "about.web.copy": "提供仪表盘、实例、模板、用户、设置与关于文档界面。",
+    "about.features": "核心能力",
+    "about.features.module": "模块",
+    "about.features.purpose": "用途",
+    "about.features.value": "价值",
+    "about.feature.instances": "实例管理",
+    "about.feature.instances.purpose": "创建、启动、停止、重启与查看运行日志。",
+    "about.feature.instances.value": "把服务生命周期集中在一个入口。",
+    "about.feature.files": "文件管理",
+    "about.feature.files.purpose": "浏览目录、上传下载、编辑文本文件与解压归档。",
+    "about.feature.files.value": "减少反复切换 SSH 与本地工具的成本。",
+    "about.feature.nodes": "节点监控",
+    "about.feature.nodes.purpose": "查看节点连接状态、资源指标与连通性。",
+    "about.feature.nodes.value": "快速判断实例异常是否来自节点侧。",
+    "about.feature.templates": "模板系统",
+    "about.feature.templates.purpose": "沉淀常用启动命令、环境变量与部署参数。",
+    "about.feature.templates.value": "让重复部署更稳定，也便于团队复用。",
+    "about.feature.saki": "Saki 助手",
+    "about.feature.saki.purpose": "基于当前页面上下文进行问答、排查与辅助操作。",
+    "about.feature.saki.value": "把解释、诊断和执行连接到同一工作流。",
+    "about.workflow": "典型流程",
+    "about.workflow.node": "接入节点",
+    "about.workflow.node.copy": "在节点侧运行 Daemon，并在面板中确认连接状态。",
+    "about.workflow.template": "创建模板",
+    "about.workflow.template.copy": "整理启动命令、工作目录和常用环境变量。",
+    "about.workflow.deploy": "部署实例",
+    "about.workflow.deploy.copy": "基于模板创建实例，按角色分配可见范围与操作权限。",
+    "about.workflow.maintain": "观察与维护",
+    "about.workflow.maintain.copy": "通过日志、终端、文件管理和审计记录完成日常维护。",
+    "about.security": "安全与审计",
+    "about.security.copy": "Saki Panel 使用基于角色的权限模型控制不同用户能看到和操作的资源。关键操作会记录到审计日志中，便于回溯“谁在什么时间对什么资源做了什么事”。",
+    "about.security.userRoles": "支持用户、角色与权限组合管理。",
+    "about.security.assignment": "支持实例分配，降低无关资源暴露。",
+    "about.security.audit": "保留登录、文件、实例、模板、节点、任务等操作记录。",
+    "about.security.runtime": "支持会话超时与面板外观等运行时配置。",
+    "about.stack": "技术栈",
+    "about.maintenance": "维护与更新",
+    "about.maintenance.copy": "发布版本以 GitHub Releases 为准。建议在更新前阅读发布说明，并备份数据库、环境变量和自定义配置，尤其是涉及权限、会话或节点通信的版本。",
+    "about.sidebar": "关于页面侧栏",
+    "about.projectInfo": "项目资料",
+    "about.subtitle": "系统管理面板",
+    "about.currentVersion": "当前版本",
+    "about.author": "作者",
+    "about.contact": "联系方式",
+    "about.license": "许可证",
+    "about.repository": "仓库",
+    "about.updateCheck": "更新检查",
+    "about.update.idle": "尚未检测更新",
+    "about.update.checking": "检测中...",
+    "about.update.check": "检查更新",
+    "about.update.release": "查看发布页",
+    "about.update.latest": "最新版本",
+    "about.toc": "目录",
+    "about.update.messageChecking": "正在检测更新...",
+    "about.update.messageAvailable": "发现新版本",
+    "about.update.messageCurrent": "当前已是最新版本",
+    "about.update.errorVersion": "无法获取版本信息",
+    "about.update.errorFailed": "检测更新失败"
+  },
+  "en-US": {
+    "common.loading": "Loading",
+    "common.refresh": "Refresh",
+    "common.save": "Save",
+    "common.saving": "Saving",
+    "common.close": "Close",
+    "common.cancel": "Cancel",
+    "common.remove": "Remove",
+    "nav.dashboard": "Overview",
+    "nav.instances": "Instances",
+    "nav.nodes": "Nodes",
+    "nav.templates": "Templates",
+    "nav.users": "Users",
+    "nav.audit": "Audit",
+    "nav.settings": "Settings",
+    "nav.about": "About",
+    "sidebar.collapse": "Collapse sidebar",
+    "sidebar.expand": "Expand sidebar",
+    "sidebar.waitingPermissions": "Waiting for permissions",
+    "topbar.context": "Console Panel",
+    "topbar.noAccess": "Permissions pending",
+    "view.instances": "Instance Management",
+    "view.nodes": "Node Management",
+    "view.settings": "Saki Settings",
+    "view.users": "Users & Permissions",
+    "view.audit": "Audit Logs",
+    "context.audit.label": "Audit Logs",
+    "context.audit.detail": "Search all records",
+    "context.instances.label": "Instance Management",
+    "context.instances.detail": "Select an instance to switch workspace",
+    "context.nodes.label": "Node Management",
+    "context.nodes.detail": "Node connectivity and status",
+    "context.templates.label": "Templates",
+    "context.templates.detail": "Instance template context",
+    "context.users.label": "User Permissions",
+    "context.users.detail": "Users and roles context",
+    "context.settings.label": "Saki Settings",
+    "context.settings.detail": "Runtime model configuration",
+    "context.dashboard.label": "Console",
+    "context.dashboard.detail": "Global context",
+    "settings.title": "Saki Settings",
+    "settings.loading": "Loading",
+    "settings.runtime": "Runtime configuration",
+    "settings.toc": "Settings Menu",
+    "settings.toc.expand": "Expand menu",
+    "settings.toc.collapse": "Collapse menu",
+    "settings.system": "System Settings",
+    "settings.system.detail": "Basic configuration",
+    "settings.model": "AI Model",
+    "settings.model.title": "AI Model Configuration",
+    "settings.model.detail": "Provider & Model",
+    "settings.features": "Feature Toggles",
+    "settings.features.detail": "Extended capabilities",
+    "settings.appearance": "Appearance",
+    "settings.appearance.detail": "Login page and background",
+    "settings.appearance.titleDetail": "Login page, icon, and site background",
+    "settings.prompt": "System Prompt",
+    "settings.prompt.detail": "System Prompt",
+    "settings.skills.detail": "installed",
+    "settings.language": "Panel language",
+    "settings.sessionTimeout": "Login timeout (minutes)",
+    "settings.sessionTimeout.placeholder": "0 means never expire",
+    "settings.registrationIdentity": "New user role",
+    "settings.requestTimeout": "Request timeout ms",
+    "settings.saved": "Settings saved. Login and registration policy applied.",
+    "settings.saveFailed": "Failed to save settings",
+    "settings.readFailed": "Failed to read Saki settings",
+    "settings.save": "Save Settings",
+    "settings.detectModels": "Detect Model API",
+    "settings.detecting": "Detecting",
+    "registration.none": "No role",
+    "registration.user": "User",
+    "registration.admin": "Admin",
+    "registration.super_admin": "Super Admin",
+    "auth.mode": "Authentication mode",
+    "auth.login": "Log in",
+    "auth.register": "Register",
+    "auth.createAccount": "Create a new account",
+    "auth.username": "Username",
+    "auth.username.registerPlaceholder": "Set a login username",
+    "auth.username.loginPlaceholder": "Enter your username",
+    "auth.displayName": "Display name",
+    "auth.displayName.placeholder": "Name shown in the panel",
+    "auth.password": "Password",
+    "auth.password.registerPlaceholder": "At least 8 characters",
+    "auth.password.loginPlaceholder": "Enter your password",
+    "auth.confirmPassword": "Confirm password",
+    "auth.confirmPassword.placeholder": "Enter the password again",
+    "auth.rememberLogin": "Remember password",
+    "auth.rememberRegister": "Remember password after registration",
+    "auth.loggingIn": "Verifying...",
+    "auth.registering": "Registering...",
+    "auth.loginSubmit": "Log in",
+    "auth.registerSubmit": "Register and enter",
+    "auth.errorRequired": "Please enter a username, display name, and password",
+    "auth.errorPasswordLength": "Password must be at least 8 characters",
+    "auth.errorPasswordMismatch": "Passwords do not match",
+    "auth.errorLoginFailed": "Login failed",
+    "auth.errorRegisterFailed": "Registration failed",
+    "account.dialog": "Account",
+    "account.uploadAvatar": "Upload avatar",
+    "account.displayName": "Display name",
+    "account.currentPassword": "Current password",
+    "account.newPassword": "New password",
+    "account.confirmPassword": "Confirm password",
+    "account.logout": "Log out",
+    "account.errorAvatarRead": "Failed to read avatar",
+    "account.errorDisplayNameRequired": "Display name is required",
+    "account.errorNewPasswordLength": "New password must be at least 8 characters",
+    "account.errorPasswordMismatch": "Passwords do not match",
+    "account.errorCurrentPasswordRequired": "Enter your current password",
+    "account.errorCurrentPasswordWrong": "Current password is incorrect",
+    "account.errorSaveFailed": "Save failed",
+    "account.noticeSynced": "Already synced",
+    "account.noticeSaved": "Saved",
+    "users.errorReadFailed": "Failed to read users",
+    "users.errorCreateFailed": "Failed to create user",
+    "users.errorSaveFailed": "Failed to save user",
+    "users.errorSwitchFailed": "Failed to switch account",
+    "users.errorDeleteSelf": "You cannot delete the current account",
+    "users.errorDeleteFailed": "Failed to delete user",
+    "users.errorRoleSaveFailed": "Failed to save role permissions",
+    "users.errorAssignFailed": "Failed to assign instances",
+    "users.assignment.title": "Assign Instances",
+    "users.assignment.copy": "Choose instances for this user. Changes take effect immediately after saving.",
+    "users.assignment.selected": "instances selected",
+    "users.assignment.available": "manageable instances",
+    "users.assignment.empty": "No assignable instances",
+    "users.assignment.save": "Save Assignment",
+    "users.assignment.button": "Assign Instances",
+    "users.assignment.emptyUsers": "No assignable admins or users",
+    "users.edit.title": "Edit User",
+    "users.edit.copySuffix": "'s profile, roles, and status will take effect immediately after saving.",
+    "users.create.title": "Create User",
+    "users.create.submit": "Create User",
+    "users.create.creating": "Creating",
+    "users.title": "Users",
+    "users.assignableCount": "assignable users",
+    "users.countUnit": "",
+    "users.username": "Username",
+    "users.displayName": "Display name",
+    "users.role": "Role",
+    "users.assignedInstances": "Assigned Instances",
+    "users.status": "Status",
+    "users.status.active": "Active",
+    "users.status.disabled": "Disabled",
+    "users.lastLogin": "Last Login",
+    "users.newPassword": "New password",
+    "users.newPassword.placeholder": "Leave blank to keep unchanged",
+    "users.roles": "User roles",
+    "users.noRole": "No role",
+    "users.saveUser": "Save User",
+    "users.edit.button": "Edit",
+    "users.switch.button": "Switch",
+    "users.switching": "Switching",
+    "users.delete.button": "Delete",
+    "users.deleting": "Deleting",
+    "roles.super_admin": "Super Admin",
+    "roles.admin": "Admin",
+    "roles.user": "User",
+    "roles.operator": "Operator",
+    "roles.readonly": "Read-only User",
+    "roles.owner.super_admin": "Super Admin",
+    "roles.owner.admin": "Admin",
+    "roles.owner.user": "User",
+    "roles.permissions.title": "Roles & Permissions",
+    "roles.permissions.copy": "Configure operation permissions for roles and users without assigned roles.",
+    "roles.permissions.save": "Save Permissions",
+    "permissions.group.dashboard": "Dashboard & System",
+    "permissions.group.nodes": "Node Management",
+    "permissions.group.instances": "Instances & Containers",
+    "permissions.group.terminal": "Remote Terminal",
+    "permissions.group.files": "File Management",
+    "permissions.group.tasks": "Scheduled Tasks",
+    "permissions.group.templates": "Template Management",
+    "permissions.group.users": "Users & Roles",
+    "permissions.group.saki": "Saki Assistant",
+    "permissions.dashboard.view": "View dashboard",
+    "permissions.system.view": "View system information",
+    "permissions.audit.view": "View audit logs",
+    "permissions.node.view": "View nodes",
+    "permissions.node.create": "Create nodes",
+    "permissions.node.update": "Edit nodes",
+    "permissions.node.delete": "Delete nodes",
+    "permissions.node.test": "Test nodes",
+    "permissions.instance.view": "View instances",
+    "permissions.instance.create": "Create instances",
+    "permissions.instance.update": "Edit instances",
+    "permissions.instance.delete": "Delete instances",
+    "permissions.instance.start": "Start instances",
+    "permissions.instance.stop": "Stop instances",
+    "permissions.instance.restart": "Restart instances",
+    "permissions.instance.kill": "Terminate instances",
+    "permissions.instance.logs": "View runtime logs",
+    "permissions.terminal.view": "Open terminal",
+    "permissions.terminal.input": "Terminal input and interaction",
+    "permissions.file.view": "View file list",
+    "permissions.file.read": "Read file content",
+    "permissions.file.write": "Modify / upload files",
+    "permissions.file.delete": "Delete files",
+    "permissions.task.view": "View tasks",
+    "permissions.task.create": "Create tasks",
+    "permissions.task.update": "Edit tasks",
+    "permissions.task.delete": "Delete tasks",
+    "permissions.task.run": "Run tasks manually",
+    "permissions.template.view": "View templates",
+    "permissions.template.create": "Create templates",
+    "permissions.user.view": "View users",
+    "permissions.user.create": "Create users",
+    "permissions.user.update": "Edit users",
+    "permissions.user.delete": "Delete users",
+    "permissions.role.view": "View roles",
+    "permissions.role.update": "Edit role permissions",
+    "permissions.saki.chat": "Use chat",
+    "permissions.saki.agent": "Use agent",
+    "permissions.saki.skills": "Manage Saki skills",
+    "permissions.saki.configure": "Configure Saki assistant",
+    "tasks.title": "Scheduled Tasks",
+    "tasks.countUnit": "",
+    "tasks.name": "Name",
+    "tasks.type": "Type",
+    "tasks.schedule": "Schedule",
+    "tasks.nextRun": "Next Run",
+    "tasks.status": "Status",
+    "tasks.command": "Command",
+    "tasks.enabled": "Enable task",
+    "tasks.create": "Add Task",
+    "tasks.creating": "Creating",
+    "tasks.run": "Run",
+    "tasks.enable": "Enable",
+    "tasks.disable": "Disable",
+    "tasks.empty": "No scheduled tasks",
+    "tasks.runRecords": "Run Records",
+    "tasks.startTime": "Start Time",
+    "tasks.endTime": "End Time",
+    "tasks.output": "Output",
+    "tasks.error": "Error",
+    "tasks.type.restart": "Restart instance",
+    "tasks.type.start": "Start instance",
+    "tasks.type.stop": "Stop instance",
+    "tasks.type.command": "Run command",
+    "tasks.errorRefresh": "Failed to refresh tasks",
+    "tasks.errorRuns": "Failed to read task runs",
+    "tasks.errorCreate": "Failed to create task",
+    "tasks.errorRun": "Failed to run task",
+    "tasks.errorUpdate": "Failed to update task status",
+    "tasks.errorDelete": "Failed to delete task",
+    "about.kicker": "Project Wiki",
+    "about.summary": "Saki Panel is a web administration panel for server instances, nodes, templates, user permissions, and audit logs. It gathers everyday operations such as startup, files, terminals, monitoring, and permissions into one clear workspace.",
+    "about.meta.version": "Version",
+    "about.meta.architecture": "Panel / Daemon architecture",
+    "about.overview": "Overview",
+    "about.overview.copy": "The panel is organized around instances: create services, assign nodes, check runtime status, open terminals, manage files, and trace operation records. The interface favors long-term readability with practical information density for desktop management while still supporting quick mobile checks.",
+    "about.position": "Positioning",
+    "about.position.value": "Lightweight instance and node operations panel",
+    "about.scenario": "Use cases",
+    "about.scenario.value": "Personal servers, small-team hosting, template deployments, and remote file management",
+    "about.design": "Design focus",
+    "about.design.value": "Clear navigation, permission isolation, auditable actions, and low learning cost",
+    "about.architecture": "System Components",
+    "about.architecture.copy": "The project consists of the Web console, Panel backend, Daemon node agent, and shared type package. The Web handles interaction, Panel handles auth, permissions, audit, and API aggregation, while Daemon performs instance, file, and terminal work on target nodes.",
+    "about.panel.copy": "Unified API, user sessions, permission policy, and audit entry point.",
+    "about.daemon.copy": "Connects real nodes and runs instance lifecycle, file, and terminal tasks.",
+    "about.web.copy": "Provides dashboard, instances, templates, users, settings, and documentation views.",
+    "about.features": "Core Capabilities",
+    "about.features.module": "Module",
+    "about.features.purpose": "Purpose",
+    "about.features.value": "Value",
+    "about.feature.instances": "Instance Management",
+    "about.feature.instances.purpose": "Create, start, stop, restart, and inspect runtime logs.",
+    "about.feature.instances.value": "Keeps the service lifecycle in one place.",
+    "about.feature.files": "File Management",
+    "about.feature.files.purpose": "Browse directories, upload and download files, edit text files, and extract archives.",
+    "about.feature.files.value": "Reduces switching between SSH and local tools.",
+    "about.feature.nodes": "Node Monitoring",
+    "about.feature.nodes.purpose": "Check node connectivity, resource metrics, and reachability.",
+    "about.feature.nodes.value": "Helps identify whether failures originate on the node side.",
+    "about.feature.templates": "Template System",
+    "about.feature.templates.purpose": "Capture common startup commands, environment variables, and deployment parameters.",
+    "about.feature.templates.value": "Makes repeated deployments steadier and easier to reuse.",
+    "about.feature.saki": "Saki Assistant",
+    "about.feature.saki.purpose": "Answer questions, diagnose issues, and assist actions from the current page context.",
+    "about.feature.saki.value": "Connects explanation, diagnosis, and execution in one workflow.",
+    "about.workflow": "Typical Workflow",
+    "about.workflow.node": "Connect a node",
+    "about.workflow.node.copy": "Run Daemon on the node and confirm its connection in the panel.",
+    "about.workflow.template": "Create a template",
+    "about.workflow.template.copy": "Organize startup commands, working directories, and common environment variables.",
+    "about.workflow.deploy": "Deploy an instance",
+    "about.workflow.deploy.copy": "Create an instance from a template and assign visibility and permissions by role.",
+    "about.workflow.maintain": "Observe and maintain",
+    "about.workflow.maintain.copy": "Use logs, terminals, file management, and audit records for daily maintenance.",
+    "about.security": "Security & Audit",
+    "about.security.copy": "Saki Panel uses a role-based permission model to control which resources each user can see and operate. Critical operations are written to audit logs so you can trace who did what, when, and to which resource.",
+    "about.security.userRoles": "Supports users, roles, and permission combinations.",
+    "about.security.assignment": "Supports instance assignment to reduce unrelated resource exposure.",
+    "about.security.audit": "Keeps records for login, file, instance, template, node, and task actions.",
+    "about.security.runtime": "Supports runtime settings such as session timeout and panel appearance.",
+    "about.stack": "Tech Stack",
+    "about.maintenance": "Maintenance",
+    "about.maintenance.copy": "Production updates should follow GitHub Releases. Read release notes and back up the database, environment variables, and custom configuration before updating, especially for versions involving permissions, sessions, or node communication.",
+    "about.sidebar": "About page sidebar",
+    "about.projectInfo": "Project info",
+    "about.subtitle": "System administration panel",
+    "about.currentVersion": "Current version",
+    "about.author": "Author",
+    "about.contact": "Contact",
+    "about.license": "License",
+    "about.repository": "Repository",
+    "about.updateCheck": "Update Check",
+    "about.update.idle": "No update check yet",
+    "about.update.checking": "Checking...",
+    "about.update.check": "Check for Updates",
+    "about.update.release": "View Release",
+    "about.update.latest": "Latest version",
+    "about.toc": "Contents",
+    "about.update.messageChecking": "Checking for updates...",
+    "about.update.messageAvailable": "New version found",
+    "about.update.messageCurrent": "You are already on the latest version",
+    "about.update.errorVersion": "Unable to fetch version information",
+    "about.update.errorFailed": "Update check failed"
+  }
+} as const;
+
+type PanelTextKey = keyof typeof panelText["zh-CN"];
+
+function readPanelLanguage(): PanelLanguage {
+  try {
+    const saved = window.localStorage.getItem(panelLanguageKey);
+    return saved === "en-US" ? "en-US" : "zh-CN";
+  } catch {
+    return "zh-CN";
+  }
+}
+
+function panelT(language: PanelLanguage, key: PanelTextKey): string {
+  return panelText[language][key] ?? panelText["zh-CN"][key];
+}
+
+interface PanelLanguageContextValue {
+  language: PanelLanguage;
+  setLanguage: (language: PanelLanguage) => void;
+  t: (key: PanelTextKey) => string;
+}
+
+const PanelLanguageContext = createContext<PanelLanguageContextValue>({
+  language: "zh-CN",
+  setLanguage: () => undefined,
+  t: (key) => panelT("zh-CN", key)
+});
+
+function usePanelLanguage() {
+  return useContext(PanelLanguageContext);
+}
+
+function usePanelT() {
+  return usePanelLanguage().t;
+}
+
+const domTextOriginals = new WeakMap<Text, string>();
+
+const domExactTranslations: Record<string, string> = {
+  概览: "Overview",
+  实例: "Instances",
+  实例管理: "Instance Management",
+  节点: "Nodes",
+  节点管理: "Node Management",
+  模板: "Templates",
+  实例模板: "Instance Templates",
+  用户: "Users",
+  审计: "Audit",
+  审计日志: "Audit Logs",
+  设置: "Settings",
+  关于: "About",
+  刷新: "Refresh",
+  关闭: "Close",
+  取消: "Cancel",
+  保存: "Save",
+  保存中: "Saving",
+  删除: "Delete",
+  删除中: "Deleting",
+  编辑: "Edit",
+  切换: "Switch",
+  切换中: "Switching",
+  测试: "Test",
+  在线: "Online",
+  离线: "Offline",
+  启用: "Active",
+  禁用: "Disabled",
+  停用: "Disable",
+  名称: "Name",
+  地址: "Address",
+  端口: "Port",
+  协议: "Protocol",
+  分组: "Group",
+  标签: "Tags",
+  备注: "Notes",
+  状态: "Status",
+  系统: "System",
+  资源: "Resources",
+  心跳: "Heartbeat",
+  用户名: "Username",
+  昵称: "Display name",
+  密码: "Password",
+  角色: "Role",
+  最近登录: "Last Login",
+  已分配实例: "Assigned Instances",
+  无角色: "No role",
+  超级管理员: "Super Admin",
+  管理员: "Admin",
+  运维管理员: "Operator",
+  只读用户: "Read-only User",
+  创建用户: "Create User",
+  分配实例: "Assign Instances",
+  角色与权限分配: "Roles & Permissions",
+  为角色以及未分配角色的用户配置操作权限: "Configure operation permissions for roles and users without assigned roles.",
+  查看仪表板: "View dashboard",
+  查看系统信息: "View system information",
+  查看审计日志: "View audit logs",
+  查看节点: "View nodes",
+  创建节点: "Create node",
+  编辑节点: "Edit node",
+  删除节点: "Delete node",
+  测试节点: "Test node",
+  查看实例: "View instances",
+  创建实例: "Create instance",
+  编辑实例: "Edit instance",
+  删除实例: "Delete instance",
+  启动实例: "Start instance",
+  停止实例: "Stop instance",
+  重启实例: "Restart instance",
+  终止实例: "Terminate instance",
+  查看运行日志: "View runtime logs",
+  打开终端: "Open terminal",
+  终端输入与交互: "Terminal input and interaction",
+  查看文件列表: "View file list",
+  读取文件内容: "Read file content",
+  "修改 / 上传文件": "Modify / upload files",
+  删除文件: "Delete files",
+  查看任务: "View tasks",
+  创建任务: "Create task",
+  编辑任务: "Edit task",
+  删除任务: "Delete task",
+  手动执行任务: "Run tasks manually",
+  查看模板: "View templates",
+  创建模板: "Create template",
+  查看用户: "View users",
+  编辑用户: "Edit user",
+  删除用户: "Delete user",
+  查看角色: "View roles",
+  编辑角色权限: "Edit role permissions",
+  使用对话: "Use chat",
+  使用智能体: "Use agent",
+  管理Saki技能: "Manage Saki skills",
+  "管理 Saki 技能": "Manage Saki skills",
+  配置Saki助手: "Configure Saki assistant",
+  "配置 Saki 助手": "Configure Saki assistant",
+  仪表板与系统: "Dashboard & System",
+  实例与容器: "Instances & Containers",
+  远程终端: "Remote Terminal",
+  文件管理: "File Management",
+  计划任务: "Scheduled Tasks",
+  模板管理: "Template Management",
+  用户与角色: "Users & Roles",
+  "Saki 助手": "Saki Assistant",
+  通用命令实例: "Generic Command Instance",
+  "Node.js 项目": "Node.js Project",
+  "Python 项目": "Python Project",
+  "Java Jar 服务": "Java Jar Service",
+  "Docker 容器": "Docker Container",
+  运行任意长驻命令或脚本: "Run any long-running command or script",
+  "适合 npm run start 或 node server.js 的 Node 服务": "For Node services such as npm run start or node server.js",
+  适合Python脚本或轻量服务: "For Python scripts or lightweight services",
+  "适合 Python 脚本或轻量服务": "For Python scripts or lightweight services",
+  "运行 app.jar 一类的 Java 服务": "Run Java services such as app.jar",
+  通过dockerRun启动容器实例: "Start a container instance with docker run",
+  "通过 docker run 启动容器实例": "Start a container instance with docker run",
+  创建通用命令实例: "Create Generic Command Instance",
+  工作目录: "Working Directory",
+  启动命令: "Start Command",
+  自启动: "Auto start",
+  重启策略: "Restart Policy",
+  不自动重启: "Never restart",
+  异常退出重启: "Restart on failure",
+  总是重启: "Always restart",
+  固定间隔重启: "Fixed interval restart",
+  最大重试: "Max retries",
+  用模板创建: "Create from Template",
+  创建中: "Creating",
+  选择节点: "Select node",
+  留空按模板生成: "Leave blank to generate from template",
+  仪表盘: "Dashboard",
+  资源曲线: "Resource Trends",
+  最近操作: "Recent Operations",
+  在线节点: "Online Nodes",
+  内存: "Memory",
+  磁盘: "Disk",
+  成功: "Success",
+  失败: "Failed",
+  暂无操作记录: "No operation records",
+  暂无节点: "No nodes",
+  添加节点: "Add Node",
+  保存节点: "Save Node",
+  节点已保存: "Node saved",
+  节点已创建: "Node created",
+  节点已删除: "Node deleted",
+  节点连接正常: "Node connection is healthy",
+  暂无日志: "No logs",
+  计划: "Schedule",
+  下次运行: "Next Run",
+  运行: "Run",
+  运行记录: "Run Records",
+  开始时间: "Start Time",
+  结束时间: "End Time",
+  输出: "Output",
+  错误: "Error",
+  暂无计划任务: "No scheduled tasks",
+  暂无运行记录: "No run records",
+  文件: "Files",
+  上传: "Upload",
+  下载: "Download",
+  新建目录: "New Folder",
+  新建文件: "New File",
+  重命名: "Rename",
+  解压: "Extract",
+  保存文件: "Save File",
+  保存设置: "Save Settings",
+  检测模型API: "Detect Model API",
+  "检测模型 API": "Detect Model API",
+  功能开关: "Feature Toggles",
+  外观自定义: "Appearance",
+  系统提示词: "System Prompt",
+  系统设置: "System Settings",
+  基础配置: "Basic configuration",
+  面板语言: "Panel language",
+  登录超时: "Login timeout",
+  注册用户身份: "New user role",
+  登录标题: "Login title",
+  登录副标题: "Login subtitle",
+  登录封面: "Login cover",
+  应用图标: "App icon",
+  网页背景: "Page background",
+  移动端背景: "Mobile background",
+  选择图片: "Choose image",
+  选择: "Choose",
+  启用联网搜索与网页爬取: "Enable web search and crawling",
+  启用MCP: "Enable MCP",
+  "启用 MCP": "Enable MCP",
+  关于页面目录: "About page contents",
+  目录: "Contents",
+  项目百科: "Project Wiki",
+  系统组成: "System Components",
+  核心能力: "Core Capabilities",
+  典型流程: "Typical Workflow",
+  安全与审计: "Security & Audit",
+  技术栈: "Tech Stack",
+  维护与更新: "Maintenance",
+  更新检查: "Update Check",
+  检查更新: "Check for Updates",
+  查看发布页: "View Release",
+  尚未检测更新: "No update check yet",
+  创建: "Create",
+  配置新的服务实例运行参数: "Configure runtime parameters for a new service instance",
+  留空自动创建: "Leave blank to create automatically",
+  可选: "Optional",
+  描述: "Description",
+  卡片: "Cards",
+  列表: "List",
+  图谱: "Graph",
+  卡片视图: "Card view",
+  列表视图: "List view",
+  图谱视图: "Graph view",
+  停止: "Stop",
+  重启: "Restart",
+  强杀: "Kill",
+  中断: "Interrupt",
+  启动中: "Starting",
+  控制中枢: "Control Hub",
+  展开控制中枢: "Expand control hub",
+  折叠控制中枢: "Collapse control hub",
+  生命周期: "Lifecycle",
+  配置: "Configuration",
+  实例名称: "Instance Name",
+  运行策略: "Run Policy",
+  运行节点: "Runtime Node",
+  创建者: "Creator",
+  负责人: "Owner",
+  更新: "Updated",
+  退出码: "Exit Code",
+  实例状态: "Instance Status",
+  实例视图: "Instance View",
+  实例列表: "Instance List",
+  图谱概览: "Graph Overview",
+  仿真终端: "Terminal",
+  沉浸终端: "Immersive Terminal",
+  退出沉浸终端: "Exit Immersive Terminal",
+  实例未运行: "Instance is not running",
+  移动端终端快捷键: "Mobile terminal shortcuts",
+  问Saki: "Ask Saki",
+  "问 Saki": "Ask Saki",
+  暂无实例: "No instances",
+  未设置工作目录: "Working directory not set",
+  请选择实例: "Select an instance",
+  打开文件管理: "Open File Manager",
+  关闭文件管理: "Close File Manager",
+  搜索文件: "Search files",
+  返回上一级目录: "Go to parent directory",
+  读取中: "Reading",
+  没有匹配的文件: "No matching files",
+  目录为空: "Directory is empty",
+  未选择文件: "No file selected",
+  关闭编辑器: "Close editor",
+  文件视图: "File view",
+  源码: "Source",
+  预览: "Preview",
+  查找当前文件: "Find in current file",
+  上一个: "Previous",
+  下一个: "Next",
+  关闭查找: "Close find",
+  选择文件查看或编辑: "Select a file to view or edit",
+  已存在同名文件: "A file with this name already exists",
+  覆盖: "Overwrite",
+  保留两份: "Keep both",
+  文件已覆盖: "File overwritten",
+  文件已创建: "File created",
+  上传成功: "Upload successful",
+  读取文件: "Reading file",
+  文件名: "File name",
+  目录名: "Directory name",
+  解压到目录: "Extract to directory",
+  本页成功: "Success on this page",
+  本页失败: "Failures on this page",
+  需关注: "Needs attention",
+  涉及用户: "Actors",
+  当前页: "Current page",
+  最新记录: "Latest Record",
+  信号矩阵: "Signal Matrix",
+  取消本页: "Deselect Page",
+  选择本页: "Select Page",
+  批量删除: "Delete Selected",
+  删除当前: "Delete Current",
+  清空全部: "Clear All",
+  暂无审计日志: "No audit logs",
+  结果: "Result",
+  时间: "Time",
+  载荷: "Payload",
+  有: "Yes",
+  无: "No",
+  交给Saki: "Send to Saki",
+  "交给 Saki": "Send to Saki",
+  无载荷: "No payload",
+  暂无选中事件: "No selected event",
+  上一页: "Previous Page",
+  下一页: "Next Page",
+  审计日志读取失败: "Failed to read audit logs",
+  审计日志删除失败: "Failed to delete audit log",
+  审计日志批量删除失败: "Failed to delete selected audit logs",
+  审计日志清空失败: "Failed to clear audit logs",
+  暂无可用权限: "No available permissions",
+  暂无可打开的控制台模块: "No accessible console modules",
+  账号设置: "Account Settings",
+  节点测试失败: "Node test failed",
+  节点刷新失败: "Failed to refresh nodes",
+  节点保存失败: "Failed to save node",
+  节点删除失败: "Failed to delete node",
+  未设置: "Not set",
+  新对话: "New Chat",
+  移除附件: "Remove attachment",
+  进行中: "Running",
+  完成: "Completed",
+  待确认: "Pending approval",
+  受阻: "Blocked",
+  "Saki 活动": "Saki Activity",
+  待审批: "Pending Approval",
+  已拒绝: "Rejected",
+  已回滚: "Rolled Back",
+  可回溯: "Rollback Available",
+  回滚: "Rollback",
+  回滚文件: "Rollback File",
+  查看实例列表: "List instances",
+  查看实例信息: "View instance details",
+  读取实例日志: "Read instance logs",
+  查看目录结构: "View directory tree",
+  写入文件: "Write file",
+  替换文件内容: "Replace file content",
+  编辑文件行: "Edit file lines",
+  创建目录: "Create directory",
+  删除路径: "Delete path",
+  "移动/重命名": "Move / rename",
+  上传文件: "Upload file",
+  运行终端命令: "Run terminal command",
+  发送控制台输入: "Send console input",
+  发送控制台命令: "Send console command",
+  查询审计日志: "Search audit logs",
+  查找技能: "Search skills",
+  读取技能: "Read skill",
+  等待你确认后执行: "Waiting for your approval before running.",
+  调用完成: "Call completed",
+  调用失败: "Call failed",
+  查看审批预览: "View approval preview",
+  查看差异: "View diff",
+  批准执行: "Approve",
+  拒绝: "Reject",
+  本地回退: "Local fallback",
+  已接入: "Connected",
+  待连接: "Pending connection",
+  打开Saki: "Open Saki",
+  "打开 Saki": "Open Saki",
+  松开交给Saki: "Drop to Saki",
+  "松开交给 Saki": "Drop to Saki",
+  历史记录: "History",
+  退出全屏: "Exit Fullscreen",
+  放大: "Expand",
+  放大Saki聊天窗口: "Expand Saki chat window",
+  "放大 Saki 聊天窗口": "Expand Saki chat window",
+  关闭输入框: "Close input",
+  暂无历史对话: "No chat history",
+  智能体: "Agent",
+  对话: "Chat",
+  已附加上下文: "Context attached",
+  清除上下文: "Clear context",
+  你: "You",
+  全部回滚: "Rollback All",
+  等待模型响应: "Waiting for model response",
+  "等待模型响应...": "Waiting for model response...",
+  思考中: "Thinking",
+  "思考中...": "Thinking...",
+  折叠对话: "Collapse chat",
+  展开对话: "Expand chat",
+  智能体权限模式: "Agent permission mode",
+  询问: "Ask",
+  免确认: "No confirmation",
+  自动改文件: "Auto edit files",
+  编辑命令和状态变更都先确认: "Confirm edits, commands, and state changes first",
+  "编辑、命令和状态变更都先确认": "Confirm edits, commands, and state changes first",
+  只读探索并输出计划不写文件: "Read-only exploration and planning without file writes",
+  "只读探索并输出计划，不写文件": "Read-only exploration and planning without file writes",
+  在账号权限和安全策略内尽量不打断执行: "Run with fewer interruptions within account permissions and safety policy",
+  文件编辑自动执行命令和高风险操作先确认: "Apply file edits automatically; confirm commands and high-risk actions first",
+  "文件编辑自动执行，命令和高风险操作先确认": "Apply file edits automatically; confirm commands and high-risk actions first",
+  让Saki先阅读项目并给出执行计划: "Ask Saki to inspect the project and draft a plan first",
+  "让 Saki 先阅读项目并给出执行计划": "Ask Saki to inspect the project and draft a plan first",
+  针对已附加的上下文继续追问: "Continue with the attached context",
+  让Saki查找审计日志: "Ask Saki to search audit logs",
+  "让 Saki 查找审计日志": "Ask Saki to search audit logs",
+  问Saki当前实例里的问题: "Ask Saki about the current instance",
+  "问 Saki 当前实例里的问题": "Ask Saki about the current instance",
+  停止语音输入: "Stop voice input",
+  语音输入: "Voice input",
+  取消注释选择: "Cancel selection annotation",
+  注释选中文本: "Annotate selected text",
+  "粘贴图片 / 选择图片": "Paste image / choose image",
+  网页截图: "Page screenshot",
+  停止生成: "Stop generation",
+  发送: "Send",
+  未连接: "Not connected",
+  连接中: "Connecting",
+  已连接: "Connected",
+  重连中: "Reconnecting",
+  已断开: "Disconnected",
+  连接异常: "Connection error",
+  上: "Up",
+  下: "Down",
+  左: "Left",
+  右: "Right",
+  退格: "Backspace",
+  输入关键词: "Enter keywords"
+};
+
+function translateDomText(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  const exact = domExactTranslations[trimmed];
+  if (exact) return value.replace(trimmed, exact);
+
+  let translated = trimmed
+    .replace(/^(\d+)\s*个可分配对象$/, "$1 assignable users")
+    .replace(/^(\d+)\s*个可管理实例$/, "$1 manageable instances")
+    .replace(/^(\d+)\s*个实例已选择$/, "$1 instances selected")
+    .replace(/^(\d+)\s*类资源$/, "$1 resource types")
+    .replace(/^已删除\s*(\d+)\s*条审计日志。?$/, "Deleted $1 audit logs.")
+    .replace(/^已批量删除\s*(\d+)\s*条审计日志。?$/, "Deleted $1 selected audit logs.")
+    .replace(/^已清空\s*(\d+)\s*条审计日志。?$/, "Cleared $1 audit logs.")
+    .replace(/^(\d+)\s*个$/, "$1")
+    .replace(/^(\d+)\s*台$/, "$1 nodes")
+    .replace(/^创建\s+(.+)$/, (_, name: string) => `Create ${domExactTranslations[name] ?? name}`)
+    .replace(/^(.+)\s+运行记录$/, "$1 Run Records")
+    .replace(/^审计日志：(.+)$/, "Audit Log: $1")
+    .replace(/^当前账号\s*@(.+)\s+还没有被分配任何权限。$/, "Current account @$1 has not been assigned any permissions.")
+    .replace(/^当前账号\s*@(.+)\s+的权限暂时没有对应的侧边栏入口。$/, "Current account @$1 does not currently have a matching sidebar entry.")
+    .replace(/^(.+)\s*\/\s*(.+)\s*个文件改动可回滚$/, "$1 / $2 file changes can be rolled back")
+    .replace(/^等待确认：(.+)$/, "Waiting for approval: $1")
+    .replace(/^已回滚\s+(.+)。?$/, "Rolled back $1.")
+    .replace(/^(.+)\s+是空目录。?$/, "$1 is an empty directory.")
+    .replace(/^找到\s+(\d+)\s+个目录、(\d+)\s+个文件。?/, "Found $1 directories and $2 files.")
+    .replace(/^已读取\s+(.+)$/, "Read $1")
+    .replace(/^已写入\s+(.+)$/, "Wrote $1")
+    .replace(/^已上传\s+(.+)$/, "Uploaded $1")
+    .replace(/^已编辑\s+(.+)$/, "Edited $1")
+    .replace(/^目录已准备好：(.+)$/, "Directory ready: $1")
+    .replace(/^已处理删除：(.+)$/, "Deletion handled: $1")
+    .replace(/^命令已结束(.+)$/, "Command finished$1")
+    .replace(/^最多只能附加\s+(\d+)\s+个项目。?$/, "You can attach up to $1 items.")
+    .replace(/^最多只能附加\s+(\d+)\s+个项目，已添加\s+(\d+)\s+个。?$/, "You can attach up to $1 items; added $2.")
+    .replace(/^最多只能附加\s+(\d+)\s+个项目，剩余文件未添加。?$/, "You can attach up to $1 items; remaining files were not added.")
+    .replace(/^最新版本:\s*(.+)$/, "Latest version: $1")
+    .replace(/^发现新版本:\s*(.+)$/, "New version found: $1");
+
+  translated = translated
+    .replace(/创建者/g, "Creator")
+    .replace(/负责人/g, "Owner")
+    .replace(/退出码/g, "Exit code")
+    .replace(/实例管理面板报错/g, "instance management panel error")
+    .replace(/当前实例面板报错/g, "current instance panel error")
+    .replace(/审计日志/g, "audit logs")
+    .replace(/请联系管理员调整角色或权限后再回来。?/g, "Contact an administrator to adjust roles or permissions, then come back.")
+    .replace(/我是 Saki。/g, "I am Saki. ")
+    .replace(/切到不同实例时，我会一起切换工作区上下文。?/g, "When you switch instances, I switch workspace context with you.")
+    .replace(/当前智能体工作区：/g, "Current agent workspace: ")
+    .replace(/当前上下文：/g, "Current context: ")
+    .replace(/我已经/g, "I have ")
+    .replace(/好文件/g, " the file ready")
+    .replace(/请选择页面文本，松开鼠标后 Saki 会开始分析。按 Esc 取消。?/g, "Select page text; after you release the mouse, Saki will start analyzing. Press Esc to cancel.")
+    .replace(/请选择页面文本/g, "Select page text")
+    .replace(/附件内容/g, "attachment content")
+    .replace(/当前账号没有可用的 Saki 权限。?/g, "The current account has no available Saki permissions.")
+    .replace(/Saki 暂时没有回应/g, "Saki did not respond for now")
+    .replace(/连接刚刚中断了，当前回复可能不完整。你可以直接继续说，我会接着处理。?/g, "The connection was just interrupted, so the current response may be incomplete. Continue directly and I will keep going.")
+    .replace(/已停止生成。?/g, "Generation stopped.")
+    .replace(/请分析附件内容。?/g, "Please analyze the attached content.")
+    .replace(/当前浏览器不支持/g, "This browser does not support")
+    .replace(/语音输入/g, "voice input")
+    .replace(/网页\/屏幕截图/g, "page/screen capture")
+    .replace(/剪贴板/g, "clipboard")
+    .replace(/图片选择/g, "image picker")
+    .replace(/这条审计日志的风险/g, "the risk of this audit log")
+    .replace(/最近失败或高风险的/g, "recent failed or high-risk")
+    .replace(/说明风险并给出下一步处理建议/g, "explain the risk and suggest next steps")
+    .replace(/当前账号/g, "Current account")
+    .replace(/已登录/g, "Logged in")
+    .replace(/未登录/g, "Not logged in");
+
+  return translated === trimmed ? value : value.replace(trimmed, translated);
+}
+
+function translateDomAttributeValue(value: string): string {
+  return translateDomText(value);
+}
+
+function applyPanelDomLanguage(language: PanelLanguage, root: ParentNode = document.body): void {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const textNodes: Text[] = [];
+  while (walker.nextNode()) {
+    textNodes.push(walker.currentNode as Text);
+  }
+
+  for (const node of textNodes) {
+    if (!domTextOriginals.has(node)) {
+      domTextOriginals.set(node, node.nodeValue ?? "");
+    }
+    const original = domTextOriginals.get(node) ?? "";
+    const nextValue = language === "en-US" ? translateDomText(original) : original;
+    if (node.nodeValue !== nextValue) {
+      node.nodeValue = nextValue;
+    }
+  }
+
+  const elements = root instanceof Element ? [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))] : Array.from(root.querySelectorAll<HTMLElement>("*"));
+  for (const element of elements) {
+    for (const attr of ["title", "aria-label", "placeholder"] as const) {
+      const value = element.getAttribute(attr);
+      if (value === null) continue;
+      const originalKey = `data-i18n-original-${attr}`;
+      if (!element.hasAttribute(originalKey)) {
+        element.setAttribute(originalKey, value);
+      }
+      const original = element.getAttribute(originalKey) ?? value;
+      const nextValue = language === "en-US" ? translateDomAttributeValue(original) : original;
+      if (element.getAttribute(attr) !== nextValue) {
+        element.setAttribute(attr, nextValue);
+      }
+    }
+  }
+}
 
 const defaultPanelAppearance: PanelAppearanceSettings = {
   appTitle: "Saki Panel",
@@ -234,12 +1456,30 @@ interface LocalSakiWorkflowStep {
   createdAt: string;
 }
 
+type LocalSakiTimelineTextSource = "workflow" | "delta" | "final" | "error";
+
+type LocalSakiTimelineItem =
+  | {
+      kind: "text";
+      id: string;
+      content: string;
+      source: LocalSakiTimelineTextSource;
+      createdAt: string;
+    }
+  | {
+      kind: "action";
+      id: string;
+      action: SakiAgentAction;
+      createdAt: string;
+    };
+
 interface LocalSakiMessage extends SakiChatMessage {
   id: string;
   source?: "direct-model" | "local-fallback";
   actions?: SakiAgentAction[];
   attachments?: SakiInputAttachment[];
   workflow?: LocalSakiWorkflowStep[];
+  timeline?: LocalSakiTimelineItem[];
   workflowExpanded?: boolean;
   rollbackGroupExpanded?: boolean;
   streaming?: boolean;
@@ -270,6 +1510,22 @@ function isSakiModeAllowed(mode: SakiChatMode, canUseChat: boolean, canUseAgent:
 function coerceSakiMode(mode: SakiChatMode | undefined, canUseChat: boolean, canUseAgent: boolean): SakiChatMode {
   if (mode && isSakiModeAllowed(mode, canUseChat, canUseAgent)) return mode;
   return canUseChat ? "chat" : "agent";
+}
+
+const defaultSakiAgentPermissionMode: SakiAgentPermissionMode = "acceptEdits";
+
+function sakiPermissionModeLabel(mode: SakiAgentPermissionMode): string {
+  if (mode === "ask") return "询问";
+  if (mode === "plan") return "计划";
+  if (mode === "bypassPermissions") return "免确认";
+  return "自动改文件";
+}
+
+function sakiPermissionModeTitle(mode: SakiAgentPermissionMode): string {
+  if (mode === "ask") return "编辑、命令和状态变更都先确认";
+  if (mode === "plan") return "只读探索并输出计划，不写文件";
+  if (mode === "bypassPermissions") return "在账号权限和安全策略内尽量不打断执行";
+  return "文件编辑自动执行，命令和高风险操作先确认";
 }
 
 function formatSakiActionArgs(args: Record<string, unknown>): string {
@@ -465,6 +1721,18 @@ function rememberSakiTerminalSelection(value: string): void {
 
 function clearRememberedSakiTerminalSelection(): void {
   latestSakiTerminalSelectionText = "";
+}
+
+function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
+  return (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "c";
+}
+
+function readTerminalClipboardText(terminal: XTerm): string {
+  return terminal
+    .getSelection()
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\u00a0/g, " ");
 }
 
 function targetIsInsideSelector(target: EventTarget | null, selector: string): boolean {
@@ -1544,6 +2812,7 @@ function LoginView({
   appearance: PanelAppearanceSettings;
   onLogin: (token: string, user: CurrentUser) => void;
 }) {
+  const t = usePanelT();
   const rememberedLogin = useMemo(() => readRememberedLogin(), []);
   const [mode, setMode] = useState<AuthMode>("login");
   const [username, setUsername] = useState(rememberedLogin?.username ?? "admin");
@@ -1576,15 +2845,15 @@ function LoginView({
     const trimmedDisplayName = displayName.trim();
     if (isRegister) {
       if (!trimmedUsername || !trimmedDisplayName || !password) {
-        setError("请填写用户名、昵称和密码");
+        setError(t("auth.errorRequired"));
         return;
       }
       if (password.length < 8) {
-        setError("密码至少 8 位");
+        setError(t("auth.errorPasswordLength"));
         return;
       }
       if (password !== confirmPassword) {
-        setError("两次密码不一致");
+        setError(t("auth.errorPasswordMismatch"));
         return;
       }
     }
@@ -1609,7 +2878,7 @@ function LoginView({
       localStorage.setItem(tokenKey, response.token);
       onLogin(response.token, response.user);
     } catch (err) {
-      setError(err instanceof Error ? err.message : isRegister ? "注册失败" : "登录失败");
+      setError(err instanceof Error ? err.message : isRegister ? t("auth.errorRegisterFailed") : t("auth.errorLoginFailed"));
     } finally {
       setLoading(false);
     }
@@ -1628,30 +2897,30 @@ function LoginView({
             </div>
             <div>
               <h1>{appearance.appTitle}</h1>
-              {appearance.appSubtitle || isRegister ? <p>{isRegister ? "创建新账户" : appearance.appSubtitle}</p> : null}
+              {appearance.appSubtitle || isRegister ? <p>{isRegister ? t("auth.createAccount") : appearance.appSubtitle}</p> : null}
             </div>
           </div>
 
-          <div className="auth-mode-tabs" role="group" aria-label="认证方式">
+          <div className="auth-mode-tabs" role="group" aria-label={t("auth.mode")}>
             <button className={!isRegister ? "active" : ""} type="button" onClick={() => switchMode("login")}>
               <LogIn size={16} />
-              登录
+              {t("auth.login")}
             </button>
             <button className={isRegister ? "active" : ""} type="button" onClick={() => switchMode("register")}>
               <UserCheck size={16} />
-              注册
+              {t("auth.register")}
             </button>
           </div>
 
           <div className="form-group">
             <label>
-              <span className="label-text">用户名</span>
+              <span className="label-text">{t("auth.username")}</span>
               <div className="input-with-icon">
                 <input
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
                   autoComplete="username"
-                  placeholder={isRegister ? "设置登录用户名" : "Enter your username"}
+                  placeholder={isRegister ? t("auth.username.registerPlaceholder") : t("auth.username.loginPlaceholder")}
                 />
               </div>
             </label>
@@ -1660,13 +2929,13 @@ function LoginView({
           {isRegister ? (
             <div className="form-group">
               <label>
-                <span className="label-text">昵称</span>
+                <span className="label-text">{t("auth.displayName")}</span>
                 <div className="input-with-icon">
                   <input
                     value={displayName}
                     onChange={(event) => setDisplayName(event.target.value)}
                     autoComplete="name"
-                    placeholder="显示在面板里的名字"
+                    placeholder={t("auth.displayName.placeholder")}
                   />
                 </div>
               </label>
@@ -1675,14 +2944,14 @@ function LoginView({
 
           <div className="form-group">
             <label>
-              <span className="label-text">密码</span>
+              <span className="label-text">{t("auth.password")}</span>
               <div className="input-with-icon">
                 <input
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   type="password"
                   autoComplete={isRegister ? "new-password" : "current-password"}
-                  placeholder={isRegister ? "至少 8 位密码" : "Enter your password"}
+                  placeholder={isRegister ? t("auth.password.registerPlaceholder") : t("auth.password.loginPlaceholder")}
                 />
               </div>
             </label>
@@ -1691,14 +2960,14 @@ function LoginView({
           {isRegister ? (
             <div className="form-group">
               <label>
-                <span className="label-text">确认密码</span>
+                <span className="label-text">{t("auth.confirmPassword")}</span>
                 <div className="input-with-icon">
                   <input
                     value={confirmPassword}
                     onChange={(event) => setConfirmPassword(event.target.value)}
                     type="password"
                     autoComplete="new-password"
-                    placeholder="再次输入密码"
+                    placeholder={t("auth.confirmPassword.placeholder")}
                   />
                 </div>
               </label>
@@ -1714,13 +2983,13 @@ function LoginView({
                 if (!event.target.checked) clearRememberedLogin();
               }}
             />
-            <span>{isRegister ? "注册后记住密码" : "记住密码"}</span>
+            <span>{isRegister ? t("auth.rememberRegister") : t("auth.rememberLogin")}</span>
           </label>
 
           {error ? <div className="form-error">{error}</div> : null}
 
           <button className="primary-button login-btn" type="submit" disabled={loading}>
-            {loading ? (isRegister ? "注册中..." : "验证中...") : isRegister ? "注册并进入" : "登录系统"}
+            {loading ? (isRegister ? t("auth.registering") : t("auth.loggingIn")) : isRegister ? t("auth.registerSubmit") : t("auth.loginSubmit")}
             {!loading && (isRegister ? <UserCheck size={18} /> : <KeyRound size={18} />)}
           </button>
         </form>
@@ -1859,10 +3128,10 @@ function instanceTypeLabel(type: ManagedInstance["type"]): string {
   return labels[type] ?? type;
 }
 
-function ownerRoleLabel(role?: InstanceAssignee["role"] | null): string {
-  if (role === "super_admin") return "超管";
-  if (role === "admin") return "管理员";
-  return "用户";
+function ownerRoleLabel(role?: InstanceAssignee["role"] | null, t: (key: PanelTextKey) => string = (key) => panelT("zh-CN", key)): string {
+  if (role === "super_admin") return t("roles.owner.super_admin");
+  if (role === "admin") return t("roles.owner.admin");
+  return t("roles.owner.user");
 }
 
 function managedUserOwnerRole(user: ManagedUser): InstanceAssignee["role"] {
@@ -1892,8 +3161,50 @@ function instanceCreatorLabel(instance: ManagedInstance): string {
   return userDisplayLabel(instance.createdByDisplayName, instance.createdByUsername);
 }
 
+function instanceAssignedUsers(instance: ManagedInstance): NonNullable<ManagedInstance["assignees"]> {
+  if (instance.assignees?.length) return instance.assignees;
+  if (!instance.assignedToUserId) return [];
+  return [
+    {
+      userId: instance.assignedToUserId,
+      username: instance.assignedToUsername ?? "",
+      displayName: instance.assignedToDisplayName ?? "",
+      role: instance.assignedToRole ?? "user"
+    }
+  ];
+}
+
+function primaryAssigneeFields(
+  assignees: NonNullable<ManagedInstance["assignees"]>
+): Pick<ManagedInstance, "assignedToUserId" | "assignedToUsername" | "assignedToDisplayName" | "assignedToRole"> {
+  const primary = assignees[0] ?? null;
+  return {
+    assignedToUserId: primary?.userId ?? null,
+    assignedToUsername: primary?.username ?? null,
+    assignedToDisplayName: primary?.displayName ?? null,
+    assignedToRole: primary?.role ?? null
+  };
+}
+
+function isInstanceAssignedTo(instance: ManagedInstance, userId: string): boolean {
+  return instanceAssignedUsers(instance).some((user) => user.userId === userId);
+}
+
 function instanceAssigneeLabel(instance: ManagedInstance): string {
-  return userDisplayLabel(instance.assignedToDisplayName, instance.assignedToUsername);
+  const assignees = instanceAssignedUsers(instance);
+  if (assignees.length === 0) return userDisplayLabel(null, null);
+  if (assignees.length <= 2) {
+    return assignees.map((user) => userDisplayLabel(user.displayName, user.username)).join(", ");
+  }
+  return `${userDisplayLabel(assignees[0]?.displayName, assignees[0]?.username)} +${assignees.length - 1}`;
+}
+
+function instanceAssigneeTitle(instance: ManagedInstance): string {
+  const assignees = instanceAssignedUsers(instance);
+  if (assignees.length === 0) return `负责人 · ${ownerRoleLabel(instance.assignedToRole)}`;
+  return assignees
+    .map((user) => `${userDisplayLabel(user.displayName, user.username)} · ${ownerRoleLabel(user.role)}`)
+    .join(", ");
 }
 
 function compactCommand(command: string, maxLength = 92): string {
@@ -2451,7 +3762,7 @@ function InstanceLogs({ logs }: { logs: InstanceLogLine[] }) {
           <div className={`log-line log-${line.stream}`} key={line.id}>
             <span>{formatDate(line.time)}</span>
             <strong>{line.stream}</strong>
-            <code>{line.text}</code>
+            <code>{renderTerminalLogText(line.text)}</code>
           </div>
         ))
       )}
@@ -2467,6 +3778,7 @@ const sakiArtAssets = {
   avatar: "/assets/head.png",
   launcher: "/assets/sakiicon.png",
   launcherHover: "/assets/saki_click.png",
+  tieEdge: "/assets/tiebian.png",
   files: "/assets/saki_files.png",
   normal: "/assets/expression/normal.png",
   thinking: "/assets/expression/think.png",
@@ -2475,14 +3787,20 @@ const sakiArtAssets = {
 } as const;
 
 type SakiArtMood = "normal" | "thinking" | "worry";
+type SakiLauncherEdge = "left" | "right";
+type SakiLauncherSizeMode = "current" | "expanded" | "attached";
 
 interface SakiLauncherPosition {
   x: number;
   y: number;
+  edge?: SakiLauncherEdge | null;
 }
 
 const sakiLauncherPositionKey = "webops.saki.launcherPosition";
 const sakiLauncherEdgePadding = 12;
+const sakiLauncherEdgeSnapDistance = 56;
+const sakiLauncherExpandedSize = { width: 86, height: 118 };
+const sakiLauncherAttachedSize = { width: 58, height: 92 };
 const sakiConversationStorageKey = "webops.saki.conversations.v1";
 
 interface StoredSakiConversation {
@@ -2571,39 +3889,85 @@ function writeSakiLauncherPosition(position: SakiLauncherPosition) {
   }
 }
 
-function sakiLauncherSize(element: HTMLElement | null) {
+function sakiLauncherSize(element: HTMLElement | null, mode: SakiLauncherSizeMode = "current") {
+  if (mode === "expanded") return sakiLauncherExpandedSize;
+  if (mode === "attached") return sakiLauncherAttachedSize;
   const rect = element?.getBoundingClientRect();
   return {
-    width: rect?.width || 86,
-    height: rect?.height || 118
+    width: rect?.width || sakiLauncherExpandedSize.width,
+    height: rect?.height || sakiLauncherExpandedSize.height
   };
 }
 
-function clampSakiLauncherPosition(position: SakiLauncherPosition, element: HTMLElement | null): SakiLauncherPosition {
-  const { width, height } = sakiLauncherSize(element);
+function clampSakiLauncherPosition(
+  position: SakiLauncherPosition,
+  element: HTMLElement | null,
+  mode: SakiLauncherSizeMode = "current"
+): SakiLauncherPosition {
+  const { width, height } = sakiLauncherSize(element, mode);
   const viewportWidth = globalThis.innerWidth || width + sakiLauncherEdgePadding * 2;
   const viewportHeight = globalThis.innerHeight || height + sakiLauncherEdgePadding * 2;
-  const maxX = Math.max(sakiLauncherEdgePadding, viewportWidth - width - sakiLauncherEdgePadding);
+  const sidePadding = mode === "attached" ? 0 : sakiLauncherEdgePadding;
+  const maxX = Math.max(sidePadding, viewportWidth - width - sidePadding);
   const maxY = Math.max(sakiLauncherEdgePadding, viewportHeight - height - sakiLauncherEdgePadding);
 
   return {
-    x: Math.min(Math.max(sakiLauncherEdgePadding, position.x), maxX),
+    x: Math.min(Math.max(sidePadding, position.x), maxX),
     y: Math.min(Math.max(sakiLauncherEdgePadding, position.y), maxY)
   };
 }
 
+function sakiLauncherEdgeForPosition(position: SakiLauncherPosition): SakiLauncherEdge {
+  const viewportWidth = globalThis.innerWidth || sakiLauncherExpandedSize.width + sakiLauncherEdgePadding * 2;
+  return position.x + sakiLauncherExpandedSize.width / 2 < viewportWidth / 2 ? "left" : "right";
+}
+
+function sakiLauncherSnapEdgeForPosition(position: SakiLauncherPosition): SakiLauncherEdge | null {
+  const viewportWidth = globalThis.innerWidth || sakiLauncherExpandedSize.width + sakiLauncherEdgePadding * 2;
+  const rightGap = viewportWidth - (position.x + sakiLauncherExpandedSize.width);
+  if (position.x <= sakiLauncherEdgeSnapDistance) return "left";
+  if (rightGap <= sakiLauncherEdgeSnapDistance) return "right";
+  return null;
+}
+
+function sakiLauncherAttachedEdgeForPosition(position: SakiLauncherPosition): SakiLauncherEdge | null {
+  if (position.edge === "left" || position.edge === "right") return position.edge;
+
+  const viewportWidth = globalThis.innerWidth || sakiLauncherAttachedSize.width + sakiLauncherEdgePadding * 2;
+  const rightEdgeX = Math.max(0, viewportWidth - sakiLauncherAttachedSize.width);
+  if (position.x <= 1) return "left";
+  if (Math.abs(position.x - rightEdgeX) <= 1 || viewportWidth - (position.x + sakiLauncherAttachedSize.width) <= 1) return "right";
+  return null;
+}
+
+function snapSakiLauncherPositionToEdge(
+  position: SakiLauncherPosition,
+  edge: SakiLauncherEdge = sakiLauncherEdgeForPosition(position)
+): SakiLauncherPosition {
+  const viewportWidth = globalThis.innerWidth || sakiLauncherAttachedSize.width + sakiLauncherEdgePadding * 2;
+  const viewportHeight = globalThis.innerHeight || sakiLauncherAttachedSize.height + sakiLauncherEdgePadding * 2;
+  const maxY = Math.max(sakiLauncherEdgePadding, viewportHeight - sakiLauncherAttachedSize.height - sakiLauncherEdgePadding);
+  return {
+    x: edge === "left" ? 0 : Math.max(0, viewportWidth - sakiLauncherAttachedSize.width),
+    y: Math.min(Math.max(sakiLauncherEdgePadding, position.y), maxY),
+    edge
+  };
+}
+
 function sameSakiLauncherPosition(left: SakiLauncherPosition, right: SakiLauncherPosition) {
-  return Math.round(left.x) === Math.round(right.x) && Math.round(left.y) === Math.round(right.y);
+  return Math.round(left.x) === Math.round(right.x) && Math.round(left.y) === Math.round(right.y) && (left.edge ?? null) === (right.edge ?? null);
 }
 
 function SakiCharacterArt({
   mood = "normal",
   compact = false,
-  fileDrop = false
+  fileDrop = false,
+  edgeAttached = false
 }: {
   mood?: SakiArtMood;
   compact?: boolean;
   fileDrop?: boolean;
+  edgeAttached?: boolean;
 }) {
   const expressionSrc =
     fileDrop ? sakiArtAssets.files : mood === "thinking" ? sakiArtAssets.thinking : mood === "worry" ? sakiArtAssets.worry : sakiArtAssets.normal;
@@ -2615,6 +3979,19 @@ function SakiCharacterArt({
           <img
             className="saki-character-image saki-character-image-file-drop"
             src={sakiArtAssets.files}
+            alt=""
+            draggable={false}
+          />
+        </div>
+      );
+    }
+
+    if (edgeAttached) {
+      return (
+        <div className="saki-character-art compact edge-attached" aria-hidden="true">
+          <img
+            className="saki-character-image saki-character-image-edge"
+            src={sakiArtAssets.tieEdge}
             alt=""
             draggable={false}
           />
@@ -2689,20 +4066,227 @@ function SakiAttachmentChip({
   );
 }
 
-function SakiThinkingTrace({ steps }: { steps: LocalSakiWorkflowStep[] }) {
+function visibleSakiActivitySteps(steps: LocalSakiWorkflowStep[] | undefined, streaming: boolean): LocalSakiWorkflowStep[] {
+  const items = steps ?? [];
+  const visible = items.filter((step) => {
+    if (step.stage === "narration") return true;
+    if (step.status === "running" || step.status === "pending") return true;
+    if (streaming && step.status === "completed" && step.stage === "tool") return true;
+    if (step.status !== "failed") return false;
+    const text = `${step.message} ${step.detail ?? ""}`.toLowerCase();
+    return !/流式|连接中断|network error|stream/.test(text);
+  });
+  if (streaming) return visible.slice(-6);
+  return visible.filter((step) => step.stage === "narration" || step.status === "pending" || step.status === "failed").slice(-6);
+}
+
+function sakiActivityStatusText(status: SakiChatWorkflowStatus): string | null {
+  if (status === "running") return "进行中";
+  if (status === "completed") return "完成";
+  if (status === "pending") return "待确认";
+  if (status === "failed") return "受阻";
+  return null;
+}
+
+function workflowEventChatText(event: SakiChatStreamEvent): string | null {
+  if (event.type !== "workflow") return null;
+  const message = event.message.trim();
+  if (!message) return null;
+  if (event.stage === "narration") return message;
+  if (event.status === "running" || event.status === "pending") return message;
+  if (event.status === "failed") {
+    return event.detail ? `${message}\n${event.detail}` : message;
+  }
+  return null;
+}
+
+function appendSakiAssistantText(current: string, next: string): string {
+  const text = next.trim();
+  if (!text) return current;
+  const recent = current.slice(-2000);
+  if (recent.includes(text)) return current;
+  return current ? `${current}\n\n${text}` : text;
+}
+
+function mergeSakiFinalText(current: string, finalText: string): string {
+  const currentTrimmed = current.trim();
+  const finalTrimmed = finalText.trim();
+  if (!currentTrimmed) return finalText;
+  if (!finalTrimmed) return current;
+  if (currentTrimmed === finalTrimmed) return finalText;
+  if (currentTrimmed.includes(finalTrimmed)) return current;
+  if (finalTrimmed.includes(currentTrimmed)) return finalText;
+  return `${current}\n\n${finalText}`;
+}
+
+function upsertSakiTimelineText(
+  timeline: LocalSakiTimelineItem[] | undefined,
+  item: { id: string; content: string; source: LocalSakiTimelineTextSource; createdAt?: string }
+): LocalSakiTimelineItem[] {
+  const content = item.content.trim();
+  const current = timeline ?? [];
+  if (!content) return current;
+  const index = current.findIndex((entry) => entry.kind === "text" && entry.id === item.id);
+  const nextItem: LocalSakiTimelineItem = {
+    kind: "text",
+    id: item.id,
+    content,
+    source: item.source,
+    createdAt: item.createdAt ?? new Date().toISOString()
+  };
+  if (index < 0) return [...current, nextItem];
+  return current.map((entry, entryIndex) =>
+    entryIndex === index && entry.kind === "text"
+      ? {
+          ...entry,
+          content,
+          source: item.source
+        }
+      : entry
+  );
+}
+
+function appendSakiTimelineDelta(timeline: LocalSakiTimelineItem[] | undefined, text: string): LocalSakiTimelineItem[] {
+  if (!text) return timeline ?? [];
+  const current = timeline ?? [];
+  const last = current.at(-1);
+  if (last?.kind === "text" && (last.source === "delta" || last.source === "final")) {
+    return [
+      ...current.slice(0, -1),
+      {
+        ...last,
+        content: `${last.content}${text}`
+      }
+    ];
+  }
+  return [
+    ...current,
+    {
+      kind: "text",
+      id: `delta:${newClientId()}`,
+      content: text,
+      source: "delta",
+      createdAt: new Date().toISOString()
+    }
+  ];
+}
+
+function upsertSakiTimelineAction(timeline: LocalSakiTimelineItem[] | undefined, action: SakiAgentAction): LocalSakiTimelineItem[] {
+  const current = timeline ?? [];
+  const id = `action:${action.id}`;
+  const index = current.findIndex((entry) => entry.kind === "action" && entry.action.id === action.id);
+  const nextItem: LocalSakiTimelineItem = {
+    kind: "action",
+    id,
+    action,
+    createdAt: current[index]?.createdAt ?? new Date().toISOString()
+  };
+  if (index < 0) return [...current, nextItem];
+  return current.map((entry, entryIndex) => (entryIndex === index ? nextItem : entry));
+}
+
+function mergeSakiTimelineActions(timeline: LocalSakiTimelineItem[] | undefined, actions: SakiAgentAction[] | undefined): LocalSakiTimelineItem[] {
+  return (actions ?? []).reduce<LocalSakiTimelineItem[]>((current, action) => upsertSakiTimelineAction(current, action), timeline ?? []);
+}
+
+function mergeSakiActionList(
+  current: SakiAgentAction[] | undefined,
+  incoming: SakiAgentAction[] | undefined
+): SakiAgentAction[] | undefined {
+  if (!incoming?.length) return current;
+  const next = [...(current ?? [])];
+  for (const action of incoming) {
+    const index = next.findIndex((item) => item.id === action.id);
+    if (index >= 0) {
+      next[index] = action;
+    } else {
+      next.push(action);
+    }
+  }
+  return next;
+}
+
+function mergeSakiFinalTimeline(timeline: LocalSakiTimelineItem[] | undefined, finalText: string): LocalSakiTimelineItem[] {
+  const text = finalText.trim();
+  const current = timeline ?? [];
+  if (!text) return current;
+  const textItems = current.filter((entry): entry is Extract<LocalSakiTimelineItem, { kind: "text" }> => entry.kind === "text");
+  if (textItems.some((entry) => entry.content.trim() === text || entry.content.includes(text))) return current;
+  const last = current.at(-1);
+  if (last?.kind === "text" && (last.source === "delta" || last.source === "final")) {
+    const lastTrimmed = last.content.trim();
+    if (text.includes(lastTrimmed)) {
+      return [
+        ...current.slice(0, -1),
+        {
+          ...last,
+          content: text,
+          source: "final"
+        }
+      ];
+    }
+  }
+  return [
+    ...current,
+    {
+      kind: "text",
+      id: `final:${newClientId()}`,
+      content: text,
+      source: "final",
+      createdAt: new Date().toISOString()
+    }
+  ];
+}
+
+function renderableSakiTimeline(message: LocalSakiMessage): LocalSakiTimelineItem[] {
+  const timeline = (message.timeline ?? []).filter((entry) => entry.kind === "action" || entry.content.trim());
+  const visibleActions = visibleSakiActions(message.actions);
+  if (timeline.length) {
+    const timelineActionIds = new Set(timeline.filter((entry) => entry.kind === "action").map((entry) => entry.action.id));
+    const missingActionItems: LocalSakiTimelineItem[] = visibleActions
+      .filter((action) => !timelineActionIds.has(action.id))
+      .map((action) => ({
+        kind: "action",
+        id: `action:${action.id}`,
+        action,
+        createdAt: action.createdAt
+      }));
+    return missingActionItems.length ? [...timeline, ...missingActionItems] : timeline;
+  }
+  const fallback: LocalSakiTimelineItem[] = [];
+  if (message.content.trim()) {
+    fallback.push({
+      kind: "text",
+      id: `${message.id}:content`,
+      content: message.content,
+      source: "final",
+      createdAt: message.createdAt ?? new Date().toISOString()
+    });
+  }
+  for (const action of visibleActions) {
+    fallback.push({
+      kind: "action",
+      id: `action:${action.id}`,
+      action,
+      createdAt: action.createdAt
+    });
+  }
+  return fallback;
+}
+
+function SakiActivityTrace({ steps }: { steps: LocalSakiWorkflowStep[]; streaming: boolean }) {
   if (steps.length === 0) return null;
   return (
-    <div className="saki-thought-trace" aria-label="Saki 可见思路和工具调用">
+    <div className="saki-thought-trace" aria-label="Saki 活动">
       {steps.map((step) => (
         <div className={`saki-thought-step ${step.status}`} key={step.id}>
           <span className="saki-thought-dot" />
           <div>
             <div className="saki-thought-row">
               <strong>{step.message}</strong>
-              {step.status === "failed" ? <em>遇到阻碍</em> : step.status === "pending" ? <em>需要确认</em> : null}
+              {sakiActivityStatusText(step.status) ? <em>{sakiActivityStatusText(step.status)}</em> : null}
             </div>
-            {step.call && step.tool !== "respond" ? <code>{step.call}</code> : null}
-            {step.detail ? <p>{step.detail}</p> : null}
+            {step.status === "failed" && step.detail ? <p>{step.detail}</p> : null}
           </div>
         </div>
       ))}
@@ -2710,10 +4294,32 @@ function SakiThinkingTrace({ steps }: { steps: LocalSakiWorkflowStep[] }) {
   );
 }
 
+function isReadOnlySakiTool(tool: string | undefined): boolean {
+  if (!tool) return true;
+  return new Set([
+    "listinstances",
+    "describeinstance",
+    "instancelogs",
+    "listfiles",
+    "readfile",
+    "searchaudit",
+    "listtasks",
+    "taskruns",
+    "searchweb",
+    "browse",
+    "crawl",
+    "researchweb",
+    "listskills",
+    "searchskills",
+    "readskill",
+    "reportprogress",
+    "respond"
+  ]).has(tool.toLowerCase());
+}
+
 function visibleSakiActions(actions: SakiAgentAction[] | undefined): SakiAgentAction[] {
-  return (actions ?? []).filter(
-    (action) => action.status === "pending_approval" || action.status === "rolled_back" || Boolean(action.approval?.rollbackAvailable)
-  );
+  const hiddenTools = new Set(["reportprogress", "respond"]);
+  return (actions ?? []).filter((action) => !hiddenTools.has(action.tool.toLowerCase()));
 }
 
 function isSakiFileEditTool(tool: string): boolean {
@@ -2734,20 +4340,323 @@ function isSakiFileRollbackAction(action: SakiAgentAction): boolean {
   return isSakiFileEditTool(action.tool) && (action.status === "rolled_back" || Boolean(action.approval?.rollbackAvailable));
 }
 
-function sakiActionTitle(action: SakiAgentAction): string {
-  if (action.status === "pending_approval") return "需要你确认的操作";
-  if (action.status === "rolled_back") return "已回滚的操作";
-  if (isSakiRollbackableFileEdit(action)) return "可回溯代码";
-  if (action.approval?.rollbackAvailable) return "已执行，可回滚";
-  return "操作记录";
-}
-
 function sakiActionStatusLabel(action: SakiAgentAction): string {
   if (action.status === "pending_approval") return "待审批";
+  if (action.status === "rejected") return "已拒绝";
   if (action.status === "rolled_back") return "已回滚";
   if (isSakiRollbackableFileEdit(action)) return "可回溯";
   if (action.ok) return "完成";
   return "失败";
+}
+
+function sakiActionStringArg(action: SakiAgentAction, keys: string[]): string {
+  for (const key of keys) {
+    const value = action.args[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+  }
+  return "";
+}
+
+function sakiActionTarget(action: SakiAgentAction): string {
+  const tool = action.tool.toLowerCase();
+  if (tool === "renamepath") {
+    const fromPath = sakiActionStringArg(action, ["fromPath"]);
+    const toPath = sakiActionStringArg(action, ["toPath"]);
+    return fromPath && toPath ? `${fromPath} -> ${toPath}` : fromPath || toPath;
+  }
+  if (tool === "runcommand" || tool === "sendcommand") return sakiActionStringArg(action, ["command"]);
+  if (tool === "sendinput") return sakiActionStringArg(action, ["input", "stdin", "data"]);
+  if (tool === "searchweb" || tool === "researchweb" || tool === "searchskills" || tool === "searchaudit") {
+    return sakiActionStringArg(action, ["query"]);
+  }
+  if (tool === "browse" || tool === "crawl") return sakiActionStringArg(action, ["url"]);
+  if (tool === "readskill") return sakiActionStringArg(action, ["skillId"]);
+  if (tool === "listfiles") return sakiActionStringArg(action, ["path"]) || ".";
+  return sakiActionStringArg(action, ["path", "instanceId", "taskId", "action"]);
+}
+
+function sakiActionMeta(action: SakiAgentAction): string {
+  const tool = action.tool.toLowerCase();
+  const parts: string[] = [];
+  const add = (label: string, value: string) => {
+    if (value) parts.push(`${label}: ${value}`);
+  };
+  if (tool === "listfiles") add("limit", sakiActionStringArg(action, ["limit"]));
+  if (tool === "readfile") {
+    add("start", sakiActionStringArg(action, ["startLine"]));
+    add("lines", sakiActionStringArg(action, ["lineCount"]));
+  }
+  if (tool === "editlines") {
+    const startLine = sakiActionStringArg(action, ["startLine"]);
+    const endLine = sakiActionStringArg(action, ["endLine"]);
+    if (startLine || endLine) parts.push(`lines: ${startLine || "?"}-${endLine || "?"}`);
+  }
+  if (tool === "runcommand") {
+    add("cwd", sakiActionStringArg(action, ["cwd", "workingDirectory"]));
+    add("timeout", sakiActionStringArg(action, ["timeoutMs"]));
+  }
+  return parts.join(" / ");
+}
+
+function sakiActionTitle(action: SakiAgentAction): string {
+  switch (action.tool.toLowerCase()) {
+    case "listinstances":
+      return "查看实例列表";
+    case "describeinstance":
+      return "查看实例信息";
+    case "instancelogs":
+      return "读取实例日志";
+    case "listfiles":
+      return "查看目录结构";
+    case "readfile":
+      return "读取文件";
+    case "writefile":
+      return "写入文件";
+    case "replaceinfile":
+      return "替换文件内容";
+    case "editlines":
+      return "编辑文件行";
+    case "mkdir":
+      return "创建目录";
+    case "deletepath":
+      return "删除路径";
+    case "renamepath":
+      return "移动/重命名";
+    case "uploadbase64":
+      return "上传文件";
+    case "runcommand":
+      return "运行终端命令";
+    case "sendinput":
+      return "发送控制台输入";
+    case "sendcommand":
+      return "发送控制台命令";
+    case "searchaudit":
+      return "查询审计日志";
+    case "listtasks":
+      return "查看计划任务";
+    case "taskruns":
+      return "查看任务运行";
+    case "searchweb":
+    case "researchweb":
+      return "检索网页";
+    case "browse":
+    case "crawl":
+      return "读取网页";
+    case "listskills":
+    case "searchskills":
+      return "查找技能";
+    case "readskill":
+      return "读取技能";
+    default:
+      return action.tool;
+  }
+}
+
+function sakiByteText(value: string): string {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes)) return value;
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
+}
+
+function sakiObservationLine(observation: string, label: string): string {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = observation.match(new RegExp(`^${escapedLabel}\\s*[:=]\\s*(.+)$`, "im"));
+  return match?.[1]?.trim() ?? "";
+}
+
+function sakiResultSummary(action: SakiAgentAction): string {
+  const observation = action.observation.trim();
+  const tool = action.tool.toLowerCase();
+  const target = sakiActionTarget(action);
+
+  if (action.status === "pending_approval") {
+    return action.approval?.reason ? `等待确认：${compactContextText(action.approval.reason, 180)}` : "等待你确认后执行。";
+  }
+  if (action.status === "rejected") return "这次调用已被拒绝，没有执行。";
+  if (action.status === "rolled_back") return target ? `已回滚 ${target}。` : "已回滚到执行前的状态。";
+  if (!observation) return action.ok ? "调用完成，没有返回额外内容。" : "调用失败，没有返回详细信息。";
+  if (!action.ok) return compactContextText(observation.replace(/\s+/g, " "), 220);
+
+  if (tool === "listfiles") {
+    if (/Directory is empty\./i.test(observation)) return target ? `${target} 是空目录。` : "目录为空。";
+    const lines = observation.split(/\r?\n/);
+    const dirCount = lines.filter((line) => line.startsWith("[DIR]")).length;
+    const fileCount = lines.filter((line) => line.startsWith("[FILE]")).length;
+    const truncated = lines.find((line) => /^Showing\s+/i.test(line.trim()));
+    return `找到 ${dirCount} 个目录、${fileCount} 个文件。${truncated ? ` ${compactContextText(truncated.trim(), 120)}` : ""}`;
+  }
+
+  if (tool === "readfile") {
+    const file = sakiObservationLine(observation, "File") || target || "文件";
+    const size = sakiObservationLine(observation, "Size").replace(/\s*bytes$/i, "");
+    const totalLines = sakiObservationLine(observation, "Total lines");
+    const showing = sakiObservationLine(observation, "Showing lines");
+    return `已读取 ${file}${totalLines ? `，共 ${totalLines} 行` : ""}${showing ? `，显示 ${showing}` : ""}${size ? `，${sakiByteText(size)}` : ""}。`;
+  }
+
+  if (tool === "writefile" || tool === "uploadbase64") {
+    const size = observation.match(/\((\d+)\s+bytes\)/i)?.[1] ?? "";
+    return `已${tool === "writefile" ? "写入" : "上传"} ${target || "文件"}${size ? `，${sakiByteText(size)}` : ""}。`;
+  }
+
+  if (tool === "replaceinfile" || tool === "editlines") {
+    const size = observation.match(/\((\d+)\s+bytes\)/i)?.[1] ?? "";
+    const removed = sakiObservationLine(observation, "Removed lines");
+    const inserted = sakiObservationLine(observation, "Inserted lines");
+    return `已编辑 ${target || "文件"}${removed ? `，删除 ${removed} 行` : ""}${inserted ? `，插入 ${inserted} 行` : ""}${size ? `，${sakiByteText(size)}` : ""}。`;
+  }
+
+  if (tool === "mkdir") return `目录已准备好：${target || "目标目录"}。`;
+  if (tool === "deletepath") return target ? `已处理删除：${target}，可用回滚检查点恢复。` : "删除操作已完成。";
+  if (tool === "renamepath") return target ? `已移动/重命名：${target}。` : "移动或重命名已完成。";
+
+  if (tool === "runcommand") {
+    const exitCode = sakiObservationLine(observation, "exitCode");
+    const duration = sakiObservationLine(observation, "durationMs");
+    const stdoutEmpty = /stdout:\s*\(empty\)/i.test(observation);
+    const stderrEmpty = /stderr:\s*\(empty\)/i.test(observation);
+    return `命令已结束${exitCode ? `，退出码 ${exitCode}` : ""}${duration ? `，耗时 ${duration}ms` : ""}${stdoutEmpty ? "，stdout 为空" : ""}${stderrEmpty ? "，stderr 为空" : ""}。`;
+  }
+
+  if (tool === "sendinput" || tool === "sendcommand") return "控制台输入已发送。";
+  return compactContextText(observation.replace(/\s+/g, " "), 220);
+}
+
+function sakiActionDetailsLabel(action: SakiAgentAction): string {
+  switch (action.tool.toLowerCase()) {
+    case "listfiles":
+      return "查看目录条目";
+    case "readfile":
+      return "查看文件内容";
+    case "runcommand":
+      return "查看命令输出";
+    default:
+      return "查看调用结果";
+  }
+}
+
+function sakiActionTone(action: SakiAgentAction): "read" | "write" | "delete" | "terminal" | "system" {
+  const tool = action.tool.toLowerCase();
+  if (tool === "deletepath") return "delete";
+  if (tool === "runcommand" || tool === "sendinput" || tool === "sendcommand") return "terminal";
+  if (tool === "writefile" || tool === "replaceinfile" || tool === "editlines" || tool === "mkdir" || tool === "renamepath" || tool === "uploadbase64") return "write";
+  if (tool === "listfiles" || tool === "readfile" || tool === "instancelogs" || tool === "listinstances" || tool === "describeinstance") return "read";
+  return "system";
+}
+
+function sakiActionStateClass(action: SakiAgentAction): string {
+  if (action.status === "pending_approval") return "pending";
+  if (action.status === "rolled_back") return "rolled-back";
+  if (!action.ok || action.status === "failed" || action.status === "rejected") return "error";
+  return "ok";
+}
+
+function SakiToolIcon({ action }: { action: SakiAgentAction }) {
+  switch (action.tool.toLowerCase()) {
+    case "listfiles":
+      return <Folder size={16} />;
+    case "readfile":
+      return <FileText size={16} />;
+    case "writefile":
+    case "uploadbase64":
+      return <FilePlus size={16} />;
+    case "replaceinfile":
+    case "editlines":
+      return <Code2 size={16} />;
+    case "mkdir":
+      return <FolderPlus size={16} />;
+    case "deletepath":
+      return <Trash2 size={16} />;
+    case "runcommand":
+    case "sendinput":
+    case "sendcommand":
+      return <TerminalIcon size={16} />;
+    case "instancelogs":
+    case "searchaudit":
+      return <ClipboardList size={16} />;
+    case "listinstances":
+    case "describeinstance":
+      return <Server size={16} />;
+    case "searchweb":
+    case "researchweb":
+    case "browse":
+    case "crawl":
+      return <Search size={16} />;
+    default:
+      return <Wrench size={16} />;
+  }
+}
+
+function SakiToolActionCard({
+  action,
+  actionBusyId,
+  onDecision
+}: {
+  action: SakiAgentAction;
+  actionBusyId: string | null;
+  onDecision: (action: SakiAgentAction, decision: "approve" | "reject" | "rollback") => void;
+}) {
+  const busy = actionBusyId === action.id;
+  const controlsDisabled = Boolean(actionBusyId);
+  const target = sakiActionTarget(action);
+  const meta = sakiActionMeta(action);
+  const observation = action.observation.trim() || "没有返回内容。";
+  return (
+    <div className={`saki-tool-card ${sakiActionStateClass(action)} tone-${sakiActionTone(action)}`}>
+      <div className="saki-tool-card-top">
+        <span className="saki-tool-icon" aria-hidden="true">
+          <SakiToolIcon action={action} />
+        </span>
+        <div className="saki-tool-heading">
+          <div className="saki-tool-title-row">
+            <strong>{sakiActionTitle(action)}</strong>
+            <span>{sakiActionStatusLabel(action)}</span>
+          </div>
+          {target ? <code>{compactContextText(target, 180)}</code> : null}
+          {meta ? <em>{meta}</em> : null}
+        </div>
+      </div>
+      <p className="saki-tool-summary">{sakiResultSummary(action)}</p>
+      {action.approval?.preview ? (
+        <details className="saki-tool-result saki-tool-preview">
+          <summary>查看审批预览</summary>
+          <pre>{compactContextText(action.approval.preview, 1400)}</pre>
+        </details>
+      ) : null}
+      {action.approval?.diff ? (
+        <details className="saki-tool-result saki-tool-preview">
+          <summary>查看差异</summary>
+          <pre>{compactContextText(action.approval.diff, 2200)}</pre>
+        </details>
+      ) : null}
+      <details className="saki-tool-result">
+        <summary>{sakiActionDetailsLabel(action)}</summary>
+        <pre>{compactContextText(observation, 5200)}</pre>
+      </details>
+      {action.status === "pending_approval" ? (
+        <div className="saki-action-controls">
+          <button className="small-button" type="button" disabled={controlsDisabled} onClick={() => onDecision(action, "approve")}>
+            {busy ? <Loader2 size={14} className="status-spinner" /> : <CheckCircle2 size={14} />}
+            批准执行
+          </button>
+          <button className="small-button danger-action" type="button" disabled={controlsDisabled} onClick={() => onDecision(action, "reject")}>
+            <X size={14} />
+            拒绝
+          </button>
+        </div>
+      ) : action.approval?.rollbackAvailable ? (
+        <div className="saki-action-controls">
+          <button className="small-button" type="button" disabled={controlsDisabled} onClick={() => onDecision(action, "rollback")}>
+            {busy ? <Loader2 size={14} className="status-spinner" /> : <CornerUpLeft size={14} />}
+            {isSakiRollbackableFileEdit(action) ? "回滚文件" : "回滚"}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function SakiFloatingChat({
@@ -2778,6 +4687,7 @@ function SakiFloatingChat({
   const [messagesExpanded, setMessagesExpanded] = useState(false);
   const [draft, setDraft] = useState("");
   const [mode, setMode] = useState<SakiChatMode>(() => coerceSakiMode("chat", canUseChat, canUseAgent));
+  const [permissionMode, setPermissionMode] = useState<SakiAgentPermissionMode>(defaultSakiAgentPermissionMode);
   const [panelError, setPanelError] = useState<string | null>(null);
   const [contextTitle, setContextTitle] = useState<string | null>(null);
   const [contextText, setContextText] = useState<string | null>(null);
@@ -2810,6 +4720,8 @@ function SakiFloatingChat({
   const speechBaseDraftRef = useRef("");
   const composerNoticeTimerRef = useRef<number | null>(null);
   const sakiStreamAbortRef = useRef<AbortController | null>(null);
+  const sakiMessagesRef = useRef<HTMLDivElement | null>(null);
+  const sakiAutoScrollRef = useRef(true);
   const sakiFileDragDepthRef = useRef(0);
   const launcherDragRef = useRef<{
     pointerId: number;
@@ -2825,6 +4737,8 @@ function SakiFloatingChat({
   const restoringContextRef = useRef(false);
   const initialConversationLoadedRef = useRef(false);
   const annotationModeRef = useRef(false);
+  const launcherAttachedEdge = launcherPosition ? sakiLauncherAttachedEdgeForPosition(launcherPosition) : null;
+  const launcherEdgeAttached = Boolean(launcherAttachedEdge) && !open && !launcherDragging && !sakiFileHoverActive && !fileDragActive;
 
   useEffect(() => {
     return () => {
@@ -2840,6 +4754,24 @@ function SakiFloatingChat({
   useEffect(() => {
     annotationModeRef.current = annotationMode;
   }, [annotationMode]);
+
+  useEffect(() => {
+    const element = sakiMessagesRef.current;
+    if (!element || !open) return;
+    const latestMessage = messages.at(-1);
+    const shouldFollow = sakiAutoScrollRef.current || Boolean(latestMessage?.streaming);
+    if (!shouldFollow) return;
+    const frame = window.requestAnimationFrame(() => {
+      element.scrollTop = element.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [messages, open, messagesExpanded, fullscreen]);
+
+  function handleSakiMessagesScroll(event: React.UIEvent<HTMLDivElement>) {
+    const element = event.currentTarget;
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    sakiAutoScrollRef.current = distanceFromBottom < 96;
+  }
 
   useEffect(() => {
     setMode((current) => coerceSakiMode(current, canUseChat, canUseAgent));
@@ -2942,6 +4874,7 @@ function SakiFloatingChat({
     setAttachments([]);
     setComposerNotice(null);
     setMode(coerceSakiMode("chat", canUseChat, canUseAgent));
+    setPermissionMode(defaultSakiAgentPermissionMode);
   }, [canUseAgent, canUseChat, contextKey, instance, messages, panelContext.label]);
 
   useEffect(() => {
@@ -3037,10 +4970,13 @@ function SakiFloatingChat({
     function clampCurrentLauncherPosition() {
       setLauncherPosition((current) => {
         if (!current) return current;
-        const clamped = clampSakiLauncherPosition(current, launcherRef.current);
-        if (sameSakiLauncherPosition(current, clamped)) return current;
-        writeSakiLauncherPosition(clamped);
-        return clamped;
+        const attachedEdge = sakiLauncherAttachedEdgeForPosition(current);
+        const nextPosition = attachedEdge
+          ? snapSakiLauncherPositionToEdge(current, attachedEdge)
+          : clampSakiLauncherPosition(current, launcherRef.current, "expanded");
+        if (current && sameSakiLauncherPosition(current, nextPosition)) return current;
+        writeSakiLauncherPosition(nextPosition);
+        return nextPosition;
       });
     }
 
@@ -3054,10 +4990,13 @@ function SakiFloatingChat({
   function handleLauncherPointerDown(event: React.PointerEvent<HTMLButtonElement>) {
     if (event.button !== 0) return;
     const rect = event.currentTarget.getBoundingClientRect();
+    const dragOrigin = launcherEdgeAttached
+      ? clampSakiLauncherPosition({ x: rect.left, y: rect.top }, event.currentTarget, "expanded")
+      : { x: rect.left, y: rect.top };
     launcherDragRef.current = {
       pointerId: event.pointerId,
-      offsetX: event.clientX - rect.left,
-      offsetY: event.clientY - rect.top,
+      offsetX: event.clientX - dragOrigin.x,
+      offsetY: event.clientY - dragOrigin.y,
       startX: event.clientX,
       startY: event.clientY,
       moved: false
@@ -3081,7 +5020,8 @@ function SakiFloatingChat({
           x: event.clientX - drag.offsetX,
           y: event.clientY - drag.offsetY
         },
-        event.currentTarget
+        event.currentTarget,
+        "expanded"
       )
     );
   }
@@ -3095,13 +5035,16 @@ function SakiFloatingChat({
     }
 
     if (drag.moved) {
-      const nextPosition = clampSakiLauncherPosition(
+      const dragPosition = clampSakiLauncherPosition(
         {
           x: event.clientX - drag.offsetX,
           y: event.clientY - drag.offsetY
         },
-        event.currentTarget
+        event.currentTarget,
+        "expanded"
       );
+      const snapEdge = sakiLauncherSnapEdgeForPosition(dragPosition);
+      const nextPosition = snapEdge ? snapSakiLauncherPositionToEdge(dragPosition, snapEdge) : dragPosition;
       setLauncherPosition(nextPosition);
       writeSakiLauncherPosition(nextPosition);
       suppressLauncherClickRef.current = true;
@@ -3195,10 +5138,33 @@ function SakiFloatingChat({
         message.actions?.some((item) => item.id === action.id)
           ? {
               ...message,
-              actions: message.actions.map((item) => (item.id === action.id ? action : item))
+              actions: message.actions.map((item) => (item.id === action.id ? action : item)),
+              timeline: upsertSakiTimelineAction(message.timeline, action)
             }
           : message
       )
+    );
+  }
+
+  function applyActionContinuationResponse(anchorActionId: string, response: SakiChatResponse) {
+    setReachable(response.source === "direct-model");
+    if (response.skills) setSkills(response.skills);
+    if (response.agentPermissionMode) setPermissionMode(response.agentPermissionMode);
+    setMessages((current) =>
+      current.map((message) => {
+        if (!message.actions?.some((item) => item.id === anchorActionId)) return message;
+        const nextActions = mergeSakiActionList(message.actions, response.actions);
+        const nextMessage: LocalSakiMessage = {
+          ...message,
+          content: mergeSakiFinalText(message.content, response.message),
+          timeline: mergeSakiTimelineActions(mergeSakiFinalTimeline(message.timeline, response.message), nextActions),
+          source: response.source,
+          workflowExpanded: false,
+          streaming: false
+        };
+        if (nextActions?.length) return { ...nextMessage, actions: nextActions };
+        return nextMessage;
+      })
     );
   }
 
@@ -3227,8 +5193,14 @@ function SakiFloatingChat({
       current.map((message) =>
         message.actions?.some((item) => item.id === action.id)
           ? {
-              ...message,
-              workflow: [...(message.workflow ?? []), step]
+            ...message,
+              workflow: [...(message.workflow ?? []), step],
+              timeline: upsertSakiTimelineText(message.timeline, {
+                id: `workflow:${step.id}`,
+                content: step.message,
+                source: "workflow",
+                createdAt: step.createdAt
+              })
             }
           : message
       )
@@ -3238,10 +5210,14 @@ function SakiFloatingChat({
   async function decideAction(action: SakiAgentAction, decision: "approve" | "reject" | "rollback") {
     if (actionBusyId) return;
     setActionBusyId(action.id);
+    if (decision === "approve") setLoading(true);
     try {
       const response = await api.sakiAction(token, action.id, decision);
       replaceAction(response.action);
       if (decision === "approve") appendActionCompletionThought(response.action);
+      if (response.response) {
+        applyActionContinuationResponse(action.id, response.response);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Saki action failed";
       replaceAction({
@@ -3252,6 +5228,7 @@ function SakiFloatingChat({
       });
     } finally {
       setActionBusyId(null);
+      if (decision === "approve") setLoading(false);
     }
   }
 
@@ -3666,6 +5643,7 @@ function SakiFloatingChat({
     }
 
     setMessagesExpanded(true);
+    sakiAutoScrollRef.current = true;
     const requestPanelError = override?.panelError ?? panelError;
     const requestContextTitle = override?.contextTitle ?? contextTitle;
     const requestContextText = override?.contextText ?? contextText;
@@ -3684,7 +5662,8 @@ function SakiFloatingChat({
       content: "",
       createdAt: new Date().toISOString(),
       source: "direct-model",
-      workflowExpanded: true,
+      timeline: [],
+      workflowExpanded: false,
       streaming: true
     };
     const nextMessages = [...messages, userMessage, assistantMessage];
@@ -3695,36 +5674,95 @@ function SakiFloatingChat({
     setLoading(true);
     const abortController = new AbortController();
     sakiStreamAbortRef.current = abortController;
+    const history = messages.filter((message) => message.id !== "saki-welcome").slice(-12).map(toSakiHistoryMessage);
+    const request = {
+      message: value,
+      history,
+      instanceId: (storedConversations.find((conversation) => conversation.id === activeConversationId)?.instanceId ?? instance?.id) || null,
+      panelError: requestPanelError,
+      contextTitle: requestContextTitle,
+      contextText: requestContextText,
+      auditSearch: !instance && panelContext.auditSearch ? value : null,
+      mode: requestMode,
+      ...(requestMode === "agent" ? { agentPermissionMode: permissionMode } : {}),
+      selectedSkillIds,
+      attachments: submittedAttachments
+    };
+    let streamSawDelta = false;
+    let streamSawUnsafeAction = false;
+    let streamSawProgress = false;
+    let streamTimedOut = false;
+    let streamCompleted = false;
+    const streamToolNames = new Set<string>();
+    let streamIdleTimer: number | null = null;
+    const canRetryAsPlainRequest = () =>
+      requestMode === "chat" || (!streamSawUnsafeAction && [...streamToolNames].every((tool) => isReadOnlySakiTool(tool)));
+    const clearStreamIdleTimer = () => {
+      if (!streamIdleTimer) return;
+      window.clearTimeout(streamIdleTimer);
+      streamIdleTimer = null;
+    };
+    const armStreamIdleTimer = () => {
+      clearStreamIdleTimer();
+      streamIdleTimer = window.setTimeout(() => {
+        if (streamCompleted || abortController.signal.aborted) return;
+        streamTimedOut = true;
+        abortController.abort();
+      }, sakiStreamIdleFallbackMs);
+    };
+    const applyFinalResponse = (response: SakiChatResponse) => {
+      streamCompleted = true;
+      clearStreamIdleTimer();
+      setReachable(response.source === "direct-model");
+      if (response.skills) setSkills(response.skills);
+      if (response.agentPermissionMode) setPermissionMode(response.agentPermissionMode);
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === assistantId
+            ? (() => {
+                const nextActions = response.actions?.length ? response.actions : message.actions;
+                const nextMessage: LocalSakiMessage = {
+                  ...message,
+                  content: mergeSakiFinalText(message.content, response.message),
+                  timeline: mergeSakiTimelineActions(mergeSakiFinalTimeline(message.timeline, response.message), nextActions),
+                  source: response.source,
+                  workflowExpanded: false,
+                  streaming: false
+                };
+                if (nextActions?.length) return { ...nextMessage, actions: nextActions };
+                return nextMessage;
+              })()
+            : message
+        )
+      );
+    };
+    armStreamIdleTimer();
 
     try {
-      const history = messages.filter((message) => message.id !== "saki-welcome").slice(-12).map(toSakiHistoryMessage);
-      const request = {
-        message: value,
-        history,
-        instanceId: (storedConversations.find((conversation) => conversation.id === activeConversationId)?.instanceId ?? instance?.id) || null,
-        panelError: requestPanelError,
-        contextTitle: requestContextTitle,
-        contextText: requestContextText,
-        auditSearch: !instance && panelContext.auditSearch ? value : null,
-        mode: requestMode,
-        selectedSkillIds,
-        attachments: submittedAttachments
-      };
       const applyStreamEvent = (streamEvent: SakiChatStreamEvent) => {
         if (abortController.signal.aborted) return;
+        armStreamIdleTimer();
         if (streamEvent.type === "meta") {
           setReachable(streamEvent.source === "direct-model");
           if (streamEvent.skills) setSkills(streamEvent.skills);
+          if (streamEvent.agentPermissionMode) setPermissionMode(streamEvent.agentPermissionMode);
+          return;
+        }
+
+        if (streamEvent.type === "heartbeat") {
           return;
         }
 
         if (streamEvent.type === "delta") {
+          streamSawDelta = true;
+          streamSawProgress = true;
           setMessages((current) =>
             current.map((message) =>
               message.id === assistantId
                 ? {
                     ...message,
-                    content: `${message.content}${streamEvent.text}`
+                    content: `${message.content}${streamEvent.text}`,
+                    timeline: appendSakiTimelineDelta(message.timeline, streamEvent.text)
                   }
                 : message
             )
@@ -3733,6 +5771,11 @@ function SakiFloatingChat({
         }
 
         if (streamEvent.type === "workflow") {
+          streamSawProgress = true;
+          if (streamEvent.tool) {
+            streamToolNames.add(streamEvent.tool);
+          }
+          const chatText = workflowEventChatText(streamEvent);
           setMessages((current) =>
             current.map((message) => {
               if (message.id !== assistantId) return message;
@@ -3751,6 +5794,17 @@ function SakiFloatingChat({
               };
               return {
                 ...message,
+                ...(chatText
+                  ? {
+                      content: appendSakiAssistantText(message.content, chatText),
+                      timeline: upsertSakiTimelineText(message.timeline, {
+                        id: `workflow:${streamEvent.id}`,
+                        content: chatText,
+                        source: "workflow",
+                        createdAt: nextStep.createdAt
+                      })
+                    }
+                  : {}),
                 workflow: existing
                   ? workflow.map((step) => (step.id === streamEvent.id ? nextStep : step))
                   : [...workflow, nextStep]
@@ -3761,6 +5815,11 @@ function SakiFloatingChat({
         }
 
         if (streamEvent.type === "action") {
+          streamSawProgress = true;
+          streamToolNames.add(streamEvent.action.tool);
+          if (!isReadOnlySakiTool(streamEvent.action.tool)) {
+            streamSawUnsafeAction = true;
+          }
           setMessages((current) =>
             current.map((message) => {
               if (message.id !== assistantId) return message;
@@ -3770,88 +5829,61 @@ function SakiFloatingChat({
                 ...message,
                 actions: exists
                   ? actions.map((action) => (action.id === streamEvent.action.id ? streamEvent.action : action))
-                  : [...actions, streamEvent.action]
+                  : [...actions, streamEvent.action],
+                timeline: upsertSakiTimelineAction(message.timeline, streamEvent.action)
               };
             })
           );
           return;
         }
 
-        setReachable(streamEvent.response.source === "direct-model");
-        if (streamEvent.response.skills) setSkills(streamEvent.response.skills);
-        setMessages((current) =>
-          current.map((message) =>
-            message.id === assistantId
-              ? (() => {
-                  const nextMessage: LocalSakiMessage = {
-                    ...message,
-                    content: streamEvent.response.message,
-                    source: streamEvent.response.source,
-                    workflowExpanded: false,
-                    streaming: false
-                  };
-                  if (streamEvent.response.actions?.length) return { ...nextMessage, actions: streamEvent.response.actions };
-                  if (message.actions?.length) return { ...nextMessage, actions: message.actions };
-                  return nextMessage;
-                })()
-              : message
-          )
-        );
+        applyFinalResponse(streamEvent.response);
       };
       const response = await api.sakiChatStream(token, request, applyStreamEvent, abortController.signal);
-      setReachable(response.source === "direct-model");
-      if (response.skills) setSkills(response.skills);
-      setMessages((current) =>
-        current.map((message) =>
-          message.id === assistantId
-            ? (() => {
-                const nextMessage: LocalSakiMessage = {
-                  ...message,
-                  content: response.message,
-                  source: response.source,
-                  workflowExpanded: false,
-                  streaming: false
-                };
-                if (response.actions?.length) return { ...nextMessage, actions: response.actions };
-                if (message.actions?.length) return { ...nextMessage, actions: message.actions };
-                return nextMessage;
-              })()
-            : message
-        )
-      );
+      applyFinalResponse(response);
       setPanelError(null);
     } catch (err) {
-      if (abortController.signal.aborted) {
+      if (abortController.signal.aborted && !streamTimedOut) {
         settleInterruptedSakiMessage(assistantId);
         return;
       }
+      try {
+        const fallbackAllowed = !streamSawProgress && (canRetryAsPlainRequest() || (!streamSawDelta && streamToolNames.size === 0));
+        if (fallbackAllowed) {
+          clearStreamIdleTimer();
+          const response = await api.sakiChat(token, request);
+          applyFinalResponse(response);
+          setPanelError(null);
+          return;
+        }
+      } catch {
+        // Fall through to the compact interruption message below.
+      }
       const message = err instanceof Error ? err.message : "Saki 暂时没有回应";
+      const friendlyMessage = /流式连接|network error|failed to fetch|stream/i.test(message)
+        ? "连接刚刚中断了，当前回复可能不完整。你可以直接继续说，我会接着处理。"
+        : message;
       setReachable(false);
       setMessages((current) =>
         current.map((item) =>
           item.id === assistantId
             ? {
                 ...item,
-                content: message,
+                content: item.content ? `${item.content}\n\n${friendlyMessage}` : friendlyMessage,
+                timeline: upsertSakiTimelineText(item.timeline, {
+                  id: `error:${newClientId()}`,
+                  content: friendlyMessage,
+                  source: "error"
+                }),
                 source: "local-fallback",
                 workflowExpanded: false,
-                streaming: false,
-                workflow: [
-                  ...(item.workflow ?? []),
-                  {
-                    id: newClientId(),
-                    stage: "error",
-                    message: "流式连接中断",
-                    status: "failed",
-                    detail: message,
-                    createdAt: new Date().toISOString()
-                  }
-                ]
+                streaming: false
               }
             : item
         )
       );
     } finally {
+      clearStreamIdleTimer();
       if (sakiStreamAbortRef.current === abortController) {
         sakiStreamAbortRef.current = null;
       }
@@ -3866,8 +5898,10 @@ function SakiFloatingChat({
   const artMood: SakiArtMood = loading ? "thinking" : panelError || reachable === false ? "worry" : "normal";
   const statusClass = reachable === false ? "fallback" : reachable ? "online" : "pending";
   const statusLabel = reachable === false ? "本地回退" : reachable ? "已接入" : "待连接";
+  const agentModeStatusLabel = mode === "agent" ? `${statusLabel} · ${sakiPermissionModeLabel(permissionMode)}` : statusLabel;
   const contextPreview = contextText ? compactContextText(contextText.replace(/\s+/g, " "), 180) : "";
   const hasStreamingAssistant = messages.some((message) => message.role === "assistant" && message.streaming);
+  const launcherEdge = launcherAttachedEdge ?? (launcherPosition ? sakiLauncherEdgeForPosition(launcherPosition) : "right");
   const launcherStyle = launcherPosition
     ? {
         left: `${launcherPosition.x}px`,
@@ -3881,7 +5915,7 @@ function SakiFloatingChat({
     <>
       <button
         ref={launcherRef}
-        className={`saki-launcher ${launcherDragging ? "is-dragging" : ""} ${sakiFileHoverActive ? "drop-ready" : ""} ${open ? "hiding" : ""}`}
+        className={`saki-launcher ${launcherDragging ? "is-dragging" : ""} ${sakiFileHoverActive ? "drop-ready" : ""} ${open ? "hiding" : ""} ${launcherEdgeAttached ? `edge-attached edge-${launcherEdge}` : ""}`}
         type="button"
         title="Saki"
         aria-label="打开 Saki"
@@ -3897,7 +5931,7 @@ function SakiFloatingChat({
         onDrop={handleSakiFileDrop}
       >
         <span className="saki-launcher-glow" />
-        <SakiCharacterArt mood={artMood} compact fileDrop={fileDragActive} />
+        <SakiCharacterArt mood={artMood} compact fileDrop={fileDragActive} edgeAttached={launcherEdgeAttached} />
       </button>
 
       <section
@@ -3918,7 +5952,7 @@ function SakiFloatingChat({
         <div className="saki-messages-container">
           <div className="saki-messages-inner">
             <div className="saki-header">
-            <span className={`saki-agent-status ${statusClass}`}>{statusLabel}</span>
+            <span className={`saki-agent-status ${statusClass}`}>{agentModeStatusLabel}</span>
             <div className="saki-header-actions">
               <button className="icon-button mini" type="button" title="历史记录" onClick={toggleSakiHistory}>
                 <Clock size={15} />
@@ -4034,15 +6068,13 @@ function SakiFloatingChat({
             </div>
           ) : null}
 
-          <div className="saki-messages">
+          <div className="saki-messages" ref={sakiMessagesRef} onScroll={handleSakiMessagesScroll}>
             {messages.map((message) => {
-              const workflowCount = message.workflow?.length ?? 0;
-              const workflowOpen = Boolean(message.workflowExpanded);
               const actionItems = visibleSakiActions(message.actions);
               const fileRollbackActions = actionItems.filter(isSakiFileRollbackAction);
-              const regularActions = actionItems.filter((action) => !isSakiFileRollbackAction(action));
               const rollbackableFileActions = fileRollbackActions.filter(isSakiRollbackableFileEdit);
-              const rollbackGroupOpen = Boolean(message.rollbackGroupExpanded);
+              const timelineItems = message.role === "assistant" ? renderableSakiTimeline(message) : [];
+              const showAssistantTimeline = message.role === "assistant" && timelineItems.length > 0;
               return (
           <div className={`saki-message saki-message-${message.role}`} key={message.id}>
             <div className="saki-message-meta">
@@ -4052,110 +6084,51 @@ function SakiFloatingChat({
               <span>{message.role === "assistant" ? "Saki" : "你"}</span>
               {message.source === "local-fallback" ? <em>fallback</em> : null}
             </div>
-            <div className="saki-message-body">
-              {workflowCount ? (
-                <button
-                  className="saki-workflow-toggle"
-                  type="button"
-                  aria-expanded={workflowOpen}
-                  onClick={() => toggleSakiWorkflow(message.id)}
-                >
-                  <ChevronRight size={14} style={{ transform: workflowOpen ? "rotate(90deg)" : "none" }} />
-                  {workflowOpen ? "收起过程" : `查看过程 · ${workflowCount}`}
-                </button>
-              ) : null}
-              {message.workflow?.length && workflowOpen ? <SakiThinkingTrace steps={message.workflow} /> : null}
-              {message.content ? <MarkdownContent content={message.content} /> : null}
-              {!message.content && message.streaming ? <p className="saki-stream-placeholder">接收中...</p> : null}
-              {message.attachments?.length ? (
-                <div className="saki-message-attachments">
-                  {message.attachments.map((attachment, index) => (
-                    <SakiAttachmentChip attachment={attachment} key={attachment.id ?? `${attachment.name}-${index}`} />
-                  ))}
-                </div>
-              ) : null}
-            </div>
-            {regularActions.length || fileRollbackActions.length ? (
-              <div className="saki-action-log">
-                {regularActions.map((action) => (
-                  <div className={action.status === "pending_approval" ? "saki-action-item pending" : action.ok ? "saki-action-item ok" : "saki-action-item error"} key={action.id}>
-                    <div>
-                      <strong>{sakiActionTitle(action)}</strong>
-                      <span>{sakiActionStatusLabel(action)}</span>
+            {showAssistantTimeline ? (
+              <div className="saki-message-timeline">
+                {timelineItems.map((item) =>
+                  item.kind === "text" ? (
+                    <div className={`saki-message-body saki-message-body-${item.source}`} key={item.id}>
+                      <MarkdownContent content={item.content} />
                     </div>
-                    <p>{compactContextText(action.observation.replace(/\s+/g, " "), 220)}</p>
-                    {action.approval?.preview ? <pre>{compactContextText(action.approval.preview, 1200)}</pre> : null}
-                    {action.approval?.diff ? <pre>{compactContextText(action.approval.diff, 1800)}</pre> : null}
-                    {action.status === "pending_approval" ? (
-                      <div className="saki-action-controls">
-                        <button className="small-button" type="button" disabled={actionBusyId === action.id} onClick={() => void decideAction(action, "approve")}>
-                          <CheckCircle2 size={14} />
-                          批准
-                        </button>
-                        <button className="small-button danger-action" type="button" disabled={actionBusyId === action.id} onClick={() => void decideAction(action, "reject")}>
-                          <X size={14} />
-                          拒绝
-                        </button>
-                      </div>
-                    ) : action.approval?.rollbackAvailable ? (
-                      <div className="saki-action-controls">
-                        <button className="small-button" type="button" disabled={actionBusyId === action.id} onClick={() => void decideAction(action, "rollback")}>
-                          <CornerUpLeft size={14} />
-                          {isSakiRollbackableFileEdit(action) ? "回溯" : "回滚"}
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                ))}
-                {fileRollbackActions.length ? (
-                  <div className="saki-rollback-group">
-                    <div className="saki-rollback-header">
-                      <button
-                        className="saki-rollback-toggle"
-                        type="button"
-                        aria-expanded={rollbackGroupOpen}
-                        onClick={() => toggleSakiRollbackGroup(message.id)}
-                      >
-                        <ChevronRight size={14} style={{ transform: rollbackGroupOpen ? "rotate(90deg)" : "none" }} />
-                        <span>可回溯代码</span>
-                        <em>
-                          {fileRollbackActions.length} 个文件
-                          {rollbackableFileActions.length < fileRollbackActions.length ? ` · 已回溯 ${fileRollbackActions.length - rollbackableFileActions.length}` : ""}
-                        </em>
-                      </button>
-                      <button
-                        className="small-button"
-                        type="button"
-                        disabled={Boolean(actionBusyId) || rollbackableFileActions.length === 0}
-                        onClick={() => void rollbackAllFileActions(message.id, fileRollbackActions)}
-                      >
-                        <CornerUpLeft size={14} />
-                        全部回溯
-                      </button>
+                  ) : (
+                    <div className="saki-tool-timeline-item" key={item.id}>
+                      <SakiToolActionCard action={item.action} actionBusyId={actionBusyId} onDecision={(targetAction, decision) => void decideAction(targetAction, decision)} />
                     </div>
-                    {rollbackGroupOpen ? (
-                      <div className="saki-rollback-list">
-                        {fileRollbackActions.map((action) => (
-                          <div
-                            className={
-                              action.status === "rolled_back"
-                                ? "saki-rollback-row rolled-back"
-                                : action.ok
-                                  ? "saki-rollback-row"
-                                  : "saki-rollback-row error"
-                            }
-                            key={action.id}
-                          >
-                            <span>{sakiActionPath(action) || action.tool}</span>
-                            <em>{action.status === "rolled_back" ? "已回溯" : action.approval?.rollbackAvailable ? "可回溯" : action.ok ? "完成" : "失败"}</em>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
+                  )
+                )}
+                {fileRollbackActions.length > 1 ? (
+                  <div className="saki-rollback-bulk">
+                    <span>
+                      {rollbackableFileActions.length} / {fileRollbackActions.length} 个文件改动可回滚
+                    </span>
+                    <button
+                      className="small-button"
+                      type="button"
+                      disabled={Boolean(actionBusyId) || rollbackableFileActions.length === 0}
+                      onClick={() => void rollbackAllFileActions(message.id, fileRollbackActions)}
+                    >
+                      {actionBusyId === `rollback_all:${message.id}` ? <Loader2 size={14} className="status-spinner" /> : <CornerUpLeft size={14} />}
+                      全部回滚
+                    </button>
                   </div>
                 ) : null}
               </div>
-            ) : null}
+            ) : (
+              <div className="saki-message-body">
+                {message.content ? <MarkdownContent content={message.content} /> : null}
+                {!message.content && message.streaming ? (
+                  <p className="saki-stream-placeholder">等待模型响应...</p>
+                ) : null}
+                {message.attachments?.length ? (
+                  <div className="saki-message-attachments">
+                    {message.attachments.map((attachment, index) => (
+                      <SakiAttachmentChip attachment={attachment} key={attachment.id ?? `${attachment.name}-${index}`} />
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            )}
           </div>
               );
             })}
@@ -4236,7 +6209,7 @@ function SakiFloatingChat({
                     <div className={`saki-message saki-message-${message.role} mini-mode`} key={message.id}>
                       <div className="saki-message-body">
                         {message.content ? <MarkdownContent content={message.content} /> : null}
-                        {!message.content && message.streaming ? <p className="saki-stream-placeholder">接收中...</p> : null}
+                        {!message.content && message.streaming ? <p className="saki-stream-placeholder">等待模型响应...</p> : null}
                       </div>
                     </div>
                   ))}
@@ -4266,13 +6239,36 @@ function SakiFloatingChat({
               </button>
             ) : null}
           </div>
+          {canUseAgent && mode === "agent" ? (
+            <div className="saki-permission-tabs" role="group" aria-label="智能体权限模式">
+              {(["acceptEdits", "ask", "plan", "bypassPermissions"] as SakiAgentPermissionMode[]).map((item) => {
+                const icon =
+                  item === "acceptEdits" ? <CheckCircle2 size={13} /> : item === "ask" ? <Shield size={13} /> : item === "plan" ? <Eye size={13} /> : <XOctagon size={13} />;
+                return (
+                  <button
+                    className={permissionMode === item ? "active" : ""}
+                    type="button"
+                    title={sakiPermissionModeTitle(item)}
+                    aria-pressed={permissionMode === item}
+                    onClick={() => setPermissionMode(item)}
+                    key={item}
+                  >
+                    {icon}
+                    <span>{sakiPermissionModeLabel(item)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
           <div className="saki-input-row">
             <textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               onPaste={handleComposerPaste}
               placeholder={
-                contextText
+                mode === "agent" && permissionMode === "plan"
+                  ? "让 Saki 先阅读项目并给出执行计划"
+                  : contextText
                   ? "针对已附加的上下文继续追问"
                   : auditSearchActive
                     ? "让 Saki 查找审计日志"
@@ -4378,6 +6374,350 @@ function terminalStateLabel(state: TerminalConnectionState): string {
   return labels[state];
 }
 
+type TerminalShortcutKey =
+  | {
+      type: "modifier";
+      id: "ctrl";
+      label: string;
+      title: string;
+    }
+  | {
+      type: "key";
+      id: string;
+      label: string;
+      title: string;
+      data?: string;
+      ctrlData?: string;
+      viaBufferedInput?: boolean;
+      wide?: boolean;
+    };
+
+const terminalShortcutKeys: TerminalShortcutKey[] = [
+  { type: "key", id: "escape", label: "Esc", title: "Esc", data: "\x1b", ctrlData: "\x1b", wide: true },
+  { type: "key", id: "tab", label: "Tab", title: "Tab", data: "\t", viaBufferedInput: true, wide: true },
+  { type: "modifier", id: "ctrl", label: "Ctrl", title: "Ctrl" },
+  { type: "key", id: "up", label: "↑", title: "上", data: "\x1b[A", ctrlData: "\x1b[1;5A" },
+  { type: "key", id: "down", label: "↓", title: "下", data: "\x1b[B", ctrlData: "\x1b[1;5B" },
+  { type: "key", id: "left", label: "←", title: "左", data: "\x1b[D", ctrlData: "\x1b[1;5D" },
+  { type: "key", id: "right", label: "→", title: "右", data: "\x1b[C", ctrlData: "\x1b[1;5C" },
+  { type: "key", id: "backspace", label: "⌫", title: "退格", data: "\b", ctrlData: "\u0017", viaBufferedInput: true },
+  { type: "key", id: "c", label: "C", title: "C / Ctrl+C", data: "c", ctrlData: "\u0003", viaBufferedInput: true },
+  { type: "key", id: "d", label: "D", title: "D / Ctrl+D", data: "d", ctrlData: "\u0004", viaBufferedInput: true },
+  { type: "key", id: "l", label: "L", title: "L / Ctrl+L", data: "l", ctrlData: "\u000c", viaBufferedInput: true },
+  { type: "key", id: "enter", label: "Enter", title: "Enter", data: "\r", viaBufferedInput: true, wide: true }
+];
+
+const terminalAnsiReset = "\x1b[0m";
+const minecraftColorMarker = "\u00a7";
+
+function terminalAnsiRgb(red: number, green: number, blue: number): string {
+  return `\x1b[38;2;${red};${green};${blue}m`;
+}
+
+const minecraftTerminalColors: Record<string, string> = {
+  "0": terminalAnsiRgb(0, 0, 0),
+  "1": terminalAnsiRgb(0, 0, 170),
+  "2": terminalAnsiRgb(0, 170, 0),
+  "3": terminalAnsiRgb(0, 170, 170),
+  "4": terminalAnsiRgb(170, 0, 0),
+  "5": terminalAnsiRgb(170, 0, 170),
+  "6": terminalAnsiRgb(255, 170, 0),
+  "7": terminalAnsiRgb(170, 170, 170),
+  "8": terminalAnsiRgb(85, 85, 85),
+  "9": terminalAnsiRgb(85, 85, 255),
+  a: terminalAnsiRgb(85, 255, 85),
+  b: terminalAnsiRgb(85, 255, 255),
+  c: terminalAnsiRgb(255, 85, 85),
+  d: terminalAnsiRgb(255, 85, 255),
+  e: terminalAnsiRgb(255, 255, 85),
+  f: terminalAnsiRgb(255, 255, 255),
+  g: terminalAnsiRgb(221, 214, 5),
+  h: terminalAnsiRgb(227, 212, 209),
+  i: terminalAnsiRgb(206, 202, 202),
+  j: terminalAnsiRgb(68, 58, 59),
+  p: terminalAnsiRgb(222, 177, 45),
+  q: terminalAnsiRgb(17, 160, 54),
+  s: terminalAnsiRgb(44, 186, 168),
+  t: terminalAnsiRgb(33, 73, 123),
+  u: terminalAnsiRgb(154, 92, 198),
+  v: terminalAnsiRgb(235, 114, 20)
+};
+
+const minecraftTerminalFormats: Record<string, string> = {
+  l: "\x1b[1m",
+  m: "\x1b[9m",
+  n: "\x1b[4m",
+  o: "\x1b[3m"
+};
+
+function readMinecraftHexColor(value: string, markerIndex: number): { sequence: string; endIndex: number } | null {
+  const digits: string[] = [];
+  let endIndex = markerIndex;
+  for (let offset = 0; offset < 6; offset += 1) {
+    const nextMarkerIndex = markerIndex + 2 + offset * 2;
+    const digitIndex = nextMarkerIndex + 1;
+    const digit = value[digitIndex];
+    if (value[nextMarkerIndex] !== minecraftColorMarker || !digit || !/^[0-9a-f]$/i.test(digit)) {
+      return null;
+    }
+    digits.push(digit);
+    endIndex = digitIndex;
+  }
+
+  const hex = digits.join("");
+  return {
+    sequence: `${terminalAnsiReset}${terminalAnsiRgb(
+      Number.parseInt(hex.slice(0, 2), 16),
+      Number.parseInt(hex.slice(2, 4), 16),
+      Number.parseInt(hex.slice(4, 6), 16)
+    )}`,
+    endIndex
+  };
+}
+
+function readMinecraftCompactHexColor(value: string, markerIndex: number): { sequence: string; endIndex: number } | null {
+  const hex = value.slice(markerIndex + 2, markerIndex + 8);
+  if (value[markerIndex + 1] !== "#" || !/^[0-9a-f]{6}$/i.test(hex)) return null;
+  return {
+    sequence: `${terminalAnsiReset}${terminalAnsiRgb(
+      Number.parseInt(hex.slice(0, 2), 16),
+      Number.parseInt(hex.slice(2, 4), 16),
+      Number.parseInt(hex.slice(4, 6), 16)
+    )}`,
+    endIndex: markerIndex + 7
+  };
+}
+
+function minecraftFormattingToAnsi(value: string): string {
+  if (!value.includes(minecraftColorMarker)) return value;
+
+  let result = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const current = value[index] ?? "";
+    if (current !== minecraftColorMarker || index + 1 >= value.length) {
+      result += current;
+      continue;
+    }
+
+    const code = (value[index + 1] ?? "").toLowerCase();
+    if (code === "x") {
+      const hexColor = readMinecraftHexColor(value, index);
+      if (hexColor) {
+        result += hexColor.sequence;
+        index = hexColor.endIndex;
+        continue;
+      }
+    }
+    if (code === "#") {
+      const hexColor = readMinecraftCompactHexColor(value, index);
+      if (hexColor) {
+        result += hexColor.sequence;
+        index = hexColor.endIndex;
+        continue;
+      }
+    }
+
+    const color = minecraftTerminalColors[code];
+    if (color) {
+      result += `${terminalAnsiReset}${color}`;
+      index += 1;
+      continue;
+    }
+
+    if (code === "r") {
+      result += terminalAnsiReset;
+      index += 1;
+      continue;
+    }
+
+    const format = minecraftTerminalFormats[code];
+    if (format) {
+      result += format;
+      index += 1;
+      continue;
+    }
+
+    if (code === "k") {
+      index += 1;
+      continue;
+    }
+
+    result += current;
+  }
+
+  return result;
+}
+
+function terminalDisplayText(value: string): string {
+  return minecraftFormattingToAnsi(value)
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[(?![0-9;:]*m)[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b[()#][0-?]*[ -/]*./g, "")
+    .replace(/\x1b[=>78]/g, "");
+}
+
+interface TerminalTextStyleState {
+  color?: string;
+  backgroundColor?: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+}
+
+const terminalAnsiCssColors: Record<number, string> = {
+  30: "#000000",
+  31: "#aa0000",
+  32: "#00aa00",
+  33: "#ffaa00",
+  34: "#5555ff",
+  35: "#aa00aa",
+  36: "#00aaaa",
+  37: "#aaaaaa",
+  90: "#555555",
+  91: "#ff5555",
+  92: "#55ff55",
+  93: "#ffff55",
+  94: "#5555ff",
+  95: "#ff55ff",
+  96: "#55ffff",
+  97: "#ffffff"
+};
+
+function terminalAnsiBasicCssColor(code: number): string | undefined {
+  if (terminalAnsiCssColors[code]) return terminalAnsiCssColors[code];
+  if ((code >= 40 && code <= 47) || (code >= 100 && code <= 107)) {
+    return terminalAnsiCssColors[code - 10];
+  }
+  return undefined;
+}
+
+function terminalAnsi256CssColor(value: number): string | undefined {
+  if (!Number.isInteger(value) || value < 0 || value > 255) return undefined;
+  const basic = terminalAnsiCssColors[value < 8 ? value + 30 : value < 16 ? value + 82 : -1];
+  if (basic) return basic;
+  if (value >= 16 && value <= 231) {
+    const index = value - 16;
+    const red = Math.floor(index / 36);
+    const green = Math.floor((index % 36) / 6);
+    const blue = index % 6;
+    const component = (level: number) => (level === 0 ? 0 : 55 + level * 40);
+    return `rgb(${component(red)}, ${component(green)}, ${component(blue)})`;
+  }
+  const gray = 8 + (value - 232) * 10;
+  return `rgb(${gray}, ${gray}, ${gray})`;
+}
+
+function terminalTextCssStyle(state: TerminalTextStyleState): React.CSSProperties | undefined {
+  const style: React.CSSProperties = {};
+  if (state.color) style.color = state.color;
+  if (state.backgroundColor) style.backgroundColor = state.backgroundColor;
+  if (state.bold) style.fontWeight = 700;
+  if (state.italic) style.fontStyle = "italic";
+  const decorations = [state.underline ? "underline" : "", state.strike ? "line-through" : ""].filter(Boolean);
+  if (decorations.length > 0) style.textDecorationLine = decorations.join(" ");
+  return Object.keys(style).length > 0 ? style : undefined;
+}
+
+function applyTerminalSgr(state: TerminalTextStyleState, rawParams: string): TerminalTextStyleState {
+  const params = rawParams
+    .split(/[;:]/)
+    .filter((value) => value.length > 0)
+    .map((value) => Number.parseInt(value, 10));
+  const codes = params.length > 0 ? params : [0];
+  let next = { ...state };
+
+  for (let index = 0; index < codes.length; index += 1) {
+    const code = codes[index] ?? 0;
+    if (code === 0) {
+      next = {};
+    } else if (code === 1) {
+      next.bold = true;
+    } else if (code === 3) {
+      next.italic = true;
+    } else if (code === 4) {
+      next.underline = true;
+    } else if (code === 9) {
+      next.strike = true;
+    } else if (code === 22) {
+      delete next.bold;
+    } else if (code === 23) {
+      delete next.italic;
+    } else if (code === 24) {
+      delete next.underline;
+    } else if (code === 29) {
+      delete next.strike;
+    } else if (code === 39) {
+      delete next.color;
+    } else if (code === 49) {
+      delete next.backgroundColor;
+    } else if (code >= 30 && code <= 37) {
+      const color = terminalAnsiBasicCssColor(code);
+      if (color) next.color = color;
+    } else if (code >= 90 && code <= 97) {
+      const color = terminalAnsiBasicCssColor(code);
+      if (color) next.color = color;
+    } else if (code >= 40 && code <= 47) {
+      const color = terminalAnsiBasicCssColor(code);
+      if (color) next.backgroundColor = color;
+    } else if (code >= 100 && code <= 107) {
+      const color = terminalAnsiBasicCssColor(code);
+      if (color) next.backgroundColor = color;
+    } else if ((code === 38 || code === 48) && codes[index + 1] === 2) {
+      const red = codes[index + 2];
+      const green = codes[index + 3];
+      const blue = codes[index + 4];
+      if (red !== undefined && green !== undefined && blue !== undefined) {
+        const value = `rgb(${red}, ${green}, ${blue})`;
+        if (code === 38) next.color = value;
+        else next.backgroundColor = value;
+        index += 4;
+      }
+    } else if ((code === 38 || code === 48) && codes[index + 1] === 5) {
+      const color = terminalAnsi256CssColor(codes[index + 2] ?? -1);
+      if (color) {
+        if (code === 38) next.color = color;
+        else next.backgroundColor = color;
+        index += 2;
+      }
+    }
+  }
+
+  return next;
+}
+
+function renderTerminalLogText(value: string): React.ReactNode {
+  const text = terminalDisplayText(value);
+  const ansiPattern = /\x1b\[([0-9;:]*)m/g;
+  const nodes: React.ReactNode[] = [];
+  let style: TerminalTextStyleState = {};
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  const pushText = (piece: string) => {
+    if (!piece) return;
+    const cssStyle = terminalTextCssStyle(style);
+    nodes.push(
+      cssStyle ? (
+        <span key={nodes.length} style={cssStyle}>
+          {piece}
+        </span>
+      ) : (
+        piece
+      )
+    );
+  };
+
+  while ((match = ansiPattern.exec(text)) !== null) {
+    pushText(text.slice(lastIndex, match.index));
+    style = applyTerminalSgr(style, match[1] ?? "");
+    lastIndex = ansiPattern.lastIndex;
+  }
+  pushText(text.slice(lastIndex));
+
+  return nodes.length > 0 ? nodes : text;
+}
+
 function formatTerminalLine(line: InstanceLogLine): string {
   const prefix =
     line.stream === "stdin"
@@ -4387,7 +6727,13 @@ function formatTerminalLine(line: InstanceLogLine): string {
         : line.stream === "system"
           ? "\x1b[33mSYS\x1b[0m "
           : "";
-  return `${prefix}${line.text}\r\n`;
+  return `${prefix}${terminalDisplayText(line.text)}${terminalAnsiReset}\r\n`;
+}
+
+function terminalTouchRowHeight(terminalHost: HTMLElement, terminal: XTerm): number {
+  const screen = terminal.element?.querySelector(".xterm-screen") as HTMLElement | null;
+  const measuredHeight = screen?.getBoundingClientRect().height || terminalHost.clientHeight;
+  return Math.max(8, measuredHeight / Math.max(1, terminal.rows));
 }
 
 function WebTerminal({
@@ -4401,7 +6747,7 @@ function WebTerminal({
   onStatus: (instanceId: string, status: InstanceStatus, exitCode?: number | null) => void;
   onAskSaki?: ((seed: Omit<SakiPromptSeed, "nonce">) => void) | undefined;
 }) {
-  const terminalElementRef = useRef<HTMLDivElement | null>(null);
+  const [terminalHost, setTerminalHost] = useState<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -4415,12 +6761,18 @@ function WebTerminal({
   const [error, setError] = useState("");
   const [lastIssue, setLastIssue] = useState("");
   const [reconnectTick, setReconnectTick] = useState(0);
+  const [terminalMountKey, setTerminalMountKey] = useState(0);
   const [terminalActionBusy, setTerminalActionBusy] = useState(false);
+  const [immersive, setImmersive] = useState(false);
+  const [mobileCtrlActive, setMobileCtrlActive] = useState(false);
   const instanceId = instance?.id ?? null;
   const instanceName = instance?.name ?? "";
+  const handleTerminalHostRef = useCallback((node: HTMLDivElement | null) => {
+    setTerminalHost(node);
+  }, []);
 
   useEffect(() => {
-    if (!terminalElementRef.current || terminalRef.current) return;
+    if (!terminalHost || terminalRef.current) return;
 
     const terminal = new XTerm({
       convertEol: true,
@@ -4431,24 +6783,104 @@ function WebTerminal({
       theme: {
         background: "#101820",
         foreground: "#e5edf5",
+        black: "#000000",
+        red: "#aa0000",
+        green: "#00aa00",
+        yellow: "#ffaa00",
+        blue: "#5555ff",
+        magenta: "#aa00aa",
+        cyan: "#00aaaa",
+        white: "#aaaaaa",
+        brightBlack: "#555555",
+        brightRed: "#ff5555",
+        brightGreen: "#55ff55",
+        brightYellow: "#ffff55",
+        brightBlue: "#5555ff",
+        brightMagenta: "#ff55ff",
+        brightCyan: "#55ffff",
+        brightWhite: "#ffffff",
         cursor: "#a7f3d0",
         selectionBackground: "#31505f"
       }
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
-    terminal.open(terminalElementRef.current);
+    terminal.open(terminalHost);
     const inputSubscription = terminal.onData((data) => terminalDataHandlerRef.current(data));
     const selectionSubscription = terminal.onSelectionChange(() => rememberSakiTerminalSelection(terminal.getSelection()));
+    const handleTerminalCopy = (event: ClipboardEvent) => {
+      const selectedText = readTerminalClipboardText(terminal);
+      if (!selectedText || !event.clipboardData) return;
+      event.clipboardData.setData("text/plain", selectedText);
+      event.preventDefault();
+      rememberSakiTerminalSelection(selectedText);
+    };
+    terminalHost.addEventListener("copy", handleTerminalCopy, true);
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type === "keydown" && isTerminalCopyShortcut(event) && terminal.hasSelection()) {
+        return false;
+      }
+      return true;
+    });
+    let touchLastY = 0;
+    let touchRemainder = 0;
+    let touchActive = false;
+    let touchScrolling = false;
+    const handleTerminalTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1) {
+        touchActive = false;
+        touchScrolling = false;
+        touchRemainder = 0;
+        return;
+      }
+      touchActive = true;
+      touchScrolling = false;
+      touchRemainder = 0;
+      touchLastY = event.touches[0]?.clientY ?? 0;
+    };
+    const handleTerminalTouchMove = (event: TouchEvent) => {
+      if (!touchActive || event.touches.length !== 1) return;
+      const nextY = event.touches[0]?.clientY ?? touchLastY;
+      touchRemainder += touchLastY - nextY;
+      touchLastY = nextY;
+
+      const rowHeight = terminalTouchRowHeight(terminalHost, terminal);
+      const lines = Math.trunc(touchRemainder / rowHeight);
+      if (lines !== 0) {
+        terminal.scrollLines(lines);
+        touchRemainder -= lines * rowHeight;
+        touchScrolling = true;
+      }
+
+      if (touchScrolling || Math.abs(touchRemainder) > 4) {
+        if (event.cancelable) event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    const handleTerminalTouchEnd = () => {
+      touchActive = false;
+      touchScrolling = false;
+      touchRemainder = 0;
+    };
+    terminalHost.addEventListener("touchstart", handleTerminalTouchStart, { passive: true });
+    terminalHost.addEventListener("touchmove", handleTerminalTouchMove, { passive: false });
+    terminalHost.addEventListener("touchend", handleTerminalTouchEnd);
+    terminalHost.addEventListener("touchcancel", handleTerminalTouchEnd);
     fitAddon.fit();
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
     setTerminalReady(true);
+    setTerminalMountKey((value) => value + 1);
 
     const resize = () => fitAddon.fit();
     window.addEventListener("resize", resize);
     return () => {
       window.removeEventListener("resize", resize);
+      terminalHost.removeEventListener("copy", handleTerminalCopy, true);
+      terminalHost.removeEventListener("touchstart", handleTerminalTouchStart);
+      terminalHost.removeEventListener("touchmove", handleTerminalTouchMove);
+      terminalHost.removeEventListener("touchend", handleTerminalTouchEnd);
+      terminalHost.removeEventListener("touchcancel", handleTerminalTouchEnd);
       inputSubscription.dispose();
       selectionSubscription.dispose();
       clearRememberedSakiTerminalSelection();
@@ -4457,7 +6889,35 @@ function WebTerminal({
       fitAddonRef.current = null;
       setTerminalReady(false);
     };
-  }, []);
+  }, [terminalHost]);
+
+  useEffect(() => {
+    if (!immersive) {
+      setMobileCtrlActive(false);
+      return;
+    }
+
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousDocumentOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    const frame = window.requestAnimationFrame(() => {
+      fitAddonRef.current?.fit();
+      terminalRef.current?.focus();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousDocumentOverflow;
+      window.requestAnimationFrame(() => fitAddonRef.current?.fit());
+    };
+  }, [immersive]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => fitAddonRef.current?.fit());
+    return () => window.cancelAnimationFrame(frame);
+  }, [terminalReady, immersive, error, lastIssue]);
 
   useEffect(() => {
     setLastIssue("");
@@ -4519,10 +6979,10 @@ function WebTerminal({
           }
           if (payload.type === "error") {
             setError(payload.message);
-            terminal.write(`\x1b[31m${payload.message}\x1b[0m\r\n`);
+            terminal.write(`\x1b[31m${terminalDisplayText(payload.message)}${terminalAnsiReset}\r\n`);
           }
         } catch {
-          terminal.write(String(event.data));
+          terminal.write(terminalDisplayText(String(event.data)));
         }
       };
 
@@ -4557,7 +7017,7 @@ function WebTerminal({
       socketRef.current?.close(1000, "Terminal view changed");
       socketRef.current = null;
     };
-  }, [instanceId, instanceName, onStatus, reconnectTick, terminalReady, token]);
+  }, [instanceId, instanceName, onStatus, reconnectTick, terminalMountKey, terminalReady, token]);
 
   function sendInput(data: string, echo = true) {
     const socket = socketRef.current;
@@ -4641,8 +7101,41 @@ function WebTerminal({
     directInputBufferRef.current = buffer;
   };
 
-  return (
-    <div className="terminal-panel">
+  function sendTerminalShortcut(shortcut: TerminalShortcutKey) {
+    terminalRef.current?.focus();
+
+    if (shortcut.type === "modifier") {
+      setMobileCtrlActive((active) => !active);
+      return;
+    }
+
+    if (!connected || !running) {
+      setError("实例运行并连接后才能输入");
+      setMobileCtrlActive(false);
+      return;
+    }
+
+    const data = mobileCtrlActive ? (shortcut.ctrlData ?? shortcut.data) : shortcut.data;
+    if (!data) {
+      setMobileCtrlActive(false);
+      return;
+    }
+
+    if (!mobileCtrlActive && shortcut.viaBufferedInput) {
+      terminalDataHandlerRef.current(data);
+    } else {
+      sendInput(data, false);
+    }
+    setMobileCtrlActive(false);
+  }
+
+  const terminalPanel = (
+    <div
+      className={`terminal-panel ${immersive ? "terminal-panel-immersive" : ""}`}
+      role={immersive ? "dialog" : undefined}
+      aria-modal={immersive ? true : undefined}
+      aria-label={immersive ? `${instanceName || "实例"} 沉浸式终端` : undefined}
+    >
       <div className="terminal-toolbar">
         <div className={`terminal-connection terminal-state-${connectionState}`}>
           <span />
@@ -4670,6 +7163,15 @@ function WebTerminal({
             <RefreshCw size={15} />
           </button>
           <button
+            className="icon-button mini"
+            title={immersive ? "退出沉浸终端" : "沉浸终端"}
+            type="button"
+            aria-pressed={immersive}
+            onClick={() => setImmersive((value) => !value)}
+          >
+            {immersive ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
+          <button
             className={running ? "icon-button mini danger-action" : "icon-button mini"}
             title={terminalActionTitle}
             type="button"
@@ -4680,7 +7182,7 @@ function WebTerminal({
           </button>
         </div>
       </div>
-      <div className="xterm-host" ref={terminalElementRef} onClick={() => terminalRef.current?.focus()} />
+      <div className="xterm-host" ref={handleTerminalHostRef} onClick={() => terminalRef.current?.focus()} />
       <form className="terminal-command-bar" onSubmit={submitCommand}>
         <input
           value={command}
@@ -4692,6 +7194,23 @@ function WebTerminal({
           <Send size={17} />
         </button>
       </form>
+      <div className="terminal-mobile-keys" aria-label="移动端终端快捷键">
+        {terminalShortcutKeys.map((shortcut) => {
+          const active = shortcut.type === "modifier" && mobileCtrlActive;
+          return (
+            <button
+              key={shortcut.id}
+              className={`terminal-key-button ${shortcut.type === "modifier" ? "terminal-key-modifier" : ""} ${shortcut.type === "key" && shortcut.wide ? "wide" : ""} ${active ? "active" : ""}`}
+              type="button"
+              title={shortcut.title}
+              aria-pressed={shortcut.type === "modifier" ? active : undefined}
+              onClick={() => sendTerminalShortcut(shortcut)}
+            >
+              {shortcut.label}
+            </button>
+          );
+        })}
+      </div>
       {error ? <div className="terminal-error">{error}</div> : null}
       {lastIssue ? (
         <div className="terminal-issue">
@@ -4716,6 +7235,8 @@ function WebTerminal({
       ) : null}
     </div>
   );
+
+  return immersive ? createPortal(terminalPanel, document.body) : terminalPanel;
 }
 
 function FileManager({
@@ -4734,6 +7255,8 @@ function FileManager({
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const conflictResolveRef = useRef<((choice: FileConflictChoice | null) => void) | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const directoryLoadRequestRef = useRef(0);
+  const fileOpenRequestRef = useRef(0);
   const mobileFileLongPressRef = useRef<{
     pointerId: number;
     entry: InstanceFileEntry;
@@ -4797,24 +7320,32 @@ function FileManager({
   const loadDirectory = useCallback(
     async (pathToLoad: string) => {
       if (!instanceId) return;
+      const requestId = directoryLoadRequestRef.current + 1;
+      directoryLoadRequestRef.current = requestId;
       setLoading(true);
       setError("");
       try {
         const response = await api.listInstanceFiles(token, instanceId, pathToLoad);
+        if (requestId !== directoryLoadRequestRef.current) return;
         setCurrentPath(response.path);
         setEntries(response.entries);
         setFileSearchQuery("");
         setSelectedPath(null);
       } catch (err) {
+        if (requestId !== directoryLoadRequestRef.current) return;
         setError(err instanceof Error ? err.message : "文件列表读取失败");
       } finally {
-        setLoading(false);
+        if (requestId === directoryLoadRequestRef.current) {
+          setLoading(false);
+        }
       }
     },
     [instanceId, token]
   );
 
   useEffect(() => {
+    directoryLoadRequestRef.current += 1;
+    fileOpenRequestRef.current += 1;
     setCurrentPath("");
     setEntries([]);
     setFileSearchQuery("");
@@ -4882,6 +7413,35 @@ function FileManager({
   }, [mobileBrowserOpen, mobileEditorOpen]);
 
   useEffect(() => {
+    if (!mobileBrowserOpen && !mobileEditorOpen && !findVisible) return;
+    const handleGlobalKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || fileConflictPrompt) return;
+      if (findVisible) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        closeEditorFind();
+        return;
+      }
+      if (mobileEditorOpen) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        closeMobileEditorModal();
+        return;
+      }
+      if (mobileBrowserOpen) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        closeMobileBrowserModal();
+      }
+    };
+    window.addEventListener("keydown", handleGlobalKeyDown, true);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown, true);
+  }, [fileConflictPrompt, findVisible, mobileBrowserOpen, mobileEditorOpen]);
+
+  useEffect(() => {
     if (!findVisible) return;
     const frame = window.requestAnimationFrame(() => {
       findInputRef.current?.focus();
@@ -4914,19 +7474,28 @@ function FileManager({
     return typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches;
   }
 
-  function closeMobileBrowserModal() {
-    setMobileEditorOpen(false);
-    setMobileBrowserOpen(false);
+  function resetEditorSearchState() {
     setFindVisible(false);
     setFindQuery("");
     setFindActiveIndex(0);
   }
 
-  function closeMobileEditorModal() {
+  function cancelPendingFileOpen() {
+    fileOpenRequestRef.current += 1;
+  }
+
+  function closeMobileBrowserModal() {
+    cancelPendingFileOpen();
+    cancelMobileFileLongPress();
     setMobileEditorOpen(false);
-    setFindVisible(false);
-    setFindQuery("");
-    setFindActiveIndex(0);
+    setMobileBrowserOpen(false);
+    resetEditorSearchState();
+  }
+
+  function closeMobileEditorModal() {
+    cancelPendingFileOpen();
+    setMobileEditorOpen(false);
+    resetEditorSearchState();
   }
 
   function openEditorFind() {
@@ -4952,6 +7521,29 @@ function FileManager({
   }
 
   function handleFileManagerKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") {
+      if (findVisible) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.nativeEvent.stopImmediatePropagation();
+        closeEditorFind();
+        return;
+      }
+      if (mobileEditorOpen) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.nativeEvent.stopImmediatePropagation();
+        closeMobileEditorModal();
+        return;
+      }
+      if (mobileBrowserOpen) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.nativeEvent.stopImmediatePropagation();
+        closeMobileBrowserModal();
+        return;
+      }
+    }
     if (!editorCanEdit || editorMode !== "edit") return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
       event.preventDefault();
@@ -5164,12 +7756,16 @@ function FileManager({
   }
 
   async function openEntry(entry: InstanceFileEntry) {
+    const requestId = fileOpenRequestRef.current + 1;
+    fileOpenRequestRef.current = requestId;
     setSelectedPath(entry.path);
     setError("");
     if (entry.type === "directory") {
       setEditorPath(null);
       setEditorContent("");
       setEditorMode("edit");
+      setMobileEditorOpen(false);
+      resetEditorSearchState();
       await loadDirectory(entry.path);
       return;
     }
@@ -5178,6 +7774,7 @@ function FileManager({
     try {
       if (isImageFile(entry.path)) {
         const response = await api.downloadInstanceFile(token, instanceId, entry.path);
+        if (requestId !== fileOpenRequestRef.current) return;
         const mimeType = imageMimeTypeFromPath(response.path) ?? imageMimeTypeFromPath(entry.path) ?? "image/png";
         setEditorPath(response.path);
         setEditorContent(`data:${mimeType};base64,${response.contentBase64}`);
@@ -5189,6 +7786,7 @@ function FileManager({
       }
 
       const response = await api.readInstanceFile(token, instanceId, entry.path);
+      if (requestId !== fileOpenRequestRef.current) return;
       setEditorPath(response.path);
       setEditorContent(response.content);
       setEditorMode(filePreviewKindFromPath(response.path) ? "preview" : "edit");
@@ -5196,6 +7794,7 @@ function FileManager({
         setMobileEditorOpen(true);
       }
     } catch (err) {
+      if (requestId !== fileOpenRequestRef.current) return;
       setError(err instanceof Error ? err.message : "文件读取失败");
     }
   }
@@ -5396,10 +7995,7 @@ function FileManager({
         </button>
       </div>
       {mobileBrowserOpen ? (
-        <div className="mobile-file-browser-scrim" role="presentation" onMouseDown={closeMobileBrowserModal} />
-      ) : null}
-      {mobileEditorOpen ? (
-        <div className="mobile-file-editor-scrim" role="presentation" onMouseDown={closeMobileEditorModal} />
+        <div className="mobile-file-browser-scrim" role="presentation" onPointerDown={closeMobileBrowserModal} />
       ) : null}
       {mobileFileDrag ? (
         <div
@@ -5417,10 +8013,13 @@ function FileManager({
             <strong>文件管理</strong>
             <span>{instance.name}</span>
           </div>
-          <button className="icon-button mini" title="关闭文件管理" type="button" onClick={closeMobileBrowserModal}>
+          <button className="icon-button mini" title="关闭文件管理" aria-label="关闭文件管理" type="button" onClick={closeMobileBrowserModal}>
             <X size={15} />
           </button>
         </div>
+        {mobileEditorOpen ? (
+          <div className="mobile-file-editor-scrim" role="presentation" onPointerDown={closeMobileEditorModal} />
+        ) : null}
         <div className="file-toolbar">
           <span className="path-pill">/{currentPath}</span>
           <label className="file-search-box">
@@ -5598,6 +8197,7 @@ function FileManager({
               <button
                 className="icon-button mini mobile-editor-close"
                 title="关闭编辑器"
+                aria-label="关闭编辑器"
                 type="button"
                 onClick={closeMobileEditorModal}
               >
@@ -5638,7 +8238,7 @@ function FileManager({
               </button>
               <button className="primary-button save-file-button" disabled={!editorCanEdit || saving} onClick={() => void saveEditor()}>
                 <Save size={16} />
-                {saving ? "保存中" : "保存"}
+                <span className="save-file-label">{saving ? "保存中" : "保存"}</span>
               </button>
             </div>
           </div>
@@ -5697,6 +8297,7 @@ function FileManager({
                   value={editorContent}
                   language={editorLanguage}
                   onChange={(newValue) => setEditorContent(newValue)}
+                  lineWrapping={mobileEditorOpen}
                   className="code-editor-surface"
                 />
               </div>
@@ -5769,6 +8370,7 @@ function InstanceTasksPanel({
   instance: ManagedInstance;
   onClose: () => void;
 }) {
+  const t = usePanelT();
   const [tasks, setTasks] = useState<ManagedScheduledTask[]>([]);
   const [runs, setRuns] = useState<ManagedTaskRun[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -5798,19 +8400,19 @@ function InstanceTasksPanel({
         onLogout();
         return;
       }
-      setError(err instanceof Error ? err.message : "任务刷新失败");
+      setError(err instanceof Error ? err.message : t("tasks.errorRefresh"));
     }
-  }, [instance.id, onLogout, token]);
+  }, [instance.id, onLogout, t, token]);
 
   const refreshRuns = useCallback(
     async (taskId: string) => {
       try {
         setRuns(await api.taskRuns(token, taskId));
       } catch (err) {
-        setError(err instanceof Error ? err.message : "任务记录读取失败");
+        setError(err instanceof Error ? err.message : t("tasks.errorRuns"));
       }
     },
-    [token]
+    [t, token]
   );
 
   useEffect(() => {
@@ -5861,7 +8463,7 @@ function InstanceTasksPanel({
         enabled: true
       }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "任务创建失败");
+      setError(err instanceof Error ? err.message : t("tasks.errorCreate"));
     } finally {
       setCreating(false);
     }
@@ -5876,7 +8478,7 @@ function InstanceTasksPanel({
       await refreshRuns(task.id);
       setSelectedTaskId(task.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "任务执行失败");
+      setError(err instanceof Error ? err.message : t("tasks.errorRun"));
     } finally {
       setBusyTaskId(null);
     }
@@ -5889,7 +8491,7 @@ function InstanceTasksPanel({
       const updated = await api.updateTask(token, task.id, { enabled: !task.enabled });
       setTasks((current) => current.map((item) => (item.id === task.id ? updated : item)));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "任务状态更新失败");
+      setError(err instanceof Error ? err.message : t("tasks.errorUpdate"));
     } finally {
       setBusyTaskId(null);
     }
@@ -5907,7 +8509,7 @@ function InstanceTasksPanel({
         setRuns([]);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "任务删除失败");
+      setError(err instanceof Error ? err.message : t("tasks.errorDelete"));
     } finally {
       setBusyTaskId(null);
     }
@@ -5926,10 +8528,10 @@ function InstanceTasksPanel({
       <div className="modal-panel task-modal-panel instance-task-panel" role="dialog" aria-modal="true" aria-labelledby="instance-task-title">
       <div className="section-heading modal-heading">
         <div>
-          <h2 id="instance-task-title">计划任务</h2>
-          <span>{tasks.length} 个 · {instance.name}</span>
+          <h2 id="instance-task-title">{t("tasks.title")}</h2>
+          <span>{tasks.length} {t("tasks.countUnit")} · {instance.name}</span>
         </div>
-        <button className="icon-button mini" title="关闭" type="button" onClick={onClose}>
+        <button className="icon-button mini" title={t("common.close")} type="button" onClick={onClose}>
           <X size={15} />
         </button>
       </div>
@@ -5937,7 +8539,7 @@ function InstanceTasksPanel({
       <div className="instance-task-layout">
         <form className="task-form instance-task-form" onSubmit={createTask}>
           <label>
-            名称
+            {t("tasks.name")}
             <input
               value={form.name}
               onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
@@ -5945,19 +8547,19 @@ function InstanceTasksPanel({
             />
           </label>
           <label>
-            类型
+            {t("tasks.type")}
             <select
               value={form.type}
               onChange={(event) => setForm((current) => ({ ...current, type: event.target.value as ScheduledTaskType }))}
             >
-              <option value="restart_instance">重启实例</option>
-              <option value="start_instance">启动实例</option>
-              <option value="stop_instance">停止实例</option>
-              <option value="run_command">执行命令</option>
+              <option value="restart_instance">{t("tasks.type.restart")}</option>
+              <option value="start_instance">{t("tasks.type.start")}</option>
+              <option value="stop_instance">{t("tasks.type.stop")}</option>
+              <option value="run_command">{t("tasks.type.command")}</option>
             </select>
           </label>
           <label>
-            计划
+            {t("tasks.schedule")}
             <input
               value={form.cron}
               onChange={(event) => setForm((current) => ({ ...current, cron: event.target.value }))}
@@ -5967,7 +8569,7 @@ function InstanceTasksPanel({
           </label>
           {form.type === "run_command" ? (
             <label className="wide-field">
-              命令
+              {t("tasks.command")}
               <input
                 value={form.command}
                 onChange={(event) => setForm((current) => ({ ...current, command: event.target.value }))}
@@ -5981,11 +8583,11 @@ function InstanceTasksPanel({
               checked={form.enabled}
               onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))}
             />
-            启用任务
+            {t("tasks.enabled")}
           </label>
           <button className="primary-button form-submit" disabled={creating} type="submit">
             <Clock size={18} />
-            {creating ? "创建中" : "添加任务"}
+            {creating ? t("tasks.creating") : t("tasks.create")}
           </button>
         </form>
 
@@ -5994,11 +8596,11 @@ function InstanceTasksPanel({
             <table>
               <thead>
                 <tr>
-                  <th>名称</th>
-                  <th>类型</th>
-                  <th>计划</th>
-                  <th>下次运行</th>
-                  <th>状态</th>
+                  <th>{t("tasks.name")}</th>
+                  <th>{t("tasks.type")}</th>
+                  <th>{t("tasks.schedule")}</th>
+                  <th>{t("tasks.nextRun")}</th>
+                  <th>{t("tasks.status")}</th>
                   <th></th>
                 </tr>
               </thead>
@@ -6015,16 +8617,16 @@ function InstanceTasksPanel({
                       <td>{taskTypeLabel(task.type)}</td>
                       <td>{task.cron}</td>
                       <td>{formatDate(task.nextRunAt)}</td>
-                      <td>{task.enabled ? "启用" : "停用"}</td>
+                      <td>{task.enabled ? t("tasks.enable") : t("tasks.disable")}</td>
                       <td>
                         <div className="row-actions">
                           <button className="small-button compact-button" disabled={busy} onClick={() => void runTask(task)}>
-                            运行
+                            {t("tasks.run")}
                           </button>
                           <button className="small-button compact-button" disabled={busy} onClick={() => void toggleTask(task)}>
-                            {task.enabled ? "停用" : "启用"}
+                            {task.enabled ? t("tasks.disable") : t("tasks.enable")}
                           </button>
-                          <button className="icon-button mini danger-action" disabled={busy} title="删除" onClick={() => void deleteTask(task)}>
+                          <button className="icon-button mini danger-action" disabled={busy} title={t("common.remove")} onClick={() => void deleteTask(task)}>
                             <Trash2 size={15} />
                           </button>
                         </div>
@@ -6035,7 +8637,7 @@ function InstanceTasksPanel({
                 {tasks.length === 0 ? (
                   <tr>
                     <td colSpan={6}>
-                      <div className="empty-state">暂无计划任务</div>
+                      <div className="empty-state">{t("tasks.empty")}</div>
                     </td>
                   </tr>
                 ) : null}
@@ -6047,18 +8649,18 @@ function InstanceTasksPanel({
 
       <div className="instance-task-runs">
         <div className="section-heading subtle-heading">
-          <h2>{selectedTask ? `${selectedTask.name} 运行记录` : "运行记录"}</h2>
+          <h2>{selectedTask ? `${selectedTask.name} ${t("tasks.runRecords")}` : t("tasks.runRecords")}</h2>
           <span>{selectedTask ? formatDate(selectedTask.lastRunAt) : "-"}</span>
         </div>
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>开始时间</th>
-                <th>结束时间</th>
-                <th>状态</th>
-                <th>输出</th>
-                <th>错误</th>
+                <th>{t("tasks.startTime")}</th>
+                <th>{t("tasks.endTime")}</th>
+                <th>{t("tasks.status")}</th>
+                <th>{t("tasks.output")}</th>
+                <th>{t("tasks.error")}</th>
               </tr>
             </thead>
             <tbody>
@@ -6133,6 +8735,9 @@ function InstancesView({
   });
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsForm, setSettingsForm] = useState({
+    name: "",
+    workingDirectory: "",
+    startCommand: "",
     nodeId: "",
     autoStart: false,
     restartPolicy: "never" as RestartPolicy,
@@ -6311,6 +8916,9 @@ function InstancesView({
   useEffect(() => {
     if (!selectedInstance) return;
     setSettingsForm({
+      name: selectedInstance.name,
+      workingDirectory: selectedInstance.workingDirectory,
+      startCommand: selectedInstance.startCommand,
       nodeId: selectedInstance.nodeId,
       autoStart: selectedInstance.autoStart,
       restartPolicy: selectedInstance.restartPolicy,
@@ -6378,10 +8986,28 @@ function InstancesView({
 
   async function saveInstanceSettings() {
     if (!selectedInstance) return;
+    const name = settingsForm.name.trim();
+    const workingDirectory = settingsForm.workingDirectory.trim();
+    const startCommand = settingsForm.startCommand.trim();
+    if (!name) {
+      setError("实例名称不能为空");
+      return;
+    }
+    if (!workingDirectory) {
+      setError("工作目录不能为空");
+      return;
+    }
+    if (!startCommand) {
+      setError("启动命令不能为空");
+      return;
+    }
     setSettingsSaving(true);
     setError("");
     try {
       const updated = await api.updateInstance(token, selectedInstance.id, {
+        name,
+        workingDirectory,
+        startCommand,
         nodeId: settingsForm.nodeId || selectedInstance.nodeId,
         autoStart: settingsForm.autoStart,
         restartPolicy: settingsForm.restartPolicy,
@@ -6661,7 +9287,7 @@ function InstancesView({
                 <UserRound size={13} />
                 {instanceCreatorLabel(selectedInstance)}
               </span>
-              <span title={`负责人 · ${ownerRoleLabel(selectedInstance.assignedToRole)}`}>
+              <span title={instanceAssigneeTitle(selectedInstance)}>
                 <UserCheck size={13} />
                 {instanceAssigneeLabel(selectedInstance)}
               </span>
@@ -6781,7 +9407,43 @@ function InstancesView({
 
               <div className="tool-section">
                 <div className="tool-section-title">
-                  <span>开关</span>
+                  <span>配置</span>
+                </div>
+                <div className="settings-compact">
+                  <label>
+                    实例名称
+                    <input
+                      value={settingsForm.name}
+                      onChange={(event) =>
+                        setSettingsForm((current) => ({ ...current, name: event.target.value }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    工作目录
+                    <input
+                      value={settingsForm.workingDirectory}
+                      onChange={(event) =>
+                        setSettingsForm((current) => ({ ...current, workingDirectory: event.target.value }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    启动命令
+                    <textarea
+                      rows={3}
+                      value={settingsForm.startCommand}
+                      onChange={(event) =>
+                        setSettingsForm((current) => ({ ...current, startCommand: event.target.value }))
+                      }
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="tool-section">
+                <div className="tool-section-title">
+                  <span>运行策略</span>
                 </div>
                 <div className="settings-compact">
                   <label>
@@ -6847,8 +9509,8 @@ function InstancesView({
                     disabled={settingsSaving}
                     onClick={() => void saveInstanceSettings()}
                   >
-                    <Settings size={17} />
-                    {settingsSaving ? "保存中" : "保存"}
+                    <Save size={17} />
+                    {settingsSaving ? "保存中" : "保存设置"}
                   </button>
                 </div>
               </div>
@@ -7090,7 +9752,7 @@ function InstancesView({
                       <UserRound size={12} />
                       {instanceCreatorLabel(instance)}
                     </span>
-                    <span title={`负责人 · ${ownerRoleLabel(instance.assignedToRole)}`}>
+                    <span title={instanceAssigneeTitle(instance)}>
                       <UserCheck size={12} />
                       {instanceAssigneeLabel(instance)}
                     </span>
@@ -7801,90 +10463,90 @@ function TemplatesView({ token, onLogout, refreshTick }: { token: string; onLogo
   );
 }
 
-const PERMISSION_GROUPS: { group: string; items: { code: PermissionCode; label: string }[] }[] = [
+const PERMISSION_GROUPS: { groupKey: PanelTextKey; items: { code: PermissionCode; labelKey: PanelTextKey }[] }[] = [
   {
-    group: "仪表板与系统",
+    groupKey: "permissions.group.dashboard",
     items: [
-      { code: "dashboard.view", label: "查看仪表板" },
-      { code: "system.view", label: "查看系统信息" },
-      { code: "audit.view", label: "查看审计日志" }
+      { code: "dashboard.view", labelKey: "permissions.dashboard.view" },
+      { code: "system.view", labelKey: "permissions.system.view" },
+      { code: "audit.view", labelKey: "permissions.audit.view" }
     ]
   },
   {
-    group: "节点管理",
+    groupKey: "permissions.group.nodes",
     items: [
-      { code: "node.view", label: "查看节点" },
-      { code: "node.create", label: "创建节点" },
-      { code: "node.update", label: "编辑节点" },
-      { code: "node.delete", label: "删除节点" },
-      { code: "node.test", label: "测试节点" }
+      { code: "node.view", labelKey: "permissions.node.view" },
+      { code: "node.create", labelKey: "permissions.node.create" },
+      { code: "node.update", labelKey: "permissions.node.update" },
+      { code: "node.delete", labelKey: "permissions.node.delete" },
+      { code: "node.test", labelKey: "permissions.node.test" }
     ]
   },
   {
-    group: "实例与容器",
+    groupKey: "permissions.group.instances",
     items: [
-      { code: "instance.view", label: "查看实例" },
-      { code: "instance.create", label: "创建实例" },
-      { code: "instance.update", label: "编辑实例" },
-      { code: "instance.delete", label: "删除实例" },
-      { code: "instance.start", label: "启动实例" },
-      { code: "instance.stop", label: "停止实例" },
-      { code: "instance.restart", label: "重启实例" },
-      { code: "instance.kill", label: "终止实例" },
-      { code: "instance.logs", label: "查看运行日志" }
+      { code: "instance.view", labelKey: "permissions.instance.view" },
+      { code: "instance.create", labelKey: "permissions.instance.create" },
+      { code: "instance.update", labelKey: "permissions.instance.update" },
+      { code: "instance.delete", labelKey: "permissions.instance.delete" },
+      { code: "instance.start", labelKey: "permissions.instance.start" },
+      { code: "instance.stop", labelKey: "permissions.instance.stop" },
+      { code: "instance.restart", labelKey: "permissions.instance.restart" },
+      { code: "instance.kill", labelKey: "permissions.instance.kill" },
+      { code: "instance.logs", labelKey: "permissions.instance.logs" }
     ]
   },
   {
-    group: "远程终端",
+    groupKey: "permissions.group.terminal",
     items: [
-      { code: "terminal.view", label: "打开终端" },
-      { code: "terminal.input", label: "终端输入与交互" }
+      { code: "terminal.view", labelKey: "permissions.terminal.view" },
+      { code: "terminal.input", labelKey: "permissions.terminal.input" }
     ]
   },
   {
-    group: "文件管理",
+    groupKey: "permissions.group.files",
     items: [
-      { code: "file.view", label: "查看文件列表" },
-      { code: "file.read", label: "读取文件内容" },
-      { code: "file.write", label: "修改 / 上传文件" },
-      { code: "file.delete", label: "删除文件" }
+      { code: "file.view", labelKey: "permissions.file.view" },
+      { code: "file.read", labelKey: "permissions.file.read" },
+      { code: "file.write", labelKey: "permissions.file.write" },
+      { code: "file.delete", labelKey: "permissions.file.delete" }
     ]
   },
   {
-    group: "计划任务",
+    groupKey: "permissions.group.tasks",
     items: [
-      { code: "task.view", label: "查看任务" },
-      { code: "task.create", label: "创建任务" },
-      { code: "task.update", label: "编辑任务" },
-      { code: "task.delete", label: "删除任务" },
-      { code: "task.run", label: "手动执行任务" }
+      { code: "task.view", labelKey: "permissions.task.view" },
+      { code: "task.create", labelKey: "permissions.task.create" },
+      { code: "task.update", labelKey: "permissions.task.update" },
+      { code: "task.delete", labelKey: "permissions.task.delete" },
+      { code: "task.run", labelKey: "permissions.task.run" }
     ]
   },
   {
-    group: "模板管理",
+    groupKey: "permissions.group.templates",
     items: [
-      { code: "template.view", label: "查看模板" },
-      { code: "template.create", label: "创建模板" }
+      { code: "template.view", labelKey: "permissions.template.view" },
+      { code: "template.create", labelKey: "permissions.template.create" }
     ]
   },
   {
-    group: "用户与角色",
+    groupKey: "permissions.group.users",
     items: [
-      { code: "user.view", label: "查看用户" },
-      { code: "user.create", label: "创建用户" },
-      { code: "user.update", label: "编辑用户" },
-      { code: "user.delete", label: "删除用户" },
-      { code: "role.view", label: "查看角色" },
-      { code: "role.update", label: "编辑角色权限" }
+      { code: "user.view", labelKey: "permissions.user.view" },
+      { code: "user.create", labelKey: "permissions.user.create" },
+      { code: "user.update", labelKey: "permissions.user.update" },
+      { code: "user.delete", labelKey: "permissions.user.delete" },
+      { code: "role.view", labelKey: "permissions.role.view" },
+      { code: "role.update", labelKey: "permissions.role.update" }
     ]
   },
   {
-    group: "Saki 助手",
+    groupKey: "permissions.group.saki",
     items: [
-      { code: "saki.chat", label: "使用对话" },
-      { code: "saki.agent", label: "使用智能体" },
-      { code: "saki.skills", label: "管理 Saki 技能" },
-      { code: "saki.configure", label: "配置 Saki 助手" }
+      { code: "saki.chat", labelKey: "permissions.saki.chat" },
+      { code: "saki.agent", labelKey: "permissions.saki.agent" },
+      { code: "saki.skills", labelKey: "permissions.saki.skills" },
+      { code: "saki.configure", labelKey: "permissions.saki.configure" }
     ]
   }
 ];
@@ -7909,23 +10571,24 @@ function isNoRolePermissionRole(role: ManagedRole): boolean {
   return role.name === noRolePermissionRoleName;
 }
 
-function roleNameDisplayName(roleName: string): string {
-  const labels: Record<string, string> = {
-    super_admin: "超级管理员",
-    admin: "管理员",
-    user: "用户",
-    operator: "运维管理员",
-    readonly: "只读用户"
+function roleNameDisplayName(roleName: string, t: (key: PanelTextKey) => string = (key) => panelT("zh-CN", key)): string {
+  const labels: Record<string, PanelTextKey> = {
+    super_admin: "roles.super_admin",
+    admin: "roles.admin",
+    user: "roles.user",
+    operator: "roles.operator",
+    readonly: "roles.readonly"
   };
-  return labels[roleName] ?? roleName;
+  const key = labels[roleName];
+  return key ? t(key) : roleName;
 }
 
-function roleDisplayName(role: ManagedRole): string {
-  return isNoRolePermissionRole(role) ? "无角色" : roleNameDisplayName(role.name);
+function roleDisplayName(role: ManagedRole, t: (key: PanelTextKey) => string = (key) => panelT("zh-CN", key)): string {
+  return isNoRolePermissionRole(role) ? t("users.noRole") : roleNameDisplayName(role.name, t);
 }
 
-function roleNamesDisplay(roleNames: readonly string[]): string {
-  return roleNames.length > 0 ? roleNames.map(roleNameDisplayName).join(", ") : "无角色";
+function roleNamesDisplay(roleNames: readonly string[], t: (key: PanelTextKey) => string = (key) => panelT("zh-CN", key)): string {
+  return roleNames.length > 0 ? roleNames.map((roleName) => roleNameDisplayName(roleName, t)).join(", ") : t("users.noRole");
 }
 
 function isElevatedManagedRole(role: ManagedRole): boolean {
@@ -7946,6 +10609,7 @@ function UsersView({
   onSwitchUser: (token: string, user: CurrentUser) => void;
   refreshTick: number;
 }) {
+  const t = usePanelT();
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [roles, setRoles] = useState<ManagedRole[]>([]);
   const [assignableUsers, setAssignableUsers] = useState<InstanceAssignee[]>([]);
@@ -7960,6 +10624,7 @@ function UsersView({
   const [savingAssignment, setSavingAssignment] = useState(false);
   const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
   const [editForm, setEditForm] = useState<UpdateUserRequest>({});
+  const editAvatarFileInputRef = useRef<HTMLInputElement | null>(null);
   const [savingUser, setSavingUser] = useState(false);
   const [switchingUserId, setSwitchingUserId] = useState<string | null>(null);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
@@ -8005,9 +10670,9 @@ function UsersView({
         onLogout();
         return;
       }
-      setError(err instanceof Error ? err.message : "用户读取失败");
+      setError(err instanceof Error ? err.message : t("users.errorReadFailed"));
     }
-  }, [canAssignInstances, canManageAccounts, currentUser.permissions, onLogout, token]);
+  }, [canAssignInstances, canManageAccounts, currentUser.permissions, onLogout, t, token]);
 
   const selectedRole = roles.find((role) => role.id === selectedRoleId) ?? null;
   const assignableUserIds = useMemo(() => new Set(assignableUsers.map((user) => user.id)), [assignableUsers]);
@@ -8029,7 +10694,7 @@ function UsersView({
       setUsers((current) => [user, ...current]);
       setForm({ username: "", password: "", displayName: "", roleIds: [], status: "ACTIVE" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "用户创建失败");
+      setError(err instanceof Error ? err.message : t("users.errorCreateFailed"));
     } finally {
       setCreatingUser(false);
     }
@@ -8040,6 +10705,7 @@ function UsersView({
     setEditForm({
       username: user.username,
       displayName: user.displayName,
+      avatarDataUrl: user.avatarDataUrl ?? null,
       status: user.status,
       roleIds: user.roleIds
     });
@@ -8048,6 +10714,20 @@ function UsersView({
   function closeUserEditor() {
     setEditingUser(null);
     setEditForm({});
+  }
+
+  async function chooseEditedUserAvatar(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.item(0);
+    event.target.value = "";
+    if (!file) return;
+
+    setError("");
+    try {
+      const avatarDataUrl = await avatarFileToDataUrl(file);
+      setEditForm((current) => ({ ...current, avatarDataUrl }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("account.errorAvatarRead"));
+    }
   }
 
   async function saveEditedUser(event: React.FormEvent<HTMLFormElement>) {
@@ -8062,6 +10742,10 @@ function UsersView({
         status: editForm.status ?? editingUser.status,
         roleIds: editForm.roleIds ?? editingUser.roleIds
       };
+      const nextAvatarDataUrl = editForm.avatarDataUrl ?? null;
+      if (nextAvatarDataUrl !== (editingUser.avatarDataUrl ?? null)) {
+        payload.avatarDataUrl = nextAvatarDataUrl;
+      }
       if (editForm.password?.trim()) {
         payload.password = editForm.password;
       }
@@ -8070,7 +10754,7 @@ function UsersView({
       closeUserEditor();
       void refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "用户保存失败");
+      setError(err instanceof Error ? err.message : t("users.errorSaveFailed"));
     } finally {
       setSavingUser(false);
     }
@@ -8083,14 +10767,14 @@ function UsersView({
       const result = await api.switchUser(token, user.id);
       onSwitchUser(result.token, result.user);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "账号切换失败");
+      setError(err instanceof Error ? err.message : t("users.errorSwitchFailed"));
       setSwitchingUserId(null);
     }
   }
 
   async function deleteUser(user: ManagedUser) {
     if (user.id === currentUser.id) {
-      setError("不能删除当前登录账号");
+      setError(t("users.errorDeleteSelf"));
       return;
     }
     const label = user.displayName && user.displayName !== user.username ? `@${user.username}（${user.displayName}）` : `@${user.username}`;
@@ -8113,14 +10797,13 @@ function UsersView({
                 createdByRole: null
               }
             : {}),
-          ...(instance.assignedToUserId === user.id
-            ? {
-                assignedToUserId: null,
-                assignedToUsername: null,
-                assignedToDisplayName: null,
-                assignedToRole: null
-              }
-            : {})
+          ...(() => {
+            const assignees = instanceAssignedUsers(instance).filter((assignee) => assignee.userId !== user.id);
+            return {
+              assignees,
+              ...primaryAssigneeFields(assignees)
+            };
+          })()
         }))
       );
       if (editingUser?.id === user.id) closeUserEditor();
@@ -8130,7 +10813,7 @@ function UsersView({
         onLogout();
         return;
       }
-      setError(err instanceof Error ? err.message : "用户删除失败");
+      setError(err instanceof Error ? err.message : t("users.errorDeleteFailed"));
     } finally {
       setDeletingUserId(null);
     }
@@ -8144,7 +10827,7 @@ function UsersView({
       const updated = await api.updateRolePermissions(token, selectedRole.id, { permissions: rolePermissions });
       setRoles((current) => current.map((role) => (role.id === updated.id ? updated : role)));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "角色权限保存失败");
+      setError(err instanceof Error ? err.message : t("users.errorRoleSaveFailed"));
     } finally {
       setSavingRole(false);
     }
@@ -8158,7 +10841,7 @@ function UsersView({
 
   function openAssignmentModal(user: InstanceAssignee) {
     setAssignmentTargetUser(user);
-    setAssignmentDraftIds(instances.filter((instance) => instance.assignedToUserId === user.id).map((instance) => instance.id));
+    setAssignmentDraftIds(instances.filter((instance) => isInstanceAssignedTo(instance, user.id)).map((instance) => instance.id));
   }
 
   function toggleAssignmentDraft(instanceId: string, checked: boolean) {
@@ -8175,23 +10858,25 @@ function UsersView({
     try {
       const draftIds = new Set(assignmentDraftIds);
       const updates = instances.filter((instance) => {
-        const currentlyAssignedToTarget = instance.assignedToUserId === assignmentTargetUser.id;
+        const currentlyAssignedToTarget = isInstanceAssignedTo(instance, assignmentTargetUser.id);
         const shouldAssignToTarget = draftIds.has(instance.id);
         return currentlyAssignedToTarget !== shouldAssignToTarget;
       });
       const updatedInstances = await Promise.all(
-        updates.map((instance) =>
-          api.updateInstance(token, instance.id, {
-            assignedToUserId: draftIds.has(instance.id) ? assignmentTargetUser.id : null
-          })
-        )
+        updates.map((instance) => {
+          const currentAssigneeIds = instanceAssignedUsers(instance).map((user) => user.userId);
+          const assignedToUserIds = draftIds.has(instance.id)
+            ? [...new Set([...currentAssigneeIds, assignmentTargetUser.id])]
+            : currentAssigneeIds.filter((userId) => userId !== assignmentTargetUser.id);
+          return api.updateInstance(token, instance.id, { assignedToUserIds });
+        })
       );
       const updatedById = new Map(updatedInstances.map((instance) => [instance.id, instance]));
       setInstances((current) => current.map((instance) => updatedById.get(instance.id) ?? instance));
       setAssignmentTargetUser(null);
       setAssignmentDraftIds([]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "实例分配失败");
+      setError(err instanceof Error ? err.message : t("users.errorAssignFailed"));
     } finally {
       setSavingAssignment(false);
     }
@@ -8205,13 +10890,13 @@ function UsersView({
           <div className="modal-panel assignment-modal assignment-picker-modal" role="dialog" aria-modal="true" aria-labelledby="assignment-modal-title">
             <div className="section-heading modal-heading">
               <div className="role-heading-info">
-                <h2 id="assignment-modal-title">分配实例</h2>
-                <p>选择要分配给该用户的实例，保存后立即生效。</p>
+                <h2 id="assignment-modal-title">{t("users.assignment.title")}</h2>
+                <p>{t("users.assignment.copy")}</p>
               </div>
               <button
                 className="icon-button mini"
                 disabled={savingAssignment}
-                title="关闭"
+                title={t("common.close")}
                 type="button"
                 onClick={() => {
                   setAssignmentTargetUser(null);
@@ -8226,15 +10911,15 @@ function UsersView({
               <div>
                 <strong>{assignmentTargetUser.displayName || assignmentTargetUser.username}</strong>
                 <span>
-                  @{assignmentTargetUser.username} · {ownerRoleLabel(assignmentTargetUser.role)}
+                  @{assignmentTargetUser.username} · {ownerRoleLabel(assignmentTargetUser.role, t)}
                 </span>
               </div>
             </div>
             <form className="assignment-form assignment-picker-form" onSubmit={saveUserAssignments}>
               <div className="assignment-instance-summary">
                 <div>
-                  <strong>{assignmentDraftIds.length} 个实例已选择</strong>
-                  <span>{instances.length} 个可管理实例</span>
+                  <strong>{assignmentDraftIds.length} {t("users.assignment.selected")}</strong>
+                  <span>{instances.length} {t("users.assignment.available")}</span>
                 </div>
               </div>
               <div className="assignment-instance-grid assignment-picker-grid">
@@ -8261,7 +10946,7 @@ function UsersView({
                     </label>
                   );
                 })}
-                {instances.length === 0 ? <div className="empty-state">当前没有可分配的实例</div> : null}
+                {instances.length === 0 ? <div className="empty-state">{t("users.assignment.empty")}</div> : null}
               </div>
               <div className="assignment-actions">
                 <button
@@ -8273,11 +10958,11 @@ function UsersView({
                     setAssignmentDraftIds([]);
                   }}
                 >
-                  取消
+                  {t("common.cancel")}
                 </button>
                 <button className="primary-button" disabled={savingAssignment} type="submit">
                   <UserCheck size={17} />
-                  {savingAssignment ? "保存中" : "保存分配"}
+                  {savingAssignment ? t("common.saving") : t("users.assignment.save")}
                 </button>
               </div>
             </form>
@@ -8290,17 +10975,61 @@ function UsersView({
           <div className="modal-panel user-edit-modal" role="dialog" aria-modal="true" aria-labelledby="user-edit-title">
             <div className="section-heading modal-heading">
               <div className="role-heading-info">
-                <h2 id="user-edit-title">编辑用户</h2>
-                <p>{editingUser.username} 的资料、角色和状态会在保存后立即生效。</p>
+                <h2 id="user-edit-title">{t("users.edit.title")}</h2>
+                <p>{editingUser.username}{t("users.edit.copySuffix")}</p>
               </div>
-              <button className="icon-button mini" disabled={savingUser} title="关闭" type="button" onClick={closeUserEditor}>
+              <button className="icon-button mini" disabled={savingUser} title={t("common.close")} type="button" onClick={closeUserEditor}>
                 <X size={18} />
               </button>
             </div>
             <form className="modal-form user-edit-form" onSubmit={saveEditedUser}>
+              <input
+                ref={editAvatarFileInputRef}
+                className="hidden-file-input"
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                onChange={(event) => void chooseEditedUserAvatar(event)}
+              />
+              <div className="managed-user-avatar-editor">
+                <button
+                  className="managed-user-avatar-button"
+                  disabled={savingUser}
+                  title={t("account.uploadAvatar")}
+                  type="button"
+                  onClick={() => editAvatarFileInputRef.current?.click()}
+                >
+                  <AccountAvatar
+                    avatarDataUrl={editForm.avatarDataUrl ?? null}
+                    displayName={editForm.displayName ?? editingUser.displayName}
+                    username={editForm.username ?? editingUser.username}
+                    className="managed-user-preview"
+                  />
+                  <span className="account-avatar-action">
+                    <Camera size={15} />
+                  </span>
+                </button>
+                <div className="managed-user-avatar-copy">
+                  <strong>{(editForm.displayName ?? editingUser.displayName).trim() || editingUser.username}</strong>
+                  <span>@{editForm.username ?? editingUser.username}</span>
+                  <div className="account-upload-actions">
+                    <button className="small-button" disabled={savingUser} type="button" onClick={() => editAvatarFileInputRef.current?.click()}>
+                      <Upload size={15} />
+                      {t("account.uploadAvatar")}
+                    </button>
+                    <button
+                      className="small-button"
+                      disabled={savingUser}
+                      type="button"
+                      onClick={() => setEditForm((current) => ({ ...current, avatarDataUrl: null }))}
+                    >
+                      {t("common.remove")}
+                    </button>
+                  </div>
+                </div>
+              </div>
               <div className="user-edit-grid">
                 <label>
-                  用户名
+                  {t("users.username")}
                   <input
                     value={editForm.username ?? ""}
                     onChange={(event) => setEditForm((current) => ({ ...current, username: event.target.value }))}
@@ -8308,7 +11037,7 @@ function UsersView({
                   />
                 </label>
                 <label>
-                  昵称
+                  {t("users.displayName")}
                   <input
                     value={editForm.displayName ?? ""}
                     onChange={(event) => setEditForm((current) => ({ ...current, displayName: event.target.value }))}
@@ -8316,27 +11045,27 @@ function UsersView({
                   />
                 </label>
                 <label>
-                  状态
+                  {t("users.status")}
                   <select
                     value={editForm.status ?? "ACTIVE"}
                     onChange={(event) => setEditForm((current) => ({ ...current, status: event.target.value as ManagedUser["status"] }))}
                   >
-                    <option value="ACTIVE">启用</option>
-                    <option value="DISABLED">禁用</option>
+                    <option value="ACTIVE">{t("users.status.active")}</option>
+                    <option value="DISABLED">{t("users.status.disabled")}</option>
                   </select>
                 </label>
                 <label>
-                  新密码
+                  {t("users.newPassword")}
                   <input
                     type="password"
                     value={editForm.password ?? ""}
                     onChange={(event) => setEditForm((current) => ({ ...current, password: event.target.value }))}
-                    placeholder="留空则不修改"
+                    placeholder={t("users.newPassword.placeholder")}
                   />
                 </label>
               </div>
               <div className="user-role-editor">
-                <span className="user-role-editor-title">用户角色</span>
+                <span className="user-role-editor-title">{t("users.roles")}</span>
                 <div className="permission-group-items user-role-options">
                   <label className={`permission-chip ${(editForm.roleIds ?? []).length === 0 ? "active" : ""}`}>
                     <input
@@ -8347,7 +11076,7 @@ function UsersView({
                     />
                     <div className="permission-chip-content">
                       {(editForm.roleIds ?? []).length === 0 ? <ShieldCheck size={17} /> : <div className="permission-chip-dot" />}
-                      <span className="permission-label">无角色</span>
+                      <span className="permission-label">{t("users.noRole")}</span>
                     </div>
                   </label>
                   {assignableRoles.map((role) => {
@@ -8372,7 +11101,7 @@ function UsersView({
                         />
                         <div className="permission-chip-content">
                           {isActive ? <ShieldCheck size={17} /> : <div className="permission-chip-dot" />}
-                          <span className="permission-label">{roleDisplayName(role)}</span>
+                          <span className="permission-label">{roleDisplayName(role, t)}</span>
                         </div>
                       </label>
                     );
@@ -8381,11 +11110,11 @@ function UsersView({
               </div>
               <div className="assignment-actions">
                 <button className="small-button" disabled={savingUser} type="button" onClick={closeUserEditor}>
-                  取消
+                  {t("common.cancel")}
                 </button>
                 <button className="primary-button" disabled={savingUser} type="submit">
                   <Save size={18} />
-                  {savingUser ? "保存中..." : "保存用户"}
+                  {savingUser ? t("common.saving") : t("users.saveUser")}
                 </button>
               </div>
             </form>
@@ -8396,33 +11125,33 @@ function UsersView({
       {!canManageAccounts && canAssignInstances ? (
         <section className="panel-block users-panel">
           <div className="section-heading">
-            <h2>用户</h2>
-            <span>{assignableUsers.length} 个可分配对象</span>
+            <h2>{t("users.title")}</h2>
+            <span>{assignableUsers.length} {t("users.assignableCount")}</span>
           </div>
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>用户名</th>
-                  <th>昵称</th>
-                  <th>角色</th>
-                  <th>已分配实例</th>
+                  <th>{t("users.username")}</th>
+                  <th>{t("users.displayName")}</th>
+                  <th>{t("users.role")}</th>
+                  <th>{t("users.assignedInstances")}</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 {assignableUsers.map((assignee) => {
-                  const assignedCount = instances.filter((instance) => instance.assignedToUserId === assignee.id).length;
+                  const assignedCount = instances.filter((instance) => isInstanceAssignedTo(instance, assignee.id)).length;
                   return (
                     <tr key={assignee.id}>
                       <td>{assignee.username}</td>
                       <td>{assignee.displayName || "-"}</td>
-                      <td>{ownerRoleLabel(assignee.role)}</td>
+                      <td>{ownerRoleLabel(assignee.role, t)}</td>
                       <td>{assignedCount}</td>
                       <td>
                         <div className="user-row-actions">
                           <button className="small-button compact-button" type="button" onClick={() => openAssignmentModal(assignee)}>
-                            分配实例
+                            {t("users.assignment.button")}
                           </button>
                         </div>
                       </td>
@@ -8431,7 +11160,7 @@ function UsersView({
                 })}
               </tbody>
             </table>
-            {assignableUsers.length === 0 ? <div className="empty-state">暂无可分配的管理员或用户</div> : null}
+            {assignableUsers.length === 0 ? <div className="empty-state">{t("users.assignment.emptyUsers")}</div> : null}
           </div>
         </section>
       ) : null}
@@ -8442,38 +11171,38 @@ function UsersView({
             {canCreateUsers ? (
               <div className="panel-block user-form-panel">
                 <div className="section-heading">
-                  <h2>创建用户</h2>
+                  <h2>{t("users.create.title")}</h2>
                 </div>
                 <form className="task-form" onSubmit={createUser}>
                   <label>
-                    用户名
+                    {t("users.username")}
                     <input value={form.username} onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))} required />
                   </label>
                   <label>
-                    昵称
+                    {t("users.displayName")}
                     <input value={form.displayName} onChange={(event) => setForm((current) => ({ ...current, displayName: event.target.value }))} required />
                   </label>
                   <label>
-                    密码
+                    {t("auth.password")}
                     <input type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} required />
                   </label>
                   <label>
-                    角色
+                    {t("users.role")}
                     <select
                       value={form.roleIds?.[0] ?? ""}
                       onChange={(event) => setForm((current) => ({ ...current, roleIds: event.target.value ? [event.target.value] : [] }))}
                     >
-                      <option value="">无角色</option>
+                      <option value="">{t("users.noRole")}</option>
                       {assignableRoles.map((role) => (
                         <option value={role.id} key={role.id}>
-                          {roleDisplayName(role)}
+                          {roleDisplayName(role, t)}
                         </option>
                       ))}
                     </select>
                   </label>
                   <button className="primary-button form-submit" disabled={creatingUser} type="submit">
                     <UserCog size={18} />
-                    {creatingUser ? "创建中" : "创建用户"}
+                    {creatingUser ? t("users.create.creating") : t("users.create.submit")}
                   </button>
                 </form>
               </div>
@@ -8481,18 +11210,18 @@ function UsersView({
 
             <div className="panel-block users-panel">
               <div className="section-heading">
-                <h2>用户</h2>
-                <span>{users.length} 个</span>
+                <h2>{t("users.title")}</h2>
+                <span>{users.length} {t("users.countUnit")}</span>
               </div>
               <div className="table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      <th>用户名</th>
-                      <th>昵称</th>
-                      <th>角色</th>
-                      <th>状态</th>
-                      <th>最近登录</th>
+                      <th>{t("users.username")}</th>
+                      <th>{t("users.displayName")}</th>
+                      <th>{t("users.role")}</th>
+                      <th>{t("users.status")}</th>
+                      <th>{t("users.lastLogin")}</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -8509,20 +11238,30 @@ function UsersView({
                       const canDeleteAccount = canDeleteUsers && user.id !== currentUser.id;
                       return (
                         <tr key={user.id}>
-                          <td>{user.username}</td>
+                          <td>
+                            <div className="managed-user-identity">
+                              <AccountAvatar
+                                avatarDataUrl={user.avatarDataUrl}
+                                displayName={user.displayName}
+                                username={user.username}
+                                className="compact"
+                              />
+                              <span>{user.username}</span>
+                            </div>
+                          </td>
                           <td>{user.displayName}</td>
-                          <td>{roleNamesDisplay(user.roleNames)}</td>
-                          <td>{user.status === "ACTIVE" ? "启用" : "禁用"}</td>
+                          <td>{roleNamesDisplay(user.roleNames, t)}</td>
+                          <td>{user.status === "ACTIVE" ? t("users.status.active") : t("users.status.disabled")}</td>
                           <td>{formatDate(user.lastLoginAt)}</td>
                           <td>
                             <div className="user-row-actions">
                               <button className="small-button compact-button" type="button" onClick={() => openUserEditor(user)}>
                                 <UserCog size={14} />
-                                编辑
+                                {t("users.edit.button")}
                               </button>
                               {canOpenAssignment && assignee ? (
                                 <button className="small-button compact-button" type="button" onClick={() => openAssignmentModal(assignee)}>
-                                  分配实例
+                                  {t("users.assignment.button")}
                                 </button>
                               ) : null}
                               {canSwitchAccount ? (
@@ -8533,7 +11272,7 @@ function UsersView({
                                   onClick={() => void switchToUser(user)}
                                 >
                                   <LogIn size={14} />
-                                  {switchingUserId === user.id ? "切换中" : "切换"}
+                                  {switchingUserId === user.id ? t("users.switching") : t("users.switch.button")}
                                 </button>
                               ) : null}
                               {canDeleteAccount ? (
@@ -8544,7 +11283,7 @@ function UsersView({
                                   onClick={() => void deleteUser(user)}
                                 >
                                   <Trash2 size={14} />
-                                  {deletingUserId === user.id ? "删除中" : "删除"}
+                                  {deletingUserId === user.id ? t("users.deleting") : t("users.delete.button")}
                                 </button>
                               ) : null}
                             </div>
@@ -8562,21 +11301,21 @@ function UsersView({
           <section className="panel-block role-panel">
             <div className="section-heading role-heading-wrap">
               <div className="role-heading-info">
-                <h2>角色与权限分配</h2>
-                <p>为角色以及未分配角色的用户配置操作权限。</p>
+                <h2>{t("roles.permissions.title")}</h2>
+                <p>{t("roles.permissions.copy")}</p>
               </div>
               <select className="role-select-box" value={selectedRoleId} onChange={(event) => setSelectedRoleId(event.target.value)}>
                 {roles.map((role) => (
                   <option value={role.id} key={role.id}>
-                    {roleDisplayName(role)}
+                    {roleDisplayName(role, t)}
                   </option>
                 ))}
               </select>
             </div>
             <div className="permission-groups">
               {PERMISSION_GROUPS.map((group) => (
-                <div className="permission-group-card" key={group.group}>
-                  <h3 className="permission-group-title">{group.group}</h3>
+                <div className="permission-group-card" key={group.groupKey}>
+                  <h3 className="permission-group-title">{t(group.groupKey)}</h3>
                   <div className="permission-group-items">
                     {group.items.map((item) => {
                       const isActive = rolePermissions.includes(item.code);
@@ -8590,7 +11329,7 @@ function UsersView({
                           />
                           <div className="permission-chip-content">
                             {isActive ? <ShieldCheck size={16} /> : <div className="permission-chip-dot" />}
-                            <span className="permission-label">{item.label}</span>
+                            <span className="permission-label">{t(item.labelKey)}</span>
                           </div>
                         </label>
                       );
@@ -8602,7 +11341,7 @@ function UsersView({
             <div className="role-actions">
               <button className="primary-button settings-save" disabled={!selectedRole || savingRole} onClick={() => void saveRolePermissions()}>
                 <ShieldCheck size={17} />
-                {savingRole ? "保存中" : "保存权限"}
+                {savingRole ? t("common.saving") : t("roles.permissions.save")}
               </button>
             </div>
           </section>
@@ -9011,7 +11750,7 @@ function AuditView({
 }
 
 const emptySakiConfig: SakiConfigResponse = {
-  requestTimeoutMs: 120000,
+  requestTimeoutMs: defaultSakiRequestTimeoutMs,
   provider: "ollama",
   model: "llama3",
   ollamaUrl: "http://localhost:11434",
@@ -9148,6 +11887,7 @@ function parseSessionTimeoutMinutesDraft(value: string): number {
 }
 
 function AboutView() {
+  const t = usePanelT();
   const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "available" | "up-to-date" | "updating" | "error">("idle");
   const [updateMessage, setUpdateMessage] = useState("");
   const currentVersion = "v0.1.0";
@@ -9157,7 +11897,7 @@ function AboutView() {
 
   const checkForUpdates = useCallback(async () => {
     setUpdateStatus("checking");
-    setUpdateMessage("正在检测更新...");
+    setUpdateMessage(t("about.update.messageChecking"));
     try {
       const response = await fetch("https://api.github.com/repos/EthanChan050430/Saki-Panel/releases/latest");
       if (response.ok) {
@@ -9167,19 +11907,19 @@ function AboutView() {
         setLatestReleaseUrl(data.html_url || "https://github.com/EthanChan050430/Saki-Panel/releases");
         if (releaseVersion && releaseVersion !== currentVersion) {
           setUpdateStatus("available");
-          setUpdateMessage(`发现新版本: ${releaseVersion}`);
+          setUpdateMessage(`${t("about.update.messageAvailable")}: ${releaseVersion}`);
         } else {
           setUpdateStatus("up-to-date");
-          setUpdateMessage("当前已是最新版本");
+          setUpdateMessage(t("about.update.messageCurrent"));
         }
       } else {
-        throw new Error("无法获取版本信息");
+        throw new Error(t("about.update.errorVersion"));
       }
     } catch (err) {
       setUpdateStatus("error");
-      setUpdateMessage(err instanceof Error ? err.message : "检测更新失败");
+      setUpdateMessage(err instanceof Error ? err.message : t("about.update.errorFailed"));
     }
-  }, [currentVersion]);
+  }, [currentVersion, t]);
 
   return (
     <div className="about-page">
@@ -9188,43 +11928,36 @@ function AboutView() {
           <header className="about-article-header">
             <div className="about-kicker">
               <img className="about-kicker-logo" src={projectLogoSrc} alt="" draggable={false} />
-              项目百科
+              {t("about.kicker")}
             </div>
             <h1>Saki Panel</h1>
-            <p>
-              Saki Panel 是一套面向服务器实例、节点、模板、用户权限与审计日志的 Web 管理面板。
-              它把日常运维中分散的启动、文件、终端、监控和权限动作收拢到一个清晰的工作台里。
-            </p>
-            <div className="about-meta-strip" aria-label="项目摘要">
-              <span>版本 {currentVersion}</span>
+            <p>{t("about.summary")}</p>
+            <div className="about-meta-strip" aria-label={t("about.kicker")}>
+              <span>{t("about.meta.version")} {currentVersion}</span>
               <span>Apache-2.0 License</span>
               <span>React + TypeScript</span>
-              <span>Panel / Daemon 架构</span>
+              <span>{t("about.meta.architecture")}</span>
             </div>
           </header>
 
           <section id="about-overview" className="about-wiki-section">
             <h2>
               <Info size={18} />
-              概览
+              {t("about.overview")}
             </h2>
-            <p>
-              面板围绕“实例”组织工作：你可以创建服务实例、分配节点、查看运行状态、打开终端、
-              管理文件并追踪操作记录。界面侧重长期使用的可读性，信息密度适中，适合在桌面端持续管理，
-              也兼顾移动端临时查看与处理。
-            </p>
+            <p>{t("about.overview.copy")}</p>
             <dl className="about-definition-list">
               <div>
-                <dt>定位</dt>
-                <dd>轻量级实例与节点运维面板</dd>
+                <dt>{t("about.position")}</dt>
+                <dd>{t("about.position.value")}</dd>
               </div>
               <div>
-                <dt>适用场景</dt>
-                <dd>个人服务器、小团队服务托管、模板化部署、远程文件管理</dd>
+                <dt>{t("about.scenario")}</dt>
+                <dd>{t("about.scenario.value")}</dd>
               </div>
               <div>
-                <dt>设计重点</dt>
-                <dd>清晰导航、权限隔离、可审计操作、低学习成本</dd>
+                <dt>{t("about.design")}</dt>
+                <dd>{t("about.design.value")}</dd>
               </div>
             </dl>
           </section>
@@ -9232,27 +11965,24 @@ function AboutView() {
           <section id="about-architecture" className="about-wiki-section">
             <h2>
               <Layers size={18} />
-              系统组成
+              {t("about.architecture")}
             </h2>
-            <p>
-              项目由前端控制台、Panel 服务端、Daemon 节点代理与共享类型包组成。前端负责交互，
-              Panel 负责认证、权限、审计和 API 聚合，Daemon 则在目标节点上执行实例、文件与终端相关操作。
-            </p>
+            <p>{t("about.architecture.copy")}</p>
             <div className="about-component-grid">
               <div>
                 <Server size={18} />
                 <strong>Panel</strong>
-                <span>统一 API、用户会话、权限策略与审计入口。</span>
+                <span>{t("about.panel.copy")}</span>
               </div>
               <div>
                 <TerminalIcon size={18} />
                 <strong>Daemon</strong>
-                <span>连接实际节点，执行实例生命周期、文件和终端任务。</span>
+                <span>{t("about.daemon.copy")}</span>
               </div>
               <div>
                 <FileText size={18} />
                 <strong>Web Console</strong>
-                <span>提供仪表盘、实例、模板、用户、设置与关于文档界面。</span>
+                <span>{t("about.web.copy")}</span>
               </div>
             </div>
           </section>
@@ -9260,38 +11990,38 @@ function AboutView() {
           <section id="about-features" className="about-wiki-section">
             <h2>
               <Wrench size={18} />
-              核心能力
+              {t("about.features")}
             </h2>
-            <div className="about-feature-table" role="table" aria-label="核心能力">
+            <div className="about-feature-table" role="table" aria-label={t("about.features")}>
               <div role="row">
-                <span role="columnheader">模块</span>
-                <span role="columnheader">用途</span>
-                <span role="columnheader">价值</span>
+                <span role="columnheader">{t("about.features.module")}</span>
+                <span role="columnheader">{t("about.features.purpose")}</span>
+                <span role="columnheader">{t("about.features.value")}</span>
               </div>
               <div role="row">
-                <span role="cell">实例管理</span>
-                <span role="cell">创建、启动、停止、重启与查看运行日志。</span>
-                <span role="cell">把服务生命周期集中在一个入口。</span>
+                <span role="cell">{t("about.feature.instances")}</span>
+                <span role="cell">{t("about.feature.instances.purpose")}</span>
+                <span role="cell">{t("about.feature.instances.value")}</span>
               </div>
               <div role="row">
-                <span role="cell">文件管理</span>
-                <span role="cell">浏览目录、上传下载、编辑文本文件与解压归档。</span>
-                <span role="cell">减少反复切换 SSH 与本地工具的成本。</span>
+                <span role="cell">{t("about.feature.files")}</span>
+                <span role="cell">{t("about.feature.files.purpose")}</span>
+                <span role="cell">{t("about.feature.files.value")}</span>
               </div>
               <div role="row">
-                <span role="cell">节点监控</span>
-                <span role="cell">查看节点连接状态、资源指标与连通性。</span>
-                <span role="cell">快速判断实例异常是否来自节点侧。</span>
+                <span role="cell">{t("about.feature.nodes")}</span>
+                <span role="cell">{t("about.feature.nodes.purpose")}</span>
+                <span role="cell">{t("about.feature.nodes.value")}</span>
               </div>
               <div role="row">
-                <span role="cell">模板系统</span>
-                <span role="cell">沉淀常用启动命令、环境变量与部署参数。</span>
-                <span role="cell">让重复部署更稳定，也便于团队复用。</span>
+                <span role="cell">{t("about.feature.templates")}</span>
+                <span role="cell">{t("about.feature.templates.purpose")}</span>
+                <span role="cell">{t("about.feature.templates.value")}</span>
               </div>
               <div role="row">
-                <span role="cell">Saki 助手</span>
-                <span role="cell">基于当前页面上下文进行问答、排查与辅助操作。</span>
-                <span role="cell">把解释、诊断和执行连接到同一工作流。</span>
+                <span role="cell">{t("about.feature.saki")}</span>
+                <span role="cell">{t("about.feature.saki.purpose")}</span>
+                <span role="cell">{t("about.feature.saki.value")}</span>
               </div>
             </div>
           </section>
@@ -9299,24 +12029,24 @@ function AboutView() {
           <section id="about-workflow" className="about-wiki-section">
             <h2>
               <ClipboardList size={18} />
-              典型流程
+              {t("about.workflow")}
             </h2>
             <ol className="about-flow-list">
               <li>
-                <strong>接入节点</strong>
-                <span>在节点侧运行 Daemon，并在面板中确认连接状态。</span>
+                <strong>{t("about.workflow.node")}</strong>
+                <span>{t("about.workflow.node.copy")}</span>
               </li>
               <li>
-                <strong>创建模板</strong>
-                <span>整理启动命令、工作目录和常用环境变量。</span>
+                <strong>{t("about.workflow.template")}</strong>
+                <span>{t("about.workflow.template.copy")}</span>
               </li>
               <li>
-                <strong>部署实例</strong>
-                <span>基于模板创建实例，按角色分配可见范围与操作权限。</span>
+                <strong>{t("about.workflow.deploy")}</strong>
+                <span>{t("about.workflow.deploy.copy")}</span>
               </li>
               <li>
-                <strong>观察与维护</strong>
-                <span>通过日志、终端、文件管理和审计记录完成日常维护。</span>
+                <strong>{t("about.workflow.maintain")}</strong>
+                <span>{t("about.workflow.maintain.copy")}</span>
               </li>
             </ol>
           </section>
@@ -9324,24 +12054,21 @@ function AboutView() {
           <section id="about-security" className="about-wiki-section">
             <h2>
               <ShieldCheck size={18} />
-              安全与审计
+              {t("about.security")}
             </h2>
-            <p>
-              Saki Panel 使用基于角色的权限模型控制不同用户能看到和操作的资源。
-              关键操作会记录到审计日志中，便于回溯“谁在什么时间对什么资源做了什么事”。
-            </p>
+            <p>{t("about.security.copy")}</p>
             <ul className="about-check-list">
-              <li>支持用户、角色与权限组合管理。</li>
-              <li>支持实例分配，降低无关资源暴露。</li>
-              <li>保留登录、文件、实例、模板、节点、任务等操作记录。</li>
-              <li>支持会话超时与面板外观等运行时配置。</li>
+              <li>{t("about.security.userRoles")}</li>
+              <li>{t("about.security.assignment")}</li>
+              <li>{t("about.security.audit")}</li>
+              <li>{t("about.security.runtime")}</li>
             </ul>
           </section>
 
           <section id="about-stack" className="about-wiki-section">
             <h2>
               <Code2 size={18} />
-              技术栈
+              {t("about.stack")}
             </h2>
             <div className="about-stack-list">
               <span>React 19</span>
@@ -9358,46 +12085,43 @@ function AboutView() {
           <section id="about-maintenance" className="about-wiki-section">
             <h2>
               <RefreshCw size={18} />
-              维护与更新
+              {t("about.maintenance")}
             </h2>
-            <p>
-              发布版本以 GitHub Releases 为准。建议在更新前阅读发布说明，并备份数据库、
-              环境变量和自定义配置，尤其是涉及权限、会话或节点通信的版本。
-            </p>
+            <p>{t("about.maintenance.copy")}</p>
           </section>
         </article>
 
-        <aside className="about-side-column" aria-label="关于页面侧栏">
-          <section className="about-infobox" aria-label="项目资料">
+        <aside className="about-side-column" aria-label={t("about.sidebar")}>
+          <section className="about-infobox" aria-label={t("about.projectInfo")}>
             <div className="about-infobox-title">
               <div className="about-icon">
                 <img className="about-project-logo" src={projectLogoSrc} alt="" draggable={false} />
               </div>
               <div>
                 <strong>Saki Panel</strong>
-                <span>系统管理面板</span>
+                <span>{t("about.subtitle")}</span>
               </div>
             </div>
 
             <dl className="about-info-list">
               <div>
-                <dt>当前版本</dt>
+                <dt>{t("about.currentVersion")}</dt>
                 <dd>{currentVersion}</dd>
               </div>
               <div>
-                <dt>作者</dt>
+                <dt>{t("about.author")}</dt>
                 <dd>帥気的男主角</dd>
               </div>
               <div>
-                <dt>联系方式</dt>
+                <dt>{t("about.contact")}</dt>
                 <dd>QQ: 3151815823</dd>
               </div>
               <div>
-                <dt>许可证</dt>
+                <dt>{t("about.license")}</dt>
                 <dd>Apache-2.0</dd>
               </div>
               <div>
-                <dt>仓库</dt>
+                <dt>{t("about.repository")}</dt>
                 <dd>
                   <a href="https://github.com/EthanChan050430/Saki-Panel" target="_blank" rel="noopener noreferrer">
                     <Github size={15} />
@@ -9410,7 +12134,7 @@ function AboutView() {
             <div className="about-update-panel">
               <h2>
                 <RefreshCw size={16} />
-                更新检查
+                {t("about.updateCheck")}
               </h2>
               <div className="update-status">
                 <div className={`status-indicator ${updateStatus}`}>
@@ -9421,7 +12145,7 @@ function AboutView() {
                   {updateStatus === "error" && <Bug size={16} />}
                   {updateStatus === "idle" && <Clock size={16} />}
                 </div>
-                <span className="status-text">{updateMessage || "尚未检测更新"}</span>
+                <span className="status-text">{updateMessage || t("about.update.idle")}</span>
               </div>
               <div className="update-actions">
                 <button
@@ -9429,7 +12153,7 @@ function AboutView() {
                   onClick={checkForUpdates}
                   disabled={updateStatus === "checking" || updateStatus === "updating"}
                 >
-                  {updateStatus === "checking" ? "检测中..." : "检查更新"}
+                  {updateStatus === "checking" ? t("about.update.checking") : t("about.update.check")}
                 </button>
                 {updateStatus === "available" && (
                   <a
@@ -9439,25 +12163,25 @@ function AboutView() {
                     rel="noopener noreferrer"
                   >
                     <DownloadCloud size={15} />
-                    查看发布页
+                    {t("about.update.release")}
                   </a>
                 )}
               </div>
               {latestVersion && (
-                <p className="latest-version-info">最新版本: {latestVersion}</p>
+                <p className="latest-version-info">{t("about.update.latest")}: {latestVersion}</p>
               )}
             </div>
           </section>
 
-          <nav className="about-toc" aria-label="关于页面目录">
-            <div className="about-toc-heading">目录</div>
-            <a href="#about-overview">概览</a>
-            <a href="#about-architecture">系统组成</a>
-            <a href="#about-features">核心能力</a>
-            <a href="#about-workflow">典型流程</a>
-            <a href="#about-security">安全与审计</a>
-            <a href="#about-stack">技术栈</a>
-            <a href="#about-maintenance">维护与更新</a>
+          <nav className="about-toc" aria-label={t("about.toc")}>
+            <div className="about-toc-heading">{t("about.toc")}</div>
+            <a href="#about-overview">{t("about.overview")}</a>
+            <a href="#about-architecture">{t("about.architecture")}</a>
+            <a href="#about-features">{t("about.features")}</a>
+            <a href="#about-workflow">{t("about.workflow")}</a>
+            <a href="#about-security">{t("about.security")}</a>
+            <a href="#about-stack">{t("about.stack")}</a>
+            <a href="#about-maintenance">{t("about.maintenance")}</a>
           </nav>
         </aside>
       </div>
@@ -9479,13 +12203,17 @@ function SettingsView({
   onLogout,
   onSessionRefresh,
   refreshTick,
-  onAppearanceChange
+  onAppearanceChange,
+  language,
+  onLanguageChange
 }: {
   token: string;
   onLogout: () => void;
   onSessionRefresh: (token: string, user: CurrentUser) => void;
   refreshTick: number;
   onAppearanceChange: (appearance: PanelAppearanceSettings) => void;
+  language: PanelLanguage;
+  onLanguageChange: (language: PanelLanguage) => void;
 }) {
   const [form, setForm] = useState<SakiConfigResponse>(emptySakiConfig);
   const [sessionTimeoutMinutes, setSessionTimeoutMinutes] = useState("120");
@@ -9505,6 +12233,9 @@ function SettingsView({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [detectingModels, setDetectingModels] = useState(false);
+  const [copilotAuthStatus, setCopilotAuthStatus] = useState<SakiCopilotAuthStatusResponse | null>(null);
+  const [copilotLoginState, setCopilotLoginState] = useState<SakiCopilotLoginResponse | null>(null);
+  const [copilotBusy, setCopilotBusy] = useState<"status" | "login" | null>(null);
   const [skillBusy, setSkillBusy] = useState<string | null>(null);
   const [skillDetailLoading, setSkillDetailLoading] = useState(false);
   const [error, setError] = useState("");
@@ -9514,6 +12245,11 @@ function SettingsView({
   const loginCoverInputRef = useRef<HTMLInputElement>(null);
   const backgroundInputRef = useRef<HTMLInputElement>(null);
   const mobileBackgroundInputRef = useRef<HTMLInputElement>(null);
+  const t = useCallback((key: PanelTextKey) => panelT(language, key), [language]);
+  const localizedRegistrationIdentityOptions = useMemo<Array<{ value: RegistrationIdentity; label: string }>>(
+    () => registrationIdentityOptions.map((option) => ({ ...option, label: t(`registration.${option.value}` as PanelTextKey) })),
+    [t]
+  );
 
   const refresh = useCallback(async () => {
     setError("");
@@ -9536,7 +12272,7 @@ function SettingsView({
         onLogout();
         return;
       }
-      setError(err instanceof Error ? err.message : "Saki 设置读取失败");
+      setError(err instanceof Error ? err.message : t("settings.readFailed"));
     } finally {
       setLoading(false);
     }
@@ -9586,7 +12322,7 @@ function SettingsView({
       }
     };
     return {
-      requestTimeoutMs: Number(form.requestTimeoutMs) || 120000,
+      requestTimeoutMs: Number(form.requestTimeoutMs) || defaultSakiRequestTimeoutMs,
       provider: form.provider,
       model: form.model,
       ollamaUrl: form.ollamaUrl,
@@ -9639,6 +12375,64 @@ function SettingsView({
       updateAppearance({ [field]: dataUrl });
     } catch (err) {
       setError(err instanceof Error ? err.message : "图片读取失败");
+    }
+  }
+
+  const refreshCopilotAuthStatus = useCallback(async (silent = false) => {
+    if (!silent) {
+      setError("");
+      setNotice("");
+      setCopilotBusy("status");
+    }
+    try {
+      const status = await api.sakiCopilotStatus(token);
+      setCopilotAuthStatus(status);
+      if (!silent) {
+        setNotice(
+          status.authenticated
+            ? `GitHub Copilot 已登录${status.login ? `：${status.login}` : ""}。`
+            : status.message || "GitHub Copilot 尚未登录。"
+        );
+      }
+      return status;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onLogout();
+        return null;
+      }
+      if (!silent) {
+        setError(err instanceof Error ? err.message : "GitHub Copilot 状态检查失败");
+      }
+      return null;
+    } finally {
+      if (!silent) setCopilotBusy(null);
+    }
+  }, [onLogout, token]);
+
+  async function startCopilotLoginFromSettings() {
+    setError("");
+    setNotice("");
+    setCopilotBusy("login");
+    try {
+      const loginState = await api.sakiCopilotLogin(token);
+      setCopilotLoginState(loginState);
+      if (loginState.verificationUri) {
+        window.open(loginState.verificationUri, "_blank", "noopener,noreferrer");
+      }
+      const status = await refreshCopilotAuthStatus(true);
+      if (status?.authenticated) {
+        setNotice(`GitHub Copilot 已登录${status.login ? `：${status.login}` : ""}。`);
+      } else {
+        setNotice(loginState.message || "GitHub 登录已启动。");
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onLogout();
+        return;
+      }
+      setError(err instanceof Error ? err.message : "GitHub 登录启动失败");
+    } finally {
+      setCopilotBusy(null);
     }
   }
 
@@ -9702,6 +12496,35 @@ function SettingsView({
     return () => window.clearTimeout(timer);
   }, [form.apiKey, form.baseUrl, form.ollamaUrl, form.provider, loading]);
 
+  useEffect(() => {
+    if (loading || form.provider !== "copilot") return;
+    void refreshCopilotAuthStatus(true);
+  }, [form.provider, loading, refreshCopilotAuthStatus]);
+
+  useEffect(() => {
+    if (form.provider !== "copilot" || copilotLoginState?.status !== "running") return;
+    const timer = window.setInterval(() => {
+      void (async () => {
+        try {
+          const [loginState, status] = await Promise.all([
+            api.sakiCopilotLoginState(token),
+            api.sakiCopilotStatus(token)
+          ]);
+          setCopilotLoginState(loginState);
+          setCopilotAuthStatus(status);
+          if (status.authenticated) {
+            setNotice(`GitHub Copilot 已登录${status.login ? `：${status.login}` : ""}。`);
+          }
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 401) {
+            onLogout();
+          }
+        }
+      })();
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [copilotLoginState?.status, form.provider, onLogout, token]);
+
   async function saveSettings(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
@@ -9722,13 +12545,13 @@ function SettingsView({
       onAppearanceChange(saved.appearance);
       const refreshed = await api.refreshSession(token);
       onSessionRefresh(refreshed.token, refreshed.user);
-      setNotice("设置已保存，登录与注册策略已应用。");
+      setNotice(t("settings.saved"));
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         onLogout();
         return;
       }
-      setError(err instanceof Error ? err.message : "设置保存失败");
+      setError(err instanceof Error ? err.message : t("settings.saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -9918,12 +12741,12 @@ function SettingsView({
   }
 
   const settingsNavItems: Array<{ id: SakiSettingsSection; label: string; detail: string; icon: React.ReactNode }> = [
-    { id: "system", label: "系统设置", detail: "基础配置", icon: <Settings size={17} /> },
-    { id: "model", label: "AI 模型", detail: "Provider & Model", icon: <Cpu size={17} /> },
-    { id: "features", label: "功能开关", detail: "扩展能力", icon: <Wrench size={17} /> },
-    { id: "appearance", label: "外观自定义", detail: "登录页与背景", icon: <ImageIcon size={17} /> },
-    { id: "prompt", label: "系统提示词", detail: "System Prompt", icon: <TextQuote size={17} /> },
-    { id: "skills", label: "Skills", detail: `${skillList.length} installed`, icon: <Layers size={17} /> }
+    { id: "system", label: t("settings.system"), detail: t("settings.system.detail"), icon: <Settings size={17} /> },
+    { id: "model", label: t("settings.model"), detail: t("settings.model.detail"), icon: <Cpu size={17} /> },
+    { id: "features", label: t("settings.features"), detail: t("settings.features.detail"), icon: <Wrench size={17} /> },
+    { id: "appearance", label: t("settings.appearance"), detail: t("settings.appearance.detail"), icon: <ImageIcon size={17} /> },
+    { id: "prompt", label: t("settings.prompt"), detail: t("settings.prompt.detail"), icon: <TextQuote size={17} /> },
+    { id: "skills", label: "Skills", detail: `${skillList.length} ${t("settings.skills.detail")}`, icon: <Layers size={17} /> }
   ];
 
   return (
@@ -9932,8 +12755,8 @@ function SettingsView({
       {notice ? <div className="page-notice">{notice}</div> : null}
       <section className="panel-block settings-panel">
         <div className="section-heading">
-          <h2>Saki 设置</h2>
-          <span>{loading ? "读取中" : "运行时配置"}</span>
+          <h2>{t("settings.title")}</h2>
+          <span>{loading ? t("settings.loading") : t("settings.runtime")}</span>
         </div>
         <div className={`settings-grid settings-wiki ${settingsMenuCollapsed ? "toc-collapsed" : ""}`}>
           <input
@@ -9964,15 +12787,15 @@ function SettingsView({
             accept="image/png,image/jpeg,image/webp,image/gif"
             onChange={(event) => void chooseAppearanceImage("mobileBackgroundSrc", event)}
           />
-          <nav className="settings-toc" aria-label="设置目录">
+          <nav className="settings-toc" aria-label={t("settings.toc")}>
             <button
               className="settings-toc-toggle"
               type="button"
-              title={settingsMenuCollapsed ? "展开目录" : "折叠目录"}
+              title={settingsMenuCollapsed ? t("settings.toc.expand") : t("settings.toc.collapse")}
               onClick={() => setSettingsMenuCollapsed((current) => !current)}
             >
               {settingsMenuCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
-              <span>设置目录</span>
+              <span>{t("settings.toc")}</span>
             </button>
             <div className="settings-toc-list">
               {settingsNavItems.map((item) => (
@@ -9999,29 +12822,18 @@ function SettingsView({
             <div className="settings-group-title">
               <div className="settings-group-icon">⚙️</div>
               <div>
-                <h3>系统设置</h3>
-                <span>基础配置</span>
+                <h3>{t("settings.system")}</h3>
+                <span>{t("settings.system.detail")}</span>
               </div>
             </div>
             <div className="settings-group-content">
               <label>
-                登录超时（分钟）
-                <input
-                  type="number"
-                  min={0}
-                  step={0.1}
-                  value={sessionTimeoutMinutes}
-                  onChange={(event) => setSessionTimeoutMinutes(event.target.value)}
-                  placeholder="0 表示永不超时"
-                />
-              </label>
-              <label>
-                注册用户身份
+                {t("settings.language")}
                 <select
-                  value={registrationIdentity}
-                  onChange={(event) => setRegistrationIdentity(event.target.value as RegistrationIdentity)}
+                  value={language}
+                  onChange={(event) => onLanguageChange(event.target.value as PanelLanguage)}
                 >
-                  {registrationIdentityOptions.map((option) => (
+                  {panelLanguageOptions.map((option) => (
                     <option value={option.value} key={option.value}>
                       {option.label}
                     </option>
@@ -10029,7 +12841,31 @@ function SettingsView({
                 </select>
               </label>
               <label>
-                请求超时 ms
+                {t("settings.sessionTimeout")}
+                <input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  value={sessionTimeoutMinutes}
+                  onChange={(event) => setSessionTimeoutMinutes(event.target.value)}
+                  placeholder={t("settings.sessionTimeout.placeholder")}
+                />
+              </label>
+              <label>
+                {t("settings.registrationIdentity")}
+                <select
+                  value={registrationIdentity}
+                  onChange={(event) => setRegistrationIdentity(event.target.value as RegistrationIdentity)}
+                >
+                  {localizedRegistrationIdentityOptions.map((option) => (
+                    <option value={option.value} key={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {t("settings.requestTimeout")}
                 <input
                   type="number"
                   min={5000}
@@ -10037,7 +12873,7 @@ function SettingsView({
                   step={1000}
                   value={form.requestTimeoutMs}
                   onChange={(event) =>
-                    setForm((current) => ({ ...current, requestTimeoutMs: Number(event.target.value) || 120000 }))
+                    setForm((current) => ({ ...current, requestTimeoutMs: Number(event.target.value) || defaultSakiRequestTimeoutMs }))
                   }
                 />
               </label>
@@ -10047,8 +12883,8 @@ function SettingsView({
             <div className="settings-group-title">
               <div className="settings-group-icon">🤖</div>
               <div>
-                <h3>AI 模型配置</h3>
-                <span>Provider & Model</span>
+                <h3>{t("settings.model.title")}</h3>
+                <span>{t("settings.model.detail")}</span>
               </div>
             </div>
             <div className="settings-group-content">
@@ -10125,14 +12961,70 @@ function SettingsView({
                   </label>
                 </>
               ) : null}
+              {form.provider === "copilot" ? (
+                <div className="copilot-auth-panel wide-field">
+                  <div className="copilot-auth-status">
+                    <div className={`copilot-auth-badge ${copilotAuthStatus?.authenticated ? "authenticated" : "pending"}`}>
+                      {copilotAuthStatus?.authenticated ? <CheckCircle2 size={17} /> : <Github size={17} />}
+                      <span>{copilotAuthStatus?.authenticated ? "已登录" : "未登录"}</span>
+                    </div>
+                    <div className="copilot-auth-copy">
+                      <strong>GitHub Copilot</strong>
+                      <span>
+                        {copilotAuthStatus?.authenticated
+                          ? `${copilotAuthStatus.login || "当前账号"}${copilotAuthStatus.authType ? ` · ${copilotAuthStatus.authType}` : ""}`
+                          : copilotAuthStatus?.message || "点击登录 GitHub 获取授权验证码。"}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="copilot-auth-actions">
+                    <button
+                      className="ghost-button"
+                      disabled={copilotBusy === "status" || loading}
+                      type="button"
+                      onClick={() => void refreshCopilotAuthStatus(false)}
+                    >
+                      <RefreshCw size={17} />
+                      {copilotBusy === "status" ? "检查中" : "检查状态"}
+                    </button>
+                    <button
+                      className="primary-button"
+                      disabled={copilotBusy === "login" || loading}
+                      type="button"
+                      onClick={() => void startCopilotLoginFromSettings()}
+                    >
+                      <LogIn size={17} />
+                      {copilotBusy === "login" ? "启动中" : "登录 GitHub"}
+                    </button>
+                  </div>
+                  {copilotLoginState?.message ? (
+                    <div className="copilot-login-progress">
+                      <div>
+                        <KeyRound size={16} />
+                        <span>{copilotLoginState.message}</span>
+                      </div>
+                      {copilotLoginState.userCode || copilotLoginState.verificationUri ? (
+                        <div className="copilot-device-row">
+                          {copilotLoginState.userCode ? <code>{copilotLoginState.userCode}</code> : null}
+                          {copilotLoginState.verificationUri ? (
+                            <a href={copilotLoginState.verificationUri} target="_blank" rel="noopener noreferrer">
+                              打开 GitHub 登录页
+                            </a>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
           <div className={`settings-group ${activeSettingsSection === "features" ? "active" : "settings-section-hidden"}`} id="settings-features">
             <div className="settings-group-title">
               <div className="settings-group-icon">🎯</div>
               <div>
-                <h3>功能开关</h3>
-                <span>扩展能力</span>
+                <h3>{t("settings.features")}</h3>
+                <span>{t("settings.features.detail")}</span>
               </div>
             </div>
             <div className="settings-group-content">
@@ -10158,8 +13050,8 @@ function SettingsView({
             <div className="settings-group-title">
               <div className="settings-group-icon">🎨</div>
               <div>
-                <h3>外观自定义</h3>
-                <span>登录页、图标与全站背景</span>
+                <h3>{t("settings.appearance")}</h3>
+                <span>{t("settings.appearance.titleDetail")}</span>
               </div>
             </div>
             <div className="settings-group-content">
@@ -10245,8 +13137,8 @@ function SettingsView({
             <div className="settings-group-title">
               <div className="settings-group-icon">📝</div>
               <div>
-                <h3>系统提示词</h3>
-                <span>System Prompt</span>
+                <h3>{t("settings.prompt")}</h3>
+                <span>{t("settings.prompt.detail")}</span>
               </div>
             </div>
             <div className="settings-group-content">
@@ -10268,7 +13160,7 @@ function SettingsView({
               <div className="settings-actions wide-field">
             <button className="primary-button settings-save" disabled={saving || loading} type="submit">
               <Save size={17} />
-              {saving ? "保存中" : "保存设置"}
+              {saving ? t("common.saving") : t("settings.save")}
             </button>
             <button
               className="ghost-button"
@@ -10277,7 +13169,7 @@ function SettingsView({
               onClick={() => void detectModels(false)}
             >
               <RefreshCw size={17} />
-              {detectingModels ? "检测中" : "检测模型 API"}
+              {detectingModels ? t("settings.detecting") : t("settings.detectModels")}
             </button>
               </div>
             </div>
@@ -10612,6 +13504,7 @@ function UserAccountModal({
   onLogout: () => void;
   onUserChange: (user: CurrentUser) => void;
 }) {
+  const t = usePanelT();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [displayName, setDisplayName] = useState(user.displayName);
   const [avatarDataUrl, setAvatarDataUrl] = useState<string | null>(user.avatarDataUrl ?? null);
@@ -10645,7 +13538,7 @@ function UserAccountModal({
     try {
       setAvatarDataUrl(await avatarFileToDataUrl(file));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "头像读取失败");
+      setError(err instanceof Error ? err.message : t("account.errorAvatarRead"));
     }
   }
 
@@ -10653,20 +13546,20 @@ function UserAccountModal({
     event.preventDefault();
     const trimmedDisplayName = displayName.trim();
     if (!trimmedDisplayName) {
-      setError("显示名不能为空");
+      setError(t("account.errorDisplayNameRequired"));
       return;
     }
     if (newPassword || currentPassword || confirmPassword) {
       if (newPassword.length < 8) {
-        setError("新密码至少 8 位");
+        setError(t("account.errorNewPasswordLength"));
         return;
       }
       if (newPassword !== confirmPassword) {
-        setError("两次密码不一致");
+        setError(t("account.errorPasswordMismatch"));
         return;
       }
       if (!currentPassword) {
-        setError("请输入当前密码");
+        setError(t("account.errorCurrentPasswordRequired"));
         return;
       }
     }
@@ -10684,7 +13577,7 @@ function UserAccountModal({
     }
 
     if (Object.keys(payload).length === 0) {
-      setNotice("已同步");
+      setNotice(t("account.noticeSynced"));
       setError("");
       return;
     }
@@ -10698,9 +13591,9 @@ function UserAccountModal({
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      setNotice("已保存");
+      setNotice(t("account.noticeSaved"));
     } catch (err) {
-      setError(err instanceof ApiError && err.status === 401 ? "当前密码不正确" : err instanceof Error ? err.message : "保存失败");
+      setError(err instanceof ApiError && err.status === 401 ? t("account.errorCurrentPasswordWrong") : err instanceof Error ? err.message : t("account.errorSaveFailed"));
     } finally {
       setSaving(false);
     }
@@ -10716,12 +13609,12 @@ function UserAccountModal({
         }
       }}
     >
-      <div className="account-modal" role="dialog" aria-modal="true" aria-label="账户">
+      <div className="account-modal" role="dialog" aria-modal="true" aria-label={t("account.dialog")}>
         <div className="account-modal-hero">
           <button
             className="account-avatar-button"
             type="button"
-            title="上传头像"
+            title={t("account.uploadAvatar")}
             onClick={() => fileInputRef.current?.click()}
           >
             <AccountAvatar
@@ -10740,7 +13633,7 @@ function UserAccountModal({
           </div>
           <div className="account-modal-tools">
             <span className="account-rank">{user.isSuperAdmin ? "SUPER" : "ACTIVE"}</span>
-            <button className="icon-button mini" title="关闭" type="button" onClick={onClose}>
+            <button className="icon-button mini" title={t("common.close")} type="button" onClick={onClose}>
               <X size={15} />
             </button>
           </div>
@@ -10765,23 +13658,23 @@ function UserAccountModal({
             <div className="account-upload-actions">
               <button className="small-button" type="button" onClick={() => fileInputRef.current?.click()}>
                 <Upload size={15} />
-                上传头像
+                {t("account.uploadAvatar")}
               </button>
               <button className="small-button" type="button" onClick={() => setAvatarDataUrl(null)}>
-                移除
+                {t("common.remove")}
               </button>
             </div>
           </div>
 
           <div className="account-form-stack">
             <label className="account-field">
-              显示名
+              {t("account.displayName")}
               <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
             </label>
 
             <div className="account-password-grid">
               <label className="account-field wide">
-                当前密码
+                {t("account.currentPassword")}
                 <input
                   value={currentPassword}
                   onChange={(event) => setCurrentPassword(event.target.value)}
@@ -10790,7 +13683,7 @@ function UserAccountModal({
                 />
               </label>
               <label className="account-field">
-                新密码
+                {t("account.newPassword")}
                 <input
                   value={newPassword}
                   onChange={(event) => setNewPassword(event.target.value)}
@@ -10799,7 +13692,7 @@ function UserAccountModal({
                 />
               </label>
               <label className="account-field">
-                确认密码
+                {t("account.confirmPassword")}
                 <input
                   value={confirmPassword}
                   onChange={(event) => setConfirmPassword(event.target.value)}
@@ -10815,11 +13708,11 @@ function UserAccountModal({
             <div className="account-modal-actions">
               <button className="ghost-button account-logout-button" type="button" onClick={onLogout}>
                 <LogOut size={16} />
-                退出登录
+                {t("account.logout")}
               </button>
               <button className="primary-button account-save-button" disabled={saving} type="submit">
                 <Save size={16} />
-                {saving ? "保存中" : "保存"}
+                {saving ? t("common.saving") : t("common.save")}
               </button>
             </div>
           </div>
@@ -10833,18 +13726,22 @@ function Workspace({
   token,
   user,
   appearance,
+  language,
   onLogout,
   onSwitchUser,
   onUserChange,
-  onAppearanceChange
+  onAppearanceChange,
+  onLanguageChange
 }: {
   token: string;
   user: CurrentUser;
   appearance: PanelAppearanceSettings;
+  language: PanelLanguage;
   onLogout: () => void;
   onSwitchUser: (token: string, user: CurrentUser) => void;
   onUserChange: (user: CurrentUser) => void;
   onAppearanceChange: (appearance: PanelAppearanceSettings) => void;
+  onLanguageChange: (language: PanelLanguage) => void;
 }) {
   const [activeView, setActiveView] = useState<ViewMode>("dashboard");
   const [refreshTick, setRefreshTick] = useState(0);
@@ -10872,6 +13769,7 @@ function Workspace({
   const canOpenUsers = user.permissions.includes("user.view") || (user.isAdmin && user.permissions.includes("instance.update"));
   const canOpenAudit = hasAssignedRole && user.isAdmin && user.permissions.includes("audit.view");
   const canOpenAbout = true;
+  const t = useCallback((key: PanelTextKey) => panelT(language, key), [language]);
   const availableViews = useMemo<ViewMode[]>(() => {
     const views: ViewMode[] = [];
     if (canOpenDashboard) views.push("dashboard");
@@ -10897,17 +13795,17 @@ function Workspace({
   const effectiveView = availableViews.includes(activeView) ? activeView : availableViews[0] ?? activeView;
   const panelContext = useMemo<SakiPanelContext>(() => {
     if (effectiveView === "audit") {
-      return { label: "审计日志", detail: "可检索全部记录", auditSearch: true };
+      return { label: t("context.audit.label"), detail: t("context.audit.detail"), auditSearch: true };
     }
     if (effectiveView === "instances") {
-      return { label: "实例管理", detail: "选择实例后切换工作区" };
+      return { label: t("context.instances.label"), detail: t("context.instances.detail") };
     }
-    if (effectiveView === "nodes") return { label: "节点管理", detail: "节点连接与状态" };
-    if (effectiveView === "templates") return { label: "模板", detail: "实例模板上下文" };
-    if (effectiveView === "users") return { label: "用户权限", detail: "用户与角色上下文" };
-    if (effectiveView === "settings") return { label: "Saki 设置", detail: "运行时模型配置" };
-    return { label: "控制台", detail: "全局上下文" };
-  }, [effectiveView]);
+    if (effectiveView === "nodes") return { label: t("context.nodes.label"), detail: t("context.nodes.detail") };
+    if (effectiveView === "templates") return { label: t("context.templates.label"), detail: t("context.templates.detail") };
+    if (effectiveView === "users") return { label: t("context.users.label"), detail: t("context.users.detail") };
+    if (effectiveView === "settings") return { label: t("context.settings.label"), detail: t("context.settings.detail") };
+    return { label: t("context.dashboard.label"), detail: t("context.dashboard.detail") };
+  }, [effectiveView, t]);
 
   const openSaki = useCallback((seed: Omit<SakiPromptSeed, "nonce">) => {
     if (!canUseSaki) return;
@@ -11027,10 +13925,10 @@ function Workspace({
             <button
               className="sidebar-inline-toggle"
               type="button"
-              aria-label="折叠侧边栏"
+              aria-label={t("sidebar.collapse")}
               aria-controls="workspace-sidebar"
               aria-expanded={!sidebarHidden}
-              title="折叠侧边栏"
+              title={t("sidebar.collapse")}
               onClick={() => {
                 hideSidebar();
               }}
@@ -11043,56 +13941,56 @@ function Workspace({
               {canOpenDashboard ? (
                 <button className={`nav-item-dashboard ${effectiveView === "dashboard" ? "active" : ""}`} onClick={() => selectView("dashboard")}>
                   <Activity size={18} />
-                  概览
+                  {t("nav.dashboard")}
                 </button>
               ) : null}
               {canOpenInstances ? (
                 <button className={`nav-item-instances ${effectiveView === "instances" ? "active" : ""}`} onClick={() => selectView("instances")}>
                   <TerminalIcon size={18} />
-                  实例
+                  {t("nav.instances")}
                 </button>
               ) : null}
               {canOpenNodes ? (
                 <button className={`nav-item-nodes ${effectiveView === "nodes" ? "active" : ""}`} onClick={() => selectView("nodes")}>
                   <Server size={18} />
-                  节点
+                  {t("nav.nodes")}
                 </button>
               ) : null}
               {canOpenTemplates ? (
                 <button className={`nav-item-templates ${effectiveView === "templates" ? "active" : ""}`} onClick={() => selectView("templates")}>
                   <LayoutTemplate size={18} />
-                  模板
+                  {t("nav.templates")}
                 </button>
               ) : null}
               {canOpenUsers ? (
                 <button className={`nav-item-users ${effectiveView === "users" ? "active" : ""}`} onClick={() => selectView("users")}>
                   <UserCog size={18} />
-                  用户
+                  {t("nav.users")}
                 </button>
               ) : null}
               {canOpenAudit ? (
                 <button className={`nav-item-audit ${effectiveView === "audit" ? "active" : ""}`} onClick={() => selectView("audit")}>
                   <ClipboardList size={18} />
-                  审计
+                  {t("nav.audit")}
                 </button>
               ) : null}
               {canConfigureSaki ? (
                 <button className={`nav-item-settings ${effectiveView === "settings" ? "active" : ""}`} onClick={() => selectView("settings")}>
                   <Settings size={18} />
-                  设置
+                  {t("nav.settings")}
                 </button>
               ) : null}
               {canOpenAbout ? (
                 <button className={`nav-item-about ${effectiveView === "about" ? "active" : ""}`} onClick={() => selectView("about")}>
                   <Info size={18} />
-                  关于
+                  {t("nav.about")}
                 </button>
               ) : null}
             </nav>
           ) : (
             <div className="sidebar-empty">
               <Shield size={18} />
-              <span>等待分配权限</span>
+              <span>{t("sidebar.waitingPermissions")}</span>
             </div>
           )}
 
@@ -11112,12 +14010,12 @@ function Workspace({
           ref={floatingSidebarToggleRef}
           className="sidebar-floating-toggle"
           type="button"
-          aria-label="展开侧边栏"
+          aria-label={t("sidebar.expand")}
           aria-controls="workspace-sidebar"
           aria-expanded={!sidebarHidden}
           inert={!sidebarHidden || undefined}
           tabIndex={sidebarHidden ? 0 : -1}
-          title="展开侧边栏"
+          title={t("sidebar.expand")}
           onClick={(e) => {
             e.currentTarget.blur();
             setSidebarHidden(false);
@@ -11130,31 +14028,31 @@ function Workspace({
           <header className="topbar">
             <div className="topbar-inner">
               <div className="topbar-title">
-                <span className="topbar-context">控制台面板</span>
+                <span className="topbar-context">{t("topbar.context")}</span>
                 <ChevronRight size={14} className="topbar-separator" />
                 <h1>
                   {!hasAnyAccessibleView
-                    ? "权限待分配"
+                    ? t("topbar.noAccess")
                     : effectiveView === "dashboard"
-                      ? "概览"
+                      ? t("nav.dashboard")
                       : effectiveView === "instances"
-                        ? "实例管理"
+                        ? t("view.instances")
                         : effectiveView === "nodes"
-                          ? "节点管理"
+                          ? t("view.nodes")
                           : effectiveView === "templates"
-                            ? "模板"
+                            ? t("nav.templates")
                             : effectiveView === "settings"
-                              ? "Saki 设置"
+                              ? t("view.settings")
                               : effectiveView === "users"
-                                ? "用户与权限"
+                                ? t("view.users")
                                 : effectiveView === "about"
-                                  ? "关于"
-                                  : "审计日志"}
+                                  ? t("nav.about")
+                                  : t("view.audit")}
                 </h1>
               </div>
               <div className="topbar-actions">
                 {hasAnyAccessibleView ? (
-                  <button className="icon-button mini" onClick={() => setRefreshTick((value) => value + 1)} title="刷新">
+                  <button className="icon-button mini" onClick={() => setRefreshTick((value) => value + 1)} title={t("common.refresh")}>
                     <RefreshCw size={14} />
                   </button>
                 ) : null}
@@ -11196,6 +14094,8 @@ function Workspace({
               onSessionRefresh={onSwitchUser}
               refreshTick={refreshTick}
               onAppearanceChange={onAppearanceChange}
+              language={language}
+              onLanguageChange={onLanguageChange}
             />
           ) : effectiveView === "about" ? (
             <AboutView />
@@ -11240,10 +14140,24 @@ export function App() {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [booting, setBooting] = useState(Boolean(token));
   const [appearance, setAppearance] = useState<PanelAppearanceSettings>(defaultPanelAppearance);
+  const [language, setLanguage] = useState<PanelLanguage>(() => readPanelLanguage());
 
   const updateAppearanceState = useCallback((nextAppearance: PanelAppearanceSettings) => {
     setAppearance(normalizePanelAppearance(nextAppearance));
   }, []);
+
+  const changeLanguage = useCallback((nextLanguage: PanelLanguage) => {
+    setLanguage(nextLanguage);
+    localStorage.setItem(panelLanguageKey, nextLanguage);
+  }, []);
+  const languageContextValue = useMemo<PanelLanguageContextValue>(
+    () => ({
+      language,
+      setLanguage: changeLanguage,
+      t: (key) => panelT(language, key)
+    }),
+    [changeLanguage, language]
+  );
 
   const logout = useCallback(() => {
     const currentToken = localStorage.getItem(tokenKey);
@@ -11271,6 +14185,42 @@ export function App() {
   useEffect(() => {
     applyPanelAppearance(appearance);
   }, [appearance]);
+
+  useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
+
+  useEffect(() => {
+    const applyLanguage = () => applyPanelDomLanguage(language);
+    const frame = window.requestAnimationFrame(applyLanguage);
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === "characterData" && mutation.target instanceof Text) {
+          applyPanelDomLanguage(language, mutation.target.parentNode ?? document.body);
+          continue;
+        }
+        for (const node of Array.from(mutation.addedNodes)) {
+          if (node instanceof Element || node instanceof DocumentFragment) {
+            applyPanelDomLanguage(language, node);
+          }
+        }
+        if (mutation.type === "attributes" && mutation.target instanceof Element) {
+          applyPanelDomLanguage(language, mutation.target);
+        }
+      }
+    });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["title", "aria-label", "placeholder"]
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [language]);
 
   useEffect(() => {
     if (!token) return;
@@ -11304,36 +14254,44 @@ export function App() {
 
   if (booting) {
     return (
-      <main className="login-shell">
-        <div className="loading-panel">
-          <RefreshCw size={22} />
-          载入中
-        </div>
-      </main>
+      <PanelLanguageContext.Provider value={languageContextValue}>
+        <main className="login-shell">
+          <div className="loading-panel">
+            <RefreshCw size={22} />
+            {panelT(language, "common.loading")}
+          </div>
+        </main>
+      </PanelLanguageContext.Provider>
     );
   }
 
   if (!token || !user) {
     return (
-      <LoginView
-        appearance={appearance}
-        onLogin={(nextToken, nextUser) => {
-          setToken(nextToken);
-          setUser(nextUser);
-        }}
-      />
+      <PanelLanguageContext.Provider value={languageContextValue}>
+        <LoginView
+          appearance={appearance}
+          onLogin={(nextToken, nextUser) => {
+            setToken(nextToken);
+            setUser(nextUser);
+          }}
+        />
+      </PanelLanguageContext.Provider>
     );
   }
 
   return (
-    <Workspace
-      token={token}
-      user={user}
-      appearance={appearance}
-      onLogout={logout}
-      onSwitchUser={switchSession}
-      onUserChange={setUser}
-      onAppearanceChange={updateAppearanceState}
-    />
+    <PanelLanguageContext.Provider value={languageContextValue}>
+      <Workspace
+        token={token}
+        user={user}
+        appearance={appearance}
+        language={language}
+        onLogout={logout}
+        onSwitchUser={switchSession}
+        onUserChange={setUser}
+        onAppearanceChange={updateAppearanceState}
+        onLanguageChange={changeLanguage}
+      />
+    </PanelLanguageContext.Provider>
   );
 }
