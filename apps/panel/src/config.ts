@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
+import { loadSslConfig } from "./ssl.js";
 
 function numberFromEnv(value: string | undefined, fallback: number): number {
   if (!value) return fallback;
@@ -27,14 +28,48 @@ function listFromEnv(value: string | undefined): string[] {
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 dotenv.config({ path: path.resolve(rootDir, ".env") });
 
-const publicUrl = process.env.PANEL_PUBLIC_URL ?? "http://localhost:5479";
-const webOrigin = process.env.WEB_ORIGIN ?? "http://localhost:5478";
+const ssl = loadSslConfig(rootDir);
+const transportProtocol = ssl ? "https" : "http";
+const panelPort = numberFromEnv(process.env.PANEL_PORT, 5479);
+const webPort = numberFromEnv(process.env.VITE_PORT ?? process.env.WEB_PORT, 5478);
+const defaultPublicHost = ssl?.hostname ?? "localhost";
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+}
+
+function normalizeServiceUrl(value: string | undefined, fallback: string): string {
+  const raw = value?.trim() || fallback;
+  if (!ssl) return raw;
+
+  try {
+    const url = new URL(raw);
+    if (url.protocol === "http:") url.protocol = "https:";
+    if (ssl.hostname && isLoopbackHostname(url.hostname)) {
+      url.hostname = ssl.hostname;
+    }
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return raw.replace(/^http:\/\//i, "https://");
+  }
+}
+
+const publicUrl = normalizeServiceUrl(
+  process.env.PANEL_PUBLIC_URL,
+  `${transportProtocol}://${defaultPublicHost}:${panelPort}`
+);
+const webOrigin = normalizeServiceUrl(process.env.WEB_ORIGIN, `${transportProtocol}://${defaultPublicHost}:${webPort}`);
 const configuredCorsOrigins = listFromEnv(process.env.PANEL_CORS_ORIGINS);
-const corsOrigins = Array.from(new Set([...configuredCorsOrigins, webOrigin, publicUrl]));
+const corsOrigins = Array.from(
+  new Set([...configuredCorsOrigins, ...configuredCorsOrigins.map((origin) => normalizeServiceUrl(origin, origin)), webOrigin, publicUrl])
+);
 
 export const panelConfig = {
   host: process.env.PANEL_HOST ?? "0.0.0.0",
-  port: numberFromEnv(process.env.PANEL_PORT, 5479),
+  port: panelPort,
+  protocol: transportProtocol,
+  https: ssl?.https,
+  ssl,
   publicUrl,
   webOrigin,
   corsOrigins,

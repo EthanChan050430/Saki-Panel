@@ -147,18 +147,18 @@ RBAC (41 permission codes) · Audit logs · Login rate limits · Dangerous comma
 
 ```
 ┌──────────────┐       HTTP/WS        ┌──────────────┐       HTTP/WS        ┌──────────────┐
-│              │  ◄─────────────────►  │              │  ◄─────────────────►  │              │
-│   🌐 Web     │       JWT            │   📋 Panel   │     Node Token       │   🔧 Daemon  │
+│              │  ◄─────────────────► │              │ ◄─────────────────►  │              │
+│   🌐 Web     │       JWT           │   📋 Panel   │     Node Token       │   🔧 Daemon  │
 │   React SPA  │                      │   Fastify    │                      │   Fastify    │
 │   + Saki UI  │                      │   + Saki AI  │                      │              │
-│   :5478      │                      │   + SQLite   │                      │   :24444     │
+│   :5478      │                      │   + SQLite   │                      │   :5480      │
 │              │                      │   :5479      │                      │              │
 └──────────────┘                      └──────────────┘                      └──────┬───────┘
                                                                                    │ spawn
                                                                                    ▼
-                                                                            ┌──────────────┐
-                                                                            │   📦 Instance Processes │
-                                                                            └──────────────┘
+                                                                            ┌──────────────────────────┐
+                                                                            │   📦 Instance Processes  │
+                                                                            └──────────────────────────┘
 ```
 
 | Component | Responsibility | Tech Stack |
@@ -232,7 +232,7 @@ npm run dev
 |:-----|:-----|
 | Web Interface | http://localhost:5478 |
 | Panel API | http://localhost:5479 |
-| Daemon | http://localhost:24444 |
+| Daemon | http://localhost:5480 |
 
 ### Default Administrator
 

@@ -216,6 +216,9 @@ export interface RegisterDaemonResponse {
 export interface HeartbeatRequest {
   status: "ONLINE";
   metrics: Omit<NodeMetricSnapshot, "createdAt">;
+  host?: string;
+  port?: number;
+  protocol?: string;
   os?: string;
   arch?: string;
   version?: string;
@@ -343,6 +346,19 @@ export interface CreateInstanceRequest {
   restartMaxRetries?: number;
   assignedToUserId?: string | null;
   assignedToUserIds?: string[] | null;
+}
+
+export interface SuggestInstanceStartCommandRequest {
+  nodeId: string;
+  workingDirectory: string;
+  instanceType?: InstanceType;
+}
+
+export interface SuggestInstanceStartCommandResponse {
+  startCommand: string;
+  confidence: "high" | "medium" | "low";
+  reason: string;
+  detected: string[];
 }
 
 export interface InstanceTemplate {
@@ -499,6 +515,26 @@ export interface ExtractInstanceArchiveResponse {
   entry: InstanceFileEntry;
   extractedCount: number;
   totalBytes: number;
+}
+
+export interface ArchiveInstancePathsRequest {
+  paths: string[];
+  outputPath?: string;
+}
+
+export interface ArchiveInstancePathsResponse {
+  instanceId: string;
+  paths: string[];
+  outputPath: string;
+  entry: InstanceFileEntry;
+  archivedCount: number;
+  size: number;
+  modifiedAt: string;
+}
+
+export interface DownloadInstanceArchiveRequest {
+  paths: string[];
+  fileName?: string;
 }
 
 export type ScheduledTaskType = "run_command" | "restart_instance" | "stop_instance" | "start_instance";

@@ -27,7 +27,7 @@ const instanceTemplates: InstanceTemplate[] = [
     name: "通用命令实例",
     description: "运行任意长驻命令或脚本",
     type: "generic_command",
-    defaultStartCommand: "node -e \"let i=0; setInterval(()=>console.log('tick '+(++i)),1000)\"",
+    defaultStartCommand: "",
     defaultStopCommand: null,
     defaultWorkingDirectoryPrefix: "instances",
     ports: [],
@@ -147,6 +147,10 @@ export async function registerTemplateRoutes(app: FastifyInstance): Promise<void
     }
 
     const startCommand = body.startCommand?.trim() || template.defaultStartCommand;
+    if (!startCommand) {
+      reply.code(400).send({ message: "startCommand is required" });
+      return;
+    }
     const blocked = findDangerousCommandReason(startCommand);
     if (blocked) {
       await writeAuditLog({

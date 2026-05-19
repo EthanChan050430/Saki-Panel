@@ -15,5 +15,5 @@ COPY apps/daemon/package.json ./apps/daemon/package.json
 COPY --from=build /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build /app/apps/daemon/dist ./apps/daemon/dist
 RUN npm ci --omit=dev
-EXPOSE 24444
+EXPOSE 5480
 CMD ["node", "apps/daemon/dist/index.js"]

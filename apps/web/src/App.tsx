@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CodeEditor, languageFromFileName } from "./CodeEditor.js";
+import { CodeEditor, type CodeEditorHandle, languageFromFileName } from "./CodeEditor.js";
 import {
   Activity,
   Archive,
@@ -39,6 +39,7 @@ import {
   MemoryStick,
   Mic,
   Minimize2,
+  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   Paperclip,
@@ -133,7 +134,7 @@ import { ApiError, api, type SakiChatStreamEvent, type SakiChatWorkflowStatus, t
 const tokenKey = "webops.token";
 const rememberedLoginKey = "webops.rememberedLogin";
 const panelLanguageKey = "webops.panelLanguage";
-const defaultStartCommand = "node -e \"let i=0; setInterval(()=>console.log('tick '+(++i)),1000)\"";
+const defaultStartCommand = "";
 const sakiStreamIdleFallbackMs = 45000;
 const defaultSakiRequestTimeoutMs = 180000;
 type PanelLanguage = "zh-CN" | "en-US";
@@ -826,6 +827,21 @@ function usePanelT() {
 }
 
 const domTextOriginals = new WeakMap<Text, string>();
+const domLanguageSkipSelector = [
+  "[data-i18n-skip]",
+  ".cm-editor",
+  ".cm-content",
+  ".xterm",
+  ".xterm-host",
+  "[contenteditable='true']",
+  "script",
+  "style"
+].join(",");
+
+function shouldSkipDomLanguageNode(node: Node): boolean {
+  const element = node instanceof Element ? node : node.parentElement;
+  return Boolean(element?.closest(domLanguageSkipSelector));
+}
 
 const domExactTranslations: Record<string, string> = {
   概览: "Overview",
@@ -1316,7 +1332,12 @@ function translateDomAttributeValue(value: string): string {
 }
 
 function applyPanelDomLanguage(language: PanelLanguage, root: ParentNode = document.body): void {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  if (root instanceof Node && shouldSkipDomLanguageNode(root)) return;
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) =>
+      shouldSkipDomLanguageNode(node) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+  });
   const textNodes: Text[] = [];
   while (walker.nextNode()) {
     textNodes.push(walker.currentNode as Text);
@@ -1335,6 +1356,7 @@ function applyPanelDomLanguage(language: PanelLanguage, root: ParentNode = docum
 
   const elements = root instanceof Element ? [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))] : Array.from(root.querySelectorAll<HTMLElement>("*"));
   for (const element of elements) {
+    if (shouldSkipDomLanguageNode(element)) continue;
     for (const attr of ["title", "aria-label", "placeholder"] as const) {
       const value = element.getAttribute(attr);
       if (value === null) continue;
@@ -1628,6 +1650,8 @@ const auditActionLabels: Record<string, string> = {
   "auth.profile.update": "更新账户",
   "auth.register": "用户注册",
   "daemon.register": "节点注册",
+  "file.archive": "压缩文件",
+  "file.archive.download": "压缩下载",
   "file.delete": "删除文件",
   "file.download": "下载文件",
   "file.extract": "解压文件",
@@ -2323,6 +2347,12 @@ function defaultExtractPath(pathname: string): string {
   const fileName = pathname.split("/").pop() ?? "archive";
   const baseName = fileName.replace(/\.(zip|rar|7z)$/i, "") || "archive";
   return joinFilePath(parentFilePath(pathname), baseName);
+}
+
+function defaultArchiveFileName(pathname: string): string {
+  const fileName = pathname.split("/").pop() ?? "archive";
+  const baseName = fileName.replace(/\.(zip|rar|7z)$/i, "") || "archive";
+  return `${baseName}.zip`;
 }
 
 function splitNameForCopy(fileName: string): { stem: string; extension: string } {
@@ -3450,7 +3480,7 @@ function NodesView({ token, onLogout, refreshTick }: { token: string; onLogout: 
   const [form, setForm] = useState({
     name: "Local Daemon",
     host: "127.0.0.1",
-    port: "24444",
+    port: "5480",
     protocol: "http" as CreateNodeRequest["protocol"],
     remarks: "",
     groupName: "",
@@ -3480,7 +3510,7 @@ function NodesView({ token, onLogout, refreshTick }: { token: string; onLogout: 
     setForm({
       name: "Local Daemon",
       host: "127.0.0.1",
-      port: "24444",
+      port: "5480",
       protocol: "http",
       remarks: "",
       groupName: "",
@@ -6407,6 +6437,123 @@ const terminalShortcutKeys: TerminalShortcutKey[] = [
   { type: "key", id: "enter", label: "Enter", title: "Enter", data: "\r", viaBufferedInput: true, wide: true }
 ];
 
+const terminalInputHistoryLimit = 100;
+
+type TerminalAutocompleteState = {
+  candidates: string[];
+  index: number;
+};
+
+const terminalCommandAutocompleteWords = [
+  "bun",
+  "cat",
+  "cd",
+  "clear",
+  "cls",
+  "copy",
+  "curl",
+  "del",
+  "dir",
+  "docker",
+  "echo",
+  "env",
+  "erase",
+  "export",
+  "find",
+  "findstr",
+  "git",
+  "grep",
+  "java",
+  "less",
+  "mkdir",
+  "more",
+  "move",
+  "node",
+  "npm",
+  "npx",
+  "pnpm",
+  "powershell",
+  "pwd",
+  "python",
+  "python3",
+  "rm",
+  "rmdir",
+  "set",
+  "sh",
+  "tar",
+  "touch",
+  "type",
+  "where",
+  "which",
+  "xcopy"
+];
+
+function uniqueTerminalAutocompleteValues(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    result.push(value);
+  }
+  return result;
+}
+
+function commonTerminalAutocompletePrefix(values: string[]): string {
+  if (values.length === 0) return "";
+  let prefix = values[0] ?? "";
+  for (const value of values.slice(1)) {
+    while (prefix && !value.startsWith(prefix)) {
+      prefix = prefix.slice(0, -1);
+    }
+  }
+  return prefix;
+}
+
+function terminalAutocompleteCandidates(value: string, history: string[]): string[] {
+  const leadingWhitespace = value.match(/^\s*/)?.[0] ?? "";
+  const withoutLeadingWhitespace = value.slice(leadingWhitespace.length);
+  const completingCommandName = !/\s/.test(withoutLeadingWhitespace);
+  const normalizedPrefix = withoutLeadingWhitespace.toLowerCase();
+
+  if (completingCommandName) {
+    if (!withoutLeadingWhitespace) return [];
+    const historyCommands = history
+      .slice()
+      .reverse()
+      .map((item) => item.trim().split(/\s+/)[0] ?? "");
+    return uniqueTerminalAutocompleteValues([...historyCommands, ...terminalCommandAutocompleteWords])
+      .filter((candidate) => candidate.toLowerCase().startsWith(normalizedPrefix))
+      .map((candidate) => `${leadingWhitespace}${candidate} `);
+  }
+
+  return uniqueTerminalAutocompleteValues(
+    history
+      .slice()
+      .reverse()
+      .filter((item) => item.startsWith(value) && item !== value)
+  );
+}
+
+function nextTerminalAutocompleteValue(
+  value: string,
+  history: string[],
+  state: TerminalAutocompleteState | null
+): { value: string; state: TerminalAutocompleteState } | null {
+  if (state && state.candidates.length > 1 && state.candidates[state.index] === value) {
+    const index = (state.index + 1) % state.candidates.length;
+    return { value: state.candidates[index] ?? value, state: { candidates: state.candidates, index } };
+  }
+
+  const candidates = terminalAutocompleteCandidates(value, history);
+  if (candidates.length === 0) return null;
+
+  const commonPrefix = commonTerminalAutocompletePrefix(candidates);
+  const nextValue = commonPrefix.length > value.length ? commonPrefix : candidates[0] ?? value;
+  const index = Math.max(0, candidates.indexOf(nextValue));
+  return { value: nextValue, state: { candidates, index } };
+}
+
 const terminalAnsiReset = "\x1b[0m";
 const minecraftColorMarker = "\u00a7";
 
@@ -6754,6 +6901,14 @@ function WebTerminal({
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
   const directInputBufferRef = useRef("");
+  const inputHistoryRef = useRef<string[]>([]);
+  const inputHistoryInstanceIdRef = useRef<string | null>(null);
+  const commandHistoryIndexRef = useRef<number | null>(null);
+  const commandHistoryDraftRef = useRef("");
+  const terminalHistoryIndexRef = useRef<number | null>(null);
+  const terminalHistoryDraftRef = useRef("");
+  const commandCompletionStateRef = useRef<TerminalAutocompleteState | null>(null);
+  const terminalCompletionStateRef = useRef<TerminalAutocompleteState | null>(null);
   const terminalDataHandlerRef = useRef<(data: string) => void>(() => {});
   const [terminalReady, setTerminalReady] = useState(false);
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>("idle");
@@ -6770,6 +6925,173 @@ function WebTerminal({
   const handleTerminalHostRef = useCallback((node: HTMLDivElement | null) => {
     setTerminalHost(node);
   }, []);
+
+  function resetCommandHistoryNavigation() {
+    commandHistoryIndexRef.current = null;
+    commandHistoryDraftRef.current = "";
+  }
+
+  function resetCommandCompletion() {
+    commandCompletionStateRef.current = null;
+  }
+
+  function resetCommandInputNavigation() {
+    resetCommandHistoryNavigation();
+    resetCommandCompletion();
+  }
+
+  function resetTerminalHistoryNavigation() {
+    terminalHistoryIndexRef.current = null;
+    terminalHistoryDraftRef.current = "";
+  }
+
+  function resetTerminalCompletion() {
+    terminalCompletionStateRef.current = null;
+  }
+
+  function resetTerminalInputNavigation() {
+    resetTerminalHistoryNavigation();
+    resetTerminalCompletion();
+  }
+
+  function resetInputHistoryNavigation() {
+    resetCommandInputNavigation();
+    resetTerminalInputNavigation();
+  }
+
+  function rememberInputHistory(value: string) {
+    if (!value.trim()) return;
+
+    const history = inputHistoryRef.current;
+    if (history[history.length - 1] === value) {
+      resetInputHistoryNavigation();
+      return;
+    }
+
+    inputHistoryRef.current = [...history, value].slice(-terminalInputHistoryLimit);
+    resetInputHistoryNavigation();
+  }
+
+  function replaceBufferedTerminalInput(value: string) {
+    const terminal = terminalRef.current;
+    const currentLength = Array.from(directInputBufferRef.current).length;
+    if (currentLength > 0) {
+      terminal?.write("\b \b".repeat(currentLength));
+    }
+    terminal?.write(value);
+    directInputBufferRef.current = value;
+  }
+
+  function autocompleteBufferedTerminalInput() {
+    const completion = nextTerminalAutocompleteValue(
+      directInputBufferRef.current,
+      inputHistoryRef.current,
+      terminalCompletionStateRef.current
+    );
+    if (!completion) return false;
+
+    resetTerminalHistoryNavigation();
+    terminalCompletionStateRef.current = completion.state;
+    replaceBufferedTerminalInput(completion.value);
+    return true;
+  }
+
+  function autocompleteCommandInput() {
+    const completion = nextTerminalAutocompleteValue(command, inputHistoryRef.current, commandCompletionStateRef.current);
+    if (!completion) return false;
+
+    resetCommandHistoryNavigation();
+    commandCompletionStateRef.current = completion.state;
+    setCommand(completion.value);
+    return true;
+  }
+
+  function navigateTerminalHistory(direction: "previous" | "next") {
+    const history = inputHistoryRef.current;
+    if (history.length === 0) return;
+
+    resetTerminalCompletion();
+
+    if (direction === "previous") {
+      if (terminalHistoryIndexRef.current === null) {
+        terminalHistoryDraftRef.current = directInputBufferRef.current;
+        terminalHistoryIndexRef.current = history.length - 1;
+      } else {
+        terminalHistoryIndexRef.current = Math.max(0, terminalHistoryIndexRef.current - 1);
+      }
+      replaceBufferedTerminalInput(history[terminalHistoryIndexRef.current] ?? "");
+      return;
+    }
+
+    if (terminalHistoryIndexRef.current === null) return;
+    const nextIndex = terminalHistoryIndexRef.current + 1;
+    if (nextIndex >= history.length) {
+      terminalHistoryIndexRef.current = null;
+      replaceBufferedTerminalInput(terminalHistoryDraftRef.current);
+      terminalHistoryDraftRef.current = "";
+      return;
+    }
+
+    terminalHistoryIndexRef.current = nextIndex;
+    replaceBufferedTerminalInput(history[nextIndex] ?? "");
+  }
+
+  function navigateCommandHistory(direction: "previous" | "next") {
+    const history = inputHistoryRef.current;
+    if (history.length === 0) return;
+
+    resetCommandCompletion();
+
+    if (direction === "previous") {
+      if (commandHistoryIndexRef.current === null) {
+        commandHistoryDraftRef.current = command;
+        commandHistoryIndexRef.current = history.length - 1;
+      } else {
+        commandHistoryIndexRef.current = Math.max(0, commandHistoryIndexRef.current - 1);
+      }
+      setCommand(history[commandHistoryIndexRef.current] ?? "");
+      return;
+    }
+
+    if (commandHistoryIndexRef.current === null) return;
+    const nextIndex = commandHistoryIndexRef.current + 1;
+    if (nextIndex >= history.length) {
+      commandHistoryIndexRef.current = null;
+      setCommand(commandHistoryDraftRef.current);
+      commandHistoryDraftRef.current = "";
+      return;
+    }
+
+    commandHistoryIndexRef.current = nextIndex;
+    setCommand(history[nextIndex] ?? "");
+  }
+
+  function handleCommandChange(event: React.ChangeEvent<HTMLInputElement>) {
+    resetCommandInputNavigation();
+    setCommand(event.target.value);
+  }
+
+  function handleCommandKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Tab") {
+      event.preventDefault();
+      autocompleteCommandInput();
+      return;
+    }
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    if (inputHistoryRef.current.length === 0) return;
+
+    event.preventDefault();
+    navigateCommandHistory(event.key === "ArrowUp" ? "previous" : "next");
+  }
+
+  useEffect(() => {
+    if (inputHistoryInstanceIdRef.current === instanceId) return;
+    inputHistoryInstanceIdRef.current = instanceId;
+    inputHistoryRef.current = [];
+    resetInputHistoryNavigation();
+    directInputBufferRef.current = "";
+    setCommand("");
+  }, [instanceId]);
 
   useEffect(() => {
     if (!terminalHost || terminalRef.current) return;
@@ -6922,6 +7244,7 @@ function WebTerminal({
   useEffect(() => {
     setLastIssue("");
     directInputBufferRef.current = "";
+    resetTerminalInputNavigation();
     clearRememberedSakiTerminalSelection();
     if (!terminalReady || !instanceId) {
       setConnectionState("idle");
@@ -7019,21 +7342,24 @@ function WebTerminal({
     };
   }, [instanceId, instanceName, onStatus, reconnectTick, terminalMountKey, terminalReady, token]);
 
-  function sendInput(data: string, echo = true) {
+  function sendInput(data: string, echo = true): boolean {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       setError("终端未连接");
-      return;
+      return false;
     }
     socket.send(JSON.stringify({ type: "input", data, echo }));
+    return true;
   }
 
   function submitCommand(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const value = command.trim();
     if (!value) return;
-    sendInput(`${value}\n`);
-    setCommand("");
+    if (sendInput(`${value}\n`)) {
+      rememberInputHistory(value);
+      setCommand("");
+    }
   }
 
   async function toggleTerminalProcess() {
@@ -7066,11 +7392,24 @@ function WebTerminal({
   terminalDataHandlerRef.current = (data: string) => {
     if (data === "\u0003") {
       directInputBufferRef.current = "";
+      resetTerminalInputNavigation();
       sendInput("\u0003");
       return;
     }
     if (!connected || !running) {
       setError("实例运行并连接后才能输入");
+      return;
+    }
+    if (data === "\x1b[A" || data === "\x1bOA") {
+      navigateTerminalHistory("previous");
+      return;
+    }
+    if (data === "\x1b[B" || data === "\x1bOB") {
+      navigateTerminalHistory("next");
+      return;
+    }
+    if (data === "\t") {
+      autocompleteBufferedTerminalInput();
       return;
     }
     if (data.startsWith("\x1b")) return;
@@ -7082,18 +7421,23 @@ function WebTerminal({
     for (const character of normalized) {
       if (character === "\r" || character === "\n") {
         terminal?.write("\r\n");
-        sendInput(`${buffer}\n`, false);
+        if (sendInput(`${buffer}\n`, false)) {
+          rememberInputHistory(buffer);
+        }
+        resetTerminalInputNavigation();
         buffer = "";
         continue;
       }
       if (character === "\u007f" || character === "\b") {
         if (buffer.length > 0) {
+          resetTerminalInputNavigation();
           buffer = Array.from(buffer).slice(0, -1).join("");
           terminal?.write("\b \b");
         }
         continue;
       }
       if (character < " " && character !== "\t") continue;
+      resetTerminalInputNavigation();
       buffer += character;
       terminal?.write(character);
     }
@@ -7121,7 +7465,7 @@ function WebTerminal({
       return;
     }
 
-    if (!mobileCtrlActive && shortcut.viaBufferedInput) {
+    if (!mobileCtrlActive && (shortcut.viaBufferedInput || shortcut.id === "up" || shortcut.id === "down")) {
       terminalDataHandlerRef.current(data);
     } else {
       sendInput(data, false);
@@ -7186,7 +7530,8 @@ function WebTerminal({
       <form className="terminal-command-bar" onSubmit={submitCommand}>
         <input
           value={command}
-          onChange={(event) => setCommand(event.target.value)}
+          onChange={handleCommandChange}
+          onKeyDown={handleCommandKeyDown}
           disabled={!connected || !running}
           placeholder={running ? "命令" : "实例未运行"}
         />
@@ -7253,6 +7598,7 @@ function FileManager({
   const instanceId = instance?.id ?? null;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
+  const codeEditorRef = useRef<CodeEditorHandle | null>(null);
   const conflictResolveRef = useRef<((choice: FileConflictChoice | null) => void) | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const directoryLoadRequestRef = useRef(0);
@@ -7271,6 +7617,7 @@ function FileManager({
   const [entries, setEntries] = useState<InstanceFileEntry[]>([]);
   const [fileSearchQuery, setFileSearchQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
   const [editorPath, setEditorPath] = useState<string | null>(null);
   const [editorContent, setEditorContent] = useState("");
   const [editorMode, setEditorMode] = useState<"edit" | "preview">("edit");
@@ -7278,6 +7625,9 @@ function FileManager({
   const [findQuery, setFindQuery] = useState("");
   const [findActiveIndex, setFindActiveIndex] = useState(0);
   const [extractingPath, setExtractingPath] = useState<string | null>(null);
+  const [archivingPath, setArchivingPath] = useState<string | null>(null);
+  const [bulkFileAction, setBulkFileAction] = useState<"archive" | "download" | "delete" | null>(null);
+  const [openFileActionMenuPath, setOpenFileActionMenuPath] = useState<string | null>(null);
   const [draggingFilePath, setDraggingFilePath] = useState<string | null>(null);
   const [fileConflictPrompt, setFileConflictPrompt] = useState<FileConflictPrompt | null>(null);
   const [uploadProgress, setUploadProgress] = useState<(UploadProgressUpdate & { fileName: string }) | null>(null);
@@ -7301,6 +7651,13 @@ function FileManager({
     return entries.filter((entry) => `${entry.name} ${entry.path}`.toLowerCase().includes(query));
   }, [entries, fileSearchQuery]);
   const selectedEntry = entries.find((entry) => entry.path === selectedPath) ?? null;
+  const selectedEntries = useMemo(
+    () => entries.filter((entry) => selectedPaths.has(entry.path)),
+    [entries, selectedPaths]
+  );
+  const selectedFileCount = selectedEntries.length;
+  const allFilteredEntriesSelected =
+    filteredEntries.length > 0 && filteredEntries.every((entry) => selectedPaths.has(entry.path));
   const editorLanguage = useMemo(() => editorLanguageFromPath(editorPath), [editorPath]);
   const editorPreviewKind = useMemo(() => filePreviewKindFromPath(editorPath), [editorPath]);
   const editorIsImage = editorPreviewKind === "image";
@@ -7331,6 +7688,8 @@ function FileManager({
         setEntries(response.entries);
         setFileSearchQuery("");
         setSelectedPath(null);
+        setSelectedPaths(new Set());
+        setOpenFileActionMenuPath(null);
       } catch (err) {
         if (requestId !== directoryLoadRequestRef.current) return;
         setError(err instanceof Error ? err.message : "文件列表读取失败");
@@ -7350,6 +7709,7 @@ function FileManager({
     setEntries([]);
     setFileSearchQuery("");
     setSelectedPath(null);
+    setSelectedPaths(new Set());
     setEditorPath(null);
     setEditorContent("");
     setEditorMode("edit");
@@ -7357,6 +7717,9 @@ function FileManager({
     setFindQuery("");
     setFindActiveIndex(0);
     setExtractingPath(null);
+    setArchivingPath(null);
+    setBulkFileAction(null);
+    setOpenFileActionMenuPath(null);
     setDraggingFilePath(null);
     setFileConflictPrompt(null);
     setUploadProgress(null);
@@ -7459,6 +7822,16 @@ function FileManager({
       setFindActiveIndex(findMatches.length - 1);
     }
   }, [findActiveIndex, findMatches.length]);
+
+  useEffect(() => {
+    if (!openFileActionMenuPath) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest(".file-action-menu-wrap")) return;
+      setOpenFileActionMenuPath(null);
+    };
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    return () => window.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [openFileActionMenuPath]);
 
   useEffect(() => {
     const match = activeFindIndex >= 0 ? findMatches[activeFindIndex] : null;
@@ -7604,7 +7977,11 @@ function FileManager({
   }
 
   function handleEntryPointerDown(event: React.PointerEvent<HTMLTableRowElement>, entry: InstanceFileEntry) {
-    if (!isMobileFileLayout() || event.pointerType === "mouse" || (event.target as HTMLElement).closest(".row-actions")) {
+    if (
+      !isMobileFileLayout() ||
+      event.pointerType === "mouse" ||
+      (event.target as HTMLElement).closest(".row-actions, .file-select-cell")
+    ) {
       return;
     }
     const payload = sakiPayloadForEntry(entry);
@@ -7700,6 +8077,57 @@ function FileManager({
     if (entry.type === "file" && isMobileFileLayout()) {
       event.preventDefault();
     }
+  }
+
+  function toggleEntrySelection(entry: InstanceFileEntry, checked: boolean) {
+    setSelectedPath(entry.path);
+    setSelectedPaths((current) => {
+      const next = new Set(current);
+      if (checked) {
+        next.add(entry.path);
+      } else {
+        next.delete(entry.path);
+      }
+      return next;
+    });
+  }
+
+  function toggleAllFilteredEntries(checked: boolean) {
+    setSelectedPaths((current) => {
+      const next = new Set(current);
+      for (const entry of filteredEntries) {
+        if (checked) {
+          next.add(entry.path);
+        } else {
+          next.delete(entry.path);
+        }
+      }
+      return next;
+    });
+  }
+
+  function clearFileSelection() {
+    setSelectedPaths(new Set());
+  }
+
+  function availableArchiveName(fileName: string): string {
+    return existingEntryByName(fileName) ? uniqueSiblingName(fileName, entries) : fileName;
+  }
+
+  function selectedArchiveFileName(selection: InstanceFileEntry[]): string {
+    if (selection.length === 1) {
+      return availableArchiveName(defaultArchiveFileName(selection[0]!.path));
+    }
+    return availableArchiveName("selection.zip");
+  }
+
+  function saveBase64Download(contentBase64: string, fileName: string) {
+    const url = URL.createObjectURL(base64ToBlob(contentBase64));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(url);
   }
 
   function showFileToast(title: string, detail: string) {
@@ -7804,7 +8232,9 @@ function FileManager({
     setSaving(true);
     setError("");
     try {
-      await api.writeInstanceFile(token, instanceId, editorPath, editorContent);
+      const contentToSave = codeEditorRef.current?.getValue() ?? editorContent;
+      await api.writeInstanceFile(token, instanceId, editorPath, contentToSave);
+      setEditorContent(contentToSave);
       await loadDirectory(currentPath);
       setSelectedPath(editorPath);
     } catch (err) {
@@ -7874,7 +8304,7 @@ function FileManager({
     setError("");
     try {
       await api.deleteInstancePath(token, instanceId, entry.path);
-      if (editorPath === entry.path) {
+      if (editorPath === entry.path || (editorPath?.startsWith(`${entry.path}/`) ?? false)) {
         setEditorPath(null);
         setEditorContent("");
         setEditorMode("edit");
@@ -7886,17 +8316,25 @@ function FileManager({
     }
   }
 
-  async function uploadFile(file: File) {
+  async function uploadFile(
+    file: File,
+    options: { clearInput?: boolean; batchIndex?: number; batchTotal?: number } = {}
+  ) {
     if (!instanceId) return;
+    const clearInput = options.clearInput ?? true;
     const target = await chooseTargetName("upload", file.name);
     if (!target) {
-      if (fileInputRef.current) {
+      if (clearInput && fileInputRef.current) {
         fileInputRef.current.value = "";
       }
       return;
     }
+    const progressFileName =
+      options.batchTotal && options.batchTotal > 1
+        ? `${target.name} (${options.batchIndex ?? 1}/${options.batchTotal})`
+        : target.name;
     setError("");
-    setUploadProgress({ fileName: target.name, percent: 1, label: "读取文件" });
+    setUploadProgress({ fileName: progressFileName, percent: 1, label: "读取文件" });
     try {
       const response = await api.uploadInstanceFileWithProgress(
         token,
@@ -7904,7 +8342,7 @@ function FileManager({
         target.path,
         file,
         target.overwrite,
-        (progress) => setUploadProgress({ ...progress, fileName: target.name })
+        (progress) => setUploadProgress({ ...progress, fileName: progressFileName })
       );
       await loadDirectory(currentPath);
       setSelectedPath(response.path);
@@ -7918,27 +8356,136 @@ function FileManager({
       setError(err instanceof Error ? err.message : "上传失败");
     } finally {
       window.setTimeout(() => {
-        setUploadProgress((current) => (current?.fileName === target.name ? null : current));
+        setUploadProgress((current) => (current?.fileName === progressFileName ? null : current));
       }, 700);
-      if (fileInputRef.current) {
+      if (clearInput && fileInputRef.current) {
         fileInputRef.current.value = "";
       }
     }
   }
 
+  async function uploadFiles(files: File[]) {
+    if (files.length === 0) return;
+    if (files.length === 1) {
+      await uploadFile(files[0]!);
+      return;
+    }
+
+    for (let index = 0; index < files.length; index += 1) {
+      await uploadFile(files[index]!, {
+        clearInput: false,
+        batchIndex: index + 1,
+        batchTotal: files.length
+      });
+    }
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+    showFileToast("批量上传完成", `已处理 ${files.length} 个文件`);
+  }
+
   async function downloadEntry(entry: InstanceFileEntry) {
-    if (!instanceId || entry.type !== "file") return;
+    if (!instanceId) return;
     setError("");
     try {
-      const response = await api.downloadInstanceFile(token, instanceId, entry.path);
-      const url = URL.createObjectURL(base64ToBlob(response.contentBase64));
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = response.fileName;
-      link.click();
-      URL.revokeObjectURL(url);
+      const response =
+        entry.type === "file"
+          ? await api.downloadInstanceFile(token, instanceId, entry.path)
+          : await api.downloadInstancePathsArchive(token, instanceId, [entry.path], defaultArchiveFileName(entry.path));
+      saveBase64Download(response.contentBase64, response.fileName);
     } catch (err) {
       setError(err instanceof Error ? err.message : "下载失败");
+    }
+  }
+
+  async function archiveEntry(entry: InstanceFileEntry) {
+    if (!instanceId) return;
+    const outputName = availableArchiveName(defaultArchiveFileName(entry.path));
+    const outputPath = joinFilePath(parentFilePath(entry.path), outputName);
+    setError("");
+    setArchivingPath(entry.path);
+    try {
+      const response = await api.archiveInstancePaths(token, instanceId, [entry.path], outputPath);
+      await loadDirectory(parentFilePath(response.outputPath));
+      setSelectedPath(response.outputPath);
+      showFileToast("压缩完成", `已创建 ${response.entry.name}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "压缩失败");
+    } finally {
+      setArchivingPath(null);
+    }
+  }
+
+  async function archiveSelectedEntries() {
+    if (!instanceId || selectedEntries.length === 0) return;
+    const outputName = selectedArchiveFileName(selectedEntries);
+    const outputPath = joinFilePath(currentPath, outputName);
+    setError("");
+    setBulkFileAction("archive");
+    try {
+      const response = await api.archiveInstancePaths(
+        token,
+        instanceId,
+        selectedEntries.map((entry) => entry.path),
+        outputPath
+      );
+      clearFileSelection();
+      await loadDirectory(parentFilePath(response.outputPath));
+      setSelectedPath(response.outputPath);
+      showFileToast("压缩完成", `已创建 ${response.entry.name}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "压缩失败");
+    } finally {
+      setBulkFileAction(null);
+    }
+  }
+
+  async function downloadSelectedEntries() {
+    if (!instanceId || selectedEntries.length === 0) return;
+    setError("");
+    setBulkFileAction("download");
+    try {
+      if (selectedEntries.length === 1 && selectedEntries[0]!.type === "file") {
+        await downloadEntry(selectedEntries[0]!);
+      } else {
+        const response = await api.downloadInstancePathsArchive(
+          token,
+          instanceId,
+          selectedEntries.map((entry) => entry.path),
+          selectedArchiveFileName(selectedEntries)
+        );
+        saveBase64Download(response.contentBase64, response.fileName);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "下载失败");
+    } finally {
+      setBulkFileAction(null);
+    }
+  }
+
+  async function deleteSelectedEntries() {
+    if (!instanceId || selectedEntries.length === 0) return;
+    if (!window.confirm(`删除选中的 ${selectedEntries.length} 个项目？`)) return;
+    const pathsToDelete = selectedEntries.map((entry) => entry.path);
+    setError("");
+    setBulkFileAction("delete");
+    try {
+      for (const entry of selectedEntries) {
+        await api.deleteInstancePath(token, instanceId, entry.path);
+      }
+      if (editorPath && pathsToDelete.some((pathToDelete) => editorPath === pathToDelete || editorPath.startsWith(`${pathToDelete}/`))) {
+        setEditorPath(null);
+        setEditorContent("");
+        setEditorMode("edit");
+        setMobileEditorOpen(false);
+      }
+      clearFileSelection();
+      await loadDirectory(currentPath);
+      showFileToast("删除完成", `已删除 ${pathsToDelete.length} 个项目`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "删除失败");
+    } finally {
+      setBulkFileAction(null);
     }
   }
 
@@ -8063,14 +8610,52 @@ function FileManager({
               ref={fileInputRef}
               className="hidden-file-input"
               type="file"
+              multiple
               onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) void uploadFile(file);
+                const files = Array.from(event.target.files ?? []);
+                if (files.length > 0) void uploadFiles(files);
               }}
             />
           </div>
         </div>
-        <div className={`file-status-area ${!error && !uploadProgress ? "empty" : ""}`}>
+        <div className={`file-status-area ${!error && !uploadProgress && selectedFileCount === 0 ? "empty" : ""}`}>
+          {selectedFileCount > 0 ? (
+            <div className="file-selection-bar" role="status" aria-live="polite">
+              <span>已选择 {selectedFileCount} 项</span>
+              <div className="file-selection-actions">
+                <button
+                  className="small-button compact-button"
+                  type="button"
+                  disabled={Boolean(bulkFileAction)}
+                  onClick={() => void archiveSelectedEntries()}
+                >
+                  {bulkFileAction === "archive" ? <RotateCw size={14} /> : <Archive size={14} />}
+                  <span>压缩</span>
+                </button>
+                <button
+                  className="small-button compact-button"
+                  type="button"
+                  disabled={Boolean(bulkFileAction)}
+                  onClick={() => void downloadSelectedEntries()}
+                >
+                  <Download size={14} />
+                  <span>下载</span>
+                </button>
+                <button
+                  className="small-button compact-button danger-action"
+                  type="button"
+                  disabled={Boolean(bulkFileAction)}
+                  onClick={() => void deleteSelectedEntries()}
+                >
+                  <Trash2 size={14} />
+                  <span>删除</span>
+                </button>
+                <button className="icon-button mini" type="button" title="清空选择" onClick={clearFileSelection}>
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+          ) : null}
           {uploadProgress ? (
             <div className="file-upload-progress" role="status" aria-live="polite">
               <div className="file-upload-progress-meta">
@@ -8090,19 +8675,29 @@ function FileManager({
           <table className="file-table">
             <thead>
               <tr>
-                <th>名称</th>
-                <th>大小</th>
-                <th>修改时间</th>
-                <th></th>
+                <th className="file-select-column">
+                  <input
+                    className="file-select-checkbox"
+                    type="checkbox"
+                    aria-label="选择全部"
+                    checked={allFilteredEntriesSelected}
+                    onChange={(event) => toggleAllFilteredEntries(event.target.checked)}
+                  />
+                </th>
+                <th className="file-name-column">名称</th>
+                <th className="file-size-column">大小</th>
+                <th className="file-modified-column">修改时间</th>
+                <th className="file-actions-column file-actions-heading"></th>
               </tr>
             </thead>
             <tbody>
               {filteredEntries.map((entry) => (
                 <tr
                   className={[
-                    selectedPath === entry.path ? "selected-row" : "",
+                    selectedPath === entry.path || selectedPaths.has(entry.path) ? "selected-row" : "",
                     entry.type === "file" ? "draggable-file-row" : "",
-                    draggingFilePath === entry.path ? "dragging-row" : ""
+                    draggingFilePath === entry.path ? "dragging-row" : "",
+                    openFileActionMenuPath === entry.path ? "file-actions-open" : ""
                   ]
                     .filter(Boolean)
                     .join(" ")}
@@ -8116,7 +8711,17 @@ function FileManager({
                   onPointerCancel={handleEntryPointerCancel}
                   onContextMenu={(event) => handleEntryContextMenu(event, entry)}
                 >
-                  <td>
+                  <td className="file-select-cell">
+                    <input
+                      className="file-select-checkbox"
+                      type="checkbox"
+                      aria-label={`选择 ${entry.name}`}
+                      checked={selectedPaths.has(entry.path)}
+                      onChange={(event) => toggleEntrySelection(entry, event.target.checked)}
+                      onClick={(event) => event.stopPropagation()}
+                    />
+                  </td>
+                  <td className="file-name-cell">
                     <button
                       className="file-name-button"
                       draggable={entry.type === "file"}
@@ -8148,39 +8753,93 @@ function FileManager({
                       <span>{entry.name}</span>
                     </button>
                   </td>
-                  <td>{entry.type === "file" ? formatBytes(entry.size) : "-"}</td>
-                  <td>{formatDate(entry.modifiedAt)}</td>
-                  <td>
+                  <td className="file-size-cell">{entry.type === "file" ? formatBytes(entry.size) : "-"}</td>
+                  <td className="file-modified-cell">{formatDate(entry.modifiedAt)}</td>
+                  <td className="file-actions-cell">
                     <div className="row-actions">
                       <button
                         className="icon-button mini"
-                        title="解压"
-                        disabled={entry.type !== "file" || !isArchiveFile(entry.path) || extractingPath === entry.path}
-                        onClick={() => void extractArchive(entry)}
-                      >
-                        {extractingPath === entry.path ? <RotateCw size={15} /> : <Archive size={15} />}
-                      </button>
-                      <button
-                        className="icon-button mini"
                         title="下载"
-                        disabled={entry.type !== "file"}
+                        disabled={entry.type !== "file" && entry.type !== "directory"}
                         onClick={() => void downloadEntry(entry)}
                       >
                         <Download size={15} />
                       </button>
-                      <button className="small-button compact-button" onClick={() => void renameEntry(entry)}>
-                        重命名
-                      </button>
-                      <button className="icon-button mini danger-action" title="删除" onClick={() => void deleteEntry(entry)}>
-                        <Trash2 size={15} />
-                      </button>
+                      <div className="file-action-menu-wrap">
+                        <button
+                          className="icon-button mini"
+                          title="更多操作"
+                          aria-haspopup="menu"
+                          aria-expanded={openFileActionMenuPath === entry.path}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setOpenFileActionMenuPath((current) => (current === entry.path ? null : entry.path));
+                          }}
+                        >
+                          <MoreHorizontal size={15} />
+                        </button>
+                        {openFileActionMenuPath === entry.path ? (
+                          <div className="file-action-menu" role="menu">
+                            {entry.type === "file" && isArchiveFile(entry.path) ? (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                disabled={extractingPath === entry.path}
+                                onClick={() => {
+                                  setOpenFileActionMenuPath(null);
+                                  void extractArchive(entry);
+                                }}
+                              >
+                                {extractingPath === entry.path ? <RotateCw size={15} /> : <Archive size={15} />}
+                                <span>解压</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                disabled={(entry.type !== "file" && entry.type !== "directory") || archivingPath === entry.path}
+                                onClick={() => {
+                                  setOpenFileActionMenuPath(null);
+                                  void archiveEntry(entry);
+                                }}
+                              >
+                                {archivingPath === entry.path ? <RotateCw size={15} /> : <Archive size={15} />}
+                                <span>压缩</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setOpenFileActionMenuPath(null);
+                                void renameEntry(entry);
+                              }}
+                            >
+                              <FileText size={15} />
+                              <span>重命名</span>
+                            </button>
+                            <button
+                              className="danger-action"
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setOpenFileActionMenuPath(null);
+                                void deleteEntry(entry);
+                              }}
+                            >
+                              <Trash2 size={15} />
+                              <span>删除</span>
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   </td>
                 </tr>
               ))}
               {filteredEntries.length === 0 ? (
                 <tr>
-                  <td colSpan={4}>
+                  <td colSpan={5}>
                     <div className="empty-state">
                       {loading ? "读取中" : entries.length > 0 && fileSearchQuery.trim() ? "没有匹配的文件" : "目录为空"}
                     </div>
@@ -8294,6 +8953,7 @@ function FileManager({
               ) : null}
               <div className="code-editor-shell">
                 <CodeEditor
+                  ref={codeEditorRef}
                   value={editorContent}
                   language={editorLanguage}
                   onChange={(newValue) => setEditorContent(newValue)}
@@ -8714,6 +9374,7 @@ function InstancesView({
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [suggestingStartCommand, setSuggestingStartCommand] = useState<"create" | "settings" | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [toolsCollapsed, setToolsCollapsed] = useState(false);
@@ -8945,6 +9606,35 @@ function InstancesView({
     setShowTaskModal(false);
   }, [selectedId]);
 
+  async function suggestStartCommand(target: "create" | "settings") {
+    const source = target === "create" ? form : settingsForm;
+    const nodeId = source.nodeId.trim();
+    const workingDirectory = source.workingDirectory.trim();
+    if (!nodeId || !workingDirectory) return;
+
+    setSuggestingStartCommand(target);
+    setError("");
+    try {
+      const suggestion = await api.suggestInstanceStartCommand(token, {
+        nodeId,
+        workingDirectory
+      });
+      if (!suggestion.startCommand) {
+        setError(`AI 未能识别启动命令：${suggestion.reason}`);
+        return;
+      }
+      if (target === "create") {
+        setForm((current) => ({ ...current, startCommand: suggestion.startCommand }));
+      } else {
+        setSettingsForm((current) => ({ ...current, startCommand: suggestion.startCommand }));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "AI 分析启动命令失败");
+    } finally {
+      setSuggestingStartCommand(null);
+    }
+  }
+
   async function createInstance(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setCreating(true);
@@ -9116,11 +9806,23 @@ function InstancesView({
             </label>
             <label className="wide-field">
               启动命令
-              <input
-                value={form.startCommand}
-                onChange={(event) => setForm((current) => ({ ...current, startCommand: event.target.value }))}
-                required
-              />
+              <div className="start-command-control">
+                <input
+                  value={form.startCommand}
+                  onChange={(event) => setForm((current) => ({ ...current, startCommand: event.target.value }))}
+                  placeholder="填写工作目录后可用 AI 分析"
+                  required
+                />
+                <button
+                  className="icon-button mini ai-suggest-button"
+                  type="button"
+                  title={form.workingDirectory.trim() ? "AI 分析并填写启动命令" : "请先填写工作目录"}
+                  disabled={!form.workingDirectory.trim() || !form.nodeId || suggestingStartCommand !== null}
+                  onClick={() => void suggestStartCommand("create")}
+                >
+                  {suggestingStartCommand === "create" ? <Loader2 size={14} className="status-spinner" /> : <Sparkles size={14} />}
+                </button>
+              </div>
             </label>
             <label className="wide-field">
               停止命令
@@ -9177,7 +9879,7 @@ function InstancesView({
           <button className="ghost-button" type="button" onClick={() => setShowCreateForm(false)}>
             取消
           </button>
-          <button className="primary-button" type="submit" form="create-instance-form" disabled={creating || nodes.length === 0}>
+          <button className="primary-button" type="submit" form="create-instance-form" disabled={creating || nodes.length === 0 || !form.startCommand.trim()}>
             <Plus size={18} />
             {creating ? "创建中" : "创建"}
           </button>
@@ -9430,13 +10132,24 @@ function InstancesView({
                   </label>
                   <label>
                     启动命令
-                    <textarea
-                      rows={3}
-                      value={settingsForm.startCommand}
-                      onChange={(event) =>
-                        setSettingsForm((current) => ({ ...current, startCommand: event.target.value }))
-                      }
-                    />
+                    <div className="start-command-control">
+                      <textarea
+                        rows={3}
+                        value={settingsForm.startCommand}
+                        onChange={(event) =>
+                          setSettingsForm((current) => ({ ...current, startCommand: event.target.value }))
+                        }
+                      />
+                      <button
+                        className="icon-button mini ai-suggest-button"
+                        type="button"
+                        title={settingsForm.workingDirectory.trim() ? "AI 分析并填写启动命令" : "请先填写工作目录"}
+                        disabled={!settingsForm.workingDirectory.trim() || !settingsForm.nodeId || suggestingStartCommand !== null}
+                        onClick={() => void suggestStartCommand("settings")}
+                      >
+                        {suggestingStartCommand === "settings" ? <Loader2 size={14} className="status-spinner" /> : <Sparkles size={14} />}
+                      </button>
+                    </div>
                   </label>
                 </div>
               </div>
@@ -10300,6 +11013,7 @@ function TemplatesView({ token, onLogout, refreshTick }: { token: string; onLogo
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
+  const [suggestingStartCommand, setSuggestingStartCommand] = useState(false);
   const [form, setForm] = useState({
     nodeId: "",
     name: "",
@@ -10344,6 +11058,30 @@ function TemplatesView({ token, onLogout, refreshTick }: { token: string; onLogo
       startCommand: selectedTemplate.defaultStartCommand
     }));
   }, [selectedTemplate]);
+
+  async function suggestTemplateStartCommand() {
+    const nodeId = form.nodeId.trim();
+    const workingDirectory = form.workingDirectory.trim();
+    if (!nodeId || !workingDirectory) return;
+
+    setSuggestingStartCommand(true);
+    setError("");
+    try {
+      const suggestion = await api.suggestInstanceStartCommand(token, {
+        nodeId,
+        workingDirectory
+      });
+      if (!suggestion.startCommand) {
+        setError(`AI 未能识别启动命令：${suggestion.reason}`);
+        return;
+      }
+      setForm((current) => ({ ...current, startCommand: suggestion.startCommand }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "AI 分析启动命令失败");
+    } finally {
+      setSuggestingStartCommand(false);
+    }
+  }
 
   async function createFromTemplate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -10434,7 +11172,22 @@ function TemplatesView({ token, onLogout, refreshTick }: { token: string; onLogo
             </label>
             <label className="wide-field">
               启动命令
-              <input value={form.startCommand} onChange={(event) => setForm((current) => ({ ...current, startCommand: event.target.value }))} />
+              <div className="start-command-control">
+                <input
+                  value={form.startCommand}
+                  onChange={(event) => setForm((current) => ({ ...current, startCommand: event.target.value }))}
+                  placeholder="填写工作目录后可用 AI 分析"
+                />
+                <button
+                  className="icon-button mini ai-suggest-button"
+                  type="button"
+                  title={form.workingDirectory.trim() ? "AI 分析并填写启动命令" : "请先填写工作目录"}
+                  disabled={!form.workingDirectory.trim() || !form.nodeId || suggestingStartCommand}
+                  onClick={() => void suggestTemplateStartCommand()}
+                >
+                  {suggestingStartCommand ? <Loader2 size={14} className="status-spinner" /> : <Sparkles size={14} />}
+                </button>
+              </div>
             </label>
             <label className="checkbox-field">
               <input type="checkbox" checked={form.autoStart} onChange={(event) => setForm((current) => ({ ...current, autoStart: event.target.checked }))} />
@@ -10452,7 +11205,7 @@ function TemplatesView({ token, onLogout, refreshTick }: { token: string; onLogo
               最大重试
               <input type="number" min={0} max={99} value={form.restartMaxRetries} onChange={(event) => setForm((current) => ({ ...current, restartMaxRetries: Number(event.target.value) || 0 }))} />
             </label>
-            <button className="primary-button form-submit" type="submit" disabled={creating || !selectedTemplate || nodes.length === 0}>
+            <button className="primary-button form-submit" type="submit" disabled={creating || !selectedTemplate || nodes.length === 0 || !form.startCommand.trim()}>
               <LayoutTemplate size={18} />
               {creating ? "创建中" : "用模板创建"}
             </button>

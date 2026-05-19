@@ -180,7 +180,7 @@ model Instance {
   lastExitCode      Int?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
-  node              Node            @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  node              Node            @relation(fields: [nodeId], references: [id], onDelete: Restrict)
   createdBy         User?           @relation("InstanceCreator", fields: [createdById], references: [id], onDelete: SetNull)
   assignedTo        User?           @relation("InstanceAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
   assignedUsers     InstanceAssignment[]

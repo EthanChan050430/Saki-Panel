@@ -28,6 +28,7 @@ declare module "fastify" {
 export async function createPanelServer() {
   const app = Fastify({
     bodyLimit: 16 * 1024 * 1024,
+    ...(panelConfig.https ? { https: panelConfig.https } : {}),
     logger: {
       level: process.env.LOG_LEVEL ?? "warn"
     }

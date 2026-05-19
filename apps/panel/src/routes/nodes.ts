@@ -3,6 +3,7 @@ import type { CreateNodeRequest, ManagedNode, NodeMetricSnapshot, UpdateNodeRequ
 import { panelConfig } from "../config.js";
 import { prisma } from "../db.js";
 import { requirePermission } from "../auth.js";
+import { testDaemonHealth } from "../daemon-client.js";
 import { generateSecretToken, hashToken, tokenLast4 } from "../security.js";
 import { writeAuditLog } from "../audit.js";
 
@@ -228,6 +229,14 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       return;
     }
 
+    const instanceCount = await prisma.instance.count({ where: { nodeId: id } });
+    if (instanceCount > 0) {
+      reply.code(409).send({
+        message: `Cannot delete this node because ${instanceCount} instance${instanceCount === 1 ? "" : "s"} still belong to it. Move or delete those instances first.`
+      });
+      return;
+    }
+
     await prisma.node.delete({ where: { id } });
     await writeAuditLog({
       request,
@@ -249,12 +258,8 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       return;
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
     try {
-      const response = await fetch(`${node.protocol}://${node.host}:${node.port}/health`, {
-        signal: controller.signal
-      });
+      const response = await testDaemonHealth(node);
       const ok = response.ok;
       await prisma.node.update({
         where: { id: node.id },
@@ -271,7 +276,7 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
         resourceId: node.id,
         result: ok ? "SUCCESS" : "FAILURE"
       });
-      return { ok, statusCode: response.status };
+      return { ok, statusCode: response.statusCode };
     } catch (error) {
       await prisma.node.update({
         where: { id: node.id },
@@ -287,8 +292,6 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
         result: "FAILURE"
       });
       return { ok: false, error: error instanceof Error ? error.message : "Unknown error" };
-    } finally {
-      clearTimeout(timeout);
     }
   });
 }

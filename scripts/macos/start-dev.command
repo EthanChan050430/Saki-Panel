@@ -21,9 +21,9 @@ check_command() {
   if ! command -v "$1" &>/dev/null; then
     log_error "$1 is not installed. Please install it first."
     if [[ "$1" == "node" ]]; then
-      echo "  → https://nodejs.org/  or  brew install node"
+      echo "  �?https://nodejs.org/  or  brew install node"
     elif [[ "$1" == "npm" ]]; then
-      echo "  → Comes with Node.js"
+      echo "  �?Comes with Node.js"
     fi
     exit 1
   fi
@@ -38,12 +38,31 @@ find_free_port() {
   echo "$port"
 }
 
+ssl_available() {
+  local ssl_dir="$ROOT/ssl"
+  [[ -d "$ssl_dir" ]] || return 1
+
+  local has_cert=0
+  local has_key=0
+  local file
+  while IFS= read -r -d '' file; do
+    if grep -q -- "-----BEGIN CERTIFICATE-----" "$file"; then
+      has_cert=1
+    fi
+    if grep -Eq -- "-----BEGIN ([A-Z ]+ )?PRIVATE KEY-----" "$file"; then
+      has_key=1
+    fi
+  done < <(find "$ssl_dir" -maxdepth 1 -type f \( -name "*.pem" -o -name "*.crt" -o -name "*.cer" -o -name "*.key" \) -print0)
+
+  [[ "$has_cert" -eq 1 && "$has_key" -eq 1 ]]
+}
+
 WEB_PORT=${WEB_PORT:-5478}
 PANEL_PORT=${PANEL_PORT:-5479}
-DAEMON_PORT=${DAEMON_PORT:-24444}
+DAEMON_PORT=${DAEMON_PORT:-5480}
 
 echo ""
-echo -e "${MAGENTA}🌸 Saki Panel — macOS Development Launcher${NC}"
+echo -e "${MAGENTA}🌸 Saki Panel �?macOS Development Launcher${NC}"
 echo ""
 
 log_info "Checking prerequisites..."
@@ -58,20 +77,32 @@ log_info "Detecting available ports..."
 WEB_PORT=$(find_free_port "$WEB_PORT")
 PANEL_PORT=$(find_free_port "$PANEL_PORT")
 DAEMON_PORT=$(find_free_port "$DAEMON_PORT")
+SCHEME="http"
+if ssl_available; then
+  SCHEME="https"
+fi
 
-export WEB_ORIGIN="http://localhost:$WEB_PORT"
 export VITE_PORT="$WEB_PORT"
-export VITE_API_BASE_URL="http://localhost:$PANEL_PORT"
 
 export PANEL_HOST="0.0.0.0"
 export PANEL_PORT="$PANEL_PORT"
-export PANEL_PUBLIC_URL="http://localhost:$PANEL_PORT"
 
 export DAEMON_HOST="127.0.0.1"
 export DAEMON_PORT="$DAEMON_PORT"
-export DAEMON_PROTOCOL="http"
-export DAEMON_PANEL_URL="http://127.0.0.1:$PANEL_PORT"
+export DAEMON_PROTOCOL="$SCHEME"
 export DAEMON_IDENTITY_FILE="$ROOT/data/daemon/identity-$DAEMON_PORT.json"
+
+if [[ "$SCHEME" == "https" ]]; then
+  unset WEB_ORIGIN
+  unset VITE_API_BASE_URL
+  unset PANEL_PUBLIC_URL
+  unset DAEMON_PANEL_URL
+else
+  export WEB_ORIGIN="$SCHEME://localhost:$WEB_PORT"
+  export VITE_API_BASE_URL="$SCHEME://localhost:$PANEL_PORT"
+  export PANEL_PUBLIC_URL="$SCHEME://localhost:$PANEL_PORT"
+  export DAEMON_PANEL_URL="http://127.0.0.1:$PANEL_PORT"
+fi
 
 if [[ ! -f "$ROOT/.env" ]]; then
   log_warn ".env file not found, creating from .env.example..."
@@ -81,9 +112,12 @@ fi
 
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "  🌐 Web     : ${CYAN}http://localhost:$WEB_PORT${NC}"
-echo -e "  📋 Panel   : ${CYAN}http://localhost:$PANEL_PORT${NC}"
-echo -e "  🔧 Daemon  : ${CYAN}http://localhost:$DAEMON_PORT${NC}"
+echo -e "  🌐 Web     : ${CYAN}$SCHEME://localhost:$WEB_PORT${NC}"
+echo -e "  📋 Panel   : ${CYAN}$SCHEME://localhost:$PANEL_PORT${NC}"
+echo -e "  🔧 Daemon  : ${CYAN}$SCHEME://localhost:$DAEMON_PORT${NC}"
+if [[ "$SCHEME" == "https" ]]; then
+  echo -e "  TLS      : ${CYAN}enabled from ssl folder${NC}"
+fi
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 

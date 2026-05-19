@@ -1,7 +1,7 @@
 param(
   [int]$WebPort = 5478,
   [int]$PanelPort = 5479,
-  [int]$DaemonPort = 24444,
+  [int]$DaemonPort = 5480,
   [switch]$SkipInstall,
   [switch]$SkipBuild,
   [switch]$DryRun
@@ -33,27 +33,63 @@ function Find-FreePort {
   return $port
 }
 
+function Test-SslAvailable {
+  param([string]$RootPath)
+
+  $sslPath = Join-Path $RootPath "ssl"
+  if (-not (Test-Path $sslPath -PathType Container)) {
+    return $false
+  }
+
+  $hasCert = $false
+  $hasKey = $false
+  foreach ($file in Get-ChildItem -Path $sslPath -File) {
+    if ($file.Extension -notmatch '^\.(pem|crt|cer|key)$') {
+      continue
+    }
+
+    $text = Get-Content -Raw -LiteralPath $file.FullName -ErrorAction SilentlyContinue
+    if ($text -match "-----BEGIN CERTIFICATE-----") {
+      $hasCert = $true
+    }
+    if ($text -match "-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----") {
+      $hasKey = $true
+    }
+  }
+
+  return ($hasCert -and $hasKey)
+}
+
 function Set-ProjectEnv {
   param(
     [int]$ChosenWebPort,
     [int]$ChosenPanelPort,
     [int]$ChosenDaemonPort,
+    [string]$Scheme,
     [string]$RootPath
   )
 
-  $env:WEB_ORIGIN = "http://localhost:$ChosenWebPort"
   $env:VITE_PORT = "$ChosenWebPort"
-  $env:VITE_API_BASE_URL = "http://localhost:$ChosenPanelPort"
 
   $env:PANEL_HOST = "0.0.0.0"
   $env:PANEL_PORT = "$ChosenPanelPort"
-  $env:PANEL_PUBLIC_URL = "http://localhost:$ChosenPanelPort"
 
   $env:DAEMON_HOST = "127.0.0.1"
   $env:DAEMON_PORT = "$ChosenDaemonPort"
-  $env:DAEMON_PROTOCOL = "http"
-  $env:DAEMON_PANEL_URL = "http://127.0.0.1:$ChosenPanelPort"
+  $env:DAEMON_PROTOCOL = "$Scheme"
   $env:DAEMON_IDENTITY_FILE = Join-Path $RootPath "data\daemon\identity-$ChosenDaemonPort.json"
+
+  if ($Scheme -eq "https") {
+    Remove-Item Env:WEB_ORIGIN -ErrorAction SilentlyContinue
+    Remove-Item Env:VITE_API_BASE_URL -ErrorAction SilentlyContinue
+    Remove-Item Env:PANEL_PUBLIC_URL -ErrorAction SilentlyContinue
+    Remove-Item Env:DAEMON_PANEL_URL -ErrorAction SilentlyContinue
+  } else {
+    $env:WEB_ORIGIN = "http://localhost:$ChosenWebPort"
+    $env:VITE_API_BASE_URL = "http://localhost:$ChosenPanelPort"
+    $env:PANEL_PUBLIC_URL = "http://localhost:$ChosenPanelPort"
+    $env:DAEMON_PANEL_URL = "http://127.0.0.1:$ChosenPanelPort"
+  }
 }
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
@@ -62,14 +98,18 @@ Set-Location $Root
 $ChosenWebPort = Find-FreePort -PreferredPort $WebPort
 $ChosenPanelPort = Find-FreePort -PreferredPort $PanelPort
 $ChosenDaemonPort = Find-FreePort -PreferredPort $DaemonPort
+$Scheme = if (Test-SslAvailable -RootPath $Root) { "https" } else { "http" }
 
-Set-ProjectEnv -ChosenWebPort $ChosenWebPort -ChosenPanelPort $ChosenPanelPort -ChosenDaemonPort $ChosenDaemonPort -RootPath $Root
+Set-ProjectEnv -ChosenWebPort $ChosenWebPort -ChosenPanelPort $ChosenPanelPort -ChosenDaemonPort $ChosenDaemonPort -Scheme $Scheme -RootPath $Root
 
 Write-Host ""
 Write-Host "Saki Panel development ports:"
-Write-Host "  Web    : http://localhost:$ChosenWebPort"
-Write-Host "  Panel  : http://localhost:$ChosenPanelPort"
-Write-Host "  Daemon : http://localhost:$ChosenDaemonPort"
+Write-Host "  Web    : ${Scheme}://localhost:$ChosenWebPort"
+Write-Host "  Panel  : ${Scheme}://localhost:$ChosenPanelPort"
+Write-Host "  Daemon : ${Scheme}://localhost:$ChosenDaemonPort"
+if ($Scheme -eq "https") {
+  Write-Host "  TLS    : enabled from ssl folder"
+}
 Write-Host ""
 
 if ($DryRun) {

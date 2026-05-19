@@ -26,7 +26,7 @@ services:
       dockerfile: apps/daemon/Dockerfile
     environment:
       DAEMON_HOST: ${DAEMON_HOST:-daemon}
-      DAEMON_PORT: ${DAEMON_PORT:-24444}
+      DAEMON_PORT: ${DAEMON_PORT:-5480}
       DAEMON_PROTOCOL: ${DAEMON_PROTOCOL:-http}
       DAEMON_PANEL_URL: ${DAEMON_PANEL_URL:-http://panel:5479}
       DAEMON_REGISTRATION_TOKEN: ${DAEMON_REGISTRATION_TOKEN:?DAEMON_REGISTRATION_TOKEN is required}

@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
+import { loadSslConfig } from "./ssl.js";
 
 function numberFromEnv(value: string | undefined, fallback: number): number {
   if (!value) return fallback;
@@ -12,12 +13,42 @@ function numberFromEnv(value: string | undefined, fallback: number): number {
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 dotenv.config({ path: path.resolve(rootDir, ".env") });
 
+const ssl = loadSslConfig(rootDir);
+const transportProtocol = ssl ? "https" : "http";
+const daemonPort = numberFromEnv(process.env.DAEMON_PORT, 5480);
+const panelPort = numberFromEnv(process.env.PANEL_PORT, 5479);
+const listenHost = process.env.DAEMON_HOST ?? "127.0.0.1";
+const defaultReachableHost = listenHost;
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+}
+
+function normalizeServiceUrl(value: string | undefined, fallback: string): string {
+  const raw = value?.trim() || fallback;
+  if (!ssl) return raw;
+
+  try {
+    const url = new URL(raw);
+    if (url.protocol === "http:") url.protocol = "https:";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return raw.replace(/^http:\/\//i, "https://");
+  }
+}
+
 export const daemonConfig = {
   name: process.env.DAEMON_NAME ?? "Local Daemon",
-  host: process.env.DAEMON_HOST ?? "127.0.0.1",
-  port: numberFromEnv(process.env.DAEMON_PORT, 24444),
-  protocol: process.env.DAEMON_PROTOCOL ?? "http",
-  panelUrl: process.env.DAEMON_PANEL_URL ?? "http://localhost:5479",
+  host: listenHost,
+  publicHost: process.env.DAEMON_PUBLIC_HOST ?? defaultReachableHost,
+  port: daemonPort,
+  protocol: ssl ? "https" : process.env.DAEMON_PROTOCOL ?? "http",
+  panelUrl: normalizeServiceUrl(
+    process.env.DAEMON_PANEL_URL,
+    `${transportProtocol}://127.0.0.1:${panelPort}`
+  ),
+  https: ssl?.https,
+  ssl,
   registrationToken: process.env.DAEMON_REGISTRATION_TOKEN ?? "dev-registration-token",
   heartbeatSeconds: numberFromEnv(process.env.DAEMON_HEARTBEAT_SECONDS, 10),
   version: process.env.DAEMON_VERSION ?? "0.1.0",

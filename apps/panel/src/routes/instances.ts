@@ -5,16 +5,19 @@ import type {
   InstanceAssignee,
   InstanceActionResponse,
   InstanceCommandResponse,
+  InstanceFileEntry,
   InstanceLogsResponse,
   InstanceStatus,
   InstanceType,
   ManagedInstance,
   RestartPolicy,
+  SuggestInstanceStartCommandRequest,
+  SuggestInstanceStartCommandResponse,
   UpdateInstanceRequest
 } from "@webops/shared";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../db.js";
-import { requirePermission } from "../auth.js";
+import { requireAnyPermission, requirePermission } from "../auth.js";
 import {
   classifyInstanceUser,
   instanceAssignedUserIds,
@@ -31,6 +34,8 @@ import { writeAuditLog } from "../audit.js";
 import { findDangerousCommandReason } from "../security.js";
 import {
   killDaemonInstance,
+  listDaemonInstanceFiles,
+  readDaemonInstanceFile,
   readDaemonInstanceLogs,
   readDaemonInstanceStatus,
   restartDaemonInstance,
@@ -123,6 +128,420 @@ function statusPatch(status: InstanceStatus, exitCode?: number | null): Prisma.I
     data.lastStoppedAt = now;
   }
   return data;
+}
+
+const startCommandProbeInstanceId = "start-command-probe";
+const rootProbeFileLimit = 200;
+
+interface StartCommandCandidate {
+  startCommand: string;
+  confidence: SuggestInstanceStartCommandResponse["confidence"];
+  reason: string;
+  detected: string[];
+}
+
+interface DirectoryProbe {
+  entries: InstanceFileEntry[];
+  entryByName: Map<string, InstanceFileEntry>;
+  files: Map<string, string>;
+  isWindows: boolean;
+  workingDirectory: string;
+}
+
+function isWindowsNode(node: { os?: string | null }): boolean {
+  return /\bwin(?:dows|32)?\b/i.test(node.os ?? "");
+}
+
+function entryKey(name: string): string {
+  return name.toLowerCase();
+}
+
+function makeEntryMap(entries: InstanceFileEntry[]): Map<string, InstanceFileEntry> {
+  return new Map(entries.map((entry) => [entryKey(entry.name), entry]));
+}
+
+function findEntry(probe: DirectoryProbe, name: string): InstanceFileEntry | null {
+  return probe.entryByName.get(entryKey(name)) ?? null;
+}
+
+function hasFile(probe: DirectoryProbe, name: string): boolean {
+  return findEntry(probe, name)?.type === "file";
+}
+
+function hasDirectory(probe: DirectoryProbe, name: string): boolean {
+  return findEntry(probe, name)?.type === "directory";
+}
+
+function firstFileByName(probe: DirectoryProbe, names: string[]): InstanceFileEntry | null {
+  for (const name of names) {
+    const entry = findEntry(probe, name);
+    if (entry?.type === "file") return entry;
+  }
+  return null;
+}
+
+function firstFileByExtension(probe: DirectoryProbe, extension: string, reject: RegExp[] = []): InstanceFileEntry | null {
+  const lowerExtension = extension.toLowerCase();
+  return (
+    probe.entries.find((entry) => {
+      const lowerName = entry.name.toLowerCase();
+      return entry.type === "file" && lowerName.endsWith(lowerExtension) && !reject.some((pattern) => pattern.test(lowerName));
+    }) ?? null
+  );
+}
+
+function commandPath(value: string): string {
+  return /^[a-z0-9_./@:-]+$/i.test(value) ? value : JSON.stringify(value);
+}
+
+function moduleNameFromFile(fileName: string): string {
+  return fileName.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_]/g, "_");
+}
+
+function safeDockerTag(workingDirectory: string): string {
+  const rawName = workingDirectory.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean).pop() || "saki-app";
+  const normalized = rawName.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
+  return normalized || "saki-app";
+}
+
+function preferredPackageManager(probe: DirectoryProbe): "npm" | "pnpm" | "yarn" | "bun" {
+  if (hasFile(probe, "pnpm-lock.yaml")) return "pnpm";
+  if (hasFile(probe, "yarn.lock")) return "yarn";
+  if (hasFile(probe, "bun.lockb") || hasFile(probe, "bun.lock")) return "bun";
+  return "npm";
+}
+
+function packageRunCommand(packageManager: "npm" | "pnpm" | "yarn" | "bun", script: string): string {
+  if (packageManager === "npm") return script === "start" ? "npm start" : `npm run ${script}`;
+  if (packageManager === "yarn") return `yarn ${script}`;
+  if (packageManager === "bun") return `bun run ${script}`;
+  return `pnpm run ${script}`;
+}
+
+function packageJsonCandidate(probe: DirectoryProbe): StartCommandCandidate | null {
+  const packageJson = probe.files.get("package.json");
+  if (!packageJson) return null;
+
+  try {
+    const parsed = JSON.parse(packageJson) as {
+      main?: unknown;
+      scripts?: unknown;
+      dependencies?: unknown;
+      devDependencies?: unknown;
+    };
+    const scripts =
+      typeof parsed.scripts === "object" && parsed.scripts !== null
+        ? (parsed.scripts as Record<string, unknown>)
+        : {};
+    const manager = preferredPackageManager(probe);
+    const scriptPreference = ["start", "serve", "dev", "preview"];
+    for (const script of scriptPreference) {
+      if (typeof scripts[script] === "string" && String(scripts[script]).trim()) {
+        return {
+          startCommand: packageRunCommand(manager, script),
+          confidence: script === "start" ? "high" : "medium",
+          reason: `Detected package.json script "${script}".`,
+          detected: ["package.json", `${manager} scripts.${script}`]
+        };
+      }
+    }
+
+    const dependencies = {
+      ...(typeof parsed.dependencies === "object" && parsed.dependencies !== null
+        ? (parsed.dependencies as Record<string, unknown>)
+        : {}),
+      ...(typeof parsed.devDependencies === "object" && parsed.devDependencies !== null
+        ? (parsed.devDependencies as Record<string, unknown>)
+        : {})
+    };
+    if ("next" in dependencies) {
+      return {
+        startCommand: packageRunCommand(manager, "dev"),
+        confidence: "medium",
+        reason: "Detected Next.js dependency but no start script.",
+        detected: ["package.json", "next"]
+      };
+    }
+    if ("vite" in dependencies) {
+      return {
+        startCommand: packageRunCommand(manager, "dev"),
+        confidence: "medium",
+        reason: "Detected Vite dependency but no start script.",
+        detected: ["package.json", "vite"]
+      };
+    }
+    if (typeof parsed.main === "string" && parsed.main.trim()) {
+      return {
+        startCommand: `node ${commandPath(parsed.main.trim())}`,
+        confidence: "medium",
+        reason: "Detected package.json main entry.",
+        detected: ["package.json", `main=${parsed.main.trim()}`]
+      };
+    }
+  } catch {
+    return null;
+  }
+
+  const entry = firstFileByName(probe, ["server.js", "app.js", "index.js", "main.js"]);
+  if (!entry) return null;
+  return {
+    startCommand: `node ${commandPath(entry.name)}`,
+    confidence: "medium",
+    reason: "Detected JavaScript entry file beside package.json.",
+    detected: ["package.json", entry.name]
+  };
+}
+
+function dockerCandidate(probe: DirectoryProbe): StartCommandCandidate | null {
+  const compose = firstFileByName(probe, [
+    "compose.yaml",
+    "compose.yml",
+    "docker-compose.yaml",
+    "docker-compose.yml"
+  ]);
+  if (compose) {
+    return {
+      startCommand: "docker compose up",
+      confidence: "high",
+      reason: `Detected ${compose.name}.`,
+      detected: [compose.name]
+    };
+  }
+  if (!hasFile(probe, "Dockerfile")) return null;
+  const tag = safeDockerTag(probe.workingDirectory);
+  return {
+    startCommand: `docker build -t ${tag} . && docker run --rm ${tag}`,
+    confidence: "medium",
+    reason: "Detected Dockerfile.",
+    detected: ["Dockerfile"]
+  };
+}
+
+function pythonCandidate(probe: DirectoryProbe): StartCommandCandidate | null {
+  if (hasFile(probe, "manage.py")) {
+    return {
+      startCommand: "python manage.py runserver 0.0.0.0:8000",
+      confidence: "high",
+      reason: "Detected Django manage.py.",
+      detected: ["manage.py"]
+    };
+  }
+
+  const pythonEntry = firstFileByName(probe, ["main.py", "app.py", "server.py", "run.py"]);
+  const requirements = probe.files.get("requirements.txt") ?? "";
+  if (pythonEntry) {
+    const source = probe.files.get(pythonEntry.name) ?? "";
+    const moduleName = moduleNameFromFile(pythonEntry.name);
+    if (/\bFastAPI\s*\(|from\s+fastapi\s+import\s+FastAPI/i.test(source) || /\bfastapi\b/i.test(requirements)) {
+      return {
+        startCommand: `uvicorn ${moduleName}:app --host 0.0.0.0 --port 8000`,
+        confidence: /\bFastAPI\s*\(|from\s+fastapi\s+import\s+FastAPI/i.test(source) ? "high" : "medium",
+        reason: `Detected FastAPI signals in ${pythonEntry.name}.`,
+        detected: [pythonEntry.name, requirements ? "requirements.txt" : ""].filter(Boolean)
+      };
+    }
+    if (/\bstreamlit\b/i.test(requirements)) {
+      return {
+        startCommand: `streamlit run ${commandPath(pythonEntry.name)}`,
+        confidence: "medium",
+        reason: "Detected Streamlit dependency.",
+        detected: [pythonEntry.name, "requirements.txt"]
+      };
+    }
+    if (/\bFlask\s*\(|from\s+flask\s+import/i.test(source)) {
+      const command = /\bapp\.run\s*\(/i.test(source)
+        ? `python ${commandPath(pythonEntry.name)}`
+        : `flask --app ${moduleName} run --host 0.0.0.0 --port 5000`;
+      return {
+        startCommand: command,
+        confidence: "high",
+        reason: `Detected Flask signals in ${pythonEntry.name}.`,
+        detected: [pythonEntry.name]
+      };
+    }
+    return {
+      startCommand: `python ${commandPath(pythonEntry.name)}`,
+      confidence: "medium",
+      reason: `Detected Python entry file ${pythonEntry.name}.`,
+      detected: [pythonEntry.name]
+    };
+  }
+
+  const anyPythonFile = firstFileByExtension(probe, ".py");
+  if (!anyPythonFile) return null;
+  return {
+    startCommand: `python ${commandPath(anyPythonFile.name)}`,
+    confidence: "low",
+    reason: `Detected Python file ${anyPythonFile.name}.`,
+    detected: [anyPythonFile.name]
+  };
+}
+
+function javaCandidate(probe: DirectoryProbe): StartCommandCandidate | null {
+  const jar = firstFileByExtension(probe, ".jar", [/sources\.jar$/, /javadoc\.jar$/, /original-/]);
+  if (jar && (hasFile(probe, "server.properties") || hasFile(probe, "eula.txt"))) {
+    return {
+      startCommand: `java -Xms1G -Xmx2G -jar ${commandPath(jar.name)} nogui`,
+      confidence: "high",
+      reason: "Detected Minecraft server files and a JAR.",
+      detected: [jar.name, hasFile(probe, "server.properties") ? "server.properties" : "eula.txt"]
+    };
+  }
+  if (jar) {
+    return {
+      startCommand: `java -jar ${commandPath(jar.name)}`,
+      confidence: "high",
+      reason: `Detected executable JAR ${jar.name}.`,
+      detected: [jar.name]
+    };
+  }
+  if (hasFile(probe, "pom.xml")) {
+    const wrapper = probe.isWindows && hasFile(probe, "mvnw.cmd") ? "mvnw.cmd" : hasFile(probe, "mvnw") ? "./mvnw" : "mvn";
+    return {
+      startCommand: `${wrapper} spring-boot:run`,
+      confidence: "medium",
+      reason: "Detected Maven project.",
+      detected: ["pom.xml"]
+    };
+  }
+  if (hasFile(probe, "build.gradle") || hasFile(probe, "build.gradle.kts")) {
+    const wrapper = probe.isWindows && hasFile(probe, "gradlew.bat") ? "gradlew.bat" : hasFile(probe, "gradlew") ? "./gradlew" : "gradle";
+    return {
+      startCommand: `${wrapper} bootRun`,
+      confidence: "medium",
+      reason: "Detected Gradle project.",
+      detected: [hasFile(probe, "build.gradle.kts") ? "build.gradle.kts" : "build.gradle"]
+    };
+  }
+  return null;
+}
+
+function scriptCandidate(probe: DirectoryProbe): StartCommandCandidate | null {
+  const script = firstFileByName(probe, probe.isWindows ? ["start.bat", "start.cmd", "run.bat", "run.cmd"] : ["start.sh", "run.sh"]);
+  if (!script) return null;
+  return {
+    startCommand: probe.isWindows ? commandPath(script.name) : `bash ${commandPath(script.name)}`,
+    confidence: "medium",
+    reason: `Detected startup script ${script.name}.`,
+    detected: [script.name]
+  };
+}
+
+function otherRuntimeCandidate(probe: DirectoryProbe): StartCommandCandidate | null {
+  if (hasFile(probe, "go.mod")) {
+    return {
+      startCommand: "go run .",
+      confidence: "medium",
+      reason: "Detected Go module.",
+      detected: ["go.mod"]
+    };
+  }
+  if (hasFile(probe, "Cargo.toml")) {
+    return {
+      startCommand: "cargo run --release",
+      confidence: "medium",
+      reason: "Detected Rust Cargo project.",
+      detected: ["Cargo.toml"]
+    };
+  }
+  if (hasFile(probe, "artisan")) {
+    return {
+      startCommand: "php artisan serve --host=0.0.0.0 --port=8000",
+      confidence: "medium",
+      reason: "Detected Laravel artisan file.",
+      detected: ["artisan"]
+    };
+  }
+  const csproj = firstFileByExtension(probe, ".csproj");
+  if (csproj) {
+    return {
+      startCommand: "dotnet run --urls http://0.0.0.0:5000",
+      confidence: "medium",
+      reason: `Detected .NET project ${csproj.name}.`,
+      detected: [csproj.name]
+    };
+  }
+  return null;
+}
+
+async function readProbeFile(
+  node: Parameters<typeof listDaemonInstanceFiles>[0],
+  workingDirectory: string,
+  fileName: string
+): Promise<string | null> {
+  try {
+    const file = await readDaemonInstanceFile(node, startCommandProbeInstanceId, workingDirectory, fileName);
+    return file.content;
+  } catch {
+    return null;
+  }
+}
+
+async function buildDirectoryProbe(
+  node: Parameters<typeof listDaemonInstanceFiles>[0],
+  workingDirectory: string,
+  isWindows: boolean
+): Promise<DirectoryProbe> {
+  const listing = await listDaemonInstanceFiles(node, startCommandProbeInstanceId, workingDirectory, "", {
+    limit: rootProbeFileLimit
+  });
+  const entryByName = makeEntryMap(listing.entries);
+  const probe: DirectoryProbe = {
+    entries: listing.entries,
+    entryByName,
+    files: new Map(),
+    isWindows,
+    workingDirectory
+  };
+  const interestingFiles = [
+    "package.json",
+    "requirements.txt",
+    "main.py",
+    "app.py",
+    "server.py",
+    "run.py"
+  ].filter((fileName) => hasFile(probe, fileName));
+  const filePairs = await Promise.all(
+    interestingFiles.map(async (fileName) => [fileName, await readProbeFile(node, workingDirectory, fileName)] as const)
+  );
+  for (const [fileName, content] of filePairs) {
+    if (content !== null) probe.files.set(fileName, content);
+  }
+  return probe;
+}
+
+function inferStartCommand(probe: DirectoryProbe): SuggestInstanceStartCommandResponse {
+  const candidates = [
+    packageJsonCandidate(probe),
+    dockerCandidate(probe),
+    pythonCandidate(probe),
+    javaCandidate(probe),
+    otherRuntimeCandidate(probe),
+    scriptCandidate(probe)
+  ].filter((candidate): candidate is StartCommandCandidate => Boolean(candidate));
+
+  const best = candidates[0];
+  if (best) {
+    return best;
+  }
+
+  const detected = probe.entries.slice(0, 12).map((entry) => entry.name);
+  return {
+    startCommand: "",
+    confidence: "low",
+    reason: probe.entries.length
+      ? "No known startup pattern was detected in the directory root."
+      : "The directory is empty or no readable files were found.",
+    detected
+  };
+}
+
+async function suggestStartCommandForDirectory(
+  node: Parameters<typeof listDaemonInstanceFiles>[0],
+  workingDirectory: string
+): Promise<SuggestInstanceStartCommandResponse> {
+  const probe = await buildDirectoryProbe(node, workingDirectory, isWindowsNode(node));
+  return inferStartCommand(probe);
 }
 
 async function updateStatus(id: string, status: InstanceStatus, exitCode?: number | null): Promise<InstanceWithAccess> {
@@ -261,6 +680,58 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
   app.get("/api/instances/assignees", { preHandler: requirePermission("instance.update") }, async (request) => {
     return listInstanceAssignees(request.user.sub) satisfies Promise<InstanceAssignee[]>;
   });
+
+  app.post(
+    "/api/instances/start-command/suggest",
+    { preHandler: requireAnyPermission(["instance.create", "instance.update"]) },
+    async (request, reply) => {
+      const body = request.body as Partial<SuggestInstanceStartCommandRequest>;
+      const nodeId = trimmedString(body.nodeId);
+      const workingDirectory = trimmedString(body.workingDirectory);
+      if (!nodeId || !workingDirectory) {
+        reply.code(400).send({ message: "nodeId and workingDirectory are required" });
+        return;
+      }
+
+      const node = await prisma.node.findUnique({ where: { id: nodeId } });
+      if (!node) {
+        reply.code(404).send({ message: "Node not found" });
+        return;
+      }
+
+      try {
+        const suggestion = await suggestStartCommandForDirectory(node, workingDirectory);
+        await writeAuditLog({
+          request,
+          userId: request.user.sub,
+          action: "instance.start_command.suggest",
+          resourceType: "instance",
+          payload: {
+            nodeId,
+            workingDirectory,
+            confidence: suggestion.confidence,
+            detected: suggestion.detected,
+            startCommand: suggestion.startCommand
+          }
+        });
+        return suggestion satisfies SuggestInstanceStartCommandResponse;
+      } catch (error) {
+        await writeAuditLog({
+          request,
+          userId: request.user.sub,
+          action: "instance.start_command.suggest",
+          resourceType: "instance",
+          payload: {
+            nodeId,
+            workingDirectory,
+            error: error instanceof Error ? error.message : "Unknown error"
+          },
+          result: "FAILURE"
+        });
+        reply.code(502).send({ message: error instanceof Error ? error.message : "Daemon request failed" });
+      }
+    }
+  );
 
   app.post("/api/instances", { preHandler: requirePermission("instance.create") }, async (request, reply) => {
     const body = request.body as Partial<CreateInstanceRequest>;

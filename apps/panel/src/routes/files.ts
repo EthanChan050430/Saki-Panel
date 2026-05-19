@@ -1,7 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { MultipartFields } from "@fastify/multipart";
 import type {
+  ArchiveInstancePathsRequest,
   DeleteInstanceFileRequest,
+  DownloadInstanceArchiveRequest,
   ExtractInstanceArchiveRequest,
   MakeInstanceDirectoryRequest,
   RenameInstanceFileRequest,
@@ -12,7 +14,9 @@ import { requirePermission } from "../auth.js";
 import { loadVisibleInstance, type InstanceWithAccess } from "../instance-access.js";
 import { writeAuditLog } from "../audit.js";
 import {
+  archiveDaemonInstancePaths,
   deleteDaemonInstancePath,
+  downloadDaemonInstanceArchive,
   downloadDaemonInstanceFile,
   extractDaemonInstanceArchive,
   listDaemonInstanceFiles,
@@ -357,6 +361,81 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       await handleFailure(request, reply, "file.extract", id, error, {
         path: body.path,
         outputPath: body.outputPath
+      });
+    }
+  });
+
+  app.post("/api/instances/:id/files/archive", { preHandler: requirePermission("file.write") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as Partial<ArchiveInstancePathsRequest>;
+    const instance = await loadInstance(request, id);
+    if (!instance) {
+      await sendNotFound(reply);
+      return;
+    }
+    if (!Array.isArray(body.paths) || body.paths.length === 0) {
+      reply.code(400).send({ message: "paths are required" });
+      return;
+    }
+
+    try {
+      const response = await archiveDaemonInstancePaths(instance.node, id, instance.workingDirectory, {
+        paths: body.paths,
+        ...(body.outputPath ? { outputPath: body.outputPath } : {})
+      });
+      await writeAuditLog({
+        request,
+        userId: request.user.sub,
+        action: "file.archive",
+        resourceType: "instance_file",
+        resourceId: id,
+        payload: {
+          paths: response.paths,
+          outputPath: response.outputPath,
+          archivedCount: response.archivedCount,
+          size: response.size
+        }
+      });
+      return response;
+    } catch (error) {
+      await handleFailure(request, reply, "file.archive", id, error, {
+        paths: body.paths,
+        outputPath: body.outputPath
+      });
+    }
+  });
+
+  app.post("/api/instances/:id/files/archive/download", { preHandler: requirePermission("file.read") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as Partial<DownloadInstanceArchiveRequest>;
+    const instance = await loadInstance(request, id);
+    if (!instance) {
+      await sendNotFound(reply);
+      return;
+    }
+    if (!Array.isArray(body.paths) || body.paths.length === 0) {
+      reply.code(400).send({ message: "paths are required" });
+      return;
+    }
+
+    try {
+      const response = await downloadDaemonInstanceArchive(instance.node, id, instance.workingDirectory, {
+        paths: body.paths,
+        ...(body.fileName ? { fileName: body.fileName } : {})
+      });
+      await writeAuditLog({
+        request,
+        userId: request.user.sub,
+        action: "file.archive.download",
+        resourceType: "instance_file",
+        resourceId: id,
+        payload: { paths: body.paths, fileName: response.fileName, size: response.size }
+      });
+      return response;
+    } catch (error) {
+      await handleFailure(request, reply, "file.archive.download", id, error, {
+        paths: body.paths,
+        fileName: body.fileName
       });
     }
   });

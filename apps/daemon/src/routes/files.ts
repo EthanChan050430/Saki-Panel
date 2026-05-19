@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import type { Dirent, Stats } from "node:fs";
 import { execFile } from "node:child_process";
@@ -8,7 +9,10 @@ import { promisify } from "node:util";
 import type { FastifyInstance } from "fastify";
 import type { MultipartFile } from "@fastify/multipart";
 import type {
+  ArchiveInstancePathsRequest,
+  ArchiveInstancePathsResponse,
   DeleteInstanceFileRequest,
+  DownloadInstanceArchiveRequest,
   DownloadInstanceFileResponse,
   ExtractInstanceArchiveRequest,
   ExtractInstanceArchiveResponse,
@@ -28,6 +32,7 @@ const maxTransferBytes = 10 * 1024 * 1024;
 const maxArchiveEntries = 5000;
 const maxExtractedBytes = 512 * 1024 * 1024;
 const maxArchiveOutputBytes = 20 * 1024 * 1024;
+const maxArchiveSources = 200;
 
 const require = createRequire(import.meta.url);
 const { path7za } = require("7zip-bin") as { path7za: string };
@@ -355,9 +360,10 @@ function parseSevenZipListOutput(stdout: string): ArchiveListEntry[] {
   return entries;
 }
 
-async function runSevenZip(args: string[]): Promise<string> {
+async function runSevenZip(args: string[], options: { cwd?: string } = {}): Promise<string> {
   try {
     const { stdout } = await execFileAsync(path7za, args, {
+      cwd: options.cwd,
       maxBuffer: maxArchiveOutputBytes,
       windowsHide: true
     });
@@ -463,6 +469,232 @@ async function extractArchiveToDirectory(
     if (!moved) {
       await fs.rm(tempDirectory, { force: true, recursive: true });
     }
+  }
+}
+
+interface ArchiveSource {
+  root: string;
+  target: string;
+  relativePath: string;
+}
+
+interface ResolvedArchiveSources {
+  root: string;
+  sources: ArchiveSource[];
+}
+
+interface TemporaryZipArchive {
+  tempDirectory: string;
+  archivePath: string;
+}
+
+function normalizeArchivePathList(paths: string[] | undefined): string[] {
+  if (!Array.isArray(paths) || paths.length === 0) {
+    throw new Error("paths are required");
+  }
+  if (paths.length > maxArchiveSources) {
+    throw new Error(`Too many paths selected; the limit is ${maxArchiveSources}`);
+  }
+
+  const seen = new Set<string>();
+  const normalizedPaths: string[] = [];
+  for (const value of paths) {
+    const normalized = normalizeRelativePath(value);
+    if (!normalized) {
+      throw new Error("Instance working directory cannot be archived directly");
+    }
+    if (/[\r\n]/.test(normalized)) {
+      throw new Error("Archive paths cannot contain line breaks");
+    }
+    const key = normalized.toLocaleLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      normalizedPaths.push(normalized);
+    }
+  }
+  return normalizedPaths;
+}
+
+function clientPathParent(value: string): string {
+  const pieces = value.split("/").filter(Boolean);
+  pieces.pop();
+  return pieces.join("/");
+}
+
+function clientPathBaseName(value: string): string {
+  return value.split("/").filter(Boolean).pop() ?? "archive";
+}
+
+function archiveFileNameForClientPath(value: string): string {
+  const baseName = clientPathBaseName(value).replace(/\.(zip|rar|7z)$/i, "") || "archive";
+  return `${baseName}.zip`;
+}
+
+function defaultArchiveCreationOutputPath(sources: ArchiveSource[]): string {
+  if (sources.length === 1) {
+    const source = sources[0]!;
+    return joinClientPath(clientPathParent(source.relativePath), archiveFileNameForClientPath(source.relativePath));
+  }
+  const basePath = commonArchiveBaseRelative(sources.map((source) => source.relativePath));
+  return joinClientPath(basePath, "archive.zip");
+}
+
+function normalizeArchiveFileName(value: string | undefined, fallback: string): string {
+  const candidate = (value ?? fallback).replace(/\\/g, "/").split("/").pop()?.trim() || fallback;
+  if (!candidate || candidate === "." || candidate === ".." || candidate.includes("\0") || /[\r\n]/.test(candidate)) {
+    throw new Error("Archive file name is invalid");
+  }
+  return candidate.toLowerCase().endsWith(".zip") ? candidate : `${candidate}.zip`;
+}
+
+function commonArchiveBaseRelative(paths: string[]): string {
+  const parents = paths.map((value) => clientPathParent(value).split("/").filter(Boolean));
+  const first = parents[0] ?? [];
+  const prefix: string[] = [];
+  for (let index = 0; index < first.length; index += 1) {
+    const piece = first[index]!;
+    if (parents.every((parent) => parent[index] === piece)) {
+      prefix.push(piece);
+    } else {
+      break;
+    }
+  }
+  return prefix.join("/");
+}
+
+async function resolveArchiveSources(
+  workingDirectory: string | undefined,
+  paths: string[] | undefined
+): Promise<ResolvedArchiveSources> {
+  const root = await resolveInstanceRoot(workingDirectory);
+  const normalizedPaths = normalizeArchivePathList(paths);
+  const sources: ArchiveSource[] = [];
+
+  for (const requestedPath of normalizedPaths) {
+    const target = path.resolve(root, requestedPath);
+    if (!isInside(root, target)) {
+      throw new Error("Path escapes the instance working directory");
+    }
+    if (!(await pathExists(target))) {
+      throw new Error(`Archive source does not exist: ${requestedPath}`);
+    }
+    await ensureRealPathInside(root, target, true);
+    const stats = await fs.lstat(target);
+    if (stats.isSymbolicLink()) {
+      throw new Error(`Symbolic links cannot be archived online: ${requestedPath}`);
+    }
+    if (!stats.isFile() && !stats.isDirectory()) {
+      throw new Error(`Only files and directories can be archived online: ${requestedPath}`);
+    }
+    sources.push({
+      root,
+      target,
+      relativePath: toClientPath(root, target)
+    });
+  }
+
+  return { root, sources };
+}
+
+async function createTemporaryZipArchive(root: string, sources: ArchiveSource[]): Promise<TemporaryZipArchive> {
+  const baseRelative = commonArchiveBaseRelative(sources.map((source) => source.relativePath));
+  const baseDirectory = path.resolve(root, baseRelative);
+  await ensureRealPathInside(root, baseDirectory, true);
+
+  const archiveArguments = sources.map((source) => {
+    const relative = path.relative(baseDirectory, source.target).split(path.sep).join("/");
+    if (!relative || relative.startsWith("../") || relative === ".." || /[\r\n]/.test(relative)) {
+      throw new Error(`Archive source path is invalid: ${source.relativePath}`);
+    }
+    return relative;
+  });
+
+  const tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "webops-archive-"));
+  const archivePath = path.join(tempDirectory, "archive.zip");
+  const listPath = path.join(tempDirectory, "sources.txt");
+
+  try {
+    await fs.writeFile(listPath, archiveArguments.join("\n"), "utf8");
+    await runSevenZip(["a", "-tzip", "-mx=5", "-scsUTF-8", archivePath, `@${listPath}`], {
+      cwd: baseDirectory
+    });
+    return { tempDirectory, archivePath };
+  } catch (error) {
+    await fs.rm(tempDirectory, { force: true, recursive: true });
+    throw error;
+  }
+}
+
+async function archivePathsToOutput(
+  id: string,
+  workingDirectory: string | undefined,
+  body: FileBody & Partial<ArchiveInstancePathsRequest>
+): Promise<ArchiveInstancePathsResponse> {
+  const resolvedSources = await resolveArchiveSources(workingDirectory, body.paths);
+  const outputPath = body.outputPath?.trim() || defaultArchiveCreationOutputPath(resolvedSources.sources);
+  const output = await resolveTarget(workingDirectory, outputPath);
+  if (output.relativePath === "") {
+    throw new Error("Archive output cannot be the instance working directory");
+  }
+  if (path.extname(output.target).toLowerCase() !== ".zip") {
+    throw new Error("Archive output must be a .zip file");
+  }
+  if (await pathExists(output.target)) {
+    throw new Error("Archive output already exists");
+  }
+
+  const temporary = await createTemporaryZipArchive(resolvedSources.root, resolvedSources.sources);
+  let moved = false;
+  try {
+    await fs.rename(temporary.archivePath, output.target);
+    moved = true;
+    const stats = await fs.lstat(output.target);
+    const entry = await toFileEntry(output.root, output.target, path.basename(output.target));
+    return {
+      instanceId: id,
+      paths: resolvedSources.sources.map((source) => source.relativePath),
+      outputPath: output.relativePath,
+      entry,
+      archivedCount: resolvedSources.sources.length,
+      size: stats.size,
+      modifiedAt: stats.mtime.toISOString()
+    };
+  } finally {
+    await fs.rm(temporary.tempDirectory, { force: true, recursive: true });
+    if (!moved) {
+      await fs.rm(output.target, { force: true });
+    }
+  }
+}
+
+async function archivePathsForDownload(
+  id: string,
+  workingDirectory: string | undefined,
+  body: FileBody & Partial<DownloadInstanceArchiveRequest>
+): Promise<DownloadInstanceFileResponse> {
+  const resolvedSources = await resolveArchiveSources(workingDirectory, body.paths);
+  const defaultFileName =
+    resolvedSources.sources.length === 1
+      ? archiveFileNameForClientPath(resolvedSources.sources[0]!.relativePath)
+      : "selection.zip";
+  const fileName = normalizeArchiveFileName(body.fileName, defaultFileName);
+  const temporary = await createTemporaryZipArchive(resolvedSources.root, resolvedSources.sources);
+  try {
+    const stats = await fs.lstat(temporary.archivePath);
+    if (stats.size > maxTransferBytes) {
+      throw new Error("Compressed download exceeds the 10 MB transfer limit");
+    }
+    const buffer = await fs.readFile(temporary.archivePath);
+    return {
+      instanceId: id,
+      path: fileName,
+      fileName,
+      contentBase64: buffer.toString("base64"),
+      size: stats.size,
+      modifiedAt: stats.mtime.toISOString()
+    };
+  } finally {
+    await fs.rm(temporary.tempDirectory, { force: true, recursive: true });
   }
 }
 
@@ -644,6 +876,18 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       extractedCount: result.count,
       totalBytes: result.totalBytes
     } satisfies ExtractInstanceArchiveResponse;
+  });
+
+  app.post("/api/instances/:id/files/archive", { preHandler: authenticatePanelRequest }, async (request) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as FileBody & Partial<ArchiveInstancePathsRequest>;
+    return archivePathsToOutput(id, body.workingDirectory, body);
+  });
+
+  app.post("/api/instances/:id/files/archive/download", { preHandler: authenticatePanelRequest }, async (request) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as FileBody & Partial<DownloadInstanceArchiveRequest>;
+    return archivePathsForDownload(id, body.workingDirectory, body);
   });
 
   app.post("/api/instances/:id/files/mkdir", { preHandler: authenticatePanelRequest }, async (request) => {

@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import multipart from "@fastify/multipart";
 import { collectMetrics } from "./metrics.js";
+import { daemonConfig } from "./config.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerInstanceRoutes } from "./routes/instances.js";
 import { registerTerminalRoutes } from "./routes/terminal.js";
@@ -9,6 +10,7 @@ import { registerTerminalRoutes } from "./routes/terminal.js";
 export async function createDaemonServer() {
   const app = Fastify({
     bodyLimit: 16 * 1024 * 1024,
+    ...(daemonConfig.https ? { https: daemonConfig.https } : {}),
     logger: {
       level: process.env.LOG_LEVEL ?? "warn"
     }

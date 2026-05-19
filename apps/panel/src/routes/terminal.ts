@@ -4,6 +4,7 @@ import { WebSocket } from "ws";
 import { isAuthDisabled, loadAuthDisabledCurrentUser, loadCurrentUser, type JwtUser } from "../auth.js";
 import { writeAuditLog } from "../audit.js";
 import { loadVisibleInstance } from "../instance-access.js";
+import { panelConfig } from "../config.js";
 import { findDangerousCommandReason } from "../security.js";
 
 function send(socket: WebSocket, payload: TerminalServerMessage): void {
@@ -14,7 +15,20 @@ function send(socket: WebSocket, payload: TerminalServerMessage): void {
 
 function closeWithError(socket: WebSocket, message: string, code = 1008): void {
   send(socket, { type: "error", message });
-  socket.close(code, message);
+  if (socket.readyState !== WebSocket.OPEN && socket.readyState !== WebSocket.CONNECTING) return;
+  socket.close(code, websocketCloseReason(message));
+}
+
+function websocketCloseReason(message: string): string {
+  const fallback = "Terminal bridge error";
+  const normalized = message.replace(/\s+/g, " ").trim() || fallback;
+  if (Buffer.byteLength(normalized, "utf8") <= 123) return normalized;
+
+  let reason = normalized;
+  while (reason.length > 0 && Buffer.byteLength(`${reason}...`, "utf8") > 123) {
+    reason = reason.slice(0, -1);
+  }
+  return reason ? `${reason}...` : fallback;
 }
 
 function parseClientMessage(raw: WebSocket.RawData): TerminalClientMessage | null {
@@ -35,9 +49,57 @@ function parseClientMessage(raw: WebSocket.RawData): TerminalClientMessage | nul
   }
 }
 
-function toWebSocketUrl(node: { protocol: string; host: string; port: number }, path: string): string {
-  const protocol = node.protocol === "https" ? "wss" : "ws";
-  return `${protocol}://${node.host}:${node.port}${path}`;
+function toWebSocketUrl(
+  node: { protocol: string; host: string; port: number },
+  path: string,
+  protocolOverride?: string,
+  hostOverride?: string
+): string {
+  const protocol = (protocolOverride ?? node.protocol) === "https" ? "wss" : "ws";
+  return `${protocol}://${hostOverride ?? node.host}:${node.port}${path}`;
+}
+
+function shouldRetryWebSocketAsHttps(error: unknown, protocol: string): boolean {
+  if (protocol === "https") return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return /Expected HTTP|HPE_INVALID_CONSTANT|wrong version number|EPROTO|socket hang up/i.test(message);
+}
+
+function shouldRetryWebSocketAsHttp(error: unknown, protocol: string): boolean {
+  if (protocol !== "https") return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return /wrong version number|EPROTO|socket hang up|ECONNRESET/i.test(message);
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+}
+
+function hostnameFromUrl(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function isPanelPublicHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  const candidates = [
+    hostnameFromUrl(panelConfig.publicUrl),
+    hostnameFromUrl(panelConfig.webOrigin),
+    panelConfig.ssl?.hostname
+  ]
+    .filter((candidate): candidate is string => Boolean(candidate))
+    .map((candidate) => candidate.toLowerCase());
+  return candidates.includes(normalized);
+}
+
+function shouldRetryWebSocketOnLoopback(error: unknown, host: string): boolean {
+  if (isLoopbackHostname(host) || !isPanelPublicHostname(host)) return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return /ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|ENOTFOUND|EPROTO|Expected HTTP|wrong version number|socket hang up/i.test(message);
 }
 
 async function authenticateTerminalUser(
@@ -106,27 +168,60 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
       }
 
       instanceId = instance.id;
-      daemonSocket = new WebSocket(toWebSocketUrl(instance.node, `/ws/instances/${instance.id}/terminal`), {
-        headers: {
-          "x-node-id": instance.node.id,
-          "x-panel-token": instance.node.tokenHash
-        }
-      });
+      const connectDaemonSocket = (protocolOverride?: string, hostOverride?: string) => {
+        const activeProtocol = protocolOverride ?? instance.node.protocol;
+        const activeHost = hostOverride ?? instance.node.host;
+        const socket = new WebSocket(
+          toWebSocketUrl(instance.node, `/ws/instances/${instance.id}/terminal`, protocolOverride, hostOverride),
+          {
+            rejectUnauthorized: false,
+            headers: {
+              "x-node-id": instance.node.id,
+              "x-panel-token": instance.node.tokenHash
+            }
+          }
+        );
+        daemonSocket = socket;
+        let opened = false;
 
-      daemonSocket.on("message", (raw) => {
-        if (browserSocket.readyState === WebSocket.OPEN) {
-          browserSocket.send(raw.toString());
-        }
-      });
+        socket.on("open", () => {
+          opened = true;
+        });
 
-      daemonSocket.on("close", () => {
-        closeWithError(browserSocket, "Daemon terminal disconnected", 1011);
-      });
+        socket.on("message", (raw) => {
+          if (browserSocket.readyState === WebSocket.OPEN) {
+            browserSocket.send(raw.toString());
+          }
+        });
 
-      daemonSocket.on("error", (error) => {
-        request.log.error(error);
-        closeWithError(browserSocket, error instanceof Error ? error.message : "Daemon terminal error", 1011);
-      });
+        socket.on("close", () => {
+          if (daemonSocket === socket) {
+            closeWithError(browserSocket, "Daemon terminal disconnected", 1011);
+          }
+        });
+
+        socket.on("error", (error) => {
+          if (!opened && shouldRetryWebSocketAsHttp(error, activeProtocol)) {
+            socket.removeAllListeners("close");
+            connectDaemonSocket("http", hostOverride);
+            return;
+          }
+          if (!opened && shouldRetryWebSocketAsHttps(error, activeProtocol)) {
+            socket.removeAllListeners("close");
+            connectDaemonSocket("https", hostOverride);
+            return;
+          }
+          if (!opened && shouldRetryWebSocketOnLoopback(error, activeHost)) {
+            socket.removeAllListeners("close");
+            connectDaemonSocket(protocolOverride, "127.0.0.1");
+            return;
+          }
+          request.log.error(error);
+          closeWithError(browserSocket, error instanceof Error ? error.message : "Daemon terminal error", 1011);
+        });
+      };
+
+      connectDaemonSocket();
     };
 
     browserSocket.on("message", (raw) => {

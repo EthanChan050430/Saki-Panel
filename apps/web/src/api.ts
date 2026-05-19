@@ -1,6 +1,7 @@
 import type {
   CurrentUser,
   DashboardOverview,
+  ArchiveInstancePathsResponse,
   DeleteAuditLogsRequest,
   DeleteAuditLogsResponse,
   DownloadInstanceFileResponse,
@@ -10,6 +11,8 @@ import type {
   CreateNodeResponse,
   CreateInstanceRequest,
   CreateInstanceFromTemplateRequest,
+  SuggestInstanceStartCommandRequest,
+  SuggestInstanceStartCommandResponse,
   CreateUserRequest,
   InstanceAssignee,
   InstanceActionResponse,
@@ -70,6 +73,9 @@ function resolveApiBase(): string {
     const url = new URL(configured, window.location.origin);
     if (isLoopbackHostname(url.hostname) && !isLoopbackHostname(window.location.hostname)) {
       return defaultApiBase();
+    }
+    if (window.location.protocol === "https:" && url.protocol === "http:") {
+      url.protocol = "https:";
     }
     return url.toString();
   } catch {
@@ -524,6 +530,13 @@ export const api = {
       token
     );
   },
+  suggestInstanceStartCommand(token: string, input: SuggestInstanceStartCommandRequest) {
+    return requestJson<SuggestInstanceStartCommandResponse>(
+      "/api/instances/start-command/suggest",
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
   updateInstance(token: string, id: string, input: UpdateInstanceRequest) {
     return requestJson<ManagedInstance>(
       `/api/instances/${id}`,
@@ -704,6 +717,26 @@ export const api = {
       {
         method: "POST",
         body: JSON.stringify({ path, ...(outputPath ? { outputPath } : {}) })
+      },
+      token
+    );
+  },
+  archiveInstancePaths(token: string, id: string, paths: string[], outputPath?: string) {
+    return requestJson<ArchiveInstancePathsResponse>(
+      `/api/instances/${id}/files/archive`,
+      {
+        method: "POST",
+        body: JSON.stringify({ paths, ...(outputPath ? { outputPath } : {}) })
+      },
+      token
+    );
+  },
+  downloadInstancePathsArchive(token: string, id: string, paths: string[], fileName?: string) {
+    return requestJson<DownloadInstanceFileResponse>(
+      `/api/instances/${id}/files/archive/download`,
+      {
+        method: "POST",
+        body: JSON.stringify({ paths, ...(fileName ? { fileName } : {}) })
       },
       token
     );

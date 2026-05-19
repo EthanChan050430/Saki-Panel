@@ -5,6 +5,41 @@ import { prisma } from "../db.js";
 import { generateSecretToken, hashToken, safeEqual, tokenLast4, verifyToken } from "../security.js";
 import { writeAuditLog } from "../audit.js";
 
+type HeartbeatNodeUpdate = HeartbeatRequest & {
+  host?: string;
+  port?: number;
+  protocol?: string;
+};
+
+async function findRegistrationNode(name: string, host: string, port: number) {
+  const candidates = await prisma.node.findMany({
+    where: {
+      name,
+      OR: [{ host }, { port }]
+    },
+    include: {
+      _count: {
+        select: {
+          instances: true
+        }
+      }
+    }
+  });
+
+  return (
+    candidates.sort((left, right) => {
+      const instanceDelta = right._count.instances - left._count.instances;
+      if (instanceDelta !== 0) return instanceDelta;
+
+      const leftExact = left.host === host && left.port === port ? 1 : 0;
+      const rightExact = right.host === host && right.port === port ? 1 : 0;
+      if (leftExact !== rightExact) return rightExact - leftExact;
+
+      return right.updatedAt.getTime() - left.updatedAt.getTime();
+    })[0] ?? null
+  );
+}
+
 export async function registerDaemonRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/daemon/register", async (request, reply) => {
     const registrationToken = request.headers["x-registration-token"];
@@ -26,19 +61,15 @@ export async function registerDaemonRoutes(app: FastifyInstance): Promise<void> 
     }
 
     const nodeToken = generateSecretToken();
-    const existing = await prisma.node.findFirst({
-      where: {
-        name: body.name,
-        host: body.host,
-        port: body.port
-      }
-    });
+    const existing = await findRegistrationNode(body.name, body.host, body.port);
 
     const node = existing
       ? await prisma.node.update({
           where: { id: existing.id },
           data: {
             protocol: body.protocol,
+            host: body.host,
+            port: body.port,
             os: body.os ?? existing.os,
             arch: body.arch ?? existing.arch,
             version: body.version ?? existing.version,
@@ -100,7 +131,7 @@ export async function registerDaemonRoutes(app: FastifyInstance): Promise<void> 
       return;
     }
 
-    const body = request.body as Partial<HeartbeatRequest>;
+    const body = request.body as Partial<HeartbeatNodeUpdate>;
     const metrics = body.metrics;
     if (!metrics) {
       reply.code(400).send({ message: "metrics are required" });
@@ -113,6 +144,9 @@ export async function registerDaemonRoutes(app: FastifyInstance): Promise<void> 
         where: { id: node.id },
         data: {
           status: "ONLINE",
+          host: body.host?.trim() || node.host,
+          port: Number.isInteger(body.port) && body.port && body.port > 0 && body.port <= 65535 ? body.port : node.port,
+          protocol: body.protocol === "http" || body.protocol === "https" ? body.protocol : node.protocol,
           os: body.os ?? node.os,
           arch: body.arch ?? node.arch,
           version: body.version ?? node.version,
