@@ -1,6 +1,6 @@
 import { useRef, useEffect, useImperativeHandle, forwardRef } from "react";
-import { EditorState } from "@codemirror/state";
-import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightActiveLine, drawSelection, rectangularSelection, highlightSpecialChars } from "@codemirror/view";
+import { EditorState, StateEffect, StateField, RangeSetBuilder } from "@codemirror/state";
+import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightActiveLine, drawSelection, rectangularSelection, highlightSpecialChars, Decoration, type DecorationSet } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, foldGutter, indentOnInput, foldKeymap } from "@codemirror/language";
 import {
@@ -25,6 +25,12 @@ import { java } from "@codemirror/lang-java";
 import { cpp } from "@codemirror/lang-cpp";
 import { rust } from "@codemirror/lang-rust";
 
+export interface FindRange {
+  start: number;
+  end: number;
+  active: boolean;
+}
+
 interface CodeEditorProps {
   value: string;
   language?: string;
@@ -33,12 +39,37 @@ interface CodeEditorProps {
   darkMode?: boolean;
   lineWrapping?: boolean;
   className?: string;
+  findRanges?: FindRange[];
 }
 
 export interface CodeEditorHandle {
   getView: () => EditorView | null;
   getValue: () => string;
+  scrollToPosition: (pos: number) => void;
 }
+
+const setFindDecorations = StateEffect.define<DecorationSet>();
+
+const findMatchMark = Decoration.mark({ class: "editor-find-match" });
+const findMatchActiveMark = Decoration.mark({ class: "editor-find-match active" });
+
+const findDecorationField = StateField.define<DecorationSet>({
+  create() {
+    return Decoration.none;
+  },
+  update(decorations, transaction) {
+    for (const effect of transaction.effects) {
+      if (effect.is(setFindDecorations)) {
+        return effect.value;
+      }
+    }
+    if (transaction.docChanged) {
+      return decorations.map(transaction.changes);
+    }
+    return decorations;
+  },
+  provide: (field) => EditorView.decorations.from(field)
+});
 
 function normalizeLanguageName(lang?: string): string {
   return lang?.toLowerCase().replace(/^\.*/, "") ?? "";
@@ -401,7 +432,7 @@ function languageFromFileName(fileName?: string): string | undefined {
 }
 
 export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEditor(
-  { value, language, onChange, readOnly = false, darkMode = false, lineWrapping = false, className },
+  { value, language, onChange, readOnly = false, darkMode = false, lineWrapping = false, className, findRanges },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -418,7 +449,15 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
 
   useImperativeHandle(ref, () => ({
     getView: () => viewRef.current,
-    getValue: () => viewRef.current?.state.doc.toString() ?? currentDocRef.current
+    getValue: () => viewRef.current?.state.doc.toString() ?? currentDocRef.current,
+    scrollToPosition: (pos: number) => {
+      const view = viewRef.current;
+      if (view) {
+        view.dispatch({
+          effects: EditorView.scrollIntoView(pos, { y: "center" })
+        });
+      }
+    }
   }), []);
 
   useEffect(() => {
@@ -482,6 +521,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
           indentWithTab
         ]),
         updateListener,
+        findDecorationField,
         EditorView.editable.of(!readOnly),
         EditorState.readOnly.of(readOnly),
         ...(lineWrapping ? [EditorView.lineWrapping] : []),
@@ -524,6 +564,26 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       currentDocRef.current = value;
     }
   }, [value]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const ranges = findRanges ?? [];
+    if (ranges.length === 0) {
+      view.dispatch({ effects: setFindDecorations.of(Decoration.none) });
+      return;
+    }
+    const docLength = view.state.doc.length;
+    const builder = new RangeSetBuilder<Decoration>();
+    const sorted = [...ranges].sort((a, b) => a.start - b.start || a.end - b.end);
+    for (const range of sorted) {
+      const from = Math.min(range.start, docLength);
+      const to = Math.min(range.end, docLength);
+      if (from >= to) continue;
+      builder.add(from, to, range.active ? findMatchActiveMark : findMatchMark);
+    }
+    view.dispatch({ effects: setFindDecorations.of(builder.finish()) });
+  }, [findRanges]);
 
   return <div ref={containerRef} className={className} data-i18n-skip="true" />;
 });

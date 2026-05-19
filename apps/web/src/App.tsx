@@ -1,13 +1,16 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CodeEditor, type CodeEditorHandle, languageFromFileName } from "./CodeEditor.js";
+import { CodeEditor, type CodeEditorHandle, type FindRange, languageFromFileName } from "./CodeEditor.js";
 import {
   Activity,
   Archive,
+  BookOpen,
+  BookMarked,
   Bug,
   Camera,
   ChartNetwork,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -20,9 +23,11 @@ import {
   Eye,
   FileArchive,
   FilePlus,
+  FileSearch,
   FileText,
   Folder,
   FolderPlus,
+  GitBranch,
   Github,
   HardDrive,
   Image as ImageIcon,
@@ -32,6 +37,7 @@ import {
   LayoutGrid,
   LayoutTemplate,
   List,
+  ListChecks,
   Loader2,
   LogIn,
   LogOut,
@@ -69,7 +75,8 @@ import {
   WifiOff,
   Wrench,
   X,
-  XOctagon
+  XOctagon,
+  Zap
 } from "lucide-react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -4401,6 +4408,11 @@ function sakiActionTarget(action: SakiAgentAction): string {
     return sakiActionStringArg(action, ["query"]);
   }
   if (tool === "browse" || tool === "crawl") return sakiActionStringArg(action, ["url"]);
+  if (tool === "searchfiles") return sakiActionStringArg(action, ["pattern"]);
+  if (tool === "findfiles") return sakiActionStringArg(action, ["pattern"]);
+  if (tool === "readmemory" || tool === "writememory") return "SAKI.md";
+  if (tool === "plan") return sakiActionStringArg(action, ["summary"]);
+  if (tool === "spawntask") return sakiActionStringArg(action, ["task"]);
   if (tool === "readskill") return sakiActionStringArg(action, ["skillId"]);
   if (tool === "listfiles") return sakiActionStringArg(action, ["path"]) || ".";
   return sakiActionStringArg(action, ["path", "instanceId", "taskId", "action"]);
@@ -4478,6 +4490,18 @@ function sakiActionTitle(action: SakiAgentAction): string {
       return "查找技能";
     case "readskill":
       return "读取技能";
+    case "searchfiles":
+      return "搜索文件内容";
+    case "findfiles":
+      return "查找文件";
+    case "readmemory":
+      return "读取项目记忆";
+    case "writememory":
+      return "保存项目记忆";
+    case "plan":
+      return "制定计划";
+    case "spawntask":
+      return "子任务";
     default:
       return action.tool;
   }
@@ -4552,6 +4576,12 @@ function sakiResultSummary(action: SakiAgentAction): string {
   }
 
   if (tool === "sendinput" || tool === "sendcommand") return "控制台输入已发送。";
+
+  if (tool === "spawntask") {
+    const taskText = sakiActionStringArg(action, ["task"]);
+    return taskText ? `子任务: ${taskText.slice(0, 80)}` : "子任务执行";
+  }
+
   return compactContextText(observation.replace(/\s+/g, " "), 220);
 }
 
@@ -4615,6 +4645,18 @@ function SakiToolIcon({ action }: { action: SakiAgentAction }) {
     case "browse":
     case "crawl":
       return <Search size={16} />;
+    case "searchfiles":
+      return <Search size={16} />;
+    case "findfiles":
+      return <FileSearch size={16} />;
+    case "readmemory":
+      return <BookOpen size={16} />;
+    case "writememory":
+      return <BookMarked size={16} />;
+    case "plan":
+      return <ListChecks size={16} />;
+    case "spawntask":
+      return <GitBranch size={16} />;
     default:
       return <Wrench size={16} />;
   }
@@ -4629,61 +4671,100 @@ function SakiToolActionCard({
   actionBusyId: string | null;
   onDecision: (action: SakiAgentAction, decision: "approve" | "reject" | "rollback") => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const busy = actionBusyId === action.id;
   const controlsDisabled = Boolean(actionBusyId);
   const target = sakiActionTarget(action);
   const meta = sakiActionMeta(action);
   const observation = action.observation.trim() || "没有返回内容。";
+  const toolLower = action.tool.toLowerCase();
+  const isCommand = toolLower === "runcommand" || toolLower === "sendcommand" || toolLower === "sendinput";
+  const isPending = action.status === "pending_approval";
+  const isFailed = !action.ok || action.status === "failed" || action.status === "rejected";
+  const statusColor = isPending ? "#f59e0b" : isFailed ? "#ef4444" : "#22c55e";
+
   return (
-    <div className={`saki-tool-card ${sakiActionStateClass(action)} tone-${sakiActionTone(action)}`}>
-      <div className="saki-tool-card-top">
-        <span className="saki-tool-icon" aria-hidden="true">
-          <SakiToolIcon action={action} />
+    <div className={`saki-action-row ${isPending ? "pending" : ""} ${isFailed ? "failed" : ""}`}>
+      <div className="saki-action-row-main" onClick={() => setExpanded(!expanded)}>
+        <span className="saki-action-icon"><SakiToolIcon action={action} /></span>
+        <span className="saki-action-label">
+          {target ? <code>{compactContextText(target, 120)}</code> : <span>{sakiActionTitle(action)}</span>}
+          {meta ? <span className="saki-action-meta">{meta}</span> : null}
         </span>
-        <div className="saki-tool-heading">
-          <div className="saki-tool-title-row">
-            <strong>{sakiActionTitle(action)}</strong>
-            <span>{sakiActionStatusLabel(action)}</span>
-          </div>
-          {target ? <code>{compactContextText(target, 180)}</code> : null}
-          {meta ? <em>{meta}</em> : null}
-        </div>
+        <span className="saki-action-status-dot" style={{ backgroundColor: statusColor }} />
+        <span className="saki-action-expand">{expanded ? "▾" : "▸"}</span>
       </div>
-      <p className="saki-tool-summary">{sakiResultSummary(action)}</p>
-      {action.approval?.preview ? (
-        <details className="saki-tool-result saki-tool-preview">
-          <summary>查看审批预览</summary>
-          <pre>{compactContextText(action.approval.preview, 1400)}</pre>
-        </details>
+      {expanded ? (
+        <div className="saki-action-detail">
+          {isCommand ? (
+            <div className="saki-action-terminal">
+              <div className="saki-action-terminal-header">
+                <span>{sakiActionTitle(action)}</span>
+                <span className="saki-action-terminal-status">{sakiResultSummary(action)}</span>
+              </div>
+              <pre className="saki-action-terminal-output">{compactContextText(observation, 8000)}</pre>
+            </div>
+          ) : (
+            <pre className="saki-action-observation">{compactContextText(observation, 5200)}</pre>
+          )}
+          {action.approval?.diff ? (
+            <div className="saki-action-diff">
+              <div className="saki-action-diff-header">差异</div>
+              <pre>{compactContextText(action.approval.diff, 4000)}</pre>
+            </div>
+          ) : null}
+          {action.approval?.preview && !action.approval.diff ? (
+            <div className="saki-action-diff">
+              <div className="saki-action-diff-header">预览</div>
+              <pre>{compactContextText(action.approval.preview, 2000)}</pre>
+            </div>
+          ) : null}
+        </div>
       ) : null}
-      {action.approval?.diff ? (
-        <details className="saki-tool-result saki-tool-preview">
-          <summary>查看差异</summary>
-          <pre>{compactContextText(action.approval.diff, 2200)}</pre>
-        </details>
-      ) : null}
-      <details className="saki-tool-result">
-        <summary>{sakiActionDetailsLabel(action)}</summary>
-        <pre>{compactContextText(observation, 5200)}</pre>
-      </details>
-      {action.status === "pending_approval" ? (
-        <div className="saki-action-controls">
-          <button className="small-button" type="button" disabled={controlsDisabled} onClick={() => onDecision(action, "approve")}>
-            {busy ? <Loader2 size={14} className="status-spinner" /> : <CheckCircle2 size={14} />}
-            批准执行
+      {isPending ? (
+        <div className="saki-action-approval">
+          <button className="saki-approval-btn approve" type="button" disabled={controlsDisabled} onClick={() => onDecision(action, "approve")}>
+            {busy ? <Loader2 size={13} className="status-spinner" /> : <CheckCircle2 size={13} />}
+            批准
           </button>
-          <button className="small-button danger-action" type="button" disabled={controlsDisabled} onClick={() => onDecision(action, "reject")}>
-            <X size={14} />
+          <button className="saki-approval-btn reject" type="button" disabled={controlsDisabled} onClick={() => onDecision(action, "reject")}>
+            <X size={13} />
             拒绝
           </button>
         </div>
       ) : action.approval?.rollbackAvailable ? (
-        <div className="saki-action-controls">
-          <button className="small-button" type="button" disabled={controlsDisabled} onClick={() => onDecision(action, "rollback")}>
-            {busy ? <Loader2 size={14} className="status-spinner" /> : <CornerUpLeft size={14} />}
-            {isSakiRollbackableFileEdit(action) ? "回滚文件" : "回滚"}
+        <div className="saki-action-approval">
+          <button className="saki-approval-btn rollback" type="button" disabled={controlsDisabled} onClick={() => onDecision(action, "rollback")}>
+            {busy ? <Loader2 size={13} className="status-spinner" /> : <CornerUpLeft size={13} />}
+            {isSakiRollbackableFileEdit(action) ? "回滚" : "回滚"}
           </button>
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SakiThinkingContent({ content }: { content: string }) {
+  const [showThink, setShowThink] = useState(false);
+  const thinkMatch = content.match(/^<think>([\s\S]*?)<\/think>\s*/);
+  if (!thinkMatch) return <MarkdownContent content={content} />;
+  const thinkText = thinkMatch[1]!.trim();
+  const restContent = content.slice(thinkMatch[0]!.length).trim();
+  return (
+    <div>
+      <div className="saki-think-block">
+        <div className="saki-think-toggle" onClick={() => setShowThink(!showThink)}>
+          <span>{showThink ? "▾" : "▸"}</span>
+          <span>思考过程</span>
+        </div>
+        {showThink ? (
+          <div className="saki-think-content">
+            <MarkdownContent content={thinkText} />
+          </div>
+        ) : null}
+      </div>
+      {restContent ? (
+        <MarkdownContent content={restContent} />
       ) : null}
     </div>
   );
@@ -4742,6 +4823,11 @@ function SakiFloatingChat({
   const [sakiFileHoverActive, setSakiFileHoverActive] = useState(false);
   const [listening, setListening] = useState(false);
   const [annotationMode, setAnnotationMode] = useState(false);
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [availableModels, setAvailableModels] = useState<SakiModelOption[]>([]);
+  const [currentModelId, setCurrentModelId] = useState<string>("");
+  const [currentModelName, setCurrentModelName] = useState<string>("");
+  const modelSelectorRef = useRef<HTMLDivElement | null>(null);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
@@ -4786,6 +4872,41 @@ function SakiFloatingChat({
   }, [annotationMode]);
 
   useEffect(() => {
+    void (async () => {
+      try {
+        const config = await api.sakiConfig(token);
+        setCurrentModelId(config.model);
+        setCurrentModelName(config.model);
+      } catch { /* ignore */ }
+      try {
+        const config = await api.sakiConfig(token);
+        const result = await api.sakiModels(token, {
+          provider: config.provider,
+          model: config.model,
+          ollamaUrl: config.ollamaUrl,
+          baseUrl: config.baseUrl,
+          apiKey: config.apiKey,
+          providerConfigs: config.providerConfigs
+        });
+        setAvailableModels(result.models);
+        const current = result.models.find((m) => m.id === config.model);
+        if (current) setCurrentModelName(current.label);
+      } catch { /* ignore */ }
+    })();
+  }, [token]);
+
+  useEffect(() => {
+    if (!modelDropdownOpen) return;
+    const handler = (event: MouseEvent) => {
+      if (modelSelectorRef.current && !modelSelectorRef.current.contains(event.target as Node)) {
+        setModelDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [modelDropdownOpen]);
+
+  useEffect(() => {
     const element = sakiMessagesRef.current;
     if (!element || !open) return;
     const latestMessage = messages.at(-1);
@@ -4796,6 +4917,15 @@ function SakiFloatingChat({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [messages, open, messagesExpanded, fullscreen]);
+
+  async function selectModel(modelId: string) {
+    setCurrentModelId(modelId);
+    const found = availableModels.find((m) => m.id === modelId);
+    setCurrentModelName(found ? found.label : modelId);
+    try {
+      await api.updateSakiConfig(token, { model: modelId });
+    } catch { /* ignore */ }
+  }
 
   function handleSakiMessagesScroll(event: React.UIEvent<HTMLDivElement>) {
     const element = event.currentTarget;
@@ -6104,77 +6234,85 @@ function SakiFloatingChat({
               const fileRollbackActions = actionItems.filter(isSakiFileRollbackAction);
               const rollbackableFileActions = fileRollbackActions.filter(isSakiRollbackableFileEdit);
               const timelineItems = message.role === "assistant" ? renderableSakiTimeline(message) : [];
-              const showAssistantTimeline = message.role === "assistant" && timelineItems.length > 0;
+              const showAssistantTimeline = message.role === "assistant" && timelineItems.some((item) => item.kind === "action");
               return (
-          <div className={`saki-message saki-message-${message.role}`} key={message.id}>
-            <div className="saki-message-meta">
-              {message.role === "assistant" ? (
-                <img className="saki-message-avatar" src={sakiArtAssets.avatar} alt="" />
-              ) : null}
-              <span>{message.role === "assistant" ? "Saki" : "你"}</span>
-              {message.source === "local-fallback" ? <em>fallback</em> : null}
-            </div>
-            {showAssistantTimeline ? (
-              <div className="saki-message-timeline">
-                {timelineItems.map((item) =>
-                  item.kind === "text" ? (
-                    <div className={`saki-message-body saki-message-body-${item.source}`} key={item.id}>
-                      <MarkdownContent content={item.content} />
-                    </div>
-                  ) : (
-                    <div className="saki-tool-timeline-item" key={item.id}>
-                      <SakiToolActionCard action={item.action} actionBusyId={actionBusyId} onDecision={(targetAction, decision) => void decideAction(targetAction, decision)} />
-                    </div>
-                  )
-                )}
-                {fileRollbackActions.length > 1 ? (
-                  <div className="saki-rollback-bulk">
-                    <span>
-                      {rollbackableFileActions.length} / {fileRollbackActions.length} 个文件改动可回滚
-                    </span>
-                    <button
-                      className="small-button"
-                      type="button"
-                      disabled={Boolean(actionBusyId) || rollbackableFileActions.length === 0}
-                      onClick={() => void rollbackAllFileActions(message.id, fileRollbackActions)}
-                    >
-                      {actionBusyId === `rollback_all:${message.id}` ? <Loader2 size={14} className="status-spinner" /> : <CornerUpLeft size={14} />}
-                      全部回滚
-                    </button>
+                <div className={`saki-message saki-message-${message.role}`} key={message.id}>
+                  <div className="saki-message-meta">
+                    {message.role === "assistant" ? (
+                      <img className="saki-message-avatar" src={sakiArtAssets.avatar} alt="" />
+                    ) : null}
+                    <span>{message.role === "assistant" ? "Saki" : "你"}</span>
+                    {message.source === "local-fallback" ? <em>fallback</em> : null}
                   </div>
-                ) : null}
-              </div>
-            ) : (
-              <div className="saki-message-body">
-                {message.content ? <MarkdownContent content={message.content} /> : null}
-                {!message.content && message.streaming ? (
-                  <p className="saki-stream-placeholder">等待模型响应...</p>
-                ) : null}
-                {message.attachments?.length ? (
-                  <div className="saki-message-attachments">
-                    {message.attachments.map((attachment, index) => (
-                      <SakiAttachmentChip attachment={attachment} key={attachment.id ?? `${attachment.name}-${index}`} />
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            )}
-          </div>
+                  {showAssistantTimeline ? (
+                    <div className="saki-message-timeline">
+                      {timelineItems
+                        .filter((item) => item.kind === "action" || (item.kind === "text" && item.source !== "final"))
+                        .map((item) =>
+                          item.kind === "text" ? (
+                            <div className={`saki-message-body saki-message-body-${item.source}`} key={item.id}>
+                              <MarkdownContent content={item.content} />
+                            </div>
+                          ) : (
+                            <div className="saki-tool-timeline-item" key={item.id}>
+                              <SakiToolActionCard action={item.action} actionBusyId={actionBusyId} onDecision={(targetAction, decision) => void decideAction(targetAction, decision)} />
+                            </div>
+                          )
+                        )}
+                      {fileRollbackActions.length > 1 ? (
+                        <div className="saki-rollback-bulk">
+                          <span>
+                            {rollbackableFileActions.length} / {fileRollbackActions.length} 个文件改动可回滚
+                          </span>
+                          <button
+                            className="small-button"
+                            type="button"
+                            disabled={Boolean(actionBusyId) || rollbackableFileActions.length === 0}
+                            onClick={() => void rollbackAllFileActions(message.id, fileRollbackActions)}
+                          >
+                            {actionBusyId === `rollback_all:${message.id}` ? <Loader2 size={14} className="status-spinner" /> : <CornerUpLeft size={14} />}
+                            全部回滚
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {(message.role === "assistant" && message.content?.trim()) ? (
+                    <div className="saki-message-body saki-message-body-final">
+                      <SakiThinkingContent content={message.content} />
+                    </div>
+                  ) : message.role === "assistant" && !message.content && message.streaming ? (
+                    <div className="saki-message-body">
+                      <p className="saki-stream-placeholder">等待模型响应...</p>
+                    </div>
+                  ) : message.role !== "assistant" && message.content ? (
+                    <div className="saki-message-body">
+                      <MarkdownContent content={message.content} />
+                    </div>
+                  ) : null}
+                  {message.attachments?.length ? (
+                    <div className="saki-message-attachments">
+                      {message.attachments.map((attachment, index) => (
+                        <SakiAttachmentChip attachment={attachment} key={attachment.id ?? `${attachment.name}-${index}`} />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               );
             })}
-        {loading && !hasStreamingAssistant ? (
-          <div className="saki-message saki-message-assistant">
-            <div className="saki-message-meta">
-              <img className="saki-message-avatar" src={sakiArtAssets.avatar} alt="" />
-              <span>Saki</span>
-            </div>
-            <p className="saki-thinking-bubble">
-              <img src={sakiArtAssets.thinkingGif} alt="" />
-              <span>思考中...</span>
-            </p>
+            {loading && !hasStreamingAssistant ? (
+              <div className="saki-message saki-message-assistant">
+                <div className="saki-message-meta">
+                  <img className="saki-message-avatar" src={sakiArtAssets.avatar} alt="" />
+                  <span>Saki</span>
+                </div>
+                <p className="saki-thinking-bubble">
+                  <img src={sakiArtAssets.thinkingGif} alt="" />
+                  <span>思考中...</span>
+                </p>
+              </div>
+            ) : null}
           </div>
-        ) : null}
-      </div>
 
           {skillsLoading || skills.length > 0 ? (
             <div className="saki-skill-row">
@@ -6370,6 +6508,22 @@ function SakiFloatingChat({
                 >
                   <Camera size={15} />
                 </button>
+              </div>
+              <div className="saki-model-selector" ref={modelSelectorRef}>
+                <button className="saki-model-btn" type="button" onClick={() => setModelDropdownOpen(!modelDropdownOpen)}>
+                  <Zap size={12} />
+                  <span>{currentModelName || "选择模型"}</span>
+                  <ChevronDown size={10} />
+                </button>
+                {modelDropdownOpen ? (
+                  <div className="saki-model-dropdown">
+                    {availableModels.map((model) => (
+                      <button key={model.id} className={`saki-model-option ${model.id === currentModelId ? "active" : ""}`} type="button" onClick={() => { selectModel(model.id); setModelDropdownOpen(false); }}>
+                        <span>{model.label || model.id}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
               <button
                 className={`primary-button send-btn ${loading ? "stop" : ""}`}
@@ -7673,6 +7827,10 @@ function FileManager({
     : findMatches.length > 0
       ? `${activeFindIndex + 1}/${findMatches.length}`
       : "无结果";
+  const findRanges = useMemo<FindRange[]>(
+    () => findMatches.map((match, index) => ({ start: match.start, end: match.end, active: index === activeFindIndex })),
+    [findMatches, activeFindIndex]
+  );
 
   const loadDirectory = useCallback(
     async (pathToLoad: string) => {
@@ -7840,7 +7998,11 @@ function FileManager({
     }
   }, [activeFindIndex, editorContent, findMatches]);
 
-  function revealFindMatch(_match: FindMatchRange, _focusEditor: boolean) {
+  function revealFindMatch(match: FindMatchRange, focusEditor: boolean) {
+    codeEditorRef.current?.scrollToPosition(match.start);
+    if (focusEditor) {
+      codeEditorRef.current?.getView()?.focus();
+    }
   }
 
   function isMobileFileLayout() {
@@ -8959,6 +9121,7 @@ function FileManager({
                   onChange={(newValue) => setEditorContent(newValue)}
                   lineWrapping={mobileEditorOpen}
                   className="code-editor-surface"
+                  findRanges={findRanges}
                 />
               </div>
             </div>
@@ -9377,6 +9540,28 @@ function InstancesView({
   const [suggestingStartCommand, setSuggestingStartCommand] = useState<"create" | "settings" | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
+  const [showTitlebarMore, setShowTitlebarMore] = useState(false);
+  const titlebarMoreRef = useRef<HTMLButtonElement>(null);
+  const [titlebarMorePos, setTitlebarMorePos] = useState<{ top: number; right: number } | null>(null);
+
+  useEffect(() => {
+    if (!showTitlebarMore) {
+      setTitlebarMorePos(null);
+      return;
+    }
+    const btn = titlebarMoreRef.current;
+    if (btn) {
+      const rect = btn.getBoundingClientRect();
+      setTitlebarMorePos({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest(".titlebar-more-wrap")) return;
+      if (event.target instanceof Element && event.target.closest(".titlebar-more-menu")) return;
+      setShowTitlebarMore(false);
+    };
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    return () => window.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [showTitlebarMore]);
   const [toolsCollapsed, setToolsCollapsed] = useState(false);
   const [directoryView, setDirectoryView] = useState<InstanceDirectoryView>(() => {
     const savedView =
@@ -9978,34 +10163,57 @@ function InstancesView({
             <span>实例</span>
           </button>
           <div className="console-title">
-            <p>{instanceTypeLabel(selectedInstance.type)}</p>
             <h2>{selectedInstance.name}</h2>
-            <div className="console-quick-meta">
-              <span title="节点">
-                <Server size={13} />
-                {selectedNodeName}
-              </span>
-              <span title={`创建者 · ${ownerRoleLabel(selectedInstance.createdByRole)}`}>
-                <UserRound size={13} />
-                {instanceCreatorLabel(selectedInstance)}
-              </span>
-              <span title={instanceAssigneeTitle(selectedInstance)}>
-                <UserCheck size={13} />
-                {instanceAssigneeLabel(selectedInstance)}
-              </span>
-              <span title="更新">
-                <Clock size={13} />
-                {formatDate(selectedInstance.updatedAt)}
-              </span>
-              {selectedInstance.lastExitCode !== null && selectedInstance.lastExitCode !== undefined ? (
-                <span title="退出码">
-                  <Bug size={13} />
-                  {selectedInstance.lastExitCode}
-                </span>
-              ) : null}
-            </div>
           </div>
           <InstanceStatusBadge status={selectedInstance.status} />
+          <div className="titlebar-more-wrap">
+            <button
+              ref={titlebarMoreRef}
+              className="titlebar-more-button"
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={showTitlebarMore}
+              onClick={() => setShowTitlebarMore((v) => !v)}
+            >
+              <MoreHorizontal size={16} />
+            </button>
+            {showTitlebarMore && titlebarMorePos ? createPortal(
+              <div
+                className="titlebar-more-menu"
+                role="menu"
+                style={{ position: "fixed", top: titlebarMorePos.top, right: titlebarMorePos.right }}
+              >
+                <div className="titlebar-more-item" role="menuitem">
+                  <Server size={14} />
+                  <span className="titlebar-more-label">节点</span>
+                  <span className="titlebar-more-value">{selectedNodeName}</span>
+                </div>
+                <div className="titlebar-more-item" role="menuitem">
+                  <UserRound size={14} />
+                  <span className="titlebar-more-label">创建者</span>
+                  <span className="titlebar-more-value">{instanceCreatorLabel(selectedInstance)}</span>
+                </div>
+                <div className="titlebar-more-item" role="menuitem">
+                  <UserCheck size={14} />
+                  <span className="titlebar-more-label">{instanceAssigneeTitle(selectedInstance)}</span>
+                  <span className="titlebar-more-value">{instanceAssigneeLabel(selectedInstance)}</span>
+                </div>
+                <div className="titlebar-more-item" role="menuitem">
+                  <Clock size={14} />
+                  <span className="titlebar-more-label">更新</span>
+                  <span className="titlebar-more-value">{formatDate(selectedInstance.updatedAt)}</span>
+                </div>
+                {selectedInstance.lastExitCode !== null && selectedInstance.lastExitCode !== undefined ? (
+                  <div className="titlebar-more-item" role="menuitem">
+                    <Bug size={14} />
+                    <span className="titlebar-more-label">退出码</span>
+                    <span className="titlebar-more-value">{selectedInstance.lastExitCode}</span>
+                  </div>
+                ) : null}
+              </div>,
+              document.body
+            ) : null}
+          </div>
         </section>
 
         <section className="glass-panel console-terminal-panel">
@@ -12126,7 +12334,7 @@ function AuditView({
   const [notice, setNotice] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
-  const [selectedLog, setSelectedLog] = useState<AuditLogEntry | null>(null);
+  const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
   const pageSize = 20;
 
   const refresh = useCallback(async () => {
@@ -12163,12 +12371,9 @@ function AuditView({
   const latestLogAt = logs[0]?.createdAt ? formatDate(logs[0].createdAt) : "-";
 
   useEffect(() => {
-    setSelectedLog((current) => {
-      if (current) {
-        const next = logs.find((log) => log.id === current.id);
-        if (next) return next;
-      }
-      return logs[0] ?? null;
+    setSelectedLogId((current) => {
+      if (current && logs.some((log) => log.id === current)) return current;
+      return logs[0]?.id ?? null;
     });
   }, [logs]);
 
@@ -12195,7 +12400,7 @@ function AuditView({
   async function refreshAfterDelete(deletedIds: string[]) {
     const deletedOnPage = logs.filter((log) => deletedIds.includes(log.id)).length;
     setSelectedLogIds((current) => current.filter((id) => !deletedIds.includes(id)));
-    setSelectedLog((current) => (current && deletedIds.includes(current.id) ? null : current));
+    setSelectedLogId((current) => (current && deletedIds.includes(current) ? null : current));
     if (page > 1 && logs.length <= deletedOnPage) {
       setPage((current) => Math.max(1, current - 1));
       return;
@@ -12256,7 +12461,7 @@ function AuditView({
       const result = await api.clearAuditLogs(token);
       setNotice(`已清空 ${result.deleted} 条审计日志。`);
       setSelectedLogIds([]);
-      setSelectedLog(null);
+      setSelectedLogId(null);
       if (page !== 1) {
         setPage(1);
       } else {
@@ -12298,7 +12503,13 @@ function AuditView({
     });
   }
 
-  const activeLog = selectedLog ?? logs[0] ?? null;
+  const activeLog = useMemo(() => {
+    if (selectedLogId) {
+      const found = logs.find((log) => log.id === selectedLogId);
+      if (found) return found;
+    }
+    return logs[0] ?? null;
+  }, [selectedLogId, logs]);
   const selectedPayloadText = activeLog ? auditPayloadText(activeLog.payload) : "";
 
   return (
@@ -12385,7 +12596,7 @@ function AuditView({
                       key={log.id}
                     >
                       <span className="audit-signal-bar" />
-                      <button className="audit-signal-main" type="button" onClick={() => setSelectedLog(log)}>
+                      <button className="audit-signal-main" type="button" onClick={() => setSelectedLogId(log.id)}>
                         <span className="audit-signal-top">
                           <span className="audit-action-icon" aria-hidden="true">
                             {auditResourceIcon(log.resourceType, log.action)}

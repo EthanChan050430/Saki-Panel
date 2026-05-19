@@ -49,7 +49,7 @@ export async function registerDashboardRoutes(app: FastifyInstance): Promise<voi
     ]);
 
     const onlineNodes = nodes.filter((node) => lastSeenIsOnline(node.lastSeenAt));
-    const latestMetrics = onlineNodes
+    const latestMetrics = nodes
       .map((node) => node.metrics[0])
       .filter((metric): metric is NonNullable<typeof metric> => Boolean(metric));
 

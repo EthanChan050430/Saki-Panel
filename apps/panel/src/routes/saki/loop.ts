@@ -1,0 +1,670 @@
+import { randomUUID } from "node:crypto";
+import type { SakiAgentAction, SakiAgentRiskLevel, SakiChatRequest, SakiChatResponse, PermissionCode } from "@webops/shared";
+import { countTokens } from "../../tokenizer.js";
+import type { ParsedToolCall, SakiAgentResumeState, SakiAgentRunEvents, SakiAgentRuntime, SakiCheckpoint, SakiModelToolTurn, PendingSakiAction } from "./types.js";
+import {
+  actionId,
+  checkpointId,
+  defaultAgentReadFileLineCount,
+  effectiveSakiAgentPermissionMode,
+  maxAgentCompactedScratchpadChars,
+  maxAgentCompactedScratchpadTokens,
+  maxAgentLoops,
+  maxAgentProgressOnlyRetries,
+  maxAgentPromptObservationChars,
+  maxAgentPromptObservationTokens,
+  maxAgentRecentScratchpadEntries,
+  maxAgentScratchpadChars,
+  maxAgentScratchpadTokens,
+  maxParallelReadOnlyTools,
+  normalizeSakiAgentPermissionMode,
+  rawStringArg,
+  redactSensitiveText,
+  RouteError,
+  stringArg,
+  stripThinking,
+  truncateText,
+  trimString,
+} from "./types.js";
+import { isSakiReadOnlyAgentTool, normalizedAgentToolName, shouldRequestSakiApproval, assertSakiPermissionModeAllowsTool, toolArgs } from "./tools.js";
+import { callConfiguredAgentTurn } from "./providers.js";
+import { buildAgentPrompt, buildAgentContinuationPrompt } from "./prompt.js";
+
+export const pendingSakiActions = new Map<string, PendingSakiAction>();
+export const completedSakiActions = new Map<string, SakiAgentAction>();
+export const sakiCheckpoints = new Map<string, SakiCheckpoint>();
+
+export function emitSakiWorkflow(events: SakiAgentRunEvents | undefined, update: { id: string; stage: string; message: string; status: string; tool?: string; call?: string; actionId?: string; detail?: string }): void {
+  events?.workflow?.(update as any);
+}
+
+export function actionStatusLabel(action: SakiAgentAction): string {
+  if (action.status === "pending_approval") return "pending_approval";
+  if (action.status === "rolled_back") return "rolled_back";
+  if (action.status === "rejected") return "rejected";
+  return action.ok ? "completed" : "failed";
+}
+
+const compactToolTextLength = 180;
+
+function toolCallArgsForDisplay(call: ParsedToolCall): Record<string, unknown> {
+  return Array.isArray(call.args) ? {} : call.args;
+}
+
+function toolDisplayArgs(call: ParsedToolCall): string {
+  const args = toolCallArgsForDisplay(call);
+  const entries: Array<[string, string]> = [];
+  const add = (key: string, value: unknown, maxLength = 60) => {
+    if (value === undefined || value === null) return;
+    const text = String(value).replace(/\s+/g, " ").trim();
+    entries.push([key, text.length > maxLength ? `${text.slice(0, maxLength)}...` : text]);
+  };
+
+  const toolName = call.name.toLowerCase();
+  if (toolName === "writefile") {
+    add("path", args.path);
+    add("content", args.content, compactToolTextLength);
+  } else if (toolName === "replaceinfile") {
+    add("path", args.path);
+    add("oldText", args.oldText, compactToolTextLength);
+    add("newText", args.newText, compactToolTextLength);
+  } else if (toolName === "editlines") {
+    add("path", args.path);
+    add("startLine", args.startLine);
+    add("endLine", args.endLine);
+    add("replacement", args.replacement, compactToolTextLength);
+  } else if (toolName === "uploadbase64") {
+    add("path", args.path);
+    add("contentBase64", args.contentBase64, compactToolTextLength);
+  } else if (toolName === "renamepath") {
+    add("fromPath", args.fromPath);
+    add("toPath", args.toPath);
+  } else if (toolName === "runcommand") {
+    add("command", args.command);
+    add("cwd", args.cwd || args.workingDirectory);
+    add("timeoutMs", args.timeoutMs);
+  } else if (toolName === "sendinput") {
+    add("instanceId", args.instanceId);
+    add("text", args.text, compactToolTextLength);
+    add("pressEnter", args.pressEnter);
+    add("echo", args.echo);
+  } else {
+    for (const key of ["instanceId", "path", "query", "url", "skillId", "taskId", "action", "command", "lines", "limit"]) {
+      add(key, args[key]);
+    }
+  }
+
+  return entries.map(([key, value]) => `${key}: ${value}`).join(", ");
+}
+
+function renderToolCall(call: ParsedToolCall): string {
+  const args = toolCallArgsForDisplay(call);
+  return `${call.name}(${JSON.stringify(args)})`;
+}
+
+function toolTargetPath(call: ParsedToolCall): string {
+  const args = toolCallArgsForDisplay(call);
+  return stringArg(args, "path") || stringArg(args, "fromPath") || stringArg(args, "toPath");
+}
+
+function isFileEditToolCall(call: ParsedToolCall): boolean {
+  const toolName = call.name.toLowerCase();
+  return toolName === "writefile" || toolName === "replaceinfile" || toolName === "editlines" || toolName === "uploadbase64";
+}
+
+function fileEditActionLabel(call: ParsedToolCall): "\u521B\u5EFA" | "\u7F16\u8F91" {
+  const toolName = call.name.toLowerCase();
+  return toolName === "replaceinfile" || toolName === "editlines" ? "\u7F16\u8F91" : "\u521B\u5EFA";
+}
+
+function toolIntentMessage(call: ParsedToolCall): string {
+  const toolName = call.name.toLowerCase();
+  const args = toolCallArgsForDisplay(call);
+  const pathArg = toolTargetPath(call);
+  const query = stringArg(args, "query");
+  const command = stringArg(args, "command");
+  const inputText = rawStringArg(args, "text");
+  const note = stringArg(args, "note");
+  if (note) return note.slice(0, 180);
+
+  if (isFileEditToolCall(call)) {
+    const label = fileEditActionLabel(call);
+    return pathArg ? `${label} ${pathArg} \u4E2D\u3002` : `${label}\u6587\u4EF6\u4E2D\u3002`;
+  }
+  if (toolName === "listinstances") return "\u6211\u8981\u5148\u770B\u6709\u54EA\u4E9B\u5B9E\u4F8B\uFF0C\u786E\u8BA4\u64CD\u4F5C\u76EE\u6807\u3002";
+  if (toolName === "describeinstance") return "\u6211\u8981\u5148\u6838\u5BF9\u8FD9\u4E2A\u5B9E\u4F8B\u7684\u914D\u7F6E\u548C\u5DE5\u4F5C\u76EE\u5F55\u3002";
+  if (toolName === "instancelogs") return "\u6211\u8981\u5148\u770B\u6700\u8FD1\u65E5\u5FD7\uFF0C\u786E\u8BA4\u9519\u8BEF\u4ECE\u54EA\u91CC\u5F00\u59CB\u3002";
+  if (toolName === "listfiles") return pathArg ? `\u6211\u8981\u67E5\u770B ${pathArg} \u91CC\u7684\u6587\u4EF6\u3002` : "\u6211\u8981\u67E5\u770B\u5F53\u524D\u76EE\u5F55\u91CC\u7684\u6587\u4EF6\u3002";
+  if (toolName === "readfile") return pathArg ? `\u6211\u8981\u5148\u8BFB ${pathArg}\uFF0C\u770B\u6E05\u695A\u5F53\u524D\u5185\u5BB9\u3002` : "\u6211\u8981\u5148\u8BFB\u76F8\u5173\u6587\u4EF6\uFF0C\u770B\u6E05\u695A\u5F53\u524D\u5185\u5BB9\u3002";
+  if (toolName === "mkdir") return pathArg ? `\u6211\u8981\u521B\u5EFA\u76EE\u5F55 ${pathArg}\u3002` : "\u6211\u8981\u521B\u5EFA\u4E00\u4E2A\u76EE\u5F55\u3002";
+  if (toolName === "deletepath") return pathArg ? `\u6211\u8981\u5220\u9664 ${pathArg}\uFF0C\u8FD9\u4E00\u6B65\u9700\u8981\u5148\u786E\u8BA4\u3002` : "\u6211\u8981\u5220\u9664\u4E00\u4E2A\u8DEF\u5F84\uFF0C\u8FD9\u4E00\u6B65\u9700\u8981\u5148\u786E\u8BA4\u3002";
+  if (toolName === "renamepath") return "\u6211\u8981\u79FB\u52A8\u6216\u91CD\u547D\u540D\u6587\u4EF6\u3002";
+  if (toolName === "runcommand") return command ? `\u6211\u9700\u8981\u8FD0\u884C\u9A8C\u8BC1\u547D\u4EE4\uFF1A${command.slice(0, 120)}` : "\u6211\u9700\u8981\u8FD0\u884C\u547D\u4EE4\u6765\u9A8C\u8BC1\u5224\u65AD\u3002";
+  if (toolName === "sendinput") return inputText ? `\u6211\u51C6\u5907\u5411\u6B63\u5728\u8FD0\u884C\u7684\u63A7\u5236\u53F0\u8F93\u5165 ${inputText.length} \u4E2A\u5B57\u7B26\u3002` : "\u6211\u51C6\u5907\u5411\u6B63\u5728\u8FD0\u884C\u7684\u63A7\u5236\u53F0\u53D1\u9001\u8F93\u5165\u3002";
+  if (toolName === "sendcommand") return command ? `\u6211\u51C6\u5907\u628A\u8F93\u5165\u53D1\u9001\u7ED9\u6B63\u5728\u8FD0\u884C\u7684\u8FDB\u7A0B\uFF1A${command.slice(0, 120)}` : "\u6211\u51C6\u5907\u628A\u8F93\u5165\u53D1\u9001\u7ED9\u6B63\u5728\u8FD0\u884C\u7684\u8FDB\u7A0B\u3002";
+  if (toolName === "instanceaction") return "\u6211\u8981\u8C03\u6574\u5B9E\u4F8B\u8FD0\u884C\u72B6\u6001\uFF0C\u8FD9\u4E00\u6B65\u9700\u8981\u8C28\u614E\u786E\u8BA4\u3002";
+  if (toolName === "updateinstancesettings") return "\u6211\u8981\u4FEE\u6539\u5B9E\u4F8B\u914D\u7F6E\u3002";
+  if (toolName === "searchaudit") return query ? `\u6211\u8981\u5728\u5BA1\u8BA1\u65E5\u5FD7\u91CC\u67E5\u201C${query.slice(0, 80)}\u201D\u3002` : "\u6211\u8981\u67E5\u5BA1\u8BA1\u65E5\u5FD7\u3002";
+  if (toolName === "listtasks" || toolName === "taskruns") return "\u6211\u8981\u67E5\u770B\u8BA1\u5212\u4EFB\u52A1\u8BB0\u5F55\u3002";
+  if (toolName.includes("scheduledtask") || toolName === "runtask") return "\u6211\u8981\u5904\u7406\u8BA1\u5212\u4EFB\u52A1\u3002";
+  if (toolName === "searchweb") return query ? `\u6211\u8981\u641C\u7D22\uFF1A\u201C${query.slice(0, 80)}\u201D\u3002` : "\u6211\u8981\u641C\u7D22\u516C\u5F00\u4FE1\u606F\u3002";
+  if (toolName === "browse" || toolName === "crawl" || toolName === "researchweb") return "\u6211\u8981\u8BFB\u53D6\u7F51\u9875\u5185\u5BB9\u3002";
+  if (toolName === "listskills" || toolName === "searchskills") return "\u6211\u8981\u67E5\u4E00\u4E0B\u6709\u6CA1\u6709\u9002\u7528\u7684\u6280\u80FD\u89C4\u8303\u3002";
+  if (toolName === "readskill") return "\u6211\u8981\u8BFB\u53D6\u8FD9\u4E2A\u6280\u80FD\u89C4\u8303\u3002";
+  if (toolName === "respond") return "\u6211\u5DF2\u7ECF\u6574\u7406\u597D\u7ED3\u679C\uFF0C\u5F00\u59CB\u56DE\u590D\u4F60\u3002";
+  return "\u6211\u8981\u5148\u8865\u5145\u4E00\u70B9\u4E0A\u4E0B\u6587\u3002";
+}
+
+function toolOutcomeMessage(call: ParsedToolCall, action: SakiAgentAction): string {
+  const toolName = call.name.toLowerCase();
+  const pathArg = toolTargetPath(call);
+  if (action.status === "pending_approval") return "\u8FD9\u4E00\u6B65\u98CE\u9669\u8F83\u9AD8\uFF0C\u6211\u5148\u7B49\u4F60\u786E\u8BA4\u3002";
+  if (!action.ok) return "\u8FD9\u6B21\u8C03\u7528\u5931\u8D25\u4E86\uFF0C\u6211\u4F1A\u6839\u636E\u9519\u8BEF\u4FE1\u606F\u8C03\u6574\u3002";
+  if (toolName === "instancelogs") return "\u65E5\u5FD7\u8BFB\u5230\u4E86\u3002";
+  if (toolName === "listfiles") return "\u76EE\u5F55\u770B\u5230\u4E86\u3002";
+  if (toolName === "readfile") return pathArg ? `${pathArg} \u8BFB\u5B8C\u4E86\u3002` : "\u6587\u4EF6\u8BFB\u5B8C\u4E86\u3002";
+  if (isFileEditToolCall(call)) {
+    const label = fileEditActionLabel(call);
+    return pathArg ? `\u6211\u5DF2\u7ECF${label}\u597D ${pathArg}\u3002` : `\u6211\u5DF2\u7ECF${label}\u597D\u6587\u4EF6\u3002`;
+  }
+  if (toolName === "mkdir") return pathArg ? `\u76EE\u5F55 ${pathArg} \u5DF2\u7ECF\u5EFA\u597D\u3002` : "\u76EE\u5F55\u5DF2\u7ECF\u5EFA\u597D\u3002";
+  if (toolName === "renamepath") return "\u79FB\u52A8\u6216\u91CD\u547D\u540D\u5DF2\u7ECF\u5B8C\u6210\u3002";
+  if (toolName === "deletepath") return pathArg ? `${pathArg} \u5DF2\u7ECF\u5904\u7406\u597D\u3002` : "\u8DEF\u5F84\u5DF2\u7ECF\u5904\u7406\u597D\u3002";
+  if (toolName === "runcommand") return "\u547D\u4EE4\u6267\u884C\u5B8C\u4E86\u3002";
+  if (toolName === "sendinput" || toolName === "sendcommand") return "\u63A7\u5236\u53F0\u8F93\u5165\u5DF2\u7ECF\u53D1\u9001\u3002";
+  if (toolName === "searchweb" || toolName === "browse" || toolName === "crawl" || toolName === "researchweb") return "\u7F51\u9875\u4FE1\u606F\u62FF\u5230\u4E86\u3002";
+  if (toolName === "listskills" || toolName === "searchskills" || toolName === "readskill") return "\u6280\u80FD\u89C4\u8303\u770B\u5B8C\u4E86\u3002";
+  return "\u8FD9\u4E00\u6B65\u5B8C\u6210\u4E86\u3002";
+}
+
+export async function emitAgentFinalText(events: SakiAgentRunEvents | undefined, text: string): Promise<void> {
+  if (!events?.delta || !text) return;
+  const chunkSize = 28;
+  for (let index = 0; index < text.length; index += chunkSize) {
+    events.delta(text.slice(index, index + chunkSize));
+    if (text.length > chunkSize) {
+      await new Promise((resolve) => setTimeout(resolve, 8));
+    }
+  }
+}
+
+function looksLikeToolCallPayload(text: string): boolean {
+  if (/"?tool_calls"?\s*:/i.test(text) || /"?toolCalls"?\s*:/i.test(text)) return true;
+  if (/"(?:listInstances|describeInstance|instanceLogs|listFiles|readFile|writeFile|replaceInFile|editLines|mkdir|deletePath|renamePath|uploadBase64|runCommand|sendInput|sendCommand|instanceAction|updateInstanceSettings|searchAudit|listTasks|createScheduledTask|updateScheduledTask|deleteScheduledTask|runTask|taskRuns|searchWeb|browse|crawl|researchWeb|listSkills|searchSkills|readSkill|reportProgress|respond)"\s*:/i.test(text)) return true;
+  return /"name"\s*:\s*"(?:listInstances|describeInstance|instanceLogs|listFiles|readFile|writeFile|replaceInFile|editLines|mkdir|deletePath|renamePath|uploadBase64|runCommand|sendInput|sendCommand|instanceAction|updateInstanceSettings|searchAudit|listTasks|createScheduledTask|updateScheduledTask|deleteScheduledTask|runTask|taskRuns|searchWeb|browse|crawl|researchWeb|listSkills|searchSkills|readSkill|reportProgress|respond)"/i.test(text);
+}
+
+function looksLikeProgressOnlyToolIntent(text: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
+  if (!normalized) return false;
+  if (/\b(?:listInstances|describeInstance|instanceLogs|listFiles|readFile|writeFile|replaceInFile|editLines|mkdir|deletePath|renamePath|uploadBase64|runCommand|sendInput|sendCommand|instanceAction|updateInstanceSettings|searchAudit|listTasks|createScheduledTask|updateScheduledTask|deleteScheduledTask|runTask|taskRuns|searchWeb|browse|crawl|researchWeb|listSkills|searchSkills|readSkill|reportProgress|respond)\b/i.test(normalized)) {
+    return true;
+  }
+  const actionVerb = /(?:read|inspect|search|run|execute|call|list|check|open|edit|modify|fix|write|create|delete|verify|test|look at)/i;
+  const futureIntent = /(?:\bi(?:'ll| will| am going to| need to| should)\b|\bnext\b|\bthen\b|\babout to\b|\bgoing to\b)/i;
+  const toolWords = /(?:tool|function|operation|call|arguments)/i;
+  return actionVerb.test(normalized) && (futureIntent.test(normalized) || toolWords.test(normalized));
+}
+
+function safeAgentFinalText(text: string): string {
+  const cleaned = stripThinking(text).trim();
+  if (!cleaned) return "Saki \u6682\u65F6\u6CA1\u6709\u5F62\u6210\u53EF\u7528\u56DE\u590D\u3002";
+  if (looksLikeToolCallPayload(cleaned)) {
+    return "\u6211\u521A\u624D\u751F\u6210\u4E86\u5DE5\u5177\u8C03\u7528\u8349\u7A3F\uFF0C\u4F46\u683C\u5F0F\u6CA1\u6709\u901A\u8FC7\u6821\u9A8C\uFF0C\u6240\u4EE5\u6CA1\u6709\u628A\u5B83\u5F53\u4F5C\u56DE\u590D\u5C55\u793A\u3002\u8BF7\u518D\u8BD5\u4E00\u6B21\uFF0C\u6211\u4F1A\u7EE7\u7EED\u7528\u5DE5\u5177\u5904\u7406\u3002";
+  }
+  return cleaned;
+}
+
+function emitAgentNarration(events: SakiAgentRunEvents | undefined, text: string): void {
+  const cleaned = stripThinking(text).trim();
+  if (!cleaned || looksLikeToolCallPayload(cleaned)) return;
+  emitSakiWorkflow(events, {
+    id: randomUUID(),
+    stage: "narration",
+    message: cleaned.slice(0, 500),
+    status: "completed"
+  });
+}
+
+function promptObservationLimit(action: SakiAgentAction, modelId?: string): number {
+  if (!action.ok) return modelId ? Math.max(maxAgentPromptObservationTokens, 1200) : Math.max(maxAgentPromptObservationChars, 3800);
+  const toolName = normalizedAgentToolName(action.tool);
+  if (modelId) {
+    if (toolName === "readfile") return 1200;
+    if (toolName === "runcommand") return 1200;
+    if (toolName === "listfiles" || toolName === "instancelogs") return 800;
+    if (toolName === "browse" || toolName === "crawl" || toolName === "researchweb" || toolName === "searchweb") return 900;
+    if (toolName === "searchfiles") return 1200;
+    if (toolName === "findfiles") return 600;
+    return maxAgentPromptObservationTokens;
+  }
+  if (toolName === "readfile") return 3600;
+  if (toolName === "runcommand") return 3600;
+  if (toolName === "listfiles" || toolName === "instancelogs") return 2400;
+  if (toolName === "browse" || toolName === "crawl" || toolName === "researchweb" || toolName === "searchweb") return 2600;
+  if (toolName === "searchfiles") return 3600;
+  if (toolName === "findfiles") return 1800;
+  return maxAgentPromptObservationChars;
+}
+
+function observationForAgentPrompt(action: SakiAgentAction): string {
+  const limit = promptObservationLimit(action);
+  const observation = truncateText(redactSensitiveText(action.observation), limit);
+  const status = action.status ?? (action.ok ? "completed" : "failed");
+  return [`status=${status}`, `ok=${action.ok}`, observation].join("\n");
+}
+
+export const cacheableReadOnlyAgentToolNames = new Set([
+  "listinstances",
+  "describeinstance",
+  "listfiles",
+  "readfile",
+  "listtasks",
+  "findfiles",
+  "searchfiles",
+  "searchweb",
+  "browse",
+  "crawl",
+  "researchweb",
+  "listskills",
+  "searchskills",
+  "readskill",
+  "readmemory"
+]);
+
+function stableCacheValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableCacheValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, item]) => item !== undefined && typeof item !== "function")
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, stableCacheValue(item)])
+    );
+  }
+  return value;
+}
+
+function normalizedAgentToolCacheArgs(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
+  const normalized = Object.fromEntries(Object.entries(args).filter(([key]) => key !== "note"));
+  if (toolName === "readfile" && normalized.lineCount === undefined) {
+    normalized.lineCount = defaultAgentReadFileLineCount;
+  }
+  if (toolName === "listfiles" && normalized.limit === undefined) normalized.limit = 200;
+  if (toolName === "listinstances" && normalized.limit === undefined) normalized.limit = 50;
+  return normalized;
+}
+
+export function agentReadOnlyToolCacheKey(runtime: SakiAgentRuntime, call: ParsedToolCall): string | null {
+  if (Array.isArray(call.args)) return null;
+  const toolName = normalizedAgentToolName(call.name);
+  if (!cacheableReadOnlyAgentToolNames.has(toolName)) return null;
+  return JSON.stringify(
+    stableCacheValue({
+      tool: toolName,
+      args: normalizedAgentToolCacheArgs(toolName, call.args),
+      activeInstanceId: runtime.context.instance?.id ?? null,
+      activeWorkingDirectory: runtime.context.instance?.workingDirectory ?? null,
+      userId: runtime.userId
+    })
+  );
+}
+
+function cloneCachedAgentAction(call: ParsedToolCall, cached: SakiAgentAction): SakiAgentAction {
+  const args = Array.isArray(call.args) ? { legacyArgs: call.args } : call.args;
+  return {
+    id: actionId(),
+    tool: call.name,
+    args,
+    observation: `${cached.observation}\n\n[cache hit: reused result from earlier ${cached.tool} action ${cached.id} in this Agent run.]`,
+    ok: cached.ok,
+    status: cached.status ?? (cached.ok ? "completed" : "failed"),
+    createdAt: new Date().toISOString()
+  };
+}
+
+function shouldCacheAgentToolResult(call: ParsedToolCall, action: SakiAgentAction): boolean {
+  if (!action.ok || action.status !== "completed") return false;
+  return !Array.isArray(call.args) && cacheableReadOnlyAgentToolNames.has(normalizedAgentToolName(call.name));
+}
+
+function shouldInvalidateAgentToolCache(call: ParsedToolCall): boolean {
+  const toolName = normalizedAgentToolName(call.name);
+  if (toolName === "respond" || toolName === "reportprogress") return false;
+  return !isSakiReadOnlyAgentTool(toolName);
+}
+
+export function compactAgentScratchpadEntry(entry: string, index: number): string {
+  const cleaned = redactSensitiveText(entry).trim();
+  const toolMatch = cleaned.match(/Assistant:\s*({[^\n]+})/);
+  let label = `entry ${index + 1}`;
+  if (toolMatch?.[1]) {
+    try {
+      const parsed = JSON.parse(toolMatch[1]) as { name?: unknown; arguments?: unknown };
+      const name = trimString(parsed.name) || "tool";
+      const args = parsed.arguments && typeof parsed.arguments === "object"
+        ? Object.entries(parsed.arguments as Record<string, unknown>)
+            .filter(([key]) => ["path", "fromPath", "toPath", "query", "url", "skillId", "taskId", "command", "startLine", "lineCount"].includes(key))
+            .map(([key, value]) => `${key}=${String(value).replace(/\s+/g, " ").slice(0, 80)}`)
+            .join(", ")
+        : "";
+      label = args ? `${name}(${args})` : name;
+    } catch {
+      label = "tool";
+    }
+  }
+
+  const observation = cleaned.includes("Observation:")
+    ? cleaned.slice(cleaned.indexOf("Observation:") + "Observation:".length).trim()
+    : cleaned;
+  const status = observation.match(/^status=([^\n]+)/m)?.[1] ?? "";
+  const ok = observation.match(/^ok=([^\n]+)/m)?.[1] ?? "";
+  const body = observation
+    .replace(/^status=[^\n]+\n?/m, "")
+    .replace(/^ok=[^\n]+\n?/m, "")
+    .trim();
+  const snippet = truncateText(body.replace(/\n{3,}/g, "\n\n"), 520);
+  return [`[older ${index + 1}] ${label}`, status || ok ? `status=${status || "unknown"} ok=${ok || "unknown"}` : "", snippet].filter(Boolean).join("\n");
+}
+
+export function renderAgentScratchpad(entries: string[], modelId?: string): string {
+  const full = entries.join("");
+  if (modelId) {
+    const tokenCount = countTokens(full, modelId);
+    if (tokenCount <= maxAgentScratchpadTokens) return full;
+  } else if (full.length <= maxAgentScratchpadChars) {
+    return full;
+  }
+
+  const spaceLimit = modelId ? maxAgentScratchpadTokens * 0.65 : maxAgentScratchpadChars * 0.65;
+  const compactedLimit = modelId ? maxAgentCompactedScratchpadTokens : maxAgentCompactedScratchpadChars;
+
+  const recent: string[] = [];
+  let recentLength = 0;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index] ?? "";
+    if (recent.length >= maxAgentRecentScratchpadEntries || recentLength + entry.length > spaceLimit) break;
+    recent.unshift(entry);
+    recentLength += entry.length;
+  }
+
+  const olderCount = entries.length - recent.length;
+  const older = entries.slice(0, olderCount);
+  const compacted = truncateText(
+    older.map((entry, index) => compactAgentScratchpadEntry(entry, index)).join("\n\n---\n\n"),
+    Math.min(compactedLimit, Math.max(2000, maxAgentScratchpadChars - recentLength - 1200)),
+    modelId
+  );
+  const rendered = [
+    `... [${olderCount} older observations compacted deterministically to keep the agent fast]`,
+    compacted,
+    "",
+    "Recent full observations:",
+    recent.join("")
+  ].join("\n");
+  if (modelId) {
+    const renderedTokenCount = countTokens(rendered, modelId);
+    if (renderedTokenCount <= maxAgentScratchpadTokens) return rendered;
+    return truncateText(rendered, maxAgentScratchpadChars, modelId);
+  }
+  return rendered.length <= maxAgentScratchpadChars ? rendered : truncateText(rendered, maxAgentScratchpadChars);
+}
+
+function isParallelizableReadOnlyCall(call: ParsedToolCall): boolean {
+  if (Array.isArray(call.args)) return false;
+  const toolName = normalizedAgentToolName(call.name);
+  return toolName !== "reportprogress" && toolName !== "respond" && isSakiReadOnlyAgentTool(toolName);
+}
+
+export type ExecuteToolFn = (runtime: SakiAgentRuntime, call: ParsedToolCall, options: { approved?: boolean; actionId?: string; pendingResume?: SakiAgentResumeState }) => Promise<SakiAgentAction>;
+
+export async function runSakiAgent(
+  runtime: SakiAgentRuntime,
+  events?: SakiAgentRunEvents,
+  resume?: SakiAgentResumeState,
+  executeTool?: ExecuteToolFn
+): Promise<SakiChatResponse> {
+  const executeToolFn = executeTool ?? (async () => {
+    throw new RouteError("executeSakiAgentTool not provided; pass executeTool to runSakiAgent.", 500);
+  });
+  const actions: SakiAgentAction[] = [...(resume?.actions ?? [])];
+  const basePrompt = buildAgentPrompt(runtime);
+  const continuationPrompt = buildAgentContinuationPrompt(runtime);
+  const agentScratchpadEntries: string[] = [...(resume?.scratchpadEntries ?? [])];
+  const readOnlyToolCache = new Map<string, SakiAgentAction>();
+  let currentPrompt = basePrompt;
+  let invalidReplies = 0;
+  let progressOnlyReplies = 0;
+  const agentPermissionMode = effectiveSakiAgentPermissionMode(runtime.input);
+  const runStartedAt = Date.now();
+  let loopsUsed = 0;
+  let toolExecutions = resume?.toolExecutions ?? 0;
+  let toolCacheHits = 0;
+  let toolCacheMisses = 0;
+  let toolCacheInvalidations = 0;
+
+  const rebuildCurrentPrompt = (): void => {
+    const agentScratchpad = renderAgentScratchpad(agentScratchpadEntries);
+    const promptBase = toolExecutions > 0 || actions.length > 0 ? continuationPrompt : basePrompt;
+    currentPrompt = agentScratchpad
+      ? `${promptBase}\n\nAgent working notes and observations:\n${agentScratchpad}`
+      : promptBase;
+  };
+
+  const appendAgentScratchpad = (entry: string): void => {
+    if (!entry.trim()) return;
+    agentScratchpadEntries.push(entry);
+    rebuildCurrentPrompt();
+  };
+
+  const createResumeState = (): SakiAgentResumeState => ({
+    input: runtime.input,
+    skills: runtime.skills,
+    actions: [...actions],
+    scratchpadEntries: [...agentScratchpadEntries],
+    toolExecutions
+  });
+
+  rebuildCurrentPrompt();
+
+  const finishAgentResponse = async (reason: string, message: string): Promise<SakiChatResponse> => {
+    await emitAgentFinalText(events, message);
+    return {
+      source: "direct-model",
+      message,
+      workspace: runtime.context.workspace,
+      agentPermissionMode,
+      skills: runtime.skills,
+      actions
+    };
+  };
+
+  const runToolWithWorkflow = async (
+    call: ParsedToolCall,
+    toolStepId: string
+  ): Promise<{ call: ParsedToolCall; toolStepId: string; action: SakiAgentAction; durationMs: number; cacheHit?: boolean }> => {
+    const toolStartedAt = Date.now();
+    const cacheKey = agentReadOnlyToolCacheKey(runtime, call);
+    if (cacheKey) {
+      const cached = readOnlyToolCache.get(cacheKey);
+      if (cached) {
+        toolCacheHits += 1;
+        return {
+          call,
+          toolStepId,
+          action: cloneCachedAgentAction(call, cached),
+          durationMs: Date.now() - toolStartedAt,
+          cacheHit: true
+        };
+      }
+      toolCacheMisses += 1;
+    }
+
+    const action = await executeToolFn(runtime, call, { pendingResume: createResumeState() });
+    if (cacheKey && shouldCacheAgentToolResult(call, action)) {
+      readOnlyToolCache.set(cacheKey, action);
+    }
+    if (shouldInvalidateAgentToolCache(call) && readOnlyToolCache.size > 0) {
+      readOnlyToolCache.clear();
+      toolCacheInvalidations += 1;
+    }
+    return { call, toolStepId, action, durationMs: Date.now() - toolStartedAt };
+  };
+
+  const handleToolResult = async (result: {
+    call: ParsedToolCall;
+    toolStepId: string;
+    action: SakiAgentAction;
+    durationMs: number;
+    cacheHit?: boolean;
+  }): Promise<SakiChatResponse | null> => {
+    const { call, toolStepId, action, cacheHit } = result;
+    toolExecutions += 1;
+    if (call.name.toLowerCase() === "respond") {
+      emitSakiWorkflow(events, {
+        id: toolStepId,
+        stage: "tool",
+        message: "Finalizing response.",
+        status: actionStatusLabel(action),
+        tool: call.name,
+        call: toolDisplayArgs(call),
+        actionId: action.id
+      });
+      const finalMessage = safeAgentFinalText(action.observation || stringArg(toolArgs(call), "text") || "");
+      return finishAgentResponse("respond_tool", finalMessage);
+    }
+    actions.push(action);
+    events?.action?.(action);
+    emitSakiWorkflow(events, {
+      id: toolStepId,
+      stage: "tool",
+      message: cacheHit ? "Reused a cached tool result from this Agent run." : action.ok && action.status !== "pending_approval" ? toolIntentMessage(call) : toolOutcomeMessage(call, action),
+      status: actionStatusLabel(action),
+      tool: call.name,
+      call: toolDisplayArgs(call),
+      actionId: action.id,
+      detail: action.ok && action.status !== "pending_approval" ? "" : action.observation.slice(0, 240)
+    });
+    if (action.status === "pending_approval") {
+      const finalMessage = "Saki has prepared an action that needs your approval. Please review it in the action preview first.";
+      return finishAgentResponse("pending_approval", finalMessage);
+    }
+    appendAgentScratchpad(`\nAssistant: ${renderToolCall(call)}\nObservation:\n${observationForAgentPrompt(action)}\n`);
+    if (!action.ok) {
+      appendAgentScratchpad("If the error is caused by missing permission, blocked safety policy, or missing active instance, stop and respond with a concise explanation. Otherwise adjust your plan and continue.\n");
+    }
+    return null;
+  };
+
+  for (let loop = 0; loop < maxAgentLoops; loop += 1) {
+    loopsUsed = loop + 1;
+    let turn: SakiModelToolTurn;
+    try {
+      turn = await callConfiguredAgentTurn(runtime, currentPrompt);
+    } catch (error) {
+      if (toolExecutions > 0 || actions.length > 0) {
+        const reason = error instanceof Error ? error.message : String(error);
+        return finishAgentResponse(
+          "model_error_after_tools",
+          `\u6A21\u578B\u63A5\u53E3\u5728\u7EE7\u7EED\u89C4\u5212\u4E0B\u4E00\u6B65\u65F6\u4E2D\u65AD\uFF1A${reason}\n\n\u524D\u9762\u5DF2\u7ECF\u5B8C\u6210\u7684\u52A8\u4F5C\u5DF2\u4FDD\u7559\u3002\u4F60\u53EF\u4EE5\u76F4\u63A5\u53D1\u9001\u201C\u7EE7\u7EED\u201D\uFF0CSaki \u4F1A\u57FA\u4E8E\u5F53\u524D\u5DE5\u4F5C\u533A\u63A5\u7740\u5904\u7406\u3002`
+        );
+      }
+      throw error;
+    }
+    const toolCalls = turn.toolCalls;
+    if (toolCalls.length === 0) {
+      const cleaned = stripThinking(turn.content).trim();
+      const progressOnlyToolIntent = looksLikeProgressOnlyToolIntent(cleaned);
+      if (progressOnlyToolIntent && progressOnlyReplies < maxAgentProgressOnlyRetries) {
+        progressOnlyReplies += 1;
+        emitAgentNarration(events, cleaned);
+        emitSakiWorkflow(events, {
+          id: randomUUID(),
+          stage: "retry",
+          message: "\u521A\u624D\u7684\u56DE\u590D\u8FD8\u662F\u8FDB\u5EA6\u8BF4\u660E\uFF0C\u6211\u4F1A\u7EE7\u7EED\u8BA9 Saki \u6267\u884C\u540E\u7EED\u5DE5\u5177\u3002",
+          status: "running"
+        });
+        appendAgentScratchpad(`\nAssistant visible note: ${redactSensitiveText(cleaned).slice(0, 1200)}\n\nSystem correction: Your previous output was only a progress note about future tool work. Continue the same user task now. If more work is needed, output ONLY one JSON object using this shape: {"tool_calls":[{"name":"readFile","arguments":{"path":"relative/path","note":"short visible note"}}]}. If the task is complete, use: {"tool_calls":[{"name":"respond","arguments":{"text":"final answer"}}]}. Do not use shorthand JSON. Do not include prose before or after JSON. Never say you will call, read, run, inspect, edit, or verify something unless that same response includes the matching tool call.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
+        continue;
+      }
+      const shouldRetry = !cleaned || looksLikeToolCallPayload(cleaned);
+      if (shouldRetry && invalidReplies < 1) {
+        invalidReplies += 1;
+        emitSakiWorkflow(events, {
+          id: randomUUID(),
+          stage: "retry",
+          message: cleaned ? "\u521A\u624D\u7684\u5DE5\u5177\u8C03\u7528\u683C\u5F0F\u6CA1\u6709\u901A\u8FC7\u6821\u9A8C\uFF0C\u6211\u4F1A\u7528\u66F4\u660E\u786E\u7684\u683C\u5F0F\u91CD\u8BD5\u3002" : "\u6A21\u578B\u8FD9\u8F6E\u6CA1\u6709\u7ED9\u51FA\u6709\u6548\u5185\u5BB9\uFF0C\u6211\u4F1A\u518D\u8BA9\u5B83\u5224\u65AD\u4E00\u6B21\u3002",
+          status: "running"
+        });
+        appendAgentScratchpad(`\n\nSystem correction: Your previous output did not produce usable content or valid tool calls. If you need a tool, output ONLY one JSON object using this exact wrapper: {"tool_calls":[{"name":"toolName","arguments":{"note":"short visible note"}}]}. arguments must be an object. Invalid: {"readFile":["a.py"]}, {"tool_calls":[{"readFile":"a.py"}]}, Markdown fences, or prose around the JSON. If no tool is needed, answer naturally in the user's language. When writing file content in JSON, escape newlines as \\n and do not place raw line breaks inside a JSON string.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
+        continue;
+      }
+
+      const finalMessage = safeAgentFinalText(turn.content);
+      return finishAgentResponse("natural", finalMessage);
+    }
+
+    invalidReplies = 0;
+    progressOnlyReplies = 0;
+    const visibleAssistantText = stripThinking(turn.content).trim();
+    if (visibleAssistantText && !looksLikeToolCallPayload(visibleAssistantText)) {
+      emitAgentNarration(events, visibleAssistantText);
+      appendAgentScratchpad(`\nAssistant visible note: ${redactSensitiveText(visibleAssistantText).slice(0, 1200)}\n`);
+    }
+
+    for (let callIndex = 0; callIndex < toolCalls.length;) {
+      const call = toolCalls[callIndex];
+      if (!call) break;
+
+      if (call.name.toLowerCase() === "reportprogress") {
+        const text = rawStringArg(toolArgs(call), "text");
+        emitAgentNarration(events, text);
+        appendAgentScratchpad(`\nAssistant: ${renderToolCall(call)}\nObservation: ${redactSensitiveText(text).slice(0, 1200)}\n`);
+        callIndex += 1;
+        continue;
+      }
+
+      if (isParallelizableReadOnlyCall(call)) {
+        const batch: Array<{ call: ParsedToolCall; toolStepId: string }> = [];
+        while (callIndex < toolCalls.length && batch.length < maxParallelReadOnlyTools) {
+          const candidate = toolCalls[callIndex];
+          if (!candidate || !isParallelizableReadOnlyCall(candidate)) break;
+          const toolStepId = randomUUID();
+          emitSakiWorkflow(events, {
+            id: toolStepId,
+            stage: "tool",
+            message: toolIntentMessage(candidate),
+            status: "running",
+            tool: candidate.name,
+            call: toolDisplayArgs(candidate)
+          });
+          batch.push({ call: candidate, toolStepId });
+          callIndex += 1;
+        }
+
+        const results = await Promise.all(batch.map((item) => runToolWithWorkflow(item.call, item.toolStepId)));
+        for (const result of results) {
+          const finalResponse = await handleToolResult(result);
+          if (finalResponse) return finalResponse;
+        }
+        continue;
+      }
+
+      const toolStepId = randomUUID();
+      emitSakiWorkflow(events, {
+        id: toolStepId,
+        stage: "tool",
+        message: toolIntentMessage(call),
+        status: "running",
+        tool: call.name,
+        call: toolDisplayArgs(call)
+      });
+      const finalResponse = await handleToolResult(await runToolWithWorkflow(call, toolStepId));
+      if (finalResponse) return finalResponse;
+      callIndex += 1;
+    }
+  }
+
+  const finalMessage = "Saki \u5DF2\u8FBE\u5230\u672C\u8F6E\u667A\u80FD\u4F53\u6267\u884C\u6B65\u6570\u4E0A\u9650\u3002\u5DF2\u5B8C\u6210\u7684\u52A8\u4F5C\u89C1\u4E0B\u65B9\u8BB0\u5F55\uFF1B\u4F60\u53EF\u4EE5\u7EE7\u7EED\u53D1\u4E00\u53E5\u201C\u7EE7\u7EED\u201D\u8BA9 Saki \u63A5\u7740\u5904\u7406\u3002";
+  return finishAgentResponse("loop_limit", finalMessage);
+}

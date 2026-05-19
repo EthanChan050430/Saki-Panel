@@ -21,8 +21,13 @@
     "@prisma/client": "^6.6.0",
     "@webops/shared": "file:../../packages/shared",
     "bcryptjs": "^3.0.2",
+    "diff": "^9.0.0",
     "dotenv": "^16.5.0",
     "fastify": "^5.3.2",
+    "tiktoken": "^1.0.22",
     "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/diff": "^7.0.2"
   }
 }

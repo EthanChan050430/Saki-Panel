@@ -8,6 +8,11 @@ import type {
   DownloadInstanceFileResponse,
   ExtractInstanceArchiveRequest,
   ExtractInstanceArchiveResponse,
+  GlobInstanceFilesRequest,
+  GlobInstanceFilesResponse,
+  GrepInstanceFilesRequest,
+  GrepInstanceFilesResponse,
+  GrepMatchLine,
   InstanceCommandRequest,
   InstanceCommandResponse,
   InstanceFileContentResponse,
@@ -477,4 +482,34 @@ export function downloadDaemonInstanceArchive(
     },
     300000
   );
+}
+
+export function grepDaemonInstanceFiles(
+  node: DaemonNodeCredentials,
+  instanceId: string,
+  workingDirectory: string,
+  input: GrepInstanceFilesRequest
+) {
+  return requestDaemon<GrepInstanceFilesResponse>(node, `/api/instances/${instanceId}/files/grep`, {
+    method: "POST",
+    body: JSON.stringify({
+      ...input,
+      workingDirectory
+    })
+  }, 30000);
+}
+
+export function globDaemonInstanceFiles(
+  node: DaemonNodeCredentials,
+  instanceId: string,
+  workingDirectory: string,
+  input: GlobInstanceFilesRequest
+) {
+  return requestDaemon<GlobInstanceFilesResponse>(node, `/api/instances/${instanceId}/files/glob`, {
+    method: "POST",
+    body: JSON.stringify({
+      ...input,
+      workingDirectory
+    })
+  }, 30000);
 }

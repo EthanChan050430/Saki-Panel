@@ -537,6 +537,44 @@ export interface DownloadInstanceArchiveRequest {
   fileName?: string;
 }
 
+export interface GrepMatchLine {
+  file: string;
+  line: number;
+  column?: number;
+  text: string;
+}
+
+export interface GrepInstanceFilesRequest {
+  workingDirectory: string;
+  pattern: string;
+  path?: string;
+  include?: string;
+  maxResults?: number;
+  contextLines?: number;
+}
+
+export interface GrepInstanceFilesResponse {
+  instanceId: string;
+  matches: GrepMatchLine[];
+  totalMatches: number;
+  truncated: boolean;
+  filesSearched: number;
+}
+
+export interface GlobInstanceFilesRequest {
+  workingDirectory: string;
+  pattern: string;
+  path?: string;
+  maxResults?: number;
+}
+
+export interface GlobInstanceFilesResponse {
+  instanceId: string;
+  paths: string[];
+  totalMatches: number;
+  truncated: boolean;
+}
+
 export type ScheduledTaskType = "run_command" | "restart_instance" | "stop_instance" | "start_instance";
 export type TaskRunStatus = "RUNNING" | "SUCCESS" | "FAILURE";
 
@@ -806,6 +844,7 @@ export interface SakiConfigResponse {
   providerConfigs: Record<string, SakiProviderConfig>;
   searchEnabled: boolean;
   mcpEnabled: boolean;
+  memoryEnabled?: boolean;
   systemPrompt?: string | null;
   appearance: PanelAppearanceSettings;
   configPath: string;
@@ -822,6 +861,7 @@ export interface UpdateSakiConfigRequest {
   providerConfigs?: Record<string, SakiProviderConfig>;
   searchEnabled?: boolean;
   mcpEnabled?: boolean;
+  memoryEnabled?: boolean;
   systemPrompt?: string | null;
   appearance?: Partial<PanelAppearanceSettings>;
 }

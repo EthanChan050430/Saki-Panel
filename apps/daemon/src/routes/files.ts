@@ -16,6 +16,10 @@ import type {
   DownloadInstanceFileResponse,
   ExtractInstanceArchiveRequest,
   ExtractInstanceArchiveResponse,
+  GlobInstanceFilesRequest,
+  GlobInstanceFilesResponse,
+  GrepInstanceFilesRequest,
+  GrepInstanceFilesResponse,
   InstanceFileContentResponse,
   InstanceFileEntry,
   InstanceFileListResponse,
@@ -360,8 +364,21 @@ function parseSevenZipListOutput(stdout: string): ArchiveListEntry[] {
   return entries;
 }
 
+let sevenZipPermissionEnsured = false;
+
+async function ensureSevenZipPermission(): Promise<void> {
+  if (sevenZipPermissionEnsured) return;
+  sevenZipPermissionEnsured = true;
+  try {
+    await fs.chmod(path7za, 0o755);
+  } catch {
+    // chmod may fail on Windows or read-only filesystems; ignore
+  }
+}
+
 async function runSevenZip(args: string[], options: { cwd?: string } = {}): Promise<string> {
   try {
+    await ensureSevenZipPermission();
     const { stdout } = await execFileAsync(path7za, args, {
       cwd: options.cwd,
       maxBuffer: maxArchiveOutputBytes,
@@ -698,6 +715,74 @@ async function archivePathsForDownload(
   }
 }
 
+const skipDirNames = new Set([
+  "node_modules", ".git", "__pycache__", ".svn", ".hg", ".DS_Store",
+  "dist", "build", ".next", ".nuxt", "target", "vendor", ".idea", ".vscode",
+  ".cache", ".parcel-cache", ".turbo", "coverage", ".tox", "eggs", "*.egg-info"
+]);
+
+const maxSearchFileSize = 1024 * 1024;
+const binaryCheckBytes = 8192;
+
+function shouldSkipDir(name: string): boolean {
+  return skipDirNames.has(name) || name.startsWith(".");
+}
+
+function matchGlobPattern(fileName: string, pattern: string): boolean {
+  let regexStr = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, "{{GLOBSTAR}}")
+    .replace(/\*/g, "[^/]*")
+    .replace(/\?/g, "[^/]")
+    .replace(/\{\{GLOBSTAR\}\}/g, ".*")
+    .replace(/\{([^}]+)\}/g, (_, group) => `(${group.split(",").join("|")})`);
+  try {
+    return new RegExp(`^${regexStr}$`).test(fileName);
+  } catch {
+    return fileName === pattern;
+  }
+}
+
+function matchIncludePattern(fileName: string, include?: string): boolean {
+  if (!include) return true;
+  return matchGlobPattern(fileName, include) || matchGlobPattern(fileName, "**/" + include);
+}
+
+async function isBinaryFile(filePath: string): Promise<boolean> {
+  const handle = await fs.open(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(binaryCheckBytes);
+    const { bytesRead } = await handle.read(buffer, 0, binaryCheckBytes, 0);
+    for (let i = 0; i < bytesRead; i++) {
+      if (buffer[i] === 0) return true;
+    }
+    return false;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function* walkFiles(root: string, subPath: string): AsyncGenerator<string> {
+  const dir = subPath ? path.resolve(root, subPath) : root;
+  if (!isInside(root, dir)) return;
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (entry.isDirectory() && shouldSkipDir(entry.name)) continue;
+    const fullPath = path.resolve(dir, entry.name);
+    if (!isInside(root, fullPath)) continue;
+    if (entry.isDirectory()) {
+      yield* walkFiles(root, path.relative(root, fullPath).replace(/\\/g, "/"));
+    } else if (entry.isFile()) {
+      yield fullPath;
+    }
+  }
+}
+
 export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/instances/:id/files", { preHandler: authenticatePanelRequest }, async (request) => {
     const { id } = request.params as { id: string };
@@ -930,5 +1015,103 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
 
     await fs.rename(from.target, to.target);
     return toFileEntry(to.root, to.target, path.basename(to.target));
+  });
+
+  app.post("/api/instances/:instanceId/files/grep", { preHandler: authenticatePanelRequest }, async (request) => {
+    const { instanceId } = request.params as { instanceId: string };
+    const body = request.body as GrepInstanceFilesRequest;
+    if (!body.pattern) {
+      throw new Error("pattern is required");
+    }
+
+    const root = await resolveInstanceRoot(body.workingDirectory);
+    const maxResults = Math.min(Math.max(1, body.maxResults ?? 100), 500);
+    const contextLines = Math.min(Math.max(0, body.contextLines ?? 0), 3);
+    const isCaseInsensitive = body.pattern === body.pattern.toLowerCase();
+    const regex = new RegExp(body.pattern, isCaseInsensitive ? "i" : "");
+
+    const matches: GrepInstanceFilesResponse["matches"] = [];
+    let totalMatches = 0;
+    let filesSearched = 0;
+    let truncated = false;
+
+    for await (const filePath of walkFiles(root, body.path ?? "")) {
+      if (truncated) break;
+      try {
+        const stats = await fs.stat(filePath);
+        if (stats.size > maxSearchFileSize) continue;
+        if (await isBinaryFile(filePath)) continue;
+
+        filesSearched++;
+        const content = await fs.readFile(filePath, "utf8");
+        const lines = content.split(/\r?\n/);
+        const relativePath = toClientPath(root, filePath);
+
+        if (!matchIncludePattern(path.basename(filePath), body.include)) continue;
+
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+          const lineText = lines[lineIndex]!;
+          const match = regex.exec(lineText);
+          if (!match) continue;
+
+          totalMatches++;
+          if (matches.length < maxResults) {
+            matches.push({
+              file: relativePath,
+              line: lineIndex + 1,
+              column: match.index + 1,
+              text: lineText
+            });
+          } else {
+            truncated = true;
+            break;
+          }
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return {
+      instanceId,
+      matches,
+      totalMatches,
+      truncated,
+      filesSearched
+    } satisfies GrepInstanceFilesResponse;
+  });
+
+  app.post("/api/instances/:instanceId/files/glob", { preHandler: authenticatePanelRequest }, async (request) => {
+    const { instanceId } = request.params as { instanceId: string };
+    const body = request.body as GlobInstanceFilesRequest;
+    if (!body.pattern) {
+      throw new Error("pattern is required");
+    }
+
+    const root = await resolveInstanceRoot(body.workingDirectory);
+    const maxResults = Math.min(Math.max(1, body.maxResults ?? 200), 1000);
+    const resultPaths: string[] = [];
+    let totalMatches = 0;
+    let truncated = false;
+
+    for await (const filePath of walkFiles(root, body.path ?? "")) {
+      const relativePath = toClientPath(root, filePath);
+      if (matchGlobPattern(relativePath, body.pattern)) {
+        totalMatches++;
+        if (resultPaths.length < maxResults) {
+          resultPaths.push(relativePath);
+        } else {
+          truncated = true;
+          break;
+        }
+      }
+    }
+
+    return {
+      instanceId,
+      paths: resultPaths,
+      totalMatches,
+      truncated
+    } satisfies GlobInstanceFilesResponse;
   });
 }
