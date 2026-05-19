@@ -6512,6 +6512,47 @@ body.saki-selection-capture-active .saki-launcher {
   font-weight: 700;
 }
 
+.saki-stream-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  margin: 4px 0;
+  font-size: 13px;
+  color: #6b7280;
+  animation: sakiFadeIn 0.2s ease;
+}
+.saki-stream-status-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+.saki-stream-status-text {
+  font-weight: 500;
+  color: #4b5563;
+}
+.saki-stream-status-dots {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 2px;
+}
+.saki-dot {
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1;
+  animation: sakiDotPulse 1.4s infinite ease-in-out both;
+}
+.saki-dot-1 { animation-delay: 0s; }
+.saki-dot-2 { animation-delay: 0.2s; }
+.saki-dot-3 { animation-delay: 0.4s; }
+@keyframes sakiDotPulse {
+  0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1.2); }
+}
+@keyframes sakiFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .saki-workflow-toggle {
   display: inline-flex;
   align-items: center;

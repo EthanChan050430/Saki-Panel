@@ -4130,11 +4130,67 @@ function workflowEventChatText(event: SakiChatStreamEvent): string | null {
   const message = event.message.trim();
   if (!message) return null;
   if (event.stage === "narration") return message;
-  if (event.status === "running" || event.status === "pending") return message;
-  if (event.status === "failed") {
-    return event.detail ? `${message}\n${event.detail}` : message;
-  }
   return null;
+}
+
+function workflowStatusText(step: LocalSakiWorkflowStep): string | null {
+  if (step.status !== "running" && step.status !== "pending") return null;
+  const tool = step.tool?.toLowerCase();
+  if (!tool) return step.message || "思考中...";
+  const call = step.call || step.message || "";
+  if (tool === "readfile") {
+    const path = extractArgFromCall(call, "path");
+    return path ? `读取 ${path}` : "读取文件...";
+  }
+  if (tool === "writefile") {
+    const path = extractArgFromCall(call, "path");
+    return path ? `写入 ${path}` : "写入文件...";
+  }
+  if (tool === "replaceinfile" || tool === "editlines") {
+    const path = extractArgFromCall(call, "path");
+    return path ? `编辑 ${path}` : "编辑文件...";
+  }
+  if (tool === "runcommand") {
+    const cmd = extractArgFromCall(call, "command");
+    return cmd ? `运行 ${cmd.length > 60 ? cmd.slice(0, 60) + "..." : cmd}` : "运行命令...";
+  }
+  if (tool === "listfiles") {
+    const path = extractArgFromCall(call, "path") || ".";
+    return `浏览 ${path}`;
+  }
+  if (tool === "searchfiles") return "搜索文件内容...";
+  if (tool === "findfiles") return "查找文件...";
+  if (tool === "sendinput" || tool === "sendcommand") return "发送输入...";
+  if (tool === "instanceaction") return "操作实例...";
+  if (tool === "deletepath") {
+    const path = extractArgFromCall(call, "path");
+    return path ? `删除 ${path}` : "删除...";
+  }
+  if (tool === "mkdir") {
+    const path = extractArgFromCall(call, "path");
+    return path ? `创建目录 ${path}` : "创建目录...";
+  }
+  if (tool === "renamepath") return "重命名...";
+  if (tool === "searchweb") return "搜索网页...";
+  if (tool === "browse" || tool === "crawl") return "浏览网页...";
+  if (tool === "researchweb") return "研究搜索...";
+  if (tool === "readmemory") return "读取项目记忆...";
+  if (tool === "writememory") return "保存项目记忆...";
+  if (tool === "plan") return "制定计划...";
+  if (tool === "spawntask") return "执行子任务...";
+  if (tool === "readskill") return "加载技能...";
+  if (tool === "instancelogs") return "读取日志...";
+  if (tool === "updateinstancesettings") return "更新实例设置...";
+  return step.message || "处理中...";
+}
+
+function extractArgFromCall(call: string, argName: string): string | null {
+  try {
+    const match = call.match(new RegExp(`"${argName}"\\s*:\\s*"([^"]*)"`));
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function appendSakiAssistantText(current: string, next: string): string {
@@ -4766,6 +4822,34 @@ function SakiThinkingContent({ content }: { content: string }) {
       {restContent ? (
         <MarkdownContent content={restContent} />
       ) : null}
+    </div>
+  );
+}
+
+function SakiStreamStatus({ workflow }: { workflow: LocalSakiWorkflowStep[] }) {
+  const runningStep = [...workflow].reverse().find((step) => step.status === "running" || step.status === "pending");
+  if (!runningStep) return null;
+  const statusText = workflowStatusText(runningStep);
+  if (!statusText) return null;
+  const tool = runningStep.tool?.toLowerCase();
+  const iconMap: Record<string, string> = {
+    readfile: "📖", writefile: "✏️", replaceinfile: "✏️", editlines: "✏️",
+    runcommand: "💻", listfiles: "📁", searchfiles: "🔍", findfiles: "🔎",
+    deletepath: "🗑️", mkdir: "📁", renamepath: "📝", searchweb: "🌐",
+    browse: "🌐", crawl: "🌐", researchweb: "🌐", sendinput: "⌨️",
+    sendcommand: "⌨️", readmemory: "💾", writememory: "💾", plan: "📋",
+    spawntask: "🔄", readskill: "📖", instancelogs: "📋"
+  };
+  const icon = tool ? (iconMap[tool] ?? "⚙️") : "💭";
+  return (
+    <div className="saki-stream-status">
+      <span className="saki-stream-status-icon">{icon}</span>
+      <span className="saki-stream-status-text">{statusText}</span>
+      <span className="saki-stream-status-dots">
+        <span className="saki-dot saki-dot-1">·</span>
+        <span className="saki-dot saki-dot-2">·</span>
+        <span className="saki-dot saki-dot-3">·</span>
+      </span>
     </div>
   );
 }
@@ -6289,6 +6373,9 @@ function SakiFloatingChat({
                     <div className="saki-message-body">
                       <MarkdownContent content={message.content} />
                     </div>
+                  ) : null}
+                  {message.role === "assistant" && message.streaming && message.workflow ? (
+                    <SakiStreamStatus workflow={message.workflow} />
                   ) : null}
                   {message.attachments?.length ? (
                     <div className="saki-message-attachments">

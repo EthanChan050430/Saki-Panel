@@ -189,11 +189,12 @@ async function ensureInsideWorkspace(targetPath: string): Promise<string> {
     return resolved;
   }
 
-  const parent = path.dirname(resolved);
-  await fs.mkdir(parent, { recursive: true });
-  const realParent = await fs.realpath(parent);
-  if (!absoluteTarget && !isInsidePath(realWorkspaceRoot, realParent)) {
-    throw new Error("Path escapes the daemon workspace root");
+  await fs.mkdir(resolved, { recursive: true });
+  if (!absoluteTarget) {
+    const realParent = await fs.realpath(path.dirname(resolved));
+    if (!isInsidePath(realWorkspaceRoot, realParent)) {
+      throw new Error("Path escapes the daemon workspace root");
+    }
   }
   return resolved;
 }
@@ -233,6 +234,18 @@ function assertCommandAllowed(command: string): void {
 
 function commandLauncher(command: string): { file: string; args: string[] } {
   if (process.platform === "win32") {
+    const psPath = [
+      path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+      path.join(process.env.SystemRoot || "C:\\Windows", "System32", "pwsh.exe")
+    ].find((p) => {
+      try { require("fs").accessSync(p); return true; } catch { return false; }
+    });
+    if (psPath) {
+      return {
+        file: psPath,
+        args: ["-NoProfile", "-NonInteractive", "-Command", command]
+      };
+    }
     return {
       file: process.env.ComSpec || "cmd.exe",
       args: ["/d", "/s", "/c", command]

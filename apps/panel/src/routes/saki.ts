@@ -425,9 +425,8 @@ function inferCommandEnvironment(instance: InstanceWithNode | null): {
       arch,
       daemonVersion,
       pathStyle: "windows",
-      shell: "cmd.exe /d /s /c",
-      commandGuidance:
-        "Use Windows command syntax for runCommand: dir, type, copy, move, del, rmdir, where, and backslash-aware paths. Use PowerShell explicitly only when needed, e.g. powershell -NoProfile -Command \"...\"."
+      shell: "PowerShell",
+      commandGuidance: "Shell is PowerShell. Use PowerShell syntax (ls, cat, grep, cp, mv, rm, mkdir, Test-Path, Select-String all work). Use backslash paths."
     };
   }
 
@@ -437,9 +436,8 @@ function inferCommandEnvironment(instance: InstanceWithNode | null): {
       arch,
       daemonVersion,
       pathStyle: "posix",
-      shell: "$SHELL -lc or /bin/sh -lc",
-      commandGuidance:
-        "Use POSIX shell syntax for runCommand: ls, cat, cp, mv, rm, mkdir -p, grep, find, test, and forward-slash paths."
+      shell: "$SHELL",
+      commandGuidance: "Shell is POSIX. Use ls, cat, grep, cp, mv, rm, mkdir -p, find. Use forward-slash paths."
     };
   }
 
@@ -449,8 +447,7 @@ function inferCommandEnvironment(instance: InstanceWithNode | null): {
     daemonVersion,
     pathStyle: "unknown",
     shell: "unknown",
-    commandGuidance:
-      "OS is unknown. Prefer cross-platform commands such as node -e or python scripts when available, or inspect the environment with a low-risk command before using OS-specific syntax."
+    commandGuidance: "OS unknown. Run `uname -a` or `$PSVersionTable` first to detect the environment."
   };
 }
 
