@@ -38,6 +38,69 @@ import { buildDirectMessages, buildDirectSystemPrompt, type DirectChatMessage, t
 
 const defaultTemperatureOnlyModelKeys = new Set<string>();
 
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 2000;
+const RATE_LIMIT_STATUS = 429;
+
+function isRetryableError(error: unknown): boolean {
+  if (!(error instanceof RouteError)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    error.statusCode === RATE_LIMIT_STATUS ||
+    error.statusCode === 503 ||
+    error.statusCode === 502 ||
+    /rate limit|too many requests|quota exceeded|capacity|overload|temporarily unavailable|timeout/i.test(message)
+  );
+}
+
+function parseRetryAfterMs(response: Response): number | null {
+  const retryAfter = response.headers.get("retry-after");
+  if (retryAfter) {
+    const seconds = parseInt(retryAfter, 10);
+    if (!isNaN(seconds)) return seconds * 1000;
+  }
+  const xRateLimitReset = response.headers.get("x-ratelimit-reset");
+  if (xRateLimitReset) {
+    const resetTime = parseInt(xRateLimitReset, 10) * 1000;
+    const delay = resetTime - Date.now();
+    if (delay > 0) return Math.min(delay, 60000);
+  }
+  return null;
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withRetry<T>(
+  operation: () => Promise<T>,
+  operationName: string,
+  requestId: string
+): Promise<T> {
+  let lastError: Error | undefined;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new RouteError(String(error), 500);
+      if (attempt >= MAX_RETRIES || !isRetryableError(error)) {
+        throw error;
+      }
+      const delay = RETRY_DELAY_MS * Math.pow(2, attempt);
+      logSakiModelEvent("retry", {
+        requestId,
+        operation: operationName,
+        attempt: attempt + 1,
+        maxRetries: MAX_RETRIES,
+        delayMs: delay,
+        error: lastError.message.slice(0, 200)
+      });
+      await sleep(delay);
+    }
+  }
+  throw lastError ?? new RouteError(`${operationName} failed after retries`, 502);
+}
+
 export function modelTemperatureKey(provider: string, baseUrl: string, model: string): string {
   return `${provider}|${safeModelLogUrl(baseUrl).toLowerCase()}|${model.toLowerCase()}`;
 }
@@ -84,8 +147,7 @@ function isTemperatureRequestError(error: unknown): boolean {
   return /temperature/i.test(message) && /(?:only\s+1|default|unsupported|not\s+support|not\s+supported|invalid|unknown|unrecognized|for this model)/i.test(message);
 }
 
-export async function requestJsonPayload(url: string, options: RequestInit, timeoutMs: number): Promise<unknown> {
-  const requestId = randomUUID().slice(0, 8);
+async function doRequestJsonPayload(url: string, options: RequestInit, timeoutMs: number, requestId: string): Promise<unknown> {
   const startedAt = Date.now();
   logSakiModelEvent("request", {
     requestId,
@@ -131,7 +193,12 @@ export async function requestJsonPayload(url: string, options: RequestInit, time
       error: message,
       ...(sakiVerboseModelLogsEnabled() ? { responsePreview: compactDebugText(text, 1200) } : {})
     });
-    throw new RouteError(`Model API request failed with ${response.status}: ${message}`, statusCode);
+    const retryAfter = parseRetryAfterMs(response);
+    const error = new RouteError(`Model API request failed with ${response.status}: ${message}`, statusCode);
+    if (retryAfter && statusCode === RATE_LIMIT_STATUS) {
+      await sleep(retryAfter);
+    }
+    throw error;
   }
 
   logSakiModelEvent("response", {
@@ -144,13 +211,22 @@ export async function requestJsonPayload(url: string, options: RequestInit, time
   return payload ?? {};
 }
 
-export async function requestStreamingPayload<T>(
+export async function requestJsonPayload(url: string, options: RequestInit, timeoutMs: number): Promise<unknown> {
+  const requestId = randomUUID().slice(0, 8);
+  return withRetry(
+    () => doRequestJsonPayload(url, options, timeoutMs, requestId),
+    "requestJsonPayload",
+    requestId
+  );
+}
+
+async function doRequestStreamingPayload<T>(
   url: string,
   options: RequestInit,
   timeoutMs: number,
-  consume: (response: Response) => Promise<T>
+  consume: (response: Response) => Promise<T>,
+  requestId: string
 ): Promise<T> {
-  const requestId = randomUUID().slice(0, 8);
   const startedAt = Date.now();
   logSakiModelEvent("stream.request", {
     requestId,
@@ -204,7 +280,12 @@ export async function requestStreamingPayload<T>(
         error: message,
         ...(sakiVerboseModelLogsEnabled() ? { responsePreview: compactDebugText(text, 1200) } : {})
       });
-      throw new RouteError(`Model API request failed with ${response.status}: ${message}`, statusCode);
+      const retryAfter = parseRetryAfterMs(response);
+      const error = new RouteError(`Model API request failed with ${response.status}: ${message}`, statusCode);
+      if (retryAfter && statusCode === RATE_LIMIT_STATUS) {
+        await sleep(retryAfter);
+      }
+      throw error;
     }
     if (!response.body) {
       throw new RouteError(`Model API response from ${url} did not include a stream.`, 502);
@@ -235,6 +316,20 @@ export async function requestStreamingPayload<T>(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function requestStreamingPayload<T>(
+  url: string,
+  options: RequestInit,
+  timeoutMs: number,
+  consume: (response: Response) => Promise<T>
+): Promise<T> {
+  const requestId = randomUUID().slice(0, 8);
+  return withRetry(
+    () => doRequestStreamingPayload(url, options, timeoutMs, consume, requestId),
+    "requestStreamingPayload",
+    requestId
+  );
 }
 
 export async function requestOpenAiCompatibleJsonPayload(

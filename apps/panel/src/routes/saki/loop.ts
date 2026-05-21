@@ -99,7 +99,9 @@ function toolDisplayArgs(call: ParsedToolCall): string {
 
 function renderToolCall(call: ParsedToolCall): string {
   const args = toolCallArgsForDisplay(call);
-  return `${call.name}(${JSON.stringify(args)})`;
+  const OT = String.fromCharCode(60) + 'tool_call' + String.fromCharCode(62);
+  const CT = String.fromCharCode(60) + '/tool_call' + String.fromCharCode(62);
+  return OT + '\n' + JSON.stringify({ name: call.name, arguments: args }) + '\n' + CT;
 }
 
 function toolTargetPath(call: ParsedToolCall): string {
@@ -177,18 +179,26 @@ function toolOutcomeMessage(call: ParsedToolCall, action: SakiAgentAction): stri
   return "\u8FD9\u4E00\u6B65\u5B8C\u6210\u4E86\u3002";
 }
 
-export async function emitAgentFinalText(events: SakiAgentRunEvents | undefined, text: string): Promise<void> {
+export async function emitAgentFinalText(events: SakiAgentRunEvents | undefined, text: string, alreadyForwarded?: string): Promise<void> {
   if (!events?.delta || !text) return;
-  const chunkSize = 28;
-  for (let index = 0; index < text.length; index += chunkSize) {
-    events.delta(text.slice(index, index + chunkSize));
-    if (text.length > chunkSize) {
-      await new Promise((resolve) => setTimeout(resolve, 8));
+  let emitText = text;
+  if (alreadyForwarded) {
+    const af = alreadyForwarded.trim();
+    if (af && emitText.trimStart().startsWith(af)) {
+      emitText = emitText.trimStart().slice(af.length).trimStart();
+    } else if (af && emitText.includes(af)) {
+      const idx = emitText.indexOf(af);
+      if (idx !== -1 && idx < emitText.length * 0.5) {
+        emitText = emitText.slice(idx + af.length).trimStart();
+      }
     }
+    if (!emitText) return;
   }
+  events.delta(emitText);
 }
 
 function looksLikeToolCallPayload(text: string): boolean {
+  if (/<tool_call>/i.test(text)) return true;
   if (/"?tool_calls"?\s*:/i.test(text) || /"?toolCalls"?\s*:/i.test(text)) return true;
   if (/"(?:listInstances|describeInstance|instanceLogs|listFiles|readFile|writeFile|replaceInFile|editLines|mkdir|deletePath|renamePath|uploadBase64|runCommand|sendInput|sendCommand|instanceAction|updateInstanceSettings|searchAudit|listTasks|createScheduledTask|updateScheduledTask|deleteScheduledTask|runTask|taskRuns|searchWeb|browse|crawl|researchWeb|listSkills|searchSkills|readSkill|reportProgress|respond)"\s*:/i.test(text)) return true;
   return /"name"\s*:\s*"(?:listInstances|describeInstance|instanceLogs|listFiles|readFile|writeFile|replaceInFile|editLines|mkdir|deletePath|renamePath|uploadBase64|runCommand|sendInput|sendCommand|instanceAction|updateInstanceSettings|searchAudit|listTasks|createScheduledTask|updateScheduledTask|deleteScheduledTask|runTask|taskRuns|searchWeb|browse|crawl|researchWeb|listSkills|searchSkills|readSkill|reportProgress|respond)"/i.test(text);
@@ -211,6 +221,11 @@ function safeAgentFinalText(text: string): string {
   if (!cleaned) return "Saki \u6682\u65F6\u6CA1\u6709\u5F62\u6210\u53EF\u7528\u56DE\u590D\u3002";
   if (looksLikeToolCallPayload(cleaned)) {
     return "\u6211\u521A\u624D\u751F\u6210\u4E86\u5DE5\u5177\u8C03\u7528\u8349\u7A3F\uFF0C\u4F46\u683C\u5F0F\u6CA1\u6709\u901A\u8FC7\u6821\u9A8C\uFF0C\u6240\u4EE5\u6CA1\u6709\u628A\u5B83\u5F53\u4F5C\u56DE\u590D\u5C55\u793A\u3002\u8BF7\u518D\u8BD5\u4E00\u6B21\uFF0C\u6211\u4F1A\u7EE7\u7EED\u7528\u5DE5\u5177\u5904\u7406\u3002";
+  }
+  const jsonStart = cleaned.indexOf("{");
+  if (jsonStart > 0) {
+    const textPart = cleaned.slice(0, jsonStart).trim();
+    if (textPart) return textPart;
   }
   return cleaned;
 }
@@ -467,8 +482,10 @@ export async function runSakiAgent(
 
   rebuildCurrentPrompt();
 
+  let lastForwardedDeltaContent: string | undefined;
+
   const finishAgentResponse = async (reason: string, message: string): Promise<SakiChatResponse> => {
-    await emitAgentFinalText(events, message);
+    await emitAgentFinalText(events, message, lastForwardedDeltaContent);
     return {
       source: "direct-model",
       message,
@@ -584,7 +601,15 @@ export async function runSakiAgent(
           message: "\u521A\u624D\u7684\u56DE\u590D\u8FD8\u662F\u8FDB\u5EA6\u8BF4\u660E\uFF0C\u6211\u4F1A\u7EE7\u7EED\u8BA9 Saki \u6267\u884C\u540E\u7EED\u5DE5\u5177\u3002",
           status: "running"
         });
-        appendAgentScratchpad(`\nAssistant visible note: ${redactSensitiveText(cleaned).slice(0, 1200)}\n\nSystem correction: Your previous output was only a progress note about future tool work. Continue the same user task now. If more work is needed, output ONLY one JSON object using this shape: {"tool_calls":[{"name":"readFile","arguments":{"path":"relative/path","note":"short visible note"}}]}. If the task is complete, use: {"tool_calls":[{"name":"respond","arguments":{"text":"final answer"}}]}. Do not use shorthand JSON. Do not include prose before or after JSON. Never say you will call, read, run, inspect, edit, or verify something unless that same response includes the matching tool call.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
+        appendAgentScratchpad(`\nAssistant visible note: ${redactSensitiveText(cleaned).slice(0, 1200)}\n\nSystem correction: Your previous output was only a progress note about future tool work. Continue the same user task now. If more work is needed, output tool calls using XML tags like this:
+<tool_call>
+{"name": "readFile", "arguments": {"path": "relative/path", "note": "short visible note"}}
+</tool_call>
+If the task is complete, use:
+<tool_call>
+{"name": "respond", "arguments": {"text": "final answer"}}
+</tool_call>
+arguments must be an object. Never use bare JSON like {"tool_calls":[...]}. Never include prose before or after the XML blocks. Never use Markdown fences.\nIMPORTANT: For editing files, use editLines or replaceInFile — NOT writeFile. writeFile is for new files only with \"content\" parameter.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
         continue;
       }
       const shouldRetry = !cleaned || looksLikeToolCallPayload(cleaned);
@@ -596,7 +621,7 @@ export async function runSakiAgent(
           message: cleaned ? "\u521A\u624D\u7684\u5DE5\u5177\u8C03\u7528\u683C\u5F0F\u6CA1\u6709\u901A\u8FC7\u6821\u9A8C\uFF0C\u6211\u4F1A\u7528\u66F4\u660E\u786E\u7684\u683C\u5F0F\u91CD\u8BD5\u3002" : "\u6A21\u578B\u8FD9\u8F6E\u6CA1\u6709\u7ED9\u51FA\u6709\u6548\u5185\u5BB9\uFF0C\u6211\u4F1A\u518D\u8BA9\u5B83\u5224\u65AD\u4E00\u6B21\u3002",
           status: "running"
         });
-        appendAgentScratchpad(`\n\nSystem correction: Your previous output did not produce usable content or valid tool calls. If you need a tool, output ONLY one JSON object using this exact wrapper: {"tool_calls":[{"name":"toolName","arguments":{"note":"short visible note"}}]}. arguments must be an object. Invalid: {"readFile":["a.py"]}, {"tool_calls":[{"readFile":"a.py"}]}, Markdown fences, or prose around the JSON. If no tool is needed, answer naturally in the user's language. When writing file content in JSON, escape newlines as \\n and do not place raw line breaks inside a JSON string.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
+        appendAgentScratchpad(`\n\nSystem correction: Your previous output did not produce usable content or valid tool calls. If you need a tool, output tool calls using XML tags like this:\n<tool_call>\n{"name": "toolName", "arguments": {"note": "short visible note"}}\n</tool_call>\narguments must be an object. Never use bare JSON like {"tool_calls":[...]}. Never include prose before or after the XML blocks. Never use Markdown fences. If no tool is needed, answer naturally in the user's language. When writing file content in JSON arguments, escape newlines as \\n and do not place raw line breaks inside a JSON string.\nIMPORTANT: For editing existing files, use editLines({ path, startLine, endLine, replacement }) or replaceInFile({ path, oldText, newText }) — NOT writeFile. writeFile is only for creating NEW files, and the parameter is \"content\" (not \"text\"). If the file content is long, break it into multiple editLines calls of 20-50 lines each. Always readFile first to check current line numbers.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
         continue;
       }
 
@@ -606,8 +631,9 @@ export async function runSakiAgent(
 
     invalidReplies = 0;
     progressOnlyReplies = 0;
+    if (turn.forwardedDeltaContent) lastForwardedDeltaContent = turn.forwardedDeltaContent;
     const visibleAssistantText = stripThinking(turn.content).trim();
-    if (visibleAssistantText && !looksLikeToolCallPayload(visibleAssistantText)) {
+    if (visibleAssistantText && !looksLikeToolCallPayload(visibleAssistantText) && !turn.forwardedDeltaText) {
       emitAgentNarration(events, visibleAssistantText);
       appendAgentScratchpad(`\nAssistant visible note: ${redactSensitiveText(visibleAssistantText).slice(0, 1200)}\n`);
     }

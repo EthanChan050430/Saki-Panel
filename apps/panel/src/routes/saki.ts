@@ -2963,8 +2963,11 @@ function extractOpenAiChatText(payload: unknown): string {
 
 function parseToolCallsFromText(text: string): ParsedToolCall[] {
   try {
-    return parseStructuredToolCalls(text);
-  } catch {
+    const result = parseStructuredToolCalls(text);
+    logSakiModelEvent("agent.parseToolCalls", { inputChars: text.length, resultCount: result.length, preview: text.slice(0, 300) });
+    return result;
+  } catch (error) {
+    logSakiModelEvent("agent.parseToolCalls.error", { inputChars: text.length, error: error instanceof Error ? error.message : String(error), preview: text.slice(0, 300) });
     return [];
   }
 }
@@ -3415,22 +3418,70 @@ async function callConfiguredPromptStream(input: SakiChatRequest, prompt: string
   return callOpenAiCompatibleModelStream(provider, config, input, prompt, onDelta);
 }
 
-async function callConfiguredAgentTurn(runtime: SakiAgentRuntime, prompt: string): Promise<SakiModelToolTurn> {
+async function callConfiguredAgentTurn(runtime: SakiAgentRuntime, prompt: string, onDelta?: (text: string) => void): Promise<SakiModelToolTurn> {
   const provider = normalizeProviderId(runtime.config.provider);
   const config = agentModelConfig(runtime.config);
   const startedAt = Date.now();
   try {
     let turn: SakiModelToolTurn;
-    if (provider === "ollama") {
-      turn = await callOllamaAgentTurn(config, runtime.input, prompt);
-    } else if (provider === "lmstudio") {
-      turn = await callOpenAiCompatibleAgentTurnWithFallback("lmstudio", config, runtime.input, prompt);
-    } else if (provider === "anthropic") {
-      turn = await callAnthropicAgentTurn(config, runtime.input, prompt);
-    } else if (provider === "copilot") {
-      turn = await callCopilotSdkAgentTurn(config, runtime.input, prompt);
+    if (onDelta) {
+      let accumulated = "";
+      let stoppedStreaming = false;
+      let forwardedIndex = 0;
+      const stopPatterns = [
+        "```json",
+        '{"tool_calls"',
+        '{"toolcalls"',
+        '<tool_call>',
+      ];
+      const maxPrefixLen = Math.max(...stopPatterns.map(p => p.length));
+      const filteredDelta = (text: string) => {
+        accumulated += text;
+        if (stoppedStreaming) return;
+        const lower = accumulated.toLowerCase();
+        let stopIndex = -1;
+        for (const pat of stopPatterns) {
+          const idx = lower.indexOf(pat.toLowerCase());
+          if (idx !== -1 && (stopIndex === -1 || idx < stopIndex)) stopIndex = idx;
+        }
+        if (stopIndex !== -1) {
+          stoppedStreaming = true;
+          if (stopIndex > forwardedIndex) onDelta(accumulated.slice(forwardedIndex, stopIndex));
+          forwardedIndex = stopIndex;
+          return;
+        }
+        const safeEnd = accumulated.length - maxPrefixLen;
+        if (safeEnd > forwardedIndex) {
+          onDelta(accumulated.slice(forwardedIndex, safeEnd));
+          forwardedIndex = safeEnd;
+        }
+      };
+
+      let content: string;
+      if (provider === "ollama") {
+        content = await callOllamaModelStream(config, runtime.input, prompt, filteredDelta);
+      } else if (provider === "lmstudio") {
+        content = await callOpenAiCompatibleModelStream("lmstudio", config, runtime.input, prompt, filteredDelta);
+      } else if (provider === "anthropic") {
+        content = await callAnthropicModelStream(config, runtime.input, prompt, filteredDelta);
+      } else if (provider === "copilot") {
+        content = await callCopilotSdkModelStream(config, runtime.input, prompt, filteredDelta);
+      } else {
+        content = await callOpenAiCompatibleModelStream(provider, config, runtime.input, prompt, filteredDelta);
+      }
+      turn = { content, toolCalls: parseToolCallsFromText(content), forwardedDeltaText: forwardedIndex > 0, forwardedDeltaContent: accumulated.slice(0, forwardedIndex) };
     } else {
-      turn = await callOpenAiCompatibleAgentTurnWithFallback(provider, config, runtime.input, prompt);
+      if (provider === "ollama") {
+        turn = { ...(await callOllamaAgentTurn(config, runtime.input, prompt)), forwardedDeltaText: false };
+      } else if (provider === "lmstudio") {
+        turn = { ...(await callOpenAiCompatibleAgentTurnWithFallback("lmstudio", config, runtime.input, prompt)), forwardedDeltaText: false };
+      } else if (provider === "anthropic") {
+        turn = { ...(await callAnthropicAgentTurn(config, runtime.input, prompt)), forwardedDeltaText: false };
+      } else if (provider === "copilot") {
+        turn = { ...(await callCopilotSdkAgentTurn(config, runtime.input, prompt)), forwardedDeltaText: false };
+      } else {
+        turn = { ...(await callOpenAiCompatibleAgentTurnWithFallback(provider, config, runtime.input, prompt)), forwardedDeltaText: false };
+      }
     }
     logSakiModelEvent("agent.turn", {
       provider,
@@ -3443,6 +3494,8 @@ async function callConfiguredAgentTurn(runtime: SakiAgentRuntime, prompt: string
       toolCalls: turn.toolCalls.map((call) => call.name),
       durationMs: Date.now() - startedAt
     });
+    console.info(`[Saki debug] agent.turn content:\n${turn.content}`);
+    console.info(`[Saki debug] agent.turn toolCalls (${turn.toolCalls.length}):\n${JSON.stringify(turn.toolCalls, null, 2)}`);
     return turn;
   } catch (error) {
     logSakiModelEvent("agent.turn.error", {
@@ -3645,7 +3698,9 @@ function escapeToolArg(value: string): string {
 }
 
 function renderToolCall(call: ParsedToolCall): string {
-  return JSON.stringify({ name: call.name, arguments: Array.isArray(call.args) ? call.args : call.args });
+  const OT = String.fromCharCode(60) + 'tool_call' + String.fromCharCode(62);
+  const CT = String.fromCharCode(60) + '/tool_call' + String.fromCharCode(62);
+  return OT + '\n' + JSON.stringify({ name: call.name, arguments: Array.isArray(call.args) ? call.args : call.args }) + '\n' + CT;
 }
 
 function numericArg(value: unknown, fallback: number, min: number, max: number): number {
@@ -3666,6 +3721,8 @@ interface SakiToolSchema {
 interface SakiModelToolTurn {
   content: string;
   toolCalls: ParsedToolCall[];
+  forwardedDeltaText?: boolean;
+  forwardedDeltaContent?: string;
 }
 
 const instanceLookupSchema = { type: "string", description: "Instance id or name. Omit to use the active instance." };
@@ -3822,6 +3879,32 @@ function parseJsonMaybe(value: unknown): unknown {
   }
 }
 
+const parameterAliases: Record<string, Record<string, string>> = {
+  writeFile: { text: "content", body: "content", data: "content", fileContent: "content", file_content: "content", source: "content" },
+  replaceInFile: { find: "oldText", search: "oldText", match: "oldText", replace: "newText", with: "newText", replacement: "newText" },
+  editLines: { lines: "replacement", content: "replacement", text: "replacement", newContent: "replacement", new_content: "replacement" },
+  readFile: { file: "path", filename: "path", filepath: "path" },
+  runCommand: { cmd: "command", shell: "command", script: "command" },
+  sendInput: { value: "text", input: "text", content: "text" },
+  listFiles: { dir: "path", directory: "path", folder: "path" },
+  mkdir: { dir: "path", directory: "path", folder: "path" },
+  deletePath: { file: "path", filepath: "path" },
+  renamePath: { source: "fromPath", src: "fromPath", dest: "toPath", destination: "toPath" },
+};
+
+function applyParameterAliases(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
+  const aliases = parameterAliases[toolName.toLowerCase()];
+  if (!aliases) return args;
+  const result = { ...args };
+  for (const [alias, canonical] of Object.entries(aliases)) {
+    if (alias in result && !(canonical in result)) {
+      result[canonical] = result[alias];
+      delete result[alias];
+    }
+  }
+  return result;
+}
+
 function normalizeStructuredToolCall(raw: unknown): ParsedToolCall {
   const item = objectValue(raw);
   if (!item) throw new RouteError("Tool call must be an object.", 400);
@@ -3830,8 +3913,9 @@ function normalizeStructuredToolCall(raw: unknown): ParsedToolCall {
   const schema = canonicalToolSchema(name);
   if (!schema) throw new RouteError(`Unknown tool '${name || "(missing)"}'.`, 400);
   const rawArgs = parseJsonMaybe(item.arguments ?? item.args ?? item.input ?? fn?.arguments ?? {});
-  const args = objectValue(rawArgs);
+  let args = objectValue(rawArgs);
   if (!args) throw new RouteError(`Arguments for ${schema.name} must be a JSON object.`, 400);
+  args = applyParameterAliases(schema.name, args);
   const parameterObject = objectValue(schema.parameters);
   const required = Array.isArray(parameterObject?.required) ? parameterObject.required.map(trimString).filter(Boolean) : [];
   const allowEmptyRequired = new Set(["content", "newText", "replacement", "text"]);
@@ -3921,13 +4005,133 @@ function parseShorthandToolCalls(root: Record<string, unknown>): ParsedToolCall[
   return calls;
 }
 
+function extractBalancedJsonObject(text: string): string | null {
+  for (let start = 0; start < text.length; start += 1) {
+    if (text[start] !== "{") continue;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < text.length; index += 1) {
+      const char = text[index];
+      if (inString) {
+        if (escaped) { escaped = false; continue; }
+        if (char === "\\") { escaped = true; continue; }
+        if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') { inString = true; continue; }
+      if (char === "{") depth += 1;
+      if (char === "}") {
+        depth -= 1;
+        if (depth === 0) return text.slice(start, index + 1);
+      }
+    }
+  }
+  return null;
+}
+
+function repairTruncatedJson(text: string): string | null {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  const slice = text.slice(start);
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  const stack: string[] = [];
+  for (let i = 0; i < slice.length; i += 1) {
+    const char = slice[i];
+    if (inString) {
+      if (escaped) { escaped = false; continue; }
+      if (char === "\\") { escaped = true; continue; }
+      if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') { inString = true; continue; }
+    if (char === "{") { depth += 1; stack.push("}"); }
+    if (char === "[") { depth += 1; stack.push("]"); }
+    if (char === "}" || char === "]") {
+      depth -= 1;
+      if (stack.length > 0) stack.pop();
+    }
+  }
+  if (depth <= 0) return null;
+  let result = slice;
+  if (inString) result += '"';
+  while (stack.length > 0) {
+    result += stack.pop();
+  }
+  return result;
+}
+
+function parseXmlToolCalls(source: string): ParsedToolCall[] | null {
+  const stripped = stripThinking(source).trim();
+  const openRe = new RegExp("<tool_call>", "gi");
+  if (!openRe.test(stripped)) return null;
+
+  const calls: ParsedToolCall[] = [];
+  const segments = stripped.split(new RegExp("</tool_call>", "gi"));
+
+  for (const segment of segments) {
+    const match = segment.match(new RegExp("<tool_call>" + '([\\s\\S]*)', "i"));
+    if (!match) continue;
+    const inner = match[1]?.trim() ?? "";
+    if (!inner) continue;
+    try {
+      const parsed = parseJsonTolerant(inner);
+      const item = objectValue(parsed);
+      if (item && ("name" in item || "tool" in item || "function" in item)) {
+        calls.push(normalizeStructuredToolCall(item));
+      }
+    } catch {
+      try {
+        const balanced = extractBalancedJsonObject(inner);
+        if (balanced) {
+          const parsed = parseJsonTolerant(balanced);
+          const item = objectValue(parsed);
+          if (item && ("name" in item || "tool" in item || "function" in item)) {
+            calls.push(normalizeStructuredToolCall(item));
+            continue;
+          }
+        }
+      } catch { /* next fallback */ }
+      try {
+        const balancedList = extractAllBalancedJsonObjects(inner);
+        for (const balanced of balancedList) {
+          try {
+            const parsed = parseJsonTolerant(balanced);
+            const item = objectValue(parsed);
+            if (item && ("name" in item || "tool" in item || "function" in item)) {
+              calls.push(normalizeStructuredToolCall(item));
+              break;
+            }
+          } catch { continue; }
+        }
+      } catch { /* next fallback */ }
+      try {
+        const repaired = repairTruncatedJson(inner);
+        if (repaired) {
+          const parsed = parseJsonTolerant(repaired);
+          const item = objectValue(parsed);
+          if (item && ("name" in item || "tool" in item || "function" in item)) {
+            calls.push(normalizeStructuredToolCall(item));
+          }
+        }
+      } catch {
+        // Skip malformed XML tool call blocks
+      }
+    }
+  }
+
+  return calls.length > 0 ? calls : null;
+}
 function stripJsonFences(value: string): string {
   const trimmed = stripThinking(value).trim();
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
   return (fenced?.[1] ?? trimmed).trim();
 }
 
-function extractBalancedJsonObject(text: string): string | null {
+function extractAllBalancedJsonObjects(text: string): string[] {
+  const results: string[] = [];
   for (let start = 0; start < text.length; start += 1) {
     if (text[start] !== "{") continue;
     let depth = 0;
@@ -3954,30 +4158,62 @@ function extractBalancedJsonObject(text: string): string | null {
       if (char === "{") depth += 1;
       if (char === "}") {
         depth -= 1;
-        if (depth === 0) return text.slice(start, index + 1);
+        if (depth === 0) {
+          results.push(text.slice(start, index + 1));
+          start = index; // Move start forward
+          break;
+        }
       }
     }
   }
-  return null;
+  return results;
 }
 
 function extractJsonPayload(source: string): unknown {
+  const fenced = source.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced && fenced[1]) {
+    try {
+      return parseJsonTolerant(fenced[1].trim());
+    } catch {}
+  }
+  
   const text = stripJsonFences(source);
   try {
     return parseJsonTolerant(text);
   } catch {
-    const balanced = extractBalancedJsonObject(text);
-    if (balanced) {
-      return parseJsonTolerant(balanced);
+    const balancedList = extractAllBalancedJsonObjects(text);
+    for (const balanced of [...balancedList].reverse()) {
+      try {
+        const parsed = parseJsonTolerant(balanced);
+        const root = objectValue(parsed);
+        if (root && (root.tool_calls || root.toolCalls || root.tools || root.name || root.tool || root.function)) {
+          return parsed;
+        }
+        const keys = Object.keys(root || {});
+        if (keys.some(k => canonicalToolSchema(k))) return parsed;
+      } catch {
+        continue;
+      }
+    }
+    if (balancedList.length > 0) {
+      const last = balancedList[balancedList.length - 1];
+      if (last) {
+        try {
+          return parseJsonTolerant(last);
+        } catch {}
+      }
     }
     throw new RouteError("Model response did not contain strict JSON tool calls.", 400);
   }
 }
 
 function parseStructuredToolCalls(source: string): ParsedToolCall[] {
+  const xmlCalls = parseXmlToolCalls(source);
+  if (xmlCalls) return xmlCalls;
+
   const payload = extractJsonPayload(source);
   const root = objectValue(payload);
-  if (!root) throw new RouteError("Model JSON response must be an object.", 400);
+  if (!root) throw new RouteError("Model response must contain tool calls in XML or JSON format.", 400);
   const calls =
     Array.isArray(root.tool_calls)
       ? root.tool_calls
@@ -3990,12 +4226,12 @@ function parseStructuredToolCalls(source: string): ParsedToolCall[] {
   if ("name" in root || "tool" in root || "function" in root) return [normalizeStructuredToolCall(root)];
   const shorthandCalls = parseShorthandToolCalls(root);
   if (shorthandCalls.length) return shorthandCalls;
-  throw new RouteError("Model JSON response must include tool_calls.", 400);
+  throw new RouteError("Model response must contain tool calls in XML or JSON format.", 400);
 }
 
 function toolArgs(call: ParsedToolCall): Record<string, unknown> {
   if (Array.isArray(call.args)) {
-    throw new RouteError("Legacy text tool calls are no longer accepted. Return strict JSON tool_calls.", 400);
+    throw new RouteError("Legacy text tool calls are no longer accepted. Return tool calls in XML or JSON format.", 400);
   }
   return call.args;
 }
@@ -6150,10 +6386,11 @@ listInstances, describeInstance, instanceLogs, listFiles, readFile, writeFile, r
 
 Tool protocol:
 - Prefer native function/tool calling when available.
-- Without native tool calling, output exactly one JSON object and no prose: {"tool_calls":[{"name":"toolName","arguments":{"note":"short visible note"}}]}
+- You may output a thinking process in <think> tags or write natural language to the user.
+- If you need tools, output exactly one JSON object AT THE VERY END of your response: {"tool_calls":[{"name":"toolName","arguments":{"note":"short visible note"}}]}
 - arguments must be a JSON object. Put path, command, text, startLine, lineCount, limit, timeoutMs, and note inside arguments.
 - To call several tools, put several objects in the same tool_calls array.
-- Never use shorthand JSON like {"readFile":["a.py"]}, Markdown fences, or prose around JSON.
+- Never use shorthand JSON like {"readFile":["a.py"]}.
 - After observations, continue from the working notes.`;
 }
 
@@ -6305,18 +6542,32 @@ function toolOutcomeMessage(call: ParsedToolCall, action: SakiAgentAction): stri
   return "这一步完成了。";
 }
 
-async function emitAgentFinalText(events: SakiAgentRunEvents | undefined, text: string): Promise<void> {
+async function emitAgentFinalText(events: SakiAgentRunEvents | undefined, text: string, alreadyForwarded?: string): Promise<void> {
   if (!events?.delta || !text) return;
+  let emitText = text;
+  if (alreadyForwarded) {
+    const af = alreadyForwarded.trim();
+    if (af && emitText.trimStart().startsWith(af)) {
+      emitText = emitText.trimStart().slice(af.length).trimStart();
+    } else if (af && emitText.includes(af)) {
+      const idx = emitText.indexOf(af);
+      if (idx !== -1 && idx < emitText.length * 0.5) {
+        emitText = emitText.slice(idx + af.length).trimStart();
+      }
+    }
+    if (!emitText) return;
+  }
   const chunkSize = 28;
-  for (let index = 0; index < text.length; index += chunkSize) {
-    events.delta(text.slice(index, index + chunkSize));
-    if (text.length > chunkSize) {
+  for (let index = 0; index < emitText.length; index += chunkSize) {
+    events.delta(emitText.slice(index, index + chunkSize));
+    if (emitText.length > chunkSize) {
       await new Promise((resolve) => setTimeout(resolve, 8));
     }
   }
 }
 
 function looksLikeToolCallPayload(text: string): boolean {
+  if (/<tool_call>/i.test(text)) return true;
   if (/"?tool_calls"?\s*:/i.test(text) || /"?toolCalls"?\s*:/i.test(text)) return true;
   if (/"(?:listInstances|describeInstance|instanceLogs|listFiles|readFile|writeFile|replaceInFile|editLines|mkdir|deletePath|renamePath|uploadBase64|runCommand|sendInput|sendCommand|instanceAction|updateInstanceSettings|searchAudit|listTasks|createScheduledTask|updateScheduledTask|deleteScheduledTask|runTask|taskRuns|searchWeb|browse|crawl|researchWeb|listSkills|searchSkills|readSkill|reportProgress|respond)"\s*:/i.test(text)) return true;
   return /"name"\s*:\s*"(?:listInstances|describeInstance|instanceLogs|listFiles|readFile|writeFile|replaceInFile|editLines|mkdir|deletePath|renamePath|uploadBase64|runCommand|sendInput|sendCommand|instanceAction|updateInstanceSettings|searchAudit|listTasks|createScheduledTask|updateScheduledTask|deleteScheduledTask|runTask|taskRuns|searchWeb|browse|crawl|researchWeb|listSkills|searchSkills|readSkill|reportProgress|respond)"/i.test(text);
@@ -6605,8 +6856,10 @@ async function runSakiAgent(
     continuationPromptChars: continuationPrompt.length
   });
 
+  let lastForwardedDeltaContent: string | undefined;
+
   const finishAgentResponse = async (reason: string, message: string): Promise<SakiChatResponse> => {
-    await emitAgentFinalText(events, message);
+    await emitAgentFinalText(events, message, lastForwardedDeltaContent);
     logSakiModelEvent("agent.run.done", {
       reason,
       loops: loopsUsed,
@@ -6722,7 +6975,7 @@ async function runSakiAgent(
     loopsUsed = loop + 1;
     let turn: SakiModelToolTurn;
     try {
-      turn = await callConfiguredAgentTurn(runtime, currentPrompt);
+      turn = await callConfiguredAgentTurn(runtime, currentPrompt, events?.delta);
     } catch (error) {
       if (toolExecutions > 0 || actions.length > 0) {
         const reason = error instanceof Error ? error.message : String(error);
@@ -6735,6 +6988,8 @@ async function runSakiAgent(
     }
     const toolCalls = turn.toolCalls;
     if (toolCalls.length === 0) {
+      console.info(`[Saki debug] NO tool calls parsed. looksLikeToolCallPayload: ${looksLikeToolCallPayload(stripThinking(turn.content).trim())}`);
+      console.info(`[Saki debug] Full content for debugging:\n${turn.content}`);
       const cleaned = stripThinking(turn.content).trim();
       const progressOnlyToolIntent = looksLikeProgressOnlyToolIntent(cleaned);
       if (progressOnlyToolIntent && progressOnlyReplies < maxAgentProgressOnlyRetries) {
@@ -6746,7 +7001,7 @@ async function runSakiAgent(
           message: "\u521a\u624d\u7684\u56de\u590d\u8fd8\u662f\u8fdb\u5ea6\u8bf4\u660e\uff0c\u6211\u4f1a\u7ee7\u7eed\u8ba9 Saki \u6267\u884c\u540e\u7eed\u5de5\u5177\u3002",
           status: "running"
         });
-        appendAgentScratchpad(`\nAssistant visible note: ${redactSensitiveText(cleaned).slice(0, 1200)}\n\nSystem correction: Your previous output was only a progress note about future tool work. Continue the same user task now. If more work is needed, output ONLY one JSON object using this shape: {"tool_calls":[{"name":"readFile","arguments":{"path":"relative/path","note":"short visible note"}}]}. If the task is complete, use: {"tool_calls":[{"name":"respond","arguments":{"text":"final answer"}}]}. Do not use shorthand JSON. Do not include prose before or after JSON. Never say you will call, read, run, inspect, edit, or verify something unless that same response includes the matching tool call.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
+        appendAgentScratchpad(`\nAssistant visible note: ${redactSensitiveText(cleaned).slice(0, 1200)}\n\nSystem correction: Your previous output was only a progress note about future tool work. Continue the same user task now. If more work is needed, output tool calls using XML tags like this:\n<tool_call>\n{"name": "readFile", "arguments": {"path": "relative/path", "note": "short visible note"}}\n</tool_call>\nIf the task is complete, use:\n<tool_call>\n{"name": "respond", "arguments": {"text": "final answer"}}\n</tool_call>\narguments must be an object. Never use bare JSON like {"tool_calls":[...]}. Never include prose before or after the XML blocks. Never say you will call, read, run, inspect, edit, or verify something unless that same response includes the matching tool call.\nIMPORTANT: For editing files, use editLines or replaceInFile — NOT writeFile. writeFile is for new files only with "content" parameter.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
         continue;
       }
       const shouldRetry = !cleaned || looksLikeToolCallPayload(cleaned);
@@ -6758,7 +7013,7 @@ async function runSakiAgent(
           message: cleaned ? "刚才的工具调用格式没有通过校验，我会用更明确的格式重试。" : "模型这轮没有给出有效内容，我会再让它判断一次。",
           status: "running"
         });
-        appendAgentScratchpad(`\n\nSystem correction: Your previous output did not produce usable content or valid tool calls. If you need a tool, output ONLY one JSON object using this exact wrapper: {"tool_calls":[{"name":"toolName","arguments":{"note":"short visible note"}}]}. arguments must be an object. Invalid: {"readFile":["a.py"]}, {"tool_calls":[{"readFile":"a.py"}]}, Markdown fences, or prose around the JSON. If no tool is needed, answer naturally in the user's language. When writing file content in JSON, escape newlines as \\n and do not place raw line breaks inside a JSON string.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
+        appendAgentScratchpad(`\n\nSystem correction: Your previous output did not produce usable content or valid tool calls. If you need a tool, output tool calls using XML tags like this:\n<tool_call>\n{"name": "toolName", "arguments": {"note": "short visible note"}}\n</tool_call>\narguments must be an object. Never use bare JSON like {"tool_calls":[...]}. Never include prose before or after the XML blocks. Never use Markdown fences. If no tool is needed, answer naturally in the user's language. When writing file content in JSON, escape newlines as \\n and do not place raw line breaks inside a JSON string.\nIMPORTANT: For editing existing files, use editLines({ path, startLine, endLine, replacement }) or replaceInFile({ path, oldText, newText }) — NOT writeFile. writeFile is only for creating NEW files, and the parameter is "content" (not "text"). If the file content is long, break it into multiple editLines calls of 20-50 lines each. Always readFile first to check current line numbers.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
         continue;
       }
 
@@ -6768,8 +7023,9 @@ async function runSakiAgent(
 
     invalidReplies = 0;
     progressOnlyReplies = 0;
+    if (turn.forwardedDeltaContent) lastForwardedDeltaContent = turn.forwardedDeltaContent;
     const visibleAssistantText = stripThinking(turn.content).trim();
-    if (visibleAssistantText && !looksLikeToolCallPayload(visibleAssistantText)) {
+    if (visibleAssistantText && !looksLikeToolCallPayload(visibleAssistantText) && !turn.forwardedDeltaText) {
       emitAgentNarration(events, visibleAssistantText);
       appendAgentScratchpad(`\nAssistant visible note: ${redactSensitiveText(visibleAssistantText).slice(0, 1200)}\n`);
     }

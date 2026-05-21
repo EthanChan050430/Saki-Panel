@@ -168,6 +168,32 @@ export function parseJsonMaybe(value: unknown): unknown {
   }
 }
 
+const parameterAliases: Record<string, Record<string, string>> = {
+  writeFile: { text: "content", body: "content", data: "content", fileContent: "content", file_content: "content", source: "content" },
+  replaceInFile: { find: "oldText", search: "oldText", match: "oldText", replace: "newText", with: "newText", replacement: "newText" },
+  editLines: { lines: "replacement", content: "replacement", text: "replacement", newContent: "replacement", new_content: "replacement" },
+  readFile: { file: "path", filename: "path", filepath: "path" },
+  runCommand: { cmd: "command", shell: "command", script: "command" },
+  sendInput: { value: "text", input: "text", content: "text" },
+  listFiles: { dir: "path", directory: "path", folder: "path" },
+  mkdir: { dir: "path", directory: "path", folder: "path" },
+  deletePath: { file: "path", filepath: "path" },
+  renamePath: { source: "fromPath", src: "fromPath", dest: "toPath", destination: "toPath" },
+};
+
+function applyParameterAliases(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
+  const aliases = parameterAliases[toolName.toLowerCase()];
+  if (!aliases) return args;
+  const result = { ...args };
+  for (const [alias, canonical] of Object.entries(aliases)) {
+    if (alias in result && !(canonical in result)) {
+      result[canonical] = result[alias];
+      delete result[alias];
+    }
+  }
+  return result;
+}
+
 export function normalizeStructuredToolCall(raw: unknown): ParsedToolCall {
   const item = objectValue(raw);
   if (!item) throw new RouteError("Tool call must be an object.", 400);
@@ -176,8 +202,9 @@ export function normalizeStructuredToolCall(raw: unknown): ParsedToolCall {
   const schema = canonicalToolSchema(name);
   if (!schema) throw new RouteError(`Unknown tool '${name || "(missing)"}'.`, 400);
   const rawArgs = parseJsonMaybe(item.arguments ?? item.args ?? item.input ?? fn?.arguments ?? {});
-  const args = objectValue(rawArgs);
+  let args = objectValue(rawArgs);
   if (!args) throw new RouteError(`Arguments for ${schema.name} must be a JSON object.`, 400);
+  args = applyParameterAliases(schema.name, args);
   const parameterObject = objectValue(schema.parameters);
   const required = Array.isArray(parameterObject?.required) ? parameterObject.required.map(trimString).filter(Boolean) : [];
   const allowEmptyRequired = new Set(["content", "newText", "replacement", "text"]);
@@ -267,6 +294,135 @@ export function parseShorthandToolCalls(root: Record<string, unknown>): ParsedTo
   return calls;
 }
 
+
+export function extractAllBalancedJsonObjects(text: string): string[] {
+  const results: string[] = [];
+  for (let start = 0; start < text.length; start += 1) {
+    if (text[start] !== "{") continue;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < text.length; index += 1) {
+      const char = text[index];
+      if (inString) {
+        if (escaped) { escaped = false; continue; }
+        if (char === "\\") { escaped = true; continue; }
+        if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') { inString = true; continue; }
+      if (char === "{") depth += 1;
+      if (char === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          results.push(text.slice(start, index + 1));
+          start = index;
+          break;
+        }
+      }
+    }
+  }
+  return results;
+}
+
+export function repairTruncatedJson(text: string): string | null {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  const slice = text.slice(start);
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  const stack: string[] = [];
+  for (let i = 0; i < slice.length; i += 1) {
+    const char = slice[i];
+    if (inString) {
+      if (escaped) { escaped = false; continue; }
+      if (char === "\\") { escaped = true; continue; }
+      if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') { inString = true; continue; }
+    if (char === "{") { depth += 1; stack.push("}"); }
+    if (char === "[") { depth += 1; stack.push("]"); }
+    if (char === "}" || char === "]") {
+      depth -= 1;
+      if (stack.length > 0) stack.pop();
+    }
+  }
+  if (depth <= 0) return null;
+  let result = slice;
+  if (inString) result += '"';
+  while (stack.length > 0) {
+    result += stack.pop();
+  }
+  return result;
+}
+
+export function parseXmlToolCalls(source: string): ParsedToolCall[] | null {
+  const stripped = stripThinking(source).trim();
+  const OT = String.fromCharCode(60) + "tool_call" + String.fromCharCode(62);
+  const CT = String.fromCharCode(60) + "/tool_call" + String.fromCharCode(62);
+  const openRe = new RegExp(OT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+  if (!openRe.test(stripped)) return null;
+
+  const calls: ParsedToolCall[] = [];
+  const closeRe = new RegExp(CT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+  const segments = stripped.split(closeRe);
+
+  for (const segment of segments) {
+    const match = segment.match(new RegExp(OT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "([\\s\\S]*)", "i"));
+    if (!match) continue;
+    const inner = match[1]?.trim() ?? "";
+    if (!inner) continue;
+    try {
+      const parsed = parseJsonTolerant(inner);
+      const item = objectValue(parsed);
+      if (item && ("name" in item || "tool" in item || "function" in item)) {
+        calls.push(normalizeStructuredToolCall(item));
+      }
+    } catch {
+      try {
+        const balanced = extractBalancedJsonObject(inner);
+        if (balanced) {
+          const parsed = parseJsonTolerant(balanced);
+          const item = objectValue(parsed);
+          if (item && ("name" in item || "tool" in item || "function" in item)) {
+            calls.push(normalizeStructuredToolCall(item));
+            continue;
+          }
+        }
+      } catch { /* next fallback */ }
+      try {
+        const balancedList = extractAllBalancedJsonObjects(inner);
+        for (const balanced of balancedList) {
+          try {
+            const parsed = parseJsonTolerant(balanced);
+            const item = objectValue(parsed);
+            if (item && ("name" in item || "tool" in item || "function" in item)) {
+              calls.push(normalizeStructuredToolCall(item));
+              break;
+            }
+          } catch { continue; }
+        }
+      } catch { /* next fallback */ }
+      try {
+        const repaired = repairTruncatedJson(inner);
+        if (repaired) {
+          const parsed = parseJsonTolerant(repaired);
+          const item = objectValue(parsed);
+          if (item && ("name" in item || "tool" in item || "function" in item)) {
+            calls.push(normalizeStructuredToolCall(item));
+          }
+        }
+      } catch {
+        // Skip malformed XML tool call blocks
+      }
+    }
+  }
+
+  return calls.length > 0 ? calls : null;
+}
+
 export function stripJsonFences(value: string): string {
   const trimmed = stripThinking(value).trim();
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
@@ -321,9 +477,12 @@ export function extractJsonPayload(source: string): unknown {
 }
 
 export function parseStructuredToolCalls(source: string): ParsedToolCall[] {
+  const xmlCalls = parseXmlToolCalls(source);
+  if (xmlCalls) return xmlCalls;
+
   const payload = extractJsonPayload(source);
   const root = objectValue(payload);
-  if (!root) throw new RouteError("Model JSON response must be an object.", 400);
+  if (!root) throw new RouteError("Model response must contain tool calls in XML or JSON format.", 400);
   const calls =
     Array.isArray(root.tool_calls)
       ? root.tool_calls
@@ -336,12 +495,12 @@ export function parseStructuredToolCalls(source: string): ParsedToolCall[] {
   if ("name" in root || "tool" in root || "function" in root) return [normalizeStructuredToolCall(root)];
   const shorthandCalls = parseShorthandToolCalls(root);
   if (shorthandCalls.length) return shorthandCalls;
-  throw new RouteError("Model JSON response must include tool_calls.", 400);
+  throw new RouteError("Model response must contain tool calls in XML or JSON format.", 400);
 }
 
 export function toolArgs(call: ParsedToolCall): Record<string, unknown> {
   if (Array.isArray(call.args)) {
-    throw new RouteError("Legacy text tool calls are no longer accepted. Return strict JSON tool_calls.", 400);
+    throw new RouteError("Legacy text tool calls are no longer accepted. Return tool calls in XML or JSON format.", 400);
   }
   return call.args;
 }

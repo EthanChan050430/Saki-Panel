@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CodeEditor, type CodeEditorHandle, type FindRange, languageFromFileName } from "./CodeEditor.js";
 import {
@@ -45,6 +45,7 @@ import {
   MemoryStick,
   Mic,
   Minimize2,
+  Moon,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
@@ -64,6 +65,7 @@ import {
   Settings,
   Sparkles,
   Square,
+  Sun,
   Terminal as TerminalIcon,
   TextQuote,
   Trash2,
@@ -1430,9 +1432,13 @@ function cssImageUrl(source: string): string {
   return `url("${source.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}")`;
 }
 
-function applyPanelAppearance(appearance: PanelAppearanceSettings): void {
-  document.documentElement.style.setProperty("--app-background-image", cssImageUrl(appearance.backgroundSrc));
-  document.documentElement.style.setProperty("--mobile-background-image", cssImageUrl(appearance.mobileBackgroundSrc));
+function applyPanelAppearance(appearance: PanelAppearanceSettings, darkMode: boolean): void {
+  const isDefaultBg = appearance.backgroundSrc === defaultPanelAppearance.backgroundSrc;
+  const isDefaultMobileBg = appearance.mobileBackgroundSrc === defaultPanelAppearance.mobileBackgroundSrc;
+  const bgSrc = (darkMode && isDefaultBg) ? "/assets/background_dark.png" : appearance.backgroundSrc;
+  const mobileBgSrc = (darkMode && isDefaultMobileBg) ? "/assets/background_mobile_dark.png" : appearance.mobileBackgroundSrc;
+  document.documentElement.style.setProperty("--app-background-image", cssImageUrl(bgSrc));
+  document.documentElement.style.setProperty("--mobile-background-image", cssImageUrl(mobileBgSrc));
   document.documentElement.style.setProperty("--login-cover-image", cssImageUrl(appearance.loginCoverSrc));
   document.title = appearance.appTitle || defaultPanelAppearance.appTitle;
 }
@@ -3820,10 +3826,20 @@ const sakiArtAssets = {
   normal: "/assets/expression/normal.png",
   thinking: "/assets/expression/think.png",
   worry: "/assets/expression/worry.png",
-  thinkingGif: "/assets/Thinking.gif"
+  thinkingGif: "/assets/Thinking.gif",
+  pickup1: "/assets/expression/pickup1.png",
+  pickup2: "/assets/expression/pickup2.png",
+  happy: "/assets/expression/happy.png",
+  OK: "/assets/expression/OK.png",
+  reading: "/assets/expression/reading.png",
+  upset: "/assets/expression/upset.png",
+  working: "/assets/expression/working.png",
+  checkfiles: "/assets/expression/checkfiles.png",
+  shy: "/assets/expression/shy.png"
 } as const;
 
 type SakiArtMood = "normal" | "thinking" | "worry";
+type SakiActivityMood = "working" | "reading" | "checkfiles" | "upset" | "happy" | "OK" | null;
 type SakiLauncherEdge = "left" | "right";
 type SakiLauncherSizeMode = "current" | "expanded" | "attached";
 
@@ -3995,21 +4011,70 @@ function sameSakiLauncherPosition(left: SakiLauncherPosition, right: SakiLaunche
   return Math.round(left.x) === Math.round(right.x) && Math.round(left.y) === Math.round(right.y) && (left.edge ?? null) === (right.edge ?? null);
 }
 
+function getSakiActivityExpressionSrc(activityMood: SakiActivityMood): string | null {
+  if (!activityMood) return null;
+  switch (activityMood) {
+    case "working":
+      return sakiArtAssets.working;
+    case "reading":
+      return sakiArtAssets.reading;
+    case "checkfiles":
+      return sakiArtAssets.checkfiles;
+    case "upset":
+      return sakiArtAssets.upset;
+    case "happy":
+      return sakiArtAssets.happy;
+    case "OK":
+      return sakiArtAssets.OK;
+    default:
+      return null;
+  }
+}
+
 function SakiCharacterArt({
   mood = "normal",
   compact = false,
   fileDrop = false,
-  edgeAttached = false
+  edgeAttached = false,
+  dragging = false,
+  draggingExpressionSrc = null,
+  activityMood = null
 }: {
   mood?: SakiArtMood;
   compact?: boolean;
   fileDrop?: boolean;
   edgeAttached?: boolean;
+  dragging?: boolean;
+  draggingExpressionSrc?: string | null;
+  activityMood?: SakiActivityMood;
 }) {
-  const expressionSrc =
-    fileDrop ? sakiArtAssets.files : mood === "thinking" ? sakiArtAssets.thinking : mood === "worry" ? sakiArtAssets.worry : sakiArtAssets.normal;
+  const activityExpressionSrc = getSakiActivityExpressionSrc(activityMood);
+  const expressionSrc = dragging && draggingExpressionSrc
+    ? draggingExpressionSrc
+    : activityExpressionSrc
+    ? activityExpressionSrc
+    : fileDrop
+    ? sakiArtAssets.files
+    : mood === "thinking"
+    ? sakiArtAssets.thinking
+    : mood === "worry"
+    ? sakiArtAssets.worry
+    : sakiArtAssets.files;
 
   if (compact) {
+    if (dragging) {
+      return (
+        <div className="saki-character-art compact" aria-hidden="true">
+          <img
+            className="saki-character-image"
+            src={expressionSrc}
+            alt=""
+            draggable={false}
+          />
+        </div>
+      );
+    }
+
     if (fileDrop) {
       return (
         <div className="saki-character-art compact" aria-hidden="true">
@@ -4243,7 +4308,7 @@ function appendSakiTimelineDelta(timeline: LocalSakiTimelineItem[] | undefined, 
   if (!text) return timeline ?? [];
   const current = timeline ?? [];
   const last = current.at(-1);
-  if (last?.kind === "text" && (last.source === "delta" || last.source === "final")) {
+  if (last?.kind === "text" && last.source === "delta") {
     return [
       ...current.slice(0, -1),
       {
@@ -4262,6 +4327,21 @@ function appendSakiTimelineDelta(timeline: LocalSakiTimelineItem[] | undefined, 
       createdAt: new Date().toISOString()
     }
   ];
+}
+
+function sealSakiTimelineDelta(timeline: LocalSakiTimelineItem[] | undefined): LocalSakiTimelineItem[] {
+  const current = timeline ?? [];
+  const last = current.at(-1);
+  if (last?.kind === "text" && last.source === "delta" && last.content.trim()) {
+    return [
+      ...current.slice(0, -1),
+      {
+        ...last,
+        source: "final" as const
+      }
+    ];
+  }
+  return current;
 }
 
 function upsertSakiTimelineAction(timeline: LocalSakiTimelineItem[] | undefined, action: SakiAgentAction): LocalSakiTimelineItem[] {
@@ -4800,9 +4880,35 @@ function SakiToolActionCard({
   );
 }
 
-function SakiThinkingContent({ content }: { content: string }) {
+function SakiThinkingContent({ content, streaming }: { content: string; streaming?: boolean }) {
   const [showThink, setShowThink] = useState(false);
-  const thinkMatch = content.match(/^<think>([\s\S]*?)<\/think>\s*/);
+  if (streaming) {
+    const thinkOpenIdx = content.indexOf("\u003Cthink\u003E");
+    const thinkCloseIdx = content.indexOf("\u003C/think\u003E");
+    if (thinkOpenIdx >= 0 && thinkCloseIdx < 0) {
+      const thinkText = content.slice(thinkOpenIdx + 7);
+      return (
+        <div className="saki-think-block">
+          <div className="saki-think-toggle" onClick={() => setShowThink(!showThink)}>
+            <span>{showThink ? "\u25BE" : "\u25B8"}</span>
+            <span>思考中...</span>
+          </div>
+          {showThink ? (
+            <div className="saki-think-content">
+              <pre className="saki-stream-raw">{thinkText}</pre>
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+    return (
+      <div className="saki-stream-raw-wrap">
+        <span className="saki-stream-raw">{content}</span>
+        <span className="saki-stream-cursor" />
+      </div>
+    );
+  }
+  const thinkMatch = content.match(/^\u003Cthink\u003E([\s\S]*?)\u003C\/think\u003E\s*/);
   if (!thinkMatch) return <MarkdownContent content={content} />;
   const thinkText = thinkMatch[1]!.trim();
   const restContent = content.slice(thinkMatch[0]!.length).trim();
@@ -4810,7 +4916,7 @@ function SakiThinkingContent({ content }: { content: string }) {
     <div>
       <div className="saki-think-block">
         <div className="saki-think-toggle" onClick={() => setShowThink(!showThink)}>
-          <span>{showThink ? "▾" : "▸"}</span>
+          <span>{showThink ? "\u25BE" : "\u25B8"}</span>
           <span>思考过程</span>
         </div>
         {showThink ? (
@@ -4893,9 +4999,11 @@ function SakiFloatingChat({
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [reachable, setReachable] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
+  const [sakiActivityMood, setSakiActivityMood] = useState<SakiActivityMood>(null);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [launcherPosition, setLauncherPosition] = useState<SakiLauncherPosition | null>(() => readSakiLauncherPosition());
   const [launcherDragging, setLauncherDragging] = useState(false);
+  const [draggingExpression, setDraggingExpression] = useState<string | null>(null);
   const [storedConversations, setStoredConversations] = useState<StoredSakiConversation[]>(() => readSakiConversations());
   const [activeConversationId, setActiveConversationId] = useState(() => newClientId());
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -5245,6 +5353,7 @@ function SakiFloatingChat({
       startY: event.clientY,
       moved: false
     };
+    setDraggingExpression(Math.random() > 0.5 ? sakiArtAssets.pickup1 : sakiArtAssets.pickup2);
     setLauncherDragging(true);
     event.currentTarget.setPointerCapture(event.pointerId);
   }
@@ -5299,6 +5408,7 @@ function SakiFloatingChat({
 
     launcherDragRef.current = null;
     setLauncherDragging(false);
+    setDraggingExpression(null);
   }
 
   function handleLauncherClick(event: React.MouseEvent<HTMLButtonElement>) {
@@ -5915,6 +6025,7 @@ function SakiFloatingChat({
     setDraft("");
     setAttachments([]);
     setComposerNotice(null);
+    setSakiActivityMood("working");
     setLoading(true);
     const abortController = new AbortController();
     sakiStreamAbortRef.current = abortController;
@@ -5960,15 +6071,23 @@ function SakiFloatingChat({
       setReachable(response.source === "direct-model");
       if (response.skills) setSkills(response.skills);
       if (response.agentPermissionMode) setPermissionMode(response.agentPermissionMode);
+      setSakiActivityMood(Math.random() > 0.5 ? "happy" : "OK");
       setMessages((current) =>
         current.map((message) =>
           message.id === assistantId
             ? (() => {
                 const nextActions = response.actions?.length ? response.actions : message.actions;
+                const sealedTimeline = sealSakiTimelineDelta(message.timeline);
+                const finalTimeline = mergeSakiTimelineActions(mergeSakiFinalTimeline(sealedTimeline, response.message), nextActions);
+                const textParts = finalTimeline
+                  .filter((item): item is Extract<LocalSakiTimelineItem, { kind: "text" }> => item.kind === "text")
+                  .map((item) => item.content.trim())
+                  .filter(Boolean);
+                const finalContent = textParts.length ? textParts.join("\n\n") : response.message;
                 const nextMessage: LocalSakiMessage = {
                   ...message,
-                  content: mergeSakiFinalText(message.content, response.message),
-                  timeline: mergeSakiTimelineActions(mergeSakiFinalTimeline(message.timeline, response.message), nextActions),
+                  content: finalContent,
+                  timeline: finalTimeline,
                   source: response.source,
                   workflowExpanded: false,
                   streaming: false
@@ -6005,7 +6124,6 @@ function SakiFloatingChat({
               message.id === assistantId
                 ? {
                     ...message,
-                    content: `${message.content}${streamEvent.text}`,
                     timeline: appendSakiTimelineDelta(message.timeline, streamEvent.text)
                   }
                 : message
@@ -6018,6 +6136,15 @@ function SakiFloatingChat({
           streamSawProgress = true;
           if (streamEvent.tool) {
             streamToolNames.add(streamEvent.tool);
+            const toolLower = streamEvent.tool.toLowerCase();
+            if (toolLower === "listfiles") {
+              setSakiActivityMood("checkfiles");
+            } else if (toolLower === "readfile") {
+              setSakiActivityMood("reading");
+            }
+          }
+          if (streamEvent.status === "failed") {
+            setSakiActivityMood("upset");
           }
           const chatText = workflowEventChatText(streamEvent);
           setMessages((current) =>
@@ -6040,7 +6167,6 @@ function SakiFloatingChat({
                 ...message,
                 ...(chatText
                   ? {
-                      content: appendSakiAssistantText(message.content, chatText),
                       timeline: upsertSakiTimelineText(message.timeline, {
                         id: `workflow:${streamEvent.id}`,
                         content: chatText,
@@ -6064,6 +6190,15 @@ function SakiFloatingChat({
           if (!isReadOnlySakiTool(streamEvent.action.tool)) {
             streamSawUnsafeAction = true;
           }
+          const toolLower = streamEvent.action.tool.toLowerCase();
+          if (toolLower === "listfiles") {
+            setSakiActivityMood("checkfiles");
+          } else if (toolLower === "readfile") {
+            setSakiActivityMood("reading");
+          }
+          if (streamEvent.action.status === "failed" || streamEvent.action.ok === false) {
+            setSakiActivityMood("upset");
+          }
           setMessages((current) =>
             current.map((message) => {
               if (message.id !== assistantId) return message;
@@ -6074,7 +6209,7 @@ function SakiFloatingChat({
                 actions: exists
                   ? actions.map((action) => (action.id === streamEvent.action.id ? streamEvent.action : action))
                   : [...actions, streamEvent.action],
-                timeline: upsertSakiTimelineAction(message.timeline, streamEvent.action)
+                timeline: upsertSakiTimelineAction(sealSakiTimelineDelta(message.timeline), streamEvent.action)
               };
             })
           );
@@ -6108,6 +6243,7 @@ function SakiFloatingChat({
         ? "连接刚刚中断了，当前回复可能不完整。你可以直接继续说，我会接着处理。"
         : message;
       setReachable(false);
+      setSakiActivityMood("upset");
       setMessages((current) =>
         current.map((item) =>
           item.id === assistantId
@@ -6175,7 +6311,7 @@ function SakiFloatingChat({
         onDrop={handleSakiFileDrop}
       >
         <span className="saki-launcher-glow" />
-        <SakiCharacterArt mood={artMood} compact fileDrop={fileDragActive} edgeAttached={launcherEdgeAttached} />
+        <SakiCharacterArt mood={artMood} compact fileDrop={fileDragActive} edgeAttached={launcherEdgeAttached} dragging={launcherDragging} draggingExpressionSrc={draggingExpression} />
       </button>
 
       <section
@@ -6196,7 +6332,7 @@ function SakiFloatingChat({
         <div className="saki-messages-container">
           <div className="saki-messages-inner">
             <div className="saki-header">
-            <span className={`saki-agent-status ${statusClass}`}>{agentModeStatusLabel}</span>
+            <span className={`saki-agent-status ${statusClass}`}>{contextPath}</span>
             <div className="saki-header-actions">
               <button className="icon-button mini" type="button" title="历史记录" onClick={toggleSakiHistory}>
                 <Clock size={15} />
@@ -6220,13 +6356,12 @@ function SakiFloatingChat({
             </button>
             <div className="saki-title">
               <div className="saki-title-avatar">
-                <SakiCharacterArt mood={artMood} compact={true} fileDrop={fileDragActive} />
+                <SakiCharacterArt mood={artMood} activityMood={sakiActivityMood} />
               </div>
               <div>
                 <div className="saki-title-row">
                   <h2>Saki</h2>
                 </div>
-                <span className="saki-title-context">{contextLabel} · {contextPath}</span>
               </div>
             </div>
           </div>
@@ -6328,21 +6463,26 @@ function SakiFloatingChat({
                     <span>{message.role === "assistant" ? "Saki" : "你"}</span>
                     {message.source === "local-fallback" ? <em>fallback</em> : null}
                   </div>
-                  {showAssistantTimeline ? (
+                  {message.role === "assistant" && timelineItems.length > 0 ? (
                     <div className="saki-message-timeline">
-                      {timelineItems
-                        .filter((item) => item.kind === "action" || (item.kind === "text" && item.source !== "final"))
-                        .map((item) =>
-                          item.kind === "text" ? (
-                            <div className={`saki-message-body saki-message-body-${item.source}`} key={item.id}>
+                      {timelineItems.map((item) =>
+                        item.kind === "text" ? (
+                          <div className={`saki-message-body saki-message-body-${item.source}`} key={item.id}>
+                            {message.streaming && item.source === "delta" ? (
+                              <div className="saki-stream-raw-wrap">
+                                <span className="saki-stream-raw">{item.content}</span>
+                                <span className="saki-stream-cursor" />
+                              </div>
+                            ) : (
                               <MarkdownContent content={item.content} />
-                            </div>
-                          ) : (
-                            <div className="saki-tool-timeline-item" key={item.id}>
-                              <SakiToolActionCard action={item.action} actionBusyId={actionBusyId} onDecision={(targetAction, decision) => void decideAction(targetAction, decision)} />
-                            </div>
-                          )
-                        )}
+                            )}
+                          </div>
+                        ) : (
+                          <div className="saki-tool-timeline-item" key={item.id}>
+                            <SakiToolActionCard action={item.action} actionBusyId={actionBusyId} onDecision={(targetAction, decision) => void decideAction(targetAction, decision)} />
+                          </div>
+                        )
+                      )}
                       {fileRollbackActions.length > 1 ? (
                         <div className="saki-rollback-bulk">
                           <span>
@@ -6360,22 +6500,14 @@ function SakiFloatingChat({
                         </div>
                       ) : null}
                     </div>
-                  ) : null}
-                  {(message.role === "assistant" && message.content?.trim()) ? (
-                    <div className="saki-message-body saki-message-body-final">
-                      <SakiThinkingContent content={message.content} />
-                    </div>
-                  ) : message.role === "assistant" && !message.content && message.streaming ? (
+                  ) : message.role === "assistant" && message.streaming && !message.content ? (
                     <div className="saki-message-body">
                       <p className="saki-stream-placeholder">等待模型响应...</p>
                     </div>
-                  ) : message.role !== "assistant" && message.content ? (
+                  ) : message.content ? (
                     <div className="saki-message-body">
                       <MarkdownContent content={message.content} />
                     </div>
-                  ) : null}
-                  {message.role === "assistant" && message.streaming && message.workflow ? (
-                    <SakiStreamStatus workflow={message.workflow} />
                   ) : null}
                   {message.attachments?.length ? (
                     <div className="saki-message-attachments">
@@ -7829,12 +7961,14 @@ function FileManager({
   token,
   instance,
   onSakiFileDragChange,
-  onSakiInstanceFileDrop
+  onSakiInstanceFileDrop,
+  darkMode
 }: {
   token: string;
   instance: ManagedInstance | null;
   onSakiFileDragChange: (active: boolean) => void;
   onSakiInstanceFileDrop?: ((payload: SakiInstanceFileDragPayload) => void) | undefined;
+  darkMode: boolean;
 }) {
   const instanceId = instance?.id ?? null;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -9209,6 +9343,7 @@ function FileManager({
                   lineWrapping={mobileEditorOpen}
                   className="code-editor-surface"
                   findRanges={findRanges}
+                  darkMode={darkMode}
                 />
               </div>
             </div>
@@ -9607,7 +9742,8 @@ function InstancesView({
   onInstanceFocus,
   onAskSaki,
   onSakiFileDragChange,
-  onSakiInstanceFileDrop
+  onSakiInstanceFileDrop,
+  darkMode
 }: {
   token: string;
   onLogout: () => void;
@@ -9617,6 +9753,7 @@ function InstancesView({
   onAskSaki?: ((seed: Omit<SakiPromptSeed, "nonce">) => void) | undefined;
   onSakiFileDragChange: (active: boolean) => void;
   onSakiInstanceFileDrop?: ((payload: SakiInstanceFileDragPayload) => void) | undefined;
+  darkMode: boolean;
 }) {
   const [nodes, setNodes] = useState<ManagedNode[]>([]);
   const [instances, setInstances] = useState<ManagedInstance[]>([]);
@@ -10334,6 +10471,7 @@ function InstancesView({
               instance={selectedInstance}
               onSakiFileDragChange={onSakiFileDragChange}
               onSakiInstanceFileDrop={handleSakiInstanceFileDrop}
+              darkMode={darkMode}
             />
           </div>
 
@@ -14782,7 +14920,9 @@ function Workspace({
   onSwitchUser,
   onUserChange,
   onAppearanceChange,
-  onLanguageChange
+  onLanguageChange,
+  darkMode,
+  onToggleDarkMode
 }: {
   token: string;
   user: CurrentUser;
@@ -14793,6 +14933,8 @@ function Workspace({
   onUserChange: (user: CurrentUser) => void;
   onAppearanceChange: (appearance: PanelAppearanceSettings) => void;
   onLanguageChange: (language: PanelLanguage) => void;
+  darkMode: boolean;
+  onToggleDarkMode: () => void;
 }) {
   const [activeView, setActiveView] = useState<ViewMode>("dashboard");
   const [refreshTick, setRefreshTick] = useState(0);
@@ -14973,19 +15115,30 @@ function Workspace({
               <img className="app-logo-img sidebar-app-logo" src={appearance.appLogoSrc} alt="" draggable={false} />
               <span>{appearance.appTitle}</span>
             </div>
-            <button
-              className="sidebar-inline-toggle"
-              type="button"
-              aria-label={t("sidebar.collapse")}
-              aria-controls="workspace-sidebar"
-              aria-expanded={!sidebarHidden}
-              title={t("sidebar.collapse")}
-              onClick={() => {
-                hideSidebar();
-              }}
-            >
-              <PanelLeftClose size={18} aria-hidden="true" />
-            </button>
+            <div className="sidebar-brand-actions">
+              <button
+                className="sidebar-inline-toggle theme-toggle-button"
+                type="button"
+                aria-label={darkMode ? "Switch to light mode" : "Switch to dark mode"}
+                title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
+                onClick={onToggleDarkMode}
+              >
+                {darkMode ? <Sun size={18} aria-hidden="true" /> : <Moon size={18} aria-hidden="true" />}
+              </button>
+              <button
+                className="sidebar-inline-toggle"
+                type="button"
+                aria-label={t("sidebar.collapse")}
+                aria-controls="workspace-sidebar"
+                aria-expanded={!sidebarHidden}
+                title={t("sidebar.collapse")}
+                onClick={() => {
+                  hideSidebar();
+                }}
+              >
+                <PanelLeftClose size={18} aria-hidden="true" />
+              </button>
+            </div>
           </div>
           {hasAnyAccessibleView ? (
             <nav>
@@ -15131,6 +15284,7 @@ function Workspace({
               onAskSaki={canUseSaki ? openSaki : undefined}
               onSakiFileDragChange={setSakiFileDragActive}
               onSakiInstanceFileDrop={canUseSaki ? attachInstanceFileToSaki : undefined}
+              darkMode={darkMode}
             />
           ) : effectiveView === "nodes" ? (
             <NodesView token={token} onLogout={onLogout} refreshTick={refreshTick} />
@@ -15192,6 +15346,23 @@ export function App() {
   const [booting, setBooting] = useState(Boolean(token));
   const [appearance, setAppearance] = useState<PanelAppearanceSettings>(defaultPanelAppearance);
   const [language, setLanguage] = useState<PanelLanguage>(() => readPanelLanguage());
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("saki-panel-theme") === "dark";
+    } catch { return false; }
+  });
+
+  const toggleDarkMode = useCallback(() => {
+    setDarkMode(prev => {
+      const next = !prev;
+      try { localStorage.setItem("saki-panel-theme", next ? "dark" : "light"); } catch {}
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", darkMode ? "dark" : "light");
+  }, [darkMode]);
 
   const updateAppearanceState = useCallback((nextAppearance: PanelAppearanceSettings) => {
     setAppearance(normalizePanelAppearance(nextAppearance));
@@ -15234,8 +15405,8 @@ export function App() {
   }, [updateAppearanceState]);
 
   useEffect(() => {
-    applyPanelAppearance(appearance);
-  }, [appearance]);
+    applyPanelAppearance(appearance, darkMode);
+  }, [appearance, darkMode]);
 
   useEffect(() => {
     document.documentElement.lang = language;
@@ -15342,6 +15513,8 @@ export function App() {
         onUserChange={setUser}
         onAppearanceChange={updateAppearanceState}
         onLanguageChange={changeLanguage}
+        darkMode={darkMode}
+        onToggleDarkMode={toggleDarkMode}
       />
     </PanelLanguageContext.Provider>
   );

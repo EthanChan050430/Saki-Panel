@@ -23,3 +23,7 @@ docker-compose.override.yml
 
 identity.json
 saki-settings.json
+instances.json
+*.cjs
+temp_verify.ps1
+packages.zip

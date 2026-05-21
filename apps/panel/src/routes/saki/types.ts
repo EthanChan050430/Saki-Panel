@@ -67,24 +67,24 @@ export class BrowseHttpError extends RouteError {
   }
 }
 
-export const maxAgentLoops = 30;
-export const maxAgentProgressOnlyRetries = 3;
-export const maxAgentVerificationRetries = 3;
-export const maxAgentObservationTokens = 1500;
-export const maxAgentPromptObservationTokens = 800;
-export const maxAgentScratchpadTokens = 6000;
-export const maxAgentContinuationContextTokens = 5000;
-export const maxAgentRecentScratchpadEntries = 10;
-export const maxAgentCompactedScratchpadTokens = 1500;
+export const maxAgentLoops = 20;
+export const maxAgentProgressOnlyRetries = 2;
+export const maxAgentVerificationRetries = 2;
+export const maxAgentObservationTokens = 1200;
+export const maxAgentPromptObservationTokens = 600;
+export const maxAgentScratchpadTokens = 4000;
+export const maxAgentContinuationContextTokens = 3500;
+export const maxAgentRecentScratchpadEntries = 8;
+export const maxAgentCompactedScratchpadTokens = 1000;
 export const maxParallelReadOnlyTools = 6;
-export const defaultAgentReadFileLineCount = 260;
+export const defaultAgentReadFileLineCount = 200;
 export const minAgentModelRequestTimeoutMs = 120000;
-export const maxAgentObservationChars = 20000;
-export const maxAgentPromptObservationChars = 12000;
-export const maxAgentScratchpadChars = 72000;
-export const maxAgentContinuationContextChars = 60000;
-export const maxAgentCompactedScratchpadChars = 20000;
-export const maxHistoryMessages = 20;
+export const maxAgentObservationChars = 16000;
+export const maxAgentPromptObservationChars = 9000;
+export const maxAgentScratchpadChars = 50000;
+export const maxAgentContinuationContextChars = 42000;
+export const maxAgentCompactedScratchpadChars = 14000;
+export const maxHistoryMessages = 12;
 export const sakiUsePermissions = ["saki.chat", "saki.agent"] as const satisfies readonly PermissionCode[];
 
 export function hasPermission(userPermissions: readonly PermissionCode[] | undefined, permission: PermissionCode): boolean {
@@ -475,6 +475,8 @@ export interface SakiToolSchema {
 export interface SakiModelToolTurn {
   content: string;
   toolCalls: ParsedToolCall[];
+  forwardedDeltaText?: boolean;
+  forwardedDeltaContent?: string;
 }
 
 export interface ParsedToolCall {
