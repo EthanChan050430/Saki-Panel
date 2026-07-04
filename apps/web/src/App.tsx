@@ -1087,7 +1087,7 @@ const domExactTranslations: Record<string, string> = {
   实例视图: "Instance View",
   实例列表: "Instance List",
   图谱概览: "Graph Overview",
-  仿真终端: "Terminal",
+  终端: "Terminal",
   沉浸终端: "Immersive Terminal",
   退出沉浸终端: "Exit Immersive Terminal",
   实例未运行: "Instance is not running",
@@ -10555,7 +10555,7 @@ function InstancesView({
               <span className="dot yellow"></span>
               <span className="dot green"></span>
             </div>
-            <div className="mac-title">仿真终端</div>
+            <div className="mac-title">终端</div>
             <div className="mac-subtitle">{formatDate(selectedInstance.updatedAt)}</div>
           </div>
           <div className="terminal-container">
@@ -12900,6 +12900,7 @@ function AuditView({
   const [deleting, setDeleting] = useState(false);
   const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
+  const [mobileAuditDetailOpen, setMobileAuditDetailOpen] = useState(false);
   const pageSize = 20;
 
   const refresh = useCallback(async () => {
@@ -13165,10 +13166,9 @@ function AuditView({
                         className="audit-signal-main"
                         type="button"
                         onClick={() => {
+                          setSelectedLogId(log.id);
                           if (window.matchMedia("(max-width: 760px)").matches) {
-                            window.alert("Verified");
-                          } else {
-                            setSelectedLogId(log.id);
+                            setMobileAuditDetailOpen(true);
                           }
                         }}
                       >
@@ -13285,6 +13285,88 @@ function AuditView({
           </div>
         )}
       </section>
+
+      {mobileAuditDetailOpen && activeLog && (
+        <div
+          className="modal-backdrop mobile-audit-detail-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setMobileAuditDetailOpen(false);
+            }
+          }}
+        >
+          <div className="modal-panel mobile-audit-detail-modal" role="dialog" aria-modal="true">
+            <div className="section-heading modal-heading">
+              <h2 id="mobile-audit-detail-title">日志详情</h2>
+              <button className="icon-button mini" title="关闭" type="button" onClick={() => setMobileAuditDetailOpen(false)}>
+                <X size={15} />
+              </button>
+            </div>
+            <div className="modal-body" style={{ overflowY: "auto", maxHeight: "calc(88dvh - 100px)", padding: "16px" }}>
+              <div className={`audit-inspector-head ${activeLog.result === "SUCCESS" ? "success" : "failure"}`} style={{ borderRadius: "8px", padding: "12px", marginBottom: "16px" }}>
+                <span className="audit-action-icon" aria-hidden="true">
+                  {auditResourceIcon(activeLog.resourceType, activeLog.action)}
+                </span>
+                <div>
+                  <p>{activeLog.result === "SUCCESS" ? "Verified" : "Attention"}</p>
+                  <h3>{auditActionLabel(activeLog.action)}</h3>
+                  <code>{activeLog.action}</code>
+                </div>
+              </div>
+
+              <div className="audit-inspector-grid" style={{ padding: "0 0 16px 0", borderBottom: "1px solid rgba(226, 232, 240, 0.7)" }}>
+                <div>
+                  <span>结果</span>
+                  <strong>{activeLog.result === "SUCCESS" ? "成功" : "失败"}</strong>
+                </div>
+                <div>
+                  <span>时间</span>
+                  <strong>{formatDate(activeLog.createdAt)}</strong>
+                </div>
+                <div>
+                  <span>用户</span>
+                  <strong>{auditActor(activeLog)}</strong>
+                </div>
+                <div>
+                  <span>资源</span>
+                  <strong>{auditResourceLabel(activeLog)}</strong>
+                </div>
+                <div>
+                  <span>IP</span>
+                  <strong>{activeLog.ip ?? "-"}</strong>
+                </div>
+                <div>
+                  <span>载荷</span>
+                  <strong>{activeLog.payload ? "有" : "无"}</strong>
+                </div>
+              </div>
+
+              {activeLog.payload && (
+                <div className="audit-inspector-payload" style={{ marginTop: "16px" }}>
+                  <div className="audit-detail-section-title" style={{ paddingLeft: 0, paddingRight: 0 }}>
+                    <FileText size={15} />
+                    <span>Payload</span>
+                    {onAskSaki ? (
+                      <button className="small-button" type="button" onClick={() => {
+                        setMobileAuditDetailOpen(false);
+                        askSakiAboutLog(activeLog);
+                      }}>
+                        <Sparkles size={14} />
+                        交给 Saki
+                      </button>
+                    ) : null}
+                  </div>
+                  {renderAuditPayloadDetails(activeLog, token, (instanceId, filePath, actionName) => {
+                    setMobileAuditDetailOpen(false);
+                    setPreviewFile({ instanceId, filePath, actionName });
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {previewFile && (
         <FilePreviewModal
