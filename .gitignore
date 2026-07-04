@@ -27,3 +27,6 @@ instances.json
 *.cjs
 temp_verify.ps1
 packages.zip
+p.zip
+*.zip
+!release/**/*.zip
