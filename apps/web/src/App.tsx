@@ -837,6 +837,8 @@ function usePanelT() {
 }
 
 const domTextOriginals = new WeakMap<Text, string>();
+const nodesBeingTranslated = new Set<Text>();
+const attributesBeingTranslated = new WeakMap<Element, Set<string>>();
 const domLanguageSkipSelector = [
   "[data-i18n-skip]",
   ".cm-editor",
@@ -1360,6 +1362,7 @@ function applyPanelDomLanguage(language: PanelLanguage, root: ParentNode = docum
     const original = domTextOriginals.get(node) ?? "";
     const nextValue = language === "en-US" ? translateDomText(original) : original;
     if (node.nodeValue !== nextValue) {
+      nodesBeingTranslated.add(node);
       node.nodeValue = nextValue;
     }
   }
@@ -1377,6 +1380,12 @@ function applyPanelDomLanguage(language: PanelLanguage, root: ParentNode = docum
       const original = element.getAttribute(originalKey) ?? value;
       const nextValue = language === "en-US" ? translateDomAttributeValue(original) : original;
       if (element.getAttribute(attr) !== nextValue) {
+        let attrs = attributesBeingTranslated.get(element);
+        if (!attrs) {
+          attrs = new Set<string>();
+          attributesBeingTranslated.set(element, attrs);
+        }
+        attrs.add(attr);
         element.setAttribute(attr, nextValue);
       }
     }
@@ -1385,8 +1394,10 @@ function applyPanelDomLanguage(language: PanelLanguage, root: ParentNode = docum
 
 const defaultPanelAppearance: PanelAppearanceSettings = {
   appTitle: "Saki Panel",
+  sidebarTitle: "Saki Panel",
   appSubtitle: "System Administration",
   appLogoSrc: "/assets/saki-panel-icon.png",
+  sidebarLogoSrc: "/assets/saki-panel-icon.png",
   loginCoverSrc: "/assets/cover.png",
   backgroundSrc: "/assets/background.png",
   mobileBackgroundSrc: "/assets/background_mobile.png"
@@ -1624,6 +1635,22 @@ function formatDate(value?: string | null): string {
 
 function formatNumber(value: number): string {
   return `${Math.round(value * 10) / 10}%`;
+}
+
+function averageMetricValues(values: number[]): number {
+  if (values.length === 0) return 0;
+  return Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10;
+}
+
+function resourcesFromNodes(nodes: ManagedNode[]): { cpuUsage: number; memoryUsage: number; diskUsage: number } {
+  const metrics = nodes
+    .filter((node) => node.status === "ONLINE" && node.latestMetric)
+    .map((node) => node.latestMetric!);
+  return {
+    cpuUsage: averageMetricValues(metrics.map((metric) => metric.cpuUsage)),
+    memoryUsage: averageMetricValues(metrics.map((metric) => metric.memoryUsage)),
+    diskUsage: averageMetricValues(metrics.map((metric) => metric.diskUsage))
+  };
 }
 
 function taskTypeLabel(type: ScheduledTaskType): string {
@@ -3306,25 +3333,38 @@ function DashboardView({
 }) {
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
   const [nodes, setNodes] = useState<ManagedNode[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [testingNodeId, setTestingNodeId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setError("");
+    setLoading(true);
     try {
-      const [nextOverview, nextNodes] = await Promise.all([
-        api.dashboard(token),
-        canViewNodes ? api.nodes(token) : Promise.resolve([])
-      ]);
-      setOverview(nextOverview);
-      setNodes(nextNodes);
+      setOverview(await api.dashboard(token));
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         onLogout();
         return;
       }
-      setError(err instanceof Error ? err.message : "刷新失败");
+      setError(err instanceof Error ? err.message : "概览数据加载失败");
     }
+
+    if (canViewNodes) {
+      try {
+        setNodes(await api.nodes(token));
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) {
+          onLogout();
+          return;
+        }
+        setError((current) => current || (err instanceof Error ? err.message : "节点数据加载失败"));
+      }
+    } else {
+      setNodes([]);
+    }
+
+    setLoading(false);
   }, [canViewNodes, onLogout, token]);
 
   useEffect(() => {
@@ -3358,7 +3398,44 @@ function DashboardView({
     }
   }
 
-  const resources = overview?.resources ?? { cpuUsage: 0, memoryUsage: 0, diskUsage: 0 };
+  const displayStats = useMemo(() => {
+    if (overview) {
+      const overviewResources = overview.resources;
+      const hasOverviewResources =
+        overviewResources.cpuUsage > 0 || overviewResources.memoryUsage > 0 || overviewResources.diskUsage > 0;
+      const nodeResources = resourcesFromNodes(nodes);
+      const hasNodeResources =
+        nodeResources.cpuUsage > 0 || nodeResources.memoryUsage > 0 || nodeResources.diskUsage > 0;
+      const nodeCounts =
+        overview.nodes.total > 0
+          ? overview.nodes
+          : {
+              online: nodes.filter((node) => node.status === "ONLINE").length,
+              total: nodes.length
+            };
+
+      return {
+        online: nodeCounts.online,
+        total: nodeCounts.total,
+        resources: hasOverviewResources || !hasNodeResources ? overviewResources : nodeResources
+      };
+    }
+
+    if (nodes.length > 0) {
+      return {
+        online: nodes.filter((node) => node.status === "ONLINE").length,
+        total: nodes.length,
+        resources: resourcesFromNodes(nodes)
+      };
+    }
+
+    return null;
+  }, [nodes, overview]);
+
+  const resources = displayStats?.resources ?? { cpuUsage: 0, memoryUsage: 0, diskUsage: 0 };
+  const nodeCountValue =
+    loading && !displayStats ? "-" : `${displayStats?.online ?? 0}/${displayStats?.total ?? 0}`;
+  const formatMetricValue = (value: number) => (loading && !displayStats ? "-" : formatNumber(value));
 
   return (
     <>
@@ -3368,12 +3445,12 @@ function DashboardView({
         <MetricTile
           icon={<Server size={22} />}
           label="在线节点"
-          value={`${overview?.nodes.online ?? 0}/${overview?.nodes.total ?? 0}`}
+          value={nodeCountValue}
           tone="teal"
         />
-        <MetricTile icon={<Cpu size={22} />} label="CPU" value={formatNumber(resources.cpuUsage)} tone="blue" />
-        <MetricTile icon={<MemoryStick size={22} />} label="内存" value={formatNumber(resources.memoryUsage)} tone="amber" />
-        <MetricTile icon={<HardDrive size={22} />} label="磁盘" value={formatNumber(resources.diskUsage)} tone="gray" />
+        <MetricTile icon={<Cpu size={22} />} label="CPU" value={formatMetricValue(resources.cpuUsage)} tone="blue" />
+        <MetricTile icon={<MemoryStick size={22} />} label="内存" value={formatMetricValue(resources.memoryUsage)} tone="amber" />
+        <MetricTile icon={<HardDrive size={22} />} label="磁盘" value={formatMetricValue(resources.diskUsage)} tone="gray" />
       </section>
 
       <section className="content-grid">
@@ -3411,7 +3488,7 @@ function DashboardView({
                 <time>{formatDate(item.createdAt)}</time>
               </div>
             ))}
-            {overview?.recentOperations.length === 0 ? <div className="empty-state">暂无操作记录</div> : null}
+            {(overview?.recentOperations?.length ?? 0) === 0 ? <div className="empty-state">暂无操作记录</div> : null}
           </div>
         </div>
       </section>
@@ -4970,7 +5047,13 @@ function SakiFloatingChat({
   instanceFileDropRequest,
   canUseChat,
   canUseAgent,
-  canUseSkills
+  canUseSkills,
+  currentModelId,
+  currentModelName,
+  availableModels,
+  onCurrentModelIdChange,
+  onCurrentModelNameChange,
+  onAvailableModelsChange
 }: {
   token: string;
   instance: ManagedInstance | null;
@@ -4981,6 +5064,12 @@ function SakiFloatingChat({
   canUseChat: boolean;
   canUseAgent: boolean;
   canUseSkills: boolean;
+  currentModelId: string;
+  currentModelName: string;
+  availableModels: SakiModelOption[];
+  onCurrentModelIdChange: (id: string) => void;
+  onCurrentModelNameChange: (name: string) => void;
+  onAvailableModelsChange: (models: SakiModelOption[]) => void;
 }) {
   const contextKey = instance ? `instance:${instance.id}` : `panel:${panelContext.label}:${panelContext.detail}`;
   const baseContextLabel = instance ? instance.name : panelContext.label;
@@ -5017,10 +5106,8 @@ function SakiFloatingChat({
   const [listening, setListening] = useState(false);
   const [annotationMode, setAnnotationMode] = useState(false);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
-  const [availableModels, setAvailableModels] = useState<SakiModelOption[]>([]);
-  const [currentModelId, setCurrentModelId] = useState<string>("");
-  const [currentModelName, setCurrentModelName] = useState<string>("");
   const modelSelectorRef = useRef<HTMLDivElement | null>(null);
+  const modelDropdownRef = useRef<HTMLDivElement | null>(null);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
@@ -5066,13 +5153,16 @@ function SakiFloatingChat({
 
   useEffect(() => {
     void (async () => {
+      let currentModel = "";
       try {
         const config = await api.sakiConfig(token);
-        setCurrentModelId(config.model);
-        setCurrentModelName(config.model);
+        currentModel = config.model;
+        onCurrentModelIdChange(currentModel);
       } catch { /* ignore */ }
       try {
         const config = await api.sakiConfig(token);
+        currentModel = config.model;
+        onCurrentModelIdChange(currentModel);
         const result = await api.sakiModels(token, {
           provider: config.provider,
           model: config.model,
@@ -5081,23 +5171,37 @@ function SakiFloatingChat({
           apiKey: config.apiKey,
           providerConfigs: config.providerConfigs
         });
-        setAvailableModels(result.models);
-        const current = result.models.find((m) => m.id === config.model);
-        if (current) setCurrentModelName(current.label);
-      } catch { /* ignore */ }
+        onAvailableModelsChange(result.models);
+        const current = result.models.find((m) => m.id === currentModel);
+        if (current) {
+          const modelName = current.label || current.name || current.id;
+          onCurrentModelNameChange(modelName);
+        } else if (currentModel) {
+          onCurrentModelNameChange(currentModel);
+        }
+      } catch {
+        if (currentModel) {
+          onCurrentModelNameChange(currentModel);
+        }
+      }
     })();
-  }, [token]);
+  }, [token, onCurrentModelIdChange, onCurrentModelNameChange, onAvailableModelsChange]);
 
   useEffect(() => {
     if (!modelDropdownOpen) return;
     const handler = (event: MouseEvent) => {
-      if (modelSelectorRef.current && !modelSelectorRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      const isInsideSelector = modelSelectorRef.current?.contains(target);
+      const isInsideDropdown = modelDropdownRef.current?.contains(target);
+      if (!isInsideSelector && !isInsideDropdown) {
         setModelDropdownOpen(false);
       }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [modelDropdownOpen]);
+
+
 
   useEffect(() => {
     const element = sakiMessagesRef.current;
@@ -5112,9 +5216,13 @@ function SakiFloatingChat({
   }, [messages, open, messagesExpanded, fullscreen]);
 
   async function selectModel(modelId: string) {
-    setCurrentModelId(modelId);
+    onCurrentModelIdChange(modelId);
     const found = availableModels.find((m) => m.id === modelId);
-    setCurrentModelName(found ? found.label : modelId);
+    if (found) {
+      onCurrentModelNameChange(found.label || found.name || found.id);
+    } else {
+      onCurrentModelNameChange(modelId);
+    }
     try {
       await api.updateSakiConfig(token, { model: modelId });
     } catch { /* ignore */ }
@@ -5133,7 +5241,11 @@ function SakiFloatingChat({
   useEffect(() => {
     function handleGlobalPointerDown(event: PointerEvent) {
       if (annotationMode) return;
-      if (open && panelRef.current && !panelRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      const isInsidePanel = panelRef.current?.contains(target);
+      const isInsideModelDropdown = modelDropdownRef.current?.contains(target);
+      const isInsideModelSelector = modelSelectorRef.current?.contains(target);
+      if (open && !isInsidePanel && !isInsideModelDropdown && !isInsideModelSelector) {
         setOpen(false);
         setMessagesExpanded(false);
       }
@@ -6734,18 +6846,9 @@ function SakiFloatingChat({
               <div className="saki-model-selector" ref={modelSelectorRef}>
                 <button className="saki-model-btn" type="button" onClick={() => setModelDropdownOpen(!modelDropdownOpen)}>
                   <Zap size={12} />
-                  <span>{currentModelName || "选择模型"}</span>
+                  <span>{currentModelName || availableModels.find(m => m.id === currentModelId)?.label || currentModelId}</span>
                   <ChevronDown size={10} />
                 </button>
-                {modelDropdownOpen ? (
-                  <div className="saki-model-dropdown">
-                    {availableModels.map((model) => (
-                      <button key={model.id} className={`saki-model-option ${model.id === currentModelId ? "active" : ""}`} type="button" onClick={() => { selectModel(model.id); setModelDropdownOpen(false); }}>
-                        <span>{model.label || model.id}</span>
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
               </div>
               <button
                 className={`primary-button send-btn ${loading ? "stop" : ""}`}
@@ -6762,6 +6865,38 @@ function SakiFloatingChat({
         </div>
       </form>
     </section>
+    {modelDropdownOpen && modelSelectorRef.current ? (
+      createPortal(
+        <div
+          ref={modelDropdownRef}
+          className="saki-model-dropdown"
+          style={{
+            position: "fixed",
+            left: modelSelectorRef.current.getBoundingClientRect().left,
+            bottom: window.innerHeight - modelSelectorRef.current.getBoundingClientRect().top + 8,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {availableModels.map((model) => (
+            <button
+              key={model.id}
+              className={`saki-model-option ${model.id === currentModelId ? "active" : ""}`}
+              type="button"
+              onClick={() => {
+                const modelName = model.label || model.name || model.id;
+                onCurrentModelIdChange(model.id);
+                onCurrentModelNameChange(modelName);
+                setModelDropdownOpen(false);
+                void api.updateSakiConfig(token, { model: model.id });
+              }}
+            >
+              <span>{model.label || model.id}</span>
+            </button>
+          ))}
+        </div>,
+        document.body
+      )
+    ) : null}
     </>
   );
 }
@@ -9008,7 +9143,7 @@ function FileManager({
                       <MoreHorizontal size={13} />
                     </button>
                     {openFileActionMenuPath === folder.path ? (
-                      <div className="file-action-menu tree-action-menu" role="menu">
+                      <div className="file-action-menu tree-action-menu" role="menu" onClick={(e) => e.stopPropagation()}>
                         {folder.type === "file" && isArchiveFile(folder.path) ? (
                           <button type="button" role="menuitem" disabled={extractingPath === folder.path}
                             onClick={() => { setOpenFileActionMenuPath(null); void extractArchive(folder); }}>
@@ -13026,7 +13161,17 @@ function AuditView({
                       key={log.id}
                     >
                       <span className="audit-signal-bar" />
-                      <button className="audit-signal-main" type="button" onClick={() => setSelectedLogId(log.id)}>
+                      <button
+                        className="audit-signal-main"
+                        type="button"
+                        onClick={() => {
+                          if (window.matchMedia("(max-width: 760px)").matches) {
+                            window.alert("Verified");
+                          } else {
+                            setSelectedLogId(log.id);
+                          }
+                        }}
+                      >
                         <span className="audit-signal-top">
                           <span className="audit-action-icon" aria-hidden="true">
                             {auditResourceIcon(log.resourceType, log.action)}
@@ -13648,6 +13793,7 @@ function SettingsView({
   const [notice, setNotice] = useState("");
   const skillDetailRequestRef = useRef(0);
   const appLogoInputRef = useRef<HTMLInputElement>(null);
+  const sidebarLogoInputRef = useRef<HTMLInputElement>(null);
   const loginCoverInputRef = useRef<HTMLInputElement>(null);
   const backgroundInputRef = useRef<HTMLInputElement>(null);
   const mobileBackgroundInputRef = useRef<HTMLInputElement>(null);
@@ -13768,7 +13914,7 @@ function SettingsView({
   }
 
   async function chooseAppearanceImage(
-    field: "appLogoSrc" | "loginCoverSrc" | "backgroundSrc" | "mobileBackgroundSrc",
+    field: "appLogoSrc" | "sidebarLogoSrc" | "loginCoverSrc" | "backgroundSrc" | "mobileBackgroundSrc",
     event: React.ChangeEvent<HTMLInputElement>
   ) {
     const file = event.target.files?.[0];
@@ -14173,6 +14319,13 @@ function SettingsView({
             onChange={(event) => void chooseAppearanceImage("appLogoSrc", event)}
           />
           <input
+            ref={sidebarLogoInputRef}
+            className="hidden-file-input"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            onChange={(event) => void chooseAppearanceImage("sidebarLogoSrc", event)}
+          />
+          <input
             ref={loginCoverInputRef}
             className="hidden-file-input"
             type="file"
@@ -14462,6 +14615,14 @@ function SettingsView({
             </div>
             <div className="settings-group-content">
               <label>
+                侧边栏标题
+                <input
+                  value={form.appearance?.sidebarTitle ?? ""}
+                  onChange={(event) => updateAppearance({ sidebarTitle: event.target.value })}
+                  placeholder="Saki Panel"
+                />
+              </label>
+              <label>
                 登录标题
                 <input
                   value={form.appearance?.appTitle ?? ""}
@@ -14506,6 +14667,21 @@ function SettingsView({
                   </button>
                 </div>
                 {form.appearance?.appLogoSrc ? <img className="appearance-preview logo-preview" src={form.appearance.appLogoSrc} alt="" /> : null}
+              </div>
+              <div className="appearance-field">
+                <span>侧边栏图标</span>
+                <div className="appearance-source-row">
+                  <input
+                    value={form.appearance?.sidebarLogoSrc ?? ""}
+                    onChange={(event) => updateAppearance({ sidebarLogoSrc: event.target.value })}
+                    placeholder="/assets/saki-panel-icon.png"
+                  />
+                  <button className="small-button" type="button" onClick={() => sidebarLogoInputRef.current?.click()}>
+                    <Upload size={15} />
+                    选择
+                  </button>
+                </div>
+                {form.appearance?.sidebarLogoSrc ? <img className="appearance-preview logo-preview" src={form.appearance.sidebarLogoSrc} alt="" /> : null}
               </div>
               <div className="appearance-field">
                 <span>网页背景</span>
@@ -15159,6 +15335,9 @@ function Workspace({
   const [sakiSeed, setSakiSeed] = useState<SakiPromptSeed | null>(null);
   const [sakiFileDragActive, setSakiFileDragActive] = useState(false);
   const [sakiFileDropRequest, setSakiFileDropRequest] = useState<SakiInstanceFileDropRequest | null>(null);
+  const [sakiCurrentModelId, setSakiCurrentModelId] = useState<string>("");
+  const [sakiCurrentModelName, setSakiCurrentModelName] = useState<string>("");
+  const [sakiAvailableModels, setSakiAvailableModels] = useState<SakiModelOption[]>([]);
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const sidebarRef = useRef<HTMLElement | null>(null);
@@ -15329,8 +15508,8 @@ function Workspace({
         <aside id="workspace-sidebar" ref={sidebarRef} className="sidebar glass-sidebar" inert={sidebarHidden || undefined}>
           <div className="sidebar-brand">
             <div className="sidebar-logo">
-              <img className="app-logo-img sidebar-app-logo" src={appearance.appLogoSrc} alt="" draggable={false} />
-              <span>{appearance.appTitle}</span>
+              <img className="app-logo-img sidebar-app-logo" src={appearance.sidebarLogoSrc || appearance.appLogoSrc} alt="" draggable={false} />
+              <span>{appearance.sidebarTitle || appearance.appTitle}</span>
             </div>
             <div className="sidebar-brand-actions">
               <button
@@ -15552,6 +15731,12 @@ function Workspace({
           canUseChat={canUseSakiChat}
           canUseAgent={canUseSakiAgent}
           canUseSkills={canUseSakiSkills}
+          currentModelId={sakiCurrentModelId}
+          currentModelName={sakiCurrentModelName}
+          availableModels={sakiAvailableModels}
+          onCurrentModelIdChange={setSakiCurrentModelId}
+          onCurrentModelNameChange={setSakiCurrentModelName}
+          onAvailableModelsChange={setSakiAvailableModels}
         />
       ) : null}
     </>
@@ -15636,7 +15821,18 @@ export function App() {
     const observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
         if (mutation.type === "characterData" && mutation.target instanceof Text) {
-          applyPanelDomLanguage(language, mutation.target.parentNode ?? document.body);
+          const target = mutation.target;
+          if (nodesBeingTranslated.has(target)) {
+            nodesBeingTranslated.delete(target);
+            continue;
+          }
+          domTextOriginals.set(target, target.nodeValue ?? "");
+          const original = target.nodeValue ?? "";
+          const nextValue = language === "en-US" ? translateDomText(original) : original;
+          if (target.nodeValue !== nextValue) {
+            nodesBeingTranslated.add(target);
+            target.nodeValue = nextValue;
+          }
           continue;
         }
         for (const node of Array.from(mutation.addedNodes)) {
@@ -15644,8 +15840,34 @@ export function App() {
             applyPanelDomLanguage(language, node);
           }
         }
-        if (mutation.type === "attributes" && mutation.target instanceof Element) {
-          applyPanelDomLanguage(language, mutation.target);
+        if (mutation.type === "attributes" && mutation.target instanceof Element && mutation.attributeName) {
+          const target = mutation.target;
+          const attr = mutation.attributeName;
+          const attrs = attributesBeingTranslated.get(target);
+          if (attrs && attrs.has(attr)) {
+            attrs.delete(attr);
+            if (attrs.size === 0) {
+              attributesBeingTranslated.delete(target);
+            }
+            continue;
+          }
+          const value = target.getAttribute(attr);
+          if (value !== null) {
+            target.setAttribute(`data-i18n-original-${attr}`, value);
+          } else {
+            target.removeAttribute(`data-i18n-original-${attr}`);
+          }
+          const original = value ?? "";
+          const nextValue = language === "en-US" ? translateDomAttributeValue(original) : original;
+          if (target.getAttribute(attr) !== nextValue) {
+            let targetAttrs = attributesBeingTranslated.get(target);
+            if (!targetAttrs) {
+              targetAttrs = new Set<string>();
+              attributesBeingTranslated.set(target, targetAttrs);
+            }
+            targetAttrs.add(attr);
+            target.setAttribute(attr, nextValue);
+          }
         }
       }
     });

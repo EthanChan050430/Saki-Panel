@@ -89,7 +89,7 @@ function Set-ProjectEnv {
     Remove-Item Env:DAEMON_PANEL_URL -ErrorAction SilentlyContinue
   } else {
     $env:WEB_ORIGIN = "http://localhost:$ChosenWebPort"
-    $env:VITE_API_BASE_URL = "http://localhost:$ChosenPanelPort"
+    Remove-Item Env:VITE_API_BASE_URL -ErrorAction SilentlyContinue
     $env:PANEL_PUBLIC_URL = "http://localhost:$ChosenPanelPort"
     $env:DAEMON_PANEL_URL = "http://127.0.0.1:$ChosenPanelPort"
   }

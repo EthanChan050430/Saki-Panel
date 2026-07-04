@@ -819,8 +819,10 @@ export const knownProviderIds = ["ollama", "lmstudio", "copilot", ...Object.keys
 
 export const defaultPanelAppearance: PanelAppearanceSettings = {
   appTitle: "Saki Panel",
+  sidebarTitle: "Saki Panel",
   appSubtitle: "System Administration",
   appLogoSrc: "/assets/saki-panel-icon.png",
+  sidebarLogoSrc: "/assets/saki-panel-icon.png",
   loginCoverSrc: "/assets/cover.png",
   backgroundSrc: "/assets/background.png",
   mobileBackgroundSrc: "/assets/background_mobile.png"
@@ -1092,8 +1094,10 @@ export function sanitizePanelAppearance(
   const item = objectValue(value) ?? {};
   return {
     appTitle: sanitizeAppearanceText(item.appTitle, fallback.appTitle, 80) || defaultPanelAppearance.appTitle,
+    sidebarTitle: sanitizeAppearanceText(item.sidebarTitle, fallback.sidebarTitle, 80) || defaultPanelAppearance.sidebarTitle,
     appSubtitle: sanitizeAppearanceText(item.appSubtitle, fallback.appSubtitle),
     appLogoSrc: sanitizeAppearanceImageSrc(item.appLogoSrc, fallback.appLogoSrc),
+    sidebarLogoSrc: sanitizeAppearanceImageSrc(item.sidebarLogoSrc, fallback.sidebarLogoSrc),
     loginCoverSrc: sanitizeAppearanceImageSrc(item.loginCoverSrc, fallback.loginCoverSrc),
     backgroundSrc: sanitizeAppearanceImageSrc(item.backgroundSrc, fallback.backgroundSrc),
     mobileBackgroundSrc: sanitizeAppearanceImageSrc(item.mobileBackgroundSrc, fallback.mobileBackgroundSrc)

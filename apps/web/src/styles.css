@@ -7583,10 +7583,6 @@ body.saki-selection-capture-active .saki-launcher {
   color: #374151;
 }
 .saki-model-dropdown {
-  position: absolute;
-  bottom: 100%;
-  left: 0;
-  margin-bottom: 4px;
   background: white;
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 10px;
@@ -7595,7 +7591,7 @@ body.saki-selection-capture-active .saki-launcher {
   min-width: 200px;
   max-height: 320px;
   overflow-y: auto;
-  z-index: 100;
+  z-index: 9999;
 }
 .saki-model-option {
   display: flex;
@@ -17032,11 +17028,16 @@ button,
   }
 
   .file-manager.mobile-browser-open .file-tree-sidebar {
+    display: flex !important;
     height: 100%;
     max-height: none;
     border: 0;
     overflow: auto;
     background: #f8fafc;
+  }
+
+  .file-manager.mobile-browser-open .tree-node-actions {
+    opacity: 1;
   }
 
   .file-manager.mobile-browser-open .file-editor {

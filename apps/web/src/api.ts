@@ -61,25 +61,45 @@ function isLoopbackHostname(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
 }
 
+function panelPortFromEnv(): number {
+  const configured = import.meta.env.VITE_PANEL_PORT?.trim();
+  if (!configured) return 5479;
+  const parsed = Number(configured);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 5479;
+}
+
 function defaultApiBase(): string {
-  return `${window.location.protocol}//${window.location.hostname}:5479`;
+  return `${window.location.protocol}//${window.location.hostname}:${panelPortFromEnv()}`;
 }
 
 function resolveApiBase(): string {
   const configured = import.meta.env.VITE_API_BASE_URL?.trim();
-  if (!configured) return defaultApiBase();
+  if (!configured) {
+    // In dev, Vite proxies /api to the panel — same-origin avoids port/CORS mismatches.
+    if (import.meta.env.DEV) {
+      return window.location.origin;
+    }
+    return defaultApiBase();
+  }
 
   try {
     const url = new URL(configured, window.location.origin);
     if (isLoopbackHostname(url.hostname) && !isLoopbackHostname(window.location.hostname)) {
       return defaultApiBase();
     }
+    if (
+      isLoopbackHostname(url.hostname) &&
+      isLoopbackHostname(window.location.hostname) &&
+      url.hostname !== window.location.hostname
+    ) {
+      return import.meta.env.DEV ? window.location.origin : defaultApiBase();
+    }
     if (window.location.protocol === "https:" && url.protocol === "http:") {
       url.protocol = "https:";
     }
-    return url.toString();
+    return url.toString().replace(/\/$/, "");
   } catch {
-    return defaultApiBase();
+    return import.meta.env.DEV ? window.location.origin : defaultApiBase();
   }
 }
 

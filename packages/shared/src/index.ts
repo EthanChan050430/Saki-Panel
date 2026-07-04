@@ -158,8 +158,10 @@ export interface UpdatePanelSessionSettingsRequest {
 
 export interface PanelAppearanceSettings {
   appTitle: string;
+  sidebarTitle: string;
   appSubtitle: string;
   appLogoSrc: string;
+  sidebarLogoSrc: string;
   loginCoverSrc: string;
   backgroundSrc: string;
   mobileBackgroundSrc: string;

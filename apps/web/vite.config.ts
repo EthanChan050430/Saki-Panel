@@ -158,7 +158,14 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.
 const host = process.env.VITE_HOST ?? "0.0.0.0";
 const allowedHosts = hostListFromEnv(process.env.VITE_ALLOWED_HOSTS);
 const port = numberFromEnv(process.env.VITE_PORT ?? process.env.PORT, 5478);
+const panelPort = numberFromEnv(process.env.PANEL_PORT, 5479);
 const https = loadHttpsOptions(rootDir);
+const panelTarget = `${https ? "https" : "http"}://127.0.0.1:${panelPort}`;
+const devProxy = {
+  "/api": { target: panelTarget, changeOrigin: true },
+  "/ws": { target: panelTarget, ws: true, changeOrigin: true },
+  "/health": { target: panelTarget, changeOrigin: true }
+} as const;
 
 function manualChunks(id: string): string | undefined {
   const normalizedId = id.replace(/\\/g, "/");
@@ -196,6 +203,7 @@ export default defineConfig({
     allowedHosts,
     port,
     strictPort: true,
+    proxy: devProxy,
     ...(https ? { https } : {})
   },
   preview: {
@@ -203,6 +211,7 @@ export default defineConfig({
     allowedHosts,
     port,
     strictPort: true,
+    proxy: devProxy,
     ...(https ? { https } : {})
   }
 });
