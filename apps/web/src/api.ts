@@ -5,6 +5,7 @@ import type {
   DeleteAuditLogsRequest,
   DeleteAuditLogsResponse,
   DownloadInstanceFileResponse,
+  ExtractConflictAction,
   ExtractInstanceArchiveResponse,
   AuditLogEntry,
   CreateNodeRequest,
@@ -738,15 +739,29 @@ export const api = {
       token
     );
   },
-  extractInstanceArchive(token: string, id: string, path: string, outputPath?: string, overwrite?: boolean) {
+  extractInstanceArchive(
+    token: string,
+    id: string,
+    path: string,
+    options: {
+      outputPath?: string;
+      preview?: boolean;
+      conflictPolicy?: ExtractConflictAction;
+      conflictResolutions?: Record<string, ExtractConflictAction>;
+      overwrite?: boolean;
+    } = {}
+  ) {
     return requestJson<ExtractInstanceArchiveResponse>(
       `/api/instances/${id}/files/extract`,
       {
         method: "POST",
         body: JSON.stringify({
           path,
-          ...(outputPath ? { outputPath } : {}),
-          ...(overwrite ? { overwrite: true } : {})
+          ...(options.outputPath ? { outputPath: options.outputPath } : {}),
+          ...(options.preview ? { preview: true } : {}),
+          ...(options.conflictPolicy ? { conflictPolicy: options.conflictPolicy } : {}),
+          ...(options.conflictResolutions ? { conflictResolutions: options.conflictResolutions } : {}),
+          ...(options.overwrite ? { overwrite: true } : {})
         })
       },
       token

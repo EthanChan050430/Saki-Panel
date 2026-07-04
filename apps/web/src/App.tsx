@@ -102,6 +102,8 @@ import type {
   CurrentUser,
   DashboardOverview,
   InstanceAssignee,
+  ExtractArchiveConflict,
+  ExtractConflictAction,
   InstanceFileEntry,
   InstanceLogLine,
   InstanceTemplate,
@@ -2424,6 +2426,13 @@ interface FileConflictPrompt {
   name: string;
   suggestedName: string;
   canOverwrite: boolean;
+}
+
+interface ExtractConflictPrompt {
+  archivePath: string;
+  outputPath: string;
+  conflicts: ExtractArchiveConflict[];
+  resolutions: Record<string, ExtractConflictAction>;
 }
 
 interface FileToast {
@@ -8141,6 +8150,7 @@ function FileManager({
   const [openFileActionMenuPath, setOpenFileActionMenuPath] = useState<string | null>(null);
   const [draggingFilePath, setDraggingFilePath] = useState<string | null>(null);
   const [fileConflictPrompt, setFileConflictPrompt] = useState<FileConflictPrompt | null>(null);
+  const [extractConflictPrompt, setExtractConflictPrompt] = useState<ExtractConflictPrompt | null>(null);
   const [uploadProgress, setUploadProgress] = useState<(UploadProgressUpdate & { fileName: string }) | null>(null);
   const [fileToast, setFileToast] = useState<FileToast | null>(null);
   const [mobileFileDrag, setMobileFileDrag] = useState<{
@@ -8519,7 +8529,7 @@ function FileManager({
   useEffect(() => {
     if (!mobileBrowserOpen && !mobileEditorOpen && !findVisible) return;
     const handleGlobalKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || fileConflictPrompt) return;
+      if (event.key !== "Escape" || fileConflictPrompt || extractConflictPrompt) return;
       if (findVisible) {
         event.preventDefault();
         event.stopPropagation();
@@ -8543,7 +8553,7 @@ function FileManager({
     };
     window.addEventListener("keydown", handleGlobalKeyDown, true);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown, true);
-  }, [fileConflictPrompt, findVisible, mobileBrowserOpen, mobileEditorOpen]);
+  }, [extractConflictPrompt, fileConflictPrompt, findVisible, mobileBrowserOpen, mobileEditorOpen]);
 
   useEffect(() => {
     if (!findVisible) return;
@@ -9020,15 +9030,68 @@ function FileManager({
     }
   }
 
-  async function finishExtract(entryPath: string, outputPath: string, overwrite: boolean) {
+  async function finishExtract(
+    entryPath: string,
+    outputPath: string,
+    options: {
+      conflictPolicy?: ExtractConflictAction;
+      conflictResolutions?: Record<string, ExtractConflictAction>;
+    } = {}
+  ) {
     if (!instanceId) return;
-    const response = await api.extractInstanceArchive(token, instanceId, entryPath, outputPath, overwrite);
+    const response = await api.extractInstanceArchive(token, instanceId, entryPath, {
+      outputPath,
+      ...options
+    });
     setEditorPath(null);
     setEditorContent("");
     setEditorMode("edit");
     await loadDirectory(parentFilePath(response.outputPath));
     setSelectedPath(response.outputPath);
-    showFileToast("解压完成", `已解压到 ${response.outputPath}`);
+    const detail =
+      response.skippedCount > 0 || response.overwrittenCount > 0
+        ? `解压 ${response.extractedCount} 个，覆盖 ${response.overwrittenCount} 个，跳过 ${response.skippedCount} 个`
+        : `已解压到 ${response.outputPath}`;
+    showFileToast("解压完成", detail);
+  }
+
+  function setExtractConflictResolution(relativePath: string, action: ExtractConflictAction) {
+    setExtractConflictPrompt((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        resolutions: {
+          ...current.resolutions,
+          [relativePath]: action
+        }
+      };
+    });
+  }
+
+  function setAllExtractConflictResolutions(action: ExtractConflictAction) {
+    setExtractConflictPrompt((current) => {
+      if (!current) return current;
+      const resolutions: Record<string, ExtractConflictAction> = {};
+      for (const conflict of current.conflicts) {
+        resolutions[conflict.path] = action === "overwrite" && !conflict.canOverwrite ? "skip" : action;
+      }
+      return { ...current, resolutions };
+    });
+  }
+
+  async function confirmExtractConflicts() {
+    if (!extractConflictPrompt) return;
+    const { archivePath, outputPath, resolutions } = extractConflictPrompt;
+    setError("");
+    setExtractingPath(archivePath);
+    try {
+      await finishExtract(archivePath, outputPath, { conflictResolutions: resolutions });
+      setExtractConflictPrompt(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "解压失败");
+    } finally {
+      setExtractingPath(null);
+    }
   }
 
   async function extractArchive(entry: InstanceFileEntry) {
@@ -9040,23 +9103,23 @@ function FileManager({
     setError("");
     setExtractingPath(entry.path);
     try {
-      await finishExtract(entry.path, outputPath, false);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "";
-      if (message.includes("Extraction target already exists")) {
-        const overwrite = window.confirm(
-          `解压目标目录「${outputPath}」已存在。\n\n覆盖将删除该目录及其全部内容，是否继续？`
-        );
-        if (overwrite) {
-          try {
-            await finishExtract(entry.path, outputPath, true);
-          } catch (retryErr) {
-            setError(retryErr instanceof Error ? retryErr.message : "解压失败");
-          }
-        }
-      } else {
-        setError(message || "解压失败");
+      const preview = await api.extractInstanceArchive(token, instanceId, entry.path, {
+        outputPath,
+        preview: true
+      });
+      const conflicts = preview.conflicts ?? [];
+      if (conflicts.length === 0) {
+        await finishExtract(entry.path, outputPath);
+        return;
       }
+      setExtractConflictPrompt({
+        archivePath: entry.path,
+        outputPath,
+        conflicts,
+        resolutions: Object.fromEntries(conflicts.map((conflict) => [conflict.path, "skip" as const]))
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "解压失败");
     } finally {
       setExtractingPath(null);
     }
@@ -9512,6 +9575,89 @@ function FileManager({
               </button>
               <button className="primary-button" type="button" onClick={() => resolveFileConflict("keep")}>
                 保留两份
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {extractConflictPrompt ? (
+        <div
+          className="file-conflict-backdrop extract-conflict-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setExtractConflictPrompt(null);
+          }}
+        >
+          <div className="extract-conflict-dialog" role="dialog" aria-modal="true" aria-labelledby="extract-conflict-title">
+            <div className="extract-conflict-header">
+              <div className="file-conflict-icon">
+                <Archive size={22} />
+              </div>
+              <div className="file-conflict-copy">
+                <h3 id="extract-conflict-title">解压冲突</h3>
+                <p>
+                  目标目录 <strong>{extractConflictPrompt.outputPath}</strong> 中已有
+                  {" "}{extractConflictPrompt.conflicts.length} 个同名项，请选择覆盖或跳过。
+                </p>
+              </div>
+            </div>
+            <div className="extract-conflict-bulk">
+              <button className="small-button" type="button" onClick={() => setAllExtractConflictResolutions("overwrite")}>
+                全部覆盖
+              </button>
+              <button className="small-button" type="button" onClick={() => setAllExtractConflictResolutions("skip")}>
+                全部跳过
+              </button>
+            </div>
+            <div className="extract-conflict-list" role="list">
+              {extractConflictPrompt.conflicts.map((conflict) => {
+                const action = extractConflictPrompt.resolutions[conflict.path] ?? "skip";
+                return (
+                  <div key={conflict.path} className="extract-conflict-row" role="listitem">
+                    <div className="extract-conflict-path-wrap">
+                      <span className="extract-conflict-path">{conflict.path}</span>
+                      <span className="extract-conflict-meta">
+                        {conflict.canOverwrite
+                          ? `归档 ${formatBytes(conflict.archiveSize ?? 0)} / 现有 ${formatBytes(conflict.existingSize ?? 0)}`
+                          : "目标为目录，只能跳过"}
+                      </span>
+                    </div>
+                    <div className="extract-conflict-choices">
+                      <label className={action === "overwrite" ? "is-active" : ""}>
+                        <input
+                          type="radio"
+                          name={`extract-conflict-${conflict.path}`}
+                          checked={action === "overwrite"}
+                          disabled={!conflict.canOverwrite}
+                          onChange={() => setExtractConflictResolution(conflict.path, "overwrite")}
+                        />
+                        覆盖
+                      </label>
+                      <label className={action === "skip" ? "is-active" : ""}>
+                        <input
+                          type="radio"
+                          name={`extract-conflict-${conflict.path}`}
+                          checked={action === "skip"}
+                          onChange={() => setExtractConflictResolution(conflict.path, "skip")}
+                        />
+                        跳过
+                      </label>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="file-conflict-actions">
+              <button className="ghost-button" type="button" onClick={() => setExtractConflictPrompt(null)}>
+                取消
+              </button>
+              <button
+                className="primary-button"
+                type="button"
+                disabled={extractingPath === extractConflictPrompt.archivePath}
+                onClick={() => void confirmExtractConflicts()}
+              >
+                {extractingPath === extractConflictPrompt.archivePath ? "解压中..." : "确认解压"}
               </button>
             </div>
           </div>

@@ -505,10 +505,25 @@ export interface RenameInstanceFileRequest {
   toPath: string;
 }
 
+export type ExtractConflictAction = "overwrite" | "skip";
+
+export interface ExtractArchiveConflict {
+  path: string;
+  existingType: "file" | "directory";
+  archiveType: "file";
+  existingSize?: number;
+  archiveSize?: number;
+  canOverwrite: boolean;
+}
+
 export interface ExtractInstanceArchiveRequest {
   path: string;
   outputPath?: string;
+  /** @deprecated Use conflictPolicy instead. */
   overwrite?: boolean;
+  preview?: boolean;
+  conflictPolicy?: ExtractConflictAction;
+  conflictResolutions?: Record<string, ExtractConflictAction>;
 }
 
 export interface ExtractInstanceArchiveResponse {
@@ -518,6 +533,10 @@ export interface ExtractInstanceArchiveResponse {
   entry: InstanceFileEntry;
   extractedCount: number;
   totalBytes: number;
+  skippedCount: number;
+  overwrittenCount: number;
+  preview?: boolean;
+  conflicts?: ExtractArchiveConflict[];
 }
 
 export interface ArchiveInstancePathsRequest {

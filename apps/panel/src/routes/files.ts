@@ -378,21 +378,28 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       const response = await extractDaemonInstanceArchive(instance.node, id, instance.workingDirectory, {
         path: body.path,
         ...(body.outputPath ? { outputPath: body.outputPath } : {}),
+        ...(body.preview ? { preview: true } : {}),
+        ...(body.conflictPolicy ? { conflictPolicy: body.conflictPolicy } : {}),
+        ...(body.conflictResolutions ? { conflictResolutions: body.conflictResolutions } : {}),
         ...(body.overwrite ? { overwrite: true } : {})
       });
-      await writeAuditLog({
-        request,
-        userId: request.user.sub,
-        action: "file.extract",
-        resourceType: "instance_file",
-        resourceId: id,
-        payload: {
-          path: response.archivePath,
-          outputPath: response.outputPath,
-          extractedCount: response.extractedCount,
-          totalBytes: response.totalBytes
-        }
-      });
+      if (!body.preview) {
+        await writeAuditLog({
+          request,
+          userId: request.user.sub,
+          action: "file.extract",
+          resourceType: "instance_file",
+          resourceId: id,
+          payload: {
+            path: response.archivePath,
+            outputPath: response.outputPath,
+            extractedCount: response.extractedCount,
+            totalBytes: response.totalBytes,
+            skippedCount: response.skippedCount,
+            overwrittenCount: response.overwrittenCount
+          }
+        });
+      }
       return response;
     } catch (error) {
       await handleFailure(request, reply, "file.extract", id, error, {

@@ -788,13 +788,18 @@ export async function executeSakiAgentTool(
         const relativePath = safeRelativePath(args.path);
         if (!relativePath) throw new RouteError("extractArchive requires an archive path.", 400);
         const outputPath = safeRelativePath(args.outputPath) || undefined;
-        const overwrite = args.overwrite === true || args.overwrite === "true";
+        const conflictPolicy =
+          args.conflictPolicy === "overwrite" || args.conflictPolicy === "skip"
+            ? args.conflictPolicy
+            : args.overwrite === true || args.overwrite === "true"
+              ? "overwrite"
+              : undefined;
         const result = await extractDaemonInstanceArchive(instance.node, instance.id, instance.workingDirectory, {
           path: relativePath,
           ...(outputPath ? { outputPath } : {}),
-          ...(overwrite ? { overwrite: true } : {})
+          ...(conflictPolicy ? { conflictPolicy } : {})
         });
-        observation = `Success: extracted ${result.archivePath} to ${result.outputPath} (${result.extractedCount} entries, ${result.totalBytes} bytes).`;
+        observation = `Success: extracted ${result.archivePath} to ${result.outputPath} (${result.extractedCount} files, skipped ${result.skippedCount}, overwrote ${result.overwrittenCount}, ${result.totalBytes} bytes).`;
       } else if (toolName === "runcommand") {
         requireUserPermission(runtime.permissions, "terminal.input");
         const instance = await resolveAgentInstance(runtime, args);

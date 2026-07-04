@@ -14,6 +14,8 @@ import type {
   DeleteInstanceFileRequest,
   DownloadInstanceArchiveRequest,
   DownloadInstanceFileResponse,
+  ExtractArchiveConflict,
+  ExtractConflictAction,
   ExtractInstanceArchiveRequest,
   ExtractInstanceArchiveResponse,
   GlobInstanceFilesRequest,
@@ -75,6 +77,24 @@ interface ArchiveListEntry {
 interface ArchiveScanResult {
   count: number;
   totalBytes: number;
+}
+
+interface ExtractedFileEntry {
+  relativePath: string;
+  absolutePath: string;
+  size: number;
+}
+
+interface ExtractArchiveOptions {
+  preview?: boolean;
+  conflictPolicy?: ExtractConflictAction;
+  conflictResolutions?: Record<string, ExtractConflictAction>;
+}
+
+interface ExtractArchiveResult extends ArchiveScanResult {
+  skippedCount: number;
+  overwrittenCount: number;
+  conflicts: ExtractArchiveConflict[];
 }
 
 interface RarFileHeader {
@@ -455,10 +475,13 @@ async function extractRarArchive(archivePath: string, targetDirectory: string): 
   }
 }
 
-async function scanExtractedTree(root: string): Promise<ArchiveScanResult> {
+function destinationFromRelativePath(targetRoot: string, relativePath: string): string {
+  return path.join(targetRoot, ...relativePath.split("/"));
+}
+
+async function listExtractedFiles(root: string): Promise<ExtractedFileEntry[]> {
   const realRoot = await fs.realpath(root);
-  let count = 0;
-  let totalBytes = 0;
+  const files: ExtractedFileEntry[] = [];
 
   async function walk(directory: string): Promise<void> {
     const dirents = await fs.readdir(directory, { withFileTypes: true });
@@ -473,33 +496,129 @@ async function scanExtractedTree(root: string): Promise<ArchiveScanResult> {
         throw new Error("Archive entry escapes the target directory");
       }
 
-      count += 1;
-      if (count > maxArchiveEntries) {
-        throw new Error(`Archive has too many entries; the limit is ${maxArchiveEntries}`);
-      }
       if (stats.isDirectory()) {
         await walk(target);
       } else if (stats.isFile()) {
-        totalBytes += stats.size;
-        if (totalBytes > maxExtractedBytes) {
-          throw new Error("Archive expands beyond the 512 MB online extraction limit");
-        }
+        files.push({
+          relativePath: toClientPath(realRoot, target),
+          absolutePath: target,
+          size: stats.size
+        });
       }
     }
   }
 
   await walk(root);
-  return { count, totalBytes };
+  return files;
 }
 
-async function extractArchiveToDirectory(
+async function scanExtractedTree(root: string): Promise<ArchiveScanResult> {
+  const files = await listExtractedFiles(root);
+  let totalBytes = 0;
+  for (const file of files) {
+    totalBytes += file.size;
+    if (totalBytes > maxExtractedBytes) {
+      throw new Error("Archive expands beyond the 512 MB online extraction limit");
+    }
+  }
+  if (files.length > maxArchiveEntries) {
+    throw new Error(`Archive has too many entries; the limit is ${maxArchiveEntries}`);
+  }
+  return { count: files.length, totalBytes };
+}
+
+async function detectExtractConflicts(
+  sourceRoot: string,
+  targetRoot: string
+): Promise<ExtractArchiveConflict[]> {
+  const files = await listExtractedFiles(sourceRoot);
+  const conflicts: ExtractArchiveConflict[] = [];
+
+  for (const file of files) {
+    const destination = destinationFromRelativePath(targetRoot, file.relativePath);
+    if (!(await pathExists(destination))) continue;
+
+    const destinationStats = await fs.lstat(destination);
+    const existingType = destinationStats.isDirectory() ? "directory" : "file";
+    const conflict: ExtractArchiveConflict = {
+      path: file.relativePath,
+      archiveType: "file",
+      existingType,
+      archiveSize: file.size,
+      canOverwrite: existingType === "file"
+    };
+    if (destinationStats.isFile()) {
+      conflict.existingSize = destinationStats.size;
+    }
+    conflicts.push(conflict);
+  }
+
+  return conflicts;
+}
+
+function resolveExtractConflictAction(
+  relativePath: string,
+  canOverwrite: boolean,
+  options: Pick<ExtractArchiveOptions, "conflictPolicy" | "conflictResolutions">
+): ExtractConflictAction {
+  const explicit = options.conflictResolutions?.[relativePath];
+  if (explicit) {
+    return explicit === "overwrite" && !canOverwrite ? "skip" : explicit;
+  }
+  if (options.conflictPolicy) {
+    return options.conflictPolicy === "overwrite" && !canOverwrite ? "skip" : options.conflictPolicy;
+  }
+  return "skip";
+}
+
+async function mergeExtractedTree(
+  sourceRoot: string,
+  targetRoot: string,
+  options: Pick<ExtractArchiveOptions, "conflictPolicy" | "conflictResolutions">
+): Promise<ArchiveScanResult & { skippedCount: number; overwrittenCount: number }> {
+  const files = await listExtractedFiles(sourceRoot);
+  let count = 0;
+  let totalBytes = 0;
+  let skippedCount = 0;
+  let overwrittenCount = 0;
+
+  await fs.mkdir(targetRoot, { recursive: true });
+
+  for (const file of files) {
+    const destination = destinationFromRelativePath(targetRoot, file.relativePath);
+    const exists = await pathExists(destination);
+    const canOverwrite = exists ? (await fs.lstat(destination)).isFile() : true;
+    const action = exists
+      ? resolveExtractConflictAction(file.relativePath, canOverwrite, options)
+      : "overwrite";
+
+    if (exists && action === "skip") {
+      skippedCount += 1;
+      continue;
+    }
+    if (exists && action === "overwrite") {
+      overwrittenCount += 1;
+    }
+
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    await fs.copyFile(file.absolutePath, destination);
+    count += 1;
+    totalBytes += file.size;
+  }
+
+  return { count, totalBytes, skippedCount, overwrittenCount };
+}
+
+async function extractArchiveToTarget(
   archivePath: string,
   targetDirectory: string,
-  kind: "zip" | "rar" | "7z"
-): Promise<ArchiveScanResult> {
+  kind: "zip" | "rar" | "7z",
+  options: ExtractArchiveOptions = {}
+): Promise<ExtractArchiveResult> {
   const tempDirectory = path.join(path.dirname(targetDirectory), `.webops-extract-${randomUUID()}`);
   let moved = false;
-  await fs.mkdir(tempDirectory);
+
+  await fs.mkdir(tempDirectory, { recursive: true });
 
   try {
     if (kind === "rar") {
@@ -508,10 +627,44 @@ async function extractArchiveToDirectory(
       await extractSevenZipArchive(archivePath, tempDirectory);
     }
 
-    const scan = await scanExtractedTree(tempDirectory);
-    await moveEntry(tempDirectory, targetDirectory);
-    moved = true;
-    return scan;
+    await scanExtractedTree(tempDirectory);
+
+    const targetExists = await pathExists(targetDirectory);
+    if (targetExists) {
+      const targetStats = await fs.lstat(targetDirectory);
+      if (!targetStats.isDirectory()) {
+        throw new Error("Extraction target already exists and is not a directory");
+      }
+    }
+
+    const conflicts = targetExists ? await detectExtractConflicts(tempDirectory, targetDirectory) : [];
+    if (options.preview) {
+      return {
+        count: 0,
+        totalBytes: 0,
+        skippedCount: 0,
+        overwrittenCount: 0,
+        conflicts
+      };
+    }
+
+    if (!targetExists) {
+      const scan = await scanExtractedTree(tempDirectory);
+      await moveEntry(tempDirectory, targetDirectory);
+      moved = true;
+      return {
+        ...scan,
+        skippedCount: 0,
+        overwrittenCount: 0,
+        conflicts: []
+      };
+    }
+
+    const merged = await mergeExtractedTree(tempDirectory, targetDirectory, options);
+    return {
+      ...merged,
+      conflicts: []
+    };
   } finally {
     if (!moved) {
       await fs.rm(tempDirectory, { force: true, recursive: true });
@@ -990,15 +1143,30 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     if (output.relativePath === "") {
       throw new Error("Extraction target cannot be the instance working directory");
     }
-    if (await pathExists(output.target)) {
-      if (!body.overwrite) {
-        throw new Error("Extraction target already exists");
-      }
-      await fs.rm(output.target, { force: true, recursive: true });
+
+    const extractOptions: ExtractArchiveOptions = {
+      preview: body.preview === true
+    };
+    if (body.conflictPolicy) {
+      extractOptions.conflictPolicy = body.conflictPolicy;
+    } else if (body.overwrite) {
+      extractOptions.conflictPolicy = "overwrite";
+    }
+    if (body.conflictResolutions) {
+      extractOptions.conflictResolutions = body.conflictResolutions;
     }
 
-    const result = await extractArchiveToDirectory(archive.target, output.target, kind);
-    const entry = await toFileEntry(output.root, output.target, path.basename(output.target));
+    const result = await extractArchiveToTarget(archive.target, output.target, kind, extractOptions);
+
+    const entry = (await pathExists(output.target))
+      ? await toFileEntry(output.root, output.target, path.basename(output.target))
+      : {
+          name: path.basename(output.target),
+          path: output.relativePath,
+          type: "directory" as const,
+          size: 0,
+          modifiedAt: new Date().toISOString()
+        };
 
     return {
       instanceId: id,
@@ -1006,7 +1174,10 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       outputPath: output.relativePath,
       entry,
       extractedCount: result.count,
-      totalBytes: result.totalBytes
+      totalBytes: result.totalBytes,
+      skippedCount: result.skippedCount,
+      overwrittenCount: result.overwrittenCount,
+      ...(body.preview ? { preview: true, conflicts: result.conflicts } : {})
     } satisfies ExtractInstanceArchiveResponse;
   });
 
