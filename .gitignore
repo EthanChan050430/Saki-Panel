@@ -3,6 +3,10 @@ dist/
 .vite/
 data/
 *.log
+.codex-*
+terminals/
+check_nodes.sql
+docs.zip
 .env
 .env.local
 .env.*.local
@@ -28,5 +32,9 @@ instances.json
 temp_verify.ps1
 packages.zip
 p.zip
+packages.zip
 *.zip
-!release/**/*.zip
+dist/
+release/node_modules/
+release/apps/
+release/packages/
