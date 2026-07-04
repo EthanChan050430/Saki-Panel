@@ -250,7 +250,7 @@ export async function prepareSakiChatInvocation(
   const skillQuery =
     `${message} ${modelInput.panelError ?? ""} ${modelInput.contextTitle ?? ""} ${combinedSakiContextText(modelInput).slice(0, 1200)}`.trim() ||
     "coding";
-  const skillState = await loadSakiSkills(skillQuery);
+  const skillState = await loadSakiSkills(skillQuery, false, input.mode === "agent" ? 20 : 12);
   const skills = input.selectedSkillIds?.length
     ? await readSakiSkillsByIds(input.selectedSkillIds)
     : skillState.skills;

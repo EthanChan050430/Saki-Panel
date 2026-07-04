@@ -13,9 +13,11 @@ import {
   autoApplySkillScoreThreshold,
   fetchWithTimeout,
   maxAgentSkillContentChars,
+  maxAgentSkillSearchResults,
   maxAutoAppliedSakiSkills,
   maxAutoAppliedSkillContextChars,
   maxSakiSkillContentChars,
+  suggestSkillScoreThreshold,
   RouteError,
   sakiSkillFileName,
   uniqueSkills,
@@ -492,6 +494,20 @@ async function readAllSakiSkillDocuments(includeDisabled = false): Promise<SakiS
     .filter((document): document is SakiSkillDocument => Boolean(document));
 }
 
+function extractSkillTriggerTerms(skill: SakiSkillDocument): string[] {
+  const triggers = new Set<string>();
+  const triggerSection = skill.content.match(/##\s*触发词\s*\n([\s\S]*?)(?=\n##|\n#|$)/i)?.[1] ?? "";
+  for (const part of triggerSection.split(/[,，、;；\n|]+/)) {
+    const term = part.trim().toLowerCase();
+    if (term.length >= 2) triggers.add(term);
+  }
+  for (const tag of skill.tags ?? []) {
+    const term = tag.trim().toLowerCase();
+    if (term.length >= 2) triggers.add(term);
+  }
+  return [...triggers];
+}
+
 function scoreSkill(skill: SakiSkillDocument, terms: string[]): number {
   if (terms.length === 0) return skill.sourceType === "builtin" ? 2 : 1;
   const name = skill.name.toLowerCase();
@@ -499,7 +515,18 @@ function scoreSkill(skill: SakiSkillDocument, terms: string[]): number {
   const description = (skill.description ?? "").toLowerCase();
   const tags = (skill.tags ?? []).join(" ").toLowerCase();
   const contentHead = skill.content.slice(0, 2400).toLowerCase();
+  const triggerTerms = extractSkillTriggerTerms(skill);
+  const normalizedQuery = terms.join(" ").trim();
   let score = 0;
+
+  if (normalizedQuery.length >= 4) {
+    if (name && normalizedQuery.includes(name)) score += 10;
+    if (description && normalizedQuery.includes(description.slice(0, Math.min(description.length, 48)))) score += 8;
+    for (const trigger of triggerTerms) {
+      if (trigger.length >= 3 && normalizedQuery.includes(trigger)) score += 9;
+    }
+  }
+
   for (const term of terms) {
     if (!term) continue;
     if (id.includes(term)) score += 8;
@@ -507,8 +534,36 @@ function scoreSkill(skill: SakiSkillDocument, terms: string[]): number {
     if (tags.includes(term)) score += 5;
     if (description.includes(term)) score += 3;
     if (contentHead.includes(term)) score += 1;
+    for (const trigger of triggerTerms) {
+      if (trigger.includes(term) || term.includes(trigger)) score += 6;
+    }
   }
   return score;
+}
+
+export interface RankedSakiSkill {
+  skill: SakiSkillDocument;
+  score: number;
+}
+
+export async function rankSkillsForQuery(
+  query: string,
+  options?: { includeDisabled?: boolean; limit?: number }
+): Promise<RankedSakiSkill[]> {
+  const documents = await readAllSakiSkillDocuments(options?.includeDisabled ?? false);
+  const terms = expandedSkillQueryTerms(query);
+  const limit = options?.limit ?? maxAgentSkillSearchResults;
+  return documents
+    .map((skill) => ({ skill, score: scoreSkill(skill, terms) }))
+    .filter((item) => terms.length === 0 || item.score > 0)
+    .sort((left, right) => right.score - left.score || left.skill.name.localeCompare(right.skill.name))
+    .slice(0, limit);
+}
+
+export function formatSkillSearchLine(skill: SakiSkillSummary, score: number): string {
+  const description = skill.description?.trim();
+  const relevance = score >= autoApplySkillScoreThreshold ? "high" : score >= suggestSkillScoreThreshold ? "medium" : "low";
+  return `${skill.id}: ${skill.name} [${relevance}/${score}]${description ? ` — ${description}` : ""}`;
 }
 
 function skillQueryTerms(query: string): string[] {
@@ -541,15 +596,69 @@ function expandedSkillQueryTerms(query: string): string[] {
   return terms.slice(0, 48);
 }
 
-export async function loadSakiSkills(query = "", includeDisabled = false): Promise<{ skills: SakiSkillSummary[]; online: boolean }> {
-  const documents = await readAllSakiSkillDocuments(includeDisabled);
-  const terms = expandedSkillQueryTerms(query);
-  const ranked = documents
-    .map((skill) => ({ skill, score: scoreSkill(skill, terms) }))
-    .filter((item) => terms.length === 0 || item.score > 0)
-    .sort((left, right) => right.score - left.score || left.skill.name.localeCompare(right.skill.name));
-  const selected = (ranked.length ? ranked.map((item) => item.skill) : documents).slice(0, includeDisabled ? 200 : 12);
+export async function loadSakiSkills(
+  query = "",
+  includeDisabled = false,
+  limit = 12
+): Promise<{ skills: SakiSkillSummary[]; online: boolean }> {
+  const ranked = await rankSkillsForQuery(query, {
+    includeDisabled,
+    limit: includeDisabled ? 200 : limit
+  });
+  const documents = ranked.length ? ranked.map((item) => item.skill) : await readAllSakiSkillDocuments(includeDisabled);
+  const selected = (ranked.length ? ranked.map((item) => item.skill) : documents).slice(0, includeDisabled ? 200 : limit);
   return { skills: selected.map(toSkillSummary), online: true };
+}
+
+export async function bootstrapAgentSkills(
+  message: string,
+  selectedSkillIds: readonly string[] = [],
+  contextText?: string | null
+): Promise<{ scratchpad: string[]; autoLoadedCount: number; suggestedCount: number }> {
+  const hasAutoApplied = (contextText ?? "").includes("Auto-applied Saki Skill");
+  const selectedIds = new Set(selectedSkillIds.map(trimString).filter(Boolean));
+  const ranked = await rankSkillsForQuery(message, { limit: maxAgentSkillSearchResults });
+  const scratchpad: string[] = [];
+  let autoLoadedCount = 0;
+  let suggestedCount = 0;
+
+  if (!hasAutoApplied) {
+    const autoCandidates = ranked.filter(
+      (item) => selectedIds.has(item.skill.id) || item.score >= autoApplySkillScoreThreshold
+    );
+    for (const candidate of autoCandidates.slice(0, maxAutoAppliedSakiSkills)) {
+      scratchpad.push(
+        `[Auto-loaded Skill — relevance ${candidate.score}]\n${formatSkillForAgent(candidate.skill)}`
+      );
+      autoLoadedCount += 1;
+    }
+  }
+
+  const loadedIds = new Set(
+    ranked
+      .filter((item) => selectedIds.has(item.skill.id) || item.score >= autoApplySkillScoreThreshold)
+      .slice(0, maxAutoAppliedSakiSkills)
+      .map((item) => item.skill.id)
+  );
+  const suggestions = ranked.filter(
+    (item) =>
+      item.score >= suggestSkillScoreThreshold &&
+      item.score < autoApplySkillScoreThreshold &&
+      !selectedIds.has(item.skill.id) &&
+      !loadedIds.has(item.skill.id)
+  );
+  if (suggestions.length > 0) {
+    scratchpad.push(
+      [
+        "Potentially relevant skills detected for this task.",
+        "If the request matches one of them, call readSkill({ skillId }) before editing files or running commands.",
+        ...suggestions.slice(0, 5).map((item) => formatSkillSearchLine(toSkillSummary(item.skill), item.score))
+      ].join("\n")
+    );
+    suggestedCount = suggestions.length;
+  }
+
+  return { scratchpad, autoLoadedCount, suggestedCount };
 }
 
 export async function buildAutoAppliedSakiSkillContext(

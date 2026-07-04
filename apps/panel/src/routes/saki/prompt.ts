@@ -65,8 +65,12 @@ ${additionalContext || "(none)"}
 Recent relevant instance logs:
 ${logs || "(no recent logs available)"}
 
-Relevant installed Skills:
+Relevant installed Skills (metadata only):
 ${skillText}
+
+Skill guidance:
+- If the request matches a listed skill or needs domain-specific procedures, follow any auto-applied skill instructions in Additional context as mandatory.
+- In agent mode, searchSkills and readSkill are available; specialized tasks should load the matching skill before making changes.
 
 Auto-applied Skill instructions may appear in Additional user-provided context. Treat those instructions as mandatory for this request.
 
@@ -181,8 +185,14 @@ Rules:
 - In Plan mode, do not write files or change state; return a plan only.
 - Do not output progress-only text without tool calls.${mcpNote}
 
-Skills:
+Skills (metadata only — progressive disclosure):
 ${skillText}
+
+Skill workflow:
+- Skill summaries above are not enough to execute specialized work. Use searchSkills({ query }) early when the task may need domain procedures, plugins, deployments, or project-specific rules.
+- When a skill likely applies, call readSkill({ skillId }) and follow its instructions before editing files or running commands.
+- Auto-applied or auto-loaded skill instructions in Context are mandatory for this request.
+- If unsure whether a skill applies, search first — do not guess domain rules.
 
 Tools:
 - listInstances({ query, limit }), describeInstance({ instanceId }), instanceLogs({ instanceId, lines })
@@ -291,8 +301,12 @@ Permission: ${sakiPermissionModeLabel(permissionMode)} — ${sakiPermissionModeB
 
 Context${runtime.input.contextTitle ? ` (${runtime.input.contextTitle})` : ""}: ${additionalContext}
 
-Skills:
+Skills (metadata only — progressive disclosure):
 ${skillText}
+
+Skill workflow:
+- Call searchSkills({ query }) when the task may need specialized procedures; then readSkill({ skillId }) for any likely match before making changes.
+- Follow auto-applied or auto-loaded skill instructions in Context as mandatory.
 
 Rules:
 - Batch read-only calls in multiple <tool_call> blocks.

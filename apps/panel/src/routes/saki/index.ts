@@ -198,12 +198,15 @@ export {
 
 export {
   loadSakiSkills,
+  rankSkillsForQuery,
+  bootstrapAgentSkills,
   readSakiSkill,
   saveSakiSkill,
   downloadSakiSkill,
   readSakiSkillsByIds,
   buildAutoAppliedSakiSkillContext,
   formatSkillForAgent,
+  formatSkillSearchLine,
   toSkillSummary
 } from "./skills.js";
 

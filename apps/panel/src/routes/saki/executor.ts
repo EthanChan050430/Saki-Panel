@@ -958,15 +958,22 @@ export async function executeSakiAgentTool(
         observation = await requireExecutorHost().researchWeb(stringArg(args, "query") || runtime.input.message, stringArg(args, "maxPages") || undefined);
       } else if (toolName === "listskills") {
         observation =
-          runtime.skills.map((skill) => `${skill.id}: ${skill.name} - ${skill.description ?? ""}`).join("\n") ||
-          "No skills available.";
-        if (observation !== "No skills available.") observation += "\n\nCall readSkill({ skillId }) before applying one of these skills.";
+          runtime.skills
+            .map((skill) => `${skill.id}: ${skill.name}${skill.description ? ` — ${skill.description}` : ""}`)
+            .join("\n") || "No skills available.";
+        if (observation !== "No skills available.") {
+          observation += "\n\nThese are summaries only. Call searchSkills({ query }) for task-specific matches, then readSkill({ skillId }) before applying a skill.";
+        }
       } else if (toolName === "searchskills") {
-        const state = await requireExecutorHost().loadSakiSkills(stringArg(args, "query") || runtime.input.message);
+        const { rankSkillsForQuery, formatSkillSearchLine, toSkillSummary } = await import("./skills.js");
+        const query = stringArg(args, "query") || runtime.input.message;
+        const ranked = await rankSkillsForQuery(query, { limit: 12 });
         observation =
-          state.skills.map((skill) => `${skill.id}: ${skill.name} - ${skill.description ?? ""}`).join("\n") ||
+          ranked.map((item) => formatSkillSearchLine(toSkillSummary(item.skill), item.score)).join("\n") ||
           "No matching skills found.";
-        if (observation !== "No matching skills found.") observation += "\n\nCall readSkill({ skillId }) before applying one of these skills.";
+        if (observation !== "No matching skills found.") {
+          observation += "\n\nCall readSkill({ skillId }) for any high/medium relevance skill before making changes.";
+        }
       } else if (toolName === "readskill") {
         observation = requireExecutorHost().formatSkillForAgent(await requireExecutorHost().readSakiSkill(stringArg(args, "skillId"), false));
       } else if (toolName === "readmemory" || toolName === "getmemory" || toolName === "loadmemory") {
@@ -1317,16 +1324,23 @@ export async function executeSakiAgentTool(
     observation = await requireExecutorHost().researchWeb(call.args[0] ?? runtime.input.message, call.args[1]);
   } else if (toolName === "listskills") {
     observation =
-      runtime.skills.map((skill) => `${skill.id}: ${skill.name} - ${skill.description ?? ""}`).join("\n") ||
-      "No skills available.";
-    if (observation !== "No skills available.") observation += "\n\nCall readSkill(skillId) before applying one of these skills.";
-  } else if (toolName === "searchskills") {
-    const state = await requireExecutorHost().loadSakiSkills(call.args[0] ?? runtime.input.message);
+      runtime.skills
+        .map((skill) => `${skill.id}: ${skill.name}${skill.description ? ` — ${skill.description}` : ""}`)
+        .join("\n") || "No skills available.";
+    if (observation !== "No skills available.") {
+      observation += "\n\nThese are summaries only. Call searchSkills(query) for task-specific matches, then readSkill(skillId) before applying a skill.";
+    }
+  } else if (toolName === "searchskills" || toolName === "findskills" || toolName === "matchskills") {
+    const { rankSkillsForQuery, formatSkillSearchLine, toSkillSummary } = await import("./skills.js");
+    const query = call.args[0] ?? runtime.input.message;
+    const ranked = await rankSkillsForQuery(query, { limit: 12 });
     observation =
-      state.skills.map((skill) => `${skill.id}: ${skill.name} - ${skill.description ?? ""}`).join("\n") ||
+      ranked.map((item) => formatSkillSearchLine(toSkillSummary(item.skill), item.score)).join("\n") ||
       "No matching skills found.";
-    if (observation !== "No matching skills found.") observation += "\n\nCall readSkill(skillId) before applying one of these skills.";
-  } else if (toolName === "readskill" || toolName === "loadskill" || toolName === "useskill" || toolName === "getskill") {
+    if (observation !== "No matching skills found.") {
+      observation += "\n\nCall readSkill(skillId) for any high/medium relevance skill before making changes.";
+    }
+  } else if (toolName === "readskill" || toolName === "loadskill" || toolName === "useskill" || toolName === "getskill" || toolName === "applyskill") {
     observation = requireExecutorHost().formatSkillForAgent(await requireExecutorHost().readSakiSkill(call.args[0] ?? "", false));
   } else if (toolName === "readmemory" || toolName === "getmemory" || toolName === "loadmemory") {
     requireUserPermission(runtime.permissions, "file.read");

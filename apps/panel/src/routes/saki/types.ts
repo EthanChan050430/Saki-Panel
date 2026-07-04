@@ -839,7 +839,9 @@ export const maxSakiSkillContentChars = 60000;
 export const maxAgentSkillContentChars = 14000;
 export const maxAutoAppliedSakiSkills = 3;
 export const maxAutoAppliedSkillContextChars = 24000;
-export const autoApplySkillScoreThreshold = 8;
+export const maxAgentSkillSearchResults = 20;
+export const autoApplySkillScoreThreshold = 5;
+export const suggestSkillScoreThreshold = 3;
 export const webUserAgent = "Saki-Panel-Agent/0.2 (+https://saki-panel.local/saki)";
 
 export const copilotMissingTokenMessage = "\u8BF7\u5148\u70B9\u51FB\u767B\u5F55 GitHub \u5B8C\u6210\u6388\u6743\u3002";

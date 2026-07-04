@@ -27,10 +27,12 @@ import {
   stripThinking,
   truncateText,
   trimString,
+  combinedSakiContextText,
 } from "./types.js";
 import { isSakiReadOnlyAgentTool, normalizedAgentToolName, shouldRequestSakiApproval, assertSakiPermissionModeAllowsTool, toolArgs } from "./tools.js";
 import { callConfiguredAgentTurn } from "./providers.js";
 import { buildAgentPrompt, buildAgentContinuationPrompt } from "./prompt.js";
+import { bootstrapAgentSkills } from "./skills.js";
 import { completedSakiActions, pendingSakiActions, sakiCheckpoints } from "./state.js";
 
 export { completedSakiActions, pendingSakiActions, sakiCheckpoints } from "./state.js";
@@ -152,8 +154,12 @@ function toolIntentMessage(call: ParsedToolCall): string {
   if (toolName.includes("scheduledtask") || toolName === "runtask") return "\u6211\u8981\u5904\u7406\u8BA1\u5212\u4EFB\u52A1\u3002";
   if (toolName === "searchweb") return query ? `\u6211\u8981\u641C\u7D22\uFF1A\u201C${query.slice(0, 80)}\u201D\u3002` : "\u6211\u8981\u641C\u7D22\u516C\u5F00\u4FE1\u606F\u3002";
   if (toolName === "browse" || toolName === "crawl" || toolName === "researchweb") return "\u6211\u8981\u8BFB\u53D6\u7F51\u9875\u5185\u5BB9\u3002";
-  if (toolName === "listskills" || toolName === "searchskills") return "\u6211\u8981\u67E5\u4E00\u4E0B\u6709\u6CA1\u6709\u9002\u7528\u7684\u6280\u80FD\u89C4\u8303\u3002";
-  if (toolName === "readskill") return "\u6211\u8981\u8BFB\u53D6\u8FD9\u4E2A\u6280\u80FD\u89C4\u8303\u3002";
+  if (toolName === "listskills" || toolName === "searchskills" || toolName === "findskills" || toolName === "matchskills") {
+    return "\u6211\u8981\u67E5\u4E00\u4E0B\u6709\u6CA1\u6709\u9002\u7528\u7684\u6280\u80FD\u89C4\u8303\u3002";
+  }
+  if (toolName === "readskill" || toolName === "loadskill" || toolName === "useskill" || toolName === "getskill" || toolName === "applyskill") {
+    return "\u6211\u8981\u8BFB\u53D6\u8FD9\u4E2A\u6280\u80FD\u89C4\u8303\u3002";
+  }
   if (toolName === "respond") return "\u6211\u5DF2\u7ECF\u6574\u7406\u597D\u7ED3\u679C\uFF0C\u5F00\u59CB\u56DE\u590D\u4F60\u3002";
   return "\u6211\u8981\u5148\u8865\u5145\u4E00\u70B9\u4E0A\u4E0B\u6587\u3002";
 }
@@ -176,7 +182,19 @@ function toolOutcomeMessage(call: ParsedToolCall, action: SakiAgentAction): stri
   if (toolName === "runcommand") return "\u547D\u4EE4\u6267\u884C\u5B8C\u4E86\u3002";
   if (toolName === "sendinput" || toolName === "sendcommand") return "\u63A7\u5236\u53F0\u8F93\u5165\u5DF2\u7ECF\u53D1\u9001\u3002";
   if (toolName === "searchweb" || toolName === "browse" || toolName === "crawl" || toolName === "researchweb") return "\u7F51\u9875\u4FE1\u606F\u62FF\u5230\u4E86\u3002";
-  if (toolName === "listskills" || toolName === "searchskills" || toolName === "readskill") return "\u6280\u80FD\u89C4\u8303\u770B\u5B8C\u4E86\u3002";
+  if (
+    toolName === "listskills" ||
+    toolName === "searchskills" ||
+    toolName === "findskills" ||
+    toolName === "matchskills" ||
+    toolName === "readskill" ||
+    toolName === "loadskill" ||
+    toolName === "useskill" ||
+    toolName === "getskill" ||
+    toolName === "applyskill"
+  ) {
+    return "\u6280\u80FD\u89C4\u8303\u770B\u5B8C\u4E86\u3002";
+  }
   return "\u8FD9\u4E00\u6B65\u5B8C\u6210\u4E86\u3002";
 }
 
@@ -289,7 +307,13 @@ export const cacheableReadOnlyAgentToolNames = new Set([
   "researchweb",
   "listskills",
   "searchskills",
+  "findskills",
+  "matchskills",
   "readskill",
+  "loadskill",
+  "useskill",
+  "getskill",
+  "applyskill",
   "readmemory"
 ]);
 
@@ -487,6 +511,23 @@ export async function runSakiAgent(
   });
 
   rebuildCurrentPrompt();
+
+  if (!resume) {
+    const skillBootstrap = await bootstrapAgentSkills(
+      runtime.input.message,
+      runtime.input.selectedSkillIds ?? [],
+      combinedSakiContextText(runtime.input)
+    );
+    for (const entry of skillBootstrap.scratchpad) {
+      appendAgentScratchpad(entry);
+    }
+    if (skillBootstrap.autoLoadedCount > 0 || skillBootstrap.suggestedCount > 0) {
+      logSakiModelEvent("agent.skills.bootstrap", {
+        autoLoadedCount: skillBootstrap.autoLoadedCount,
+        suggestedCount: skillBootstrap.suggestedCount
+      });
+    }
+  }
 
   logSakiModelEvent("agent.run.start", {
     mode: runtime.input.mode ?? "agent",
