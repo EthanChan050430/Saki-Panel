@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CodeEditor, type CodeEditorHandle, type FindRange, languageFromFileName } from "./CodeEditor.js";
 import {
@@ -7990,12 +7990,11 @@ function FileManager({
     timerId: number;
     active: boolean;
   } | null>(null);
-  const suppressMobileFileClickRef = useRef(false);
   const [currentPath, setCurrentPath] = useState("");
+  const [loading, setLoading] = useState(false);
   const [entries, setEntries] = useState<InstanceFileEntry[]>([]);
   const [fileSearchQuery, setFileSearchQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
   const [editorPath, setEditorPath] = useState<string | null>(null);
   const [editorContent, setEditorContent] = useState("");
   const [editorMode, setEditorMode] = useState<"edit" | "preview">("edit");
@@ -8004,7 +8003,6 @@ function FileManager({
   const [findActiveIndex, setFindActiveIndex] = useState(0);
   const [extractingPath, setExtractingPath] = useState<string | null>(null);
   const [archivingPath, setArchivingPath] = useState<string | null>(null);
-  const [bulkFileAction, setBulkFileAction] = useState<"archive" | "download" | "delete" | null>(null);
   const [openFileActionMenuPath, setOpenFileActionMenuPath] = useState<string | null>(null);
   const [draggingFilePath, setDraggingFilePath] = useState<string | null>(null);
   const [fileConflictPrompt, setFileConflictPrompt] = useState<FileConflictPrompt | null>(null);
@@ -8019,7 +8017,6 @@ function FileManager({
   } | null>(null);
   const [mobileBrowserOpen, setMobileBrowserOpen] = useState(false);
   const [mobileEditorOpen, setMobileEditorOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -8066,13 +8063,6 @@ function FileManager({
     return result;
   }, [entries, fileSearchQuery, sortField, sortOrder]);
   const selectedEntry = entries.find((entry) => entry.path === selectedPath) ?? null;
-  const selectedEntries = useMemo(
-    () => entries.filter((entry) => selectedPaths.has(entry.path)),
-    [entries, selectedPaths]
-  );
-  const selectedFileCount = selectedEntries.length;
-  const allFilteredEntriesSelected =
-    filteredEntries.length > 0 && filteredEntries.every((entry) => selectedPaths.has(entry.path));
   const editorLanguage = useMemo(() => editorLanguageFromPath(editorPath), [editorPath]);
   const editorPreviewKind = useMemo(() => filePreviewKindFromPath(editorPath), [editorPath]);
   const editorIsImage = editorPreviewKind === "image";
@@ -8107,7 +8097,6 @@ function FileManager({
         setEntries(response.entries);
         setFileSearchQuery("");
         setSelectedPath(null);
-        setSelectedPaths(new Set());
         setOpenFileActionMenuPath(null);
 
         // Update treeData for this directory path
@@ -8133,7 +8122,7 @@ function FileManager({
       const response = await api.listInstanceFiles(token, instanceId, pathToLoad);
       setTreeData(prev => ({
         ...prev,
-        [pathToLoad]: response.entries
+        [response.path]: response.entries
       }));
     } catch (err) {
       console.error("Failed to load tree directory:", err);
@@ -8180,8 +8169,6 @@ function FileManager({
     const paths = new Set<string>();
     if (path) {
       paths.add(path);
-    } else if (selectedEntries.length > 0) {
-      selectedEntries.forEach((entry) => paths.add(entry.path));
     } else if (selectedPath) {
       paths.add(selectedPath);
     }
@@ -8205,7 +8192,6 @@ function FileManager({
     setError("");
     const pathsToPaste = Array.from(clipboard.paths);
     const actionName = clipboard.action === "copy" ? "复制" : "移动";
-    setBulkFileAction(clipboard.action === "copy" ? "download" : "archive");
 
     try {
       for (const srcPath of pathsToPaste) {
@@ -8229,12 +8215,9 @@ function FileManager({
         setClipboard(null);
       }
 
-      clearFileSelection();
       await loadDirectory(currentPath);
     } catch (err) {
       setError(err instanceof Error ? err.message : `${actionName}失败`);
-    } finally {
-      setBulkFileAction(null);
     }
   }
 
@@ -8284,43 +8267,33 @@ function FileManager({
           void openEntry(entry);
         }
       } else if (event.key === "Delete") {
-        if (selectedEntries.length > 0) {
-          event.preventDefault();
-          void deleteSelectedEntries();
-        } else if (selectedPath) {
+        if (selectedPath) {
           const entry = filteredEntries.find(e => e.path === selectedPath);
           if (entry) {
             event.preventDefault();
             void deleteEntry(entry);
           }
         }
-      } else if (event.key === "f" || event.key === "F2") {
-        if (event.key === "F2" || (event.ctrlKey && event.key === "f")) {
-          if (selectedPath) {
-            const entry = filteredEntries.find(e => e.path === selectedPath);
-            if (entry) {
-              event.preventDefault();
-              void renameEntry(entry);
-            }
+      } else if (event.key === "F2") {
+        if (selectedPath) {
+          const entry = filteredEntries.find(e => e.path === selectedPath);
+          if (entry) {
+            event.preventDefault();
+            void renameEntry(entry);
           }
-        }
-      } else if (event.key === "a" && (event.ctrlKey || event.metaKey)) {
-        if (filteredEntries.length > 0) {
-          event.preventDefault();
-          toggleAllFilteredEntries(true);
         }
       } else if (event.key === "Escape") {
         event.preventDefault();
-        clearFileSelection();
+        setSelectedPath(null);
       } else if (event.key === "c" && (event.ctrlKey || event.metaKey)) {
-        if (selectedEntries.length > 0 || selectedPath) {
+        if (selectedPath) {
           event.preventDefault();
-          handleClipboardAction("copy");
+          handleClipboardAction("copy", selectedPath);
         }
       } else if (event.key === "x" && (event.ctrlKey || event.metaKey)) {
-        if (selectedEntries.length > 0 || selectedPath) {
+        if (selectedPath) {
           event.preventDefault();
-          handleClipboardAction("cut");
+          handleClipboardAction("cut", selectedPath);
         }
       } else if (event.key === "v" && (event.ctrlKey || event.metaKey)) {
         if (clipboard) {
@@ -8332,7 +8305,7 @@ function FileManager({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [instanceId, editorPath, filteredEntries, selectedPath, selectedEntries, clipboard]);
+  }, [instanceId, editorPath, filteredEntries, selectedPath, clipboard]);
 
   useEffect(() => {
     directoryLoadRequestRef.current += 1;
@@ -8341,7 +8314,6 @@ function FileManager({
     setEntries([]);
     setFileSearchQuery("");
     setSelectedPath(null);
-    setSelectedPaths(new Set());
     setEditorPath(null);
     setEditorContent("");
     setEditorMode("edit");
@@ -8350,7 +8322,6 @@ function FileManager({
     setFindActiveIndex(0);
     setExtractingPath(null);
     setArchivingPath(null);
-    setBulkFileAction(null);
     setOpenFileActionMenuPath(null);
     setDraggingFilePath(null);
     setFileConflictPrompt(null);
@@ -8615,149 +8586,8 @@ function FileManager({
     onSakiFileDragChange(false);
   }
 
-  function handleEntryPointerDown(event: React.PointerEvent<HTMLTableRowElement>, entry: InstanceFileEntry) {
-    if (
-      !isMobileFileLayout() ||
-      event.pointerType === "mouse" ||
-      (event.target as HTMLElement).closest(".row-actions, .file-select-cell")
-    ) {
-      return;
-    }
-    const payload = sakiPayloadForEntry(entry);
-    if (!payload || !onSakiInstanceFileDrop) return;
-
-    const target = event.currentTarget;
-    const timerId = window.setTimeout(() => {
-      const drag = mobileFileLongPressRef.current;
-      if (!drag || drag.pointerId !== event.pointerId) return;
-      drag.active = true;
-      setDraggingFilePath(entry.path);
-      onSakiFileDragChange(true);
-      setMobileFileDrag({
-        name: entry.name,
-        path: entry.path,
-        x: drag.startX,
-        y: drag.startY,
-        overSaki: isSakiDropTargetAt(drag.startX, drag.startY)
-      });
-    }, 420);
-
-    mobileFileLongPressRef.current = {
-      pointerId: event.pointerId,
-      entry,
-      payload,
-      startX: event.clientX,
-      startY: event.clientY,
-      timerId,
-      active: false
-    };
-    try {
-      target.setPointerCapture(event.pointerId);
-    } catch {
-    }
-  }
-
-  function handleEntryPointerMove(event: React.PointerEvent<HTMLTableRowElement>) {
-    const drag = mobileFileLongPressRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-
-    const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
-    if (!drag.active && distance > 12) {
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
-      cancelMobileFileLongPress();
-      return;
-    }
-
-    if (!drag.active) return;
-    event.preventDefault();
-    setMobileFileDrag({
-      name: drag.entry.name,
-      path: drag.entry.path,
-      x: event.clientX,
-      y: event.clientY,
-      overSaki: isSakiDropTargetAt(event.clientX, event.clientY)
-    });
-  }
-
-  function finishMobileFileDrag(event: React.PointerEvent<HTMLTableRowElement>) {
-    const drag = mobileFileLongPressRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-
-    const shouldDrop = drag.active && isSakiDropTargetAt(event.clientX, event.clientY);
-    const payload = drag.payload;
-    if (drag.active) {
-      suppressMobileFileClickRef.current = true;
-      window.setTimeout(() => {
-        suppressMobileFileClickRef.current = false;
-      }, 500);
-    }
-    cancelMobileFileLongPress();
-    if (shouldDrop && onSakiInstanceFileDrop) {
-      onSakiInstanceFileDrop(payload);
-    }
-  }
-
-  function handleEntryPointerCancel(event: React.PointerEvent<HTMLTableRowElement>) {
-    const drag = mobileFileLongPressRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    cancelMobileFileLongPress();
-  }
-
-  function handleEntryContextMenu(event: React.MouseEvent<HTMLTableRowElement>, entry: InstanceFileEntry) {
-    if (entry.type === "file" && isMobileFileLayout()) {
-      event.preventDefault();
-    }
-  }
-
-  function toggleEntrySelection(entry: InstanceFileEntry, checked: boolean) {
-    setSelectedPath(entry.path);
-    setSelectedPaths((current) => {
-      const next = new Set(current);
-      if (checked) {
-        next.add(entry.path);
-      } else {
-        next.delete(entry.path);
-      }
-      return next;
-    });
-  }
-
-  function toggleAllFilteredEntries(checked: boolean) {
-    setSelectedPaths((current) => {
-      const next = new Set(current);
-      for (const entry of filteredEntries) {
-        if (checked) {
-          next.add(entry.path);
-        } else {
-          next.delete(entry.path);
-        }
-      }
-      return next;
-    });
-  }
-
-  function clearFileSelection() {
-    setSelectedPaths(new Set());
-  }
-
   function availableArchiveName(fileName: string): string {
     return existingEntryByName(fileName) ? uniqueSiblingName(fileName, entries) : fileName;
-  }
-
-  function selectedArchiveFileName(selection: InstanceFileEntry[]): string {
-    if (selection.length === 1) {
-      return availableArchiveName(defaultArchiveFileName(selection[0]!.path));
-    }
-    return availableArchiveName("selection.zip");
   }
 
   function saveBase64Download(contentBase64: string, fileName: string) {
@@ -9055,79 +8885,6 @@ function FileManager({
     }
   }
 
-  async function archiveSelectedEntries() {
-    if (!instanceId || selectedEntries.length === 0) return;
-    const outputName = selectedArchiveFileName(selectedEntries);
-    const outputPath = joinFilePath(currentPath, outputName);
-    setError("");
-    setBulkFileAction("archive");
-    try {
-      const response = await api.archiveInstancePaths(
-        token,
-        instanceId,
-        selectedEntries.map((entry) => entry.path),
-        outputPath
-      );
-      clearFileSelection();
-      await loadDirectory(parentFilePath(response.outputPath));
-      setSelectedPath(response.outputPath);
-      showFileToast("压缩完成", `已创建 ${response.entry.name}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "压缩失败");
-    } finally {
-      setBulkFileAction(null);
-    }
-  }
-
-  async function downloadSelectedEntries() {
-    if (!instanceId || selectedEntries.length === 0) return;
-    setError("");
-    setBulkFileAction("download");
-    try {
-      if (selectedEntries.length === 1 && selectedEntries[0]!.type === "file") {
-        await downloadEntry(selectedEntries[0]!);
-      } else {
-        const response = await api.downloadInstancePathsArchive(
-          token,
-          instanceId,
-          selectedEntries.map((entry) => entry.path),
-          selectedArchiveFileName(selectedEntries)
-        );
-        saveBase64Download(response.contentBase64, response.fileName);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "下载失败");
-    } finally {
-      setBulkFileAction(null);
-    }
-  }
-
-  async function deleteSelectedEntries() {
-    if (!instanceId || selectedEntries.length === 0) return;
-    if (!window.confirm(`删除选中的 ${selectedEntries.length} 个项目？`)) return;
-    const pathsToDelete = selectedEntries.map((entry) => entry.path);
-    setError("");
-    setBulkFileAction("delete");
-    try {
-      for (const entry of selectedEntries) {
-        await api.deleteInstancePath(token, instanceId, entry.path);
-      }
-      if (editorPath && pathsToDelete.some((pathToDelete) => editorPath === pathToDelete || editorPath.startsWith(`${pathToDelete}/`))) {
-        setEditorPath(null);
-        setEditorContent("");
-        setEditorMode("edit");
-        setMobileEditorOpen(false);
-      }
-      clearFileSelection();
-      await loadDirectory(currentPath);
-      showFileToast("删除完成", `已删除 ${pathsToDelete.length} 个项目`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "删除失败");
-    } finally {
-      setBulkFileAction(null);
-    }
-  }
-
   async function extractArchive(entry: InstanceFileEntry) {
     if (!instanceId || entry.type !== "file" || !isArchiveFile(entry.path)) return;
     const suggestedPath = defaultExtractPath(entry.path);
@@ -9156,7 +8913,7 @@ function FileManager({
       <div className="tree-node-children" style={{ marginLeft: depth > 0 ? "12px" : "0" }}>
         {folders.map((folder) => {
           const isExpanded = expandedFolders.has(folder.path);
-          const isCurrent = folder.type === "directory" ? currentPath === folder.path : selectedPath === folder.path;
+          const isCurrent = folder.type === "directory" ? currentPath === folder.path : editorPath === folder.path;
           return (
             <div key={folder.path} className="tree-node-wrapper">
               <div
@@ -9168,6 +8925,10 @@ function FileManager({
                   } else {
                     void openEntry(folder);
                   }
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setOpenFileActionMenuPath((current) => (current === folder.path ? null : folder.path));
                 }}
                 onDragOver={folder.type === "directory" ? (e) => {
                   e.preventDefault();
@@ -9217,6 +8978,82 @@ function FileManager({
                   <FileText size={14} className="tree-node-icon" />
                 )}
                 <span className="tree-node-label">{folder.name}</span>
+                {folder.type === "file" && (
+                  <span className="tree-node-size">{formatBytes(folder.size)}</span>
+                )}
+                <div className="tree-node-actions">
+                  {folder.type === "file" ? (
+                    <button
+                      className="tree-node-action-btn"
+                      title="下载"
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void downloadEntry(folder);
+                      }}
+                    >
+                      <Download size={13} />
+                    </button>
+                  ) : null}
+                  <div className="file-action-menu-wrap">
+                    <button
+                      className="tree-node-action-btn"
+                      title="更多操作"
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenFileActionMenuPath((current) => (current === folder.path ? null : folder.path));
+                      }}
+                    >
+                      <MoreHorizontal size={13} />
+                    </button>
+                    {openFileActionMenuPath === folder.path ? (
+                      <div className="file-action-menu tree-action-menu" role="menu">
+                        {folder.type === "file" && isArchiveFile(folder.path) ? (
+                          <button type="button" role="menuitem" disabled={extractingPath === folder.path}
+                            onClick={() => { setOpenFileActionMenuPath(null); void extractArchive(folder); }}>
+                            {extractingPath === folder.path ? <RotateCw size={14} /> : <Archive size={14} />}
+                            <span>解压</span>
+                          </button>
+                        ) : (
+                          <button type="button" role="menuitem"
+                            disabled={(folder.type !== "file" && folder.type !== "directory") || archivingPath === folder.path}
+                            onClick={() => { setOpenFileActionMenuPath(null); void archiveEntry(folder); }}>
+                            {archivingPath === folder.path ? <RotateCw size={14} /> : <Archive size={14} />}
+                            <span>压缩</span>
+                          </button>
+                        )}
+                        <button type="button" role="menuitem"
+                          onClick={() => { setOpenFileActionMenuPath(null); handleClipboardAction("copy", folder.path); }}>
+                          <ClipboardList size={14} />
+                          <span>复制</span>
+                        </button>
+                        <button type="button" role="menuitem"
+                          onClick={() => { setOpenFileActionMenuPath(null); handleClipboardAction("cut", folder.path); }}>
+                          <Layers size={14} />
+                          <span>剪切</span>
+                        </button>
+                        <button type="button" role="menuitem"
+                          onClick={() => { setOpenFileActionMenuPath(null); void renameEntry(folder); }}>
+                          <FileText size={14} />
+                          <span>重命名</span>
+                        </button>
+                        {folder.type === "file" ? (
+                          <button type="button" role="menuitem"
+                            onClick={() => { setOpenFileActionMenuPath(null); void downloadEntry(folder); }}>
+                            <Download size={14} />
+                            <span>下载</span>
+                          </button>
+                        ) : null}
+                        <button className="danger-action" type="button" role="menuitem"
+                          onClick={() => { setOpenFileActionMenuPath(null); void deleteEntry(folder); }}>
+                          <Trash2 size={14} />
+                          <span>删除</span>
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
               </div>
               {folder.type === "directory" && isExpanded && renderTreeNodes(folder.path, depth + 1)}
             </div>
@@ -9283,386 +9120,92 @@ function FileManager({
         {mobileEditorOpen ? (
           <div className="mobile-file-editor-scrim" role="presentation" onPointerDown={closeMobileEditorModal} />
         ) : null}
-        <div className="file-toolbar">
-          <span className="path-pill">/{currentPath}</span>
-          <label className="file-search-box">
-            <Search size={15} />
-            <input
-              value={fileSearchQuery}
-              onChange={(event) => setFileSearchQuery(event.target.value)}
-              placeholder="搜索文件"
-              aria-label="搜索文件"
-            />
-            {fileSearchQuery ? (
-              <button className="icon-button mini" type="button" title="清空搜索" onClick={() => setFileSearchQuery("")}>
-                <X size={14} />
-              </button>
-            ) : null}
-          </label>
-          <div className="file-toolbar-actions">
-            <button
-              className="small-button compact-button file-parent-button"
-              type="button"
-              title="返回上一级目录"
-              disabled={!currentPath}
-              onClick={() => void loadDirectory(parentFilePath(currentPath))}
-            >
-              <CornerUpLeft size={15} />
-              <span>上一级</span>
-            </button>
-            <button className="icon-button mini" title="刷新" disabled={loading} onClick={() => void loadDirectory(currentPath)}>
-              <RefreshCw size={15} />
-            </button>
-            <button className="icon-button mini" title="新建文件" onClick={() => void createFile()}>
-              <FilePlus size={15} />
-            </button>
-            <button className="icon-button mini" title="新建目录" onClick={() => void createDirectory()}>
-              <FolderPlus size={15} />
-            </button>
-            <button className="icon-button mini" title="上传" onClick={() => fileInputRef.current?.click()}>
-              <Upload size={15} />
-            </button>
-            <input
-              ref={fileInputRef}
-              className="hidden-file-input"
-              type="file"
-              multiple
-              onChange={(event) => {
-                const files = Array.from(event.target.files ?? []);
-                if (files.length > 0) void uploadFiles(files);
-              }}
-            />
+        {uploadProgress ? (
+          <div className="file-upload-progress" role="status" aria-live="polite">
+            <div className="file-upload-progress-meta">
+              <span>{uploadProgress.label}</span>
+              <strong>{uploadProgress.fileName}</strong>
+              <em>{uploadProgress.percent}%</em>
+            </div>
+            <div className="file-upload-progress-track">
+              <span style={{ width: `${uploadProgress.percent}%` }} />
+            </div>
           </div>
-        </div>
-        <div className={`file-status-area ${!error && !uploadProgress && selectedFileCount === 0 && !clipboard ? "empty" : ""}`}>
-          {selectedFileCount > 0 ? (
-            <div className="file-selection-bar" role="status" aria-live="polite">
-              <span>已选择 {selectedFileCount} 项</span>
-              <div className="file-selection-actions">
-                <button
-                  className="small-button compact-button"
-                  type="button"
-                  disabled={Boolean(bulkFileAction)}
-                  onClick={() => handleClipboardAction("copy")}
-                >
-                  <ClipboardList size={14} />
-                  <span>复制</span>
-                </button>
-                <button
-                  className="small-button compact-button"
-                  type="button"
-                  disabled={Boolean(bulkFileAction)}
-                  onClick={() => handleClipboardAction("cut")}
-                >
-                  <Layers size={14} />
-                  <span>剪切</span>
-                </button>
-                <button
-                  className="small-button compact-button"
-                  type="button"
-                  disabled={Boolean(bulkFileAction)}
-                  onClick={() => void archiveSelectedEntries()}
-                >
-                  {bulkFileAction === "archive" ? <RotateCw size={14} /> : <Archive size={14} />}
-                  <span>压缩</span>
-                </button>
-                <button
-                  className="small-button compact-button"
-                  type="button"
-                  disabled={Boolean(bulkFileAction)}
-                  onClick={() => void downloadSelectedEntries()}
-                >
-                  <Download size={14} />
-                  <span>下载</span>
-                </button>
-                <button
-                  className="small-button compact-button danger-action"
-                  type="button"
-                  disabled={Boolean(bulkFileAction)}
-                  onClick={() => void deleteSelectedEntries()}
-                >
-                  <Trash2 size={14} />
-                  <span>删除</span>
-                </button>
-                <button className="icon-button mini" type="button" title="清空选择" onClick={clearFileSelection}>
-                  <X size={14} />
-                </button>
-              </div>
-            </div>
-          ) : null}
-          {clipboard && clipboard.paths.size > 0 ? (
-            <div className="file-selection-bar clipboard-bar" role="status" aria-live="polite">
-              <span>已{clipboard.action === "copy" ? "复制" : "剪切"} {clipboard.paths.size} 个项目</span>
-              <div className="file-selection-actions">
-                <button
-                  className="small-button compact-button"
-                  type="button"
-                  onClick={() => void handleClipboardPaste()}
-                >
-                  <ClipboardList size={14} />
-                  <span>粘贴到此处</span>
-                </button>
-                <button
-                  className="icon-button mini"
-                  type="button"
-                  title="取消"
-                  onClick={() => setClipboard(null)}
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            </div>
-          ) : null}
-          {uploadProgress ? (
-            <div className="file-upload-progress" role="status" aria-live="polite">
-              <div className="file-upload-progress-meta">
-                <span>{uploadProgress.label}</span>
-                <strong>{uploadProgress.fileName}</strong>
-                <em>{uploadProgress.percent}%</em>
-              </div>
-              <div className="file-upload-progress-track">
-                <span style={{ width: `${uploadProgress.percent}%` }} />
-              </div>
-            </div>
-          ) : null}
-          {error ? <div className="file-error">{error}</div> : null}
-        </div>
+        ) : null}
         <div className="file-workspace">
           <div className="file-tree-sidebar">
             <div className="file-tree-sidebar-header">
-              <Folder size={14} />
-              <span>目录树</span>
+              <span className="file-tree-breadcrumb">/{currentPath || ""}</span>
             </div>
+            <div className="file-tree-toolbar">
+              <button
+                className="small-button compact-button file-parent-button"
+                type="button"
+                title="返回上一级目录"
+                disabled={!currentPath}
+                onClick={() => void loadDirectory(parentFilePath(currentPath))}
+              >
+                <CornerUpLeft size={14} />
+              </button>
+              <button className="icon-button mini" title="刷新" disabled={loading} onClick={() => void loadDirectory(currentPath)}>
+                <RefreshCw size={14} />
+              </button>
+              <button className="icon-button mini" title="新建文件" onClick={() => void createFile()}>
+                <FilePlus size={14} />
+              </button>
+              <button className="icon-button mini" title="新建目录" onClick={() => void createDirectory()}>
+                <FolderPlus size={14} />
+              </button>
+              <button className="icon-button mini" title="上传" onClick={() => fileInputRef.current?.click()}>
+                <Upload size={14} />
+              </button>
+              <input
+                ref={fileInputRef}
+                className="hidden-file-input"
+                type="file"
+                multiple
+                onChange={(event) => {
+                  const files = Array.from(event.target.files ?? []);
+                  if (files.length > 0) void uploadFiles(files);
+                }}
+              />
+              <label className="tree-search-box">
+                <Search size={13} />
+                <input
+                  value={fileSearchQuery}
+                  onChange={(event) => setFileSearchQuery(event.target.value)}
+                  placeholder="搜索"
+                  aria-label="搜索文件"
+                />
+                {fileSearchQuery ? (
+                  <button className="icon-button mini" type="button" title="清空" onClick={() => setFileSearchQuery("")}>
+                    <X size={12} />
+                  </button>
+                ) : null}
+              </label>
+            </div>
+            {clipboard && clipboard.paths.size > 0 ? (
+              <div className="tree-clipboard-bar">
+                <span>已{clipboard.action === "copy" ? "复制" : "剪切"} {clipboard.paths.size} 项</span>
+                <button className="small-button compact-button" type="button" onClick={() => void handleClipboardPaste()}>
+                  <ClipboardList size={12} />
+                  <span>粘贴</span>
+                </button>
+                <button className="icon-button mini" type="button" title="取消" onClick={() => setClipboard(null)}>
+                  <X size={12} />
+                </button>
+              </div>
+            ) : null}
+            {error ? <div className="tree-error-bar">{error}</div> : null}
             <div className="file-tree-sidebar-body">
               {(!treeData[""] || treeData[""].length === 0) ? (
                 <div className="tree-empty-state">
-                  {loading ? "载入中..." : "无子文件夹"}
+                  {loading ? "载入中..." : "目录为空"}
                 </div>
               ) : renderTreeNodes("", 0)}
             </div>
           </div>
-          <div className="file-browser">
-          <table className="file-table">
-            <thead>
-              <tr>
-                <th className="file-select-column">
-                  <input
-                    className="file-select-checkbox"
-                    type="checkbox"
-                    aria-label="选择全部"
-                    checked={allFilteredEntriesSelected}
-                    onChange={(event) => toggleAllFilteredEntries(event.target.checked)}
-                  />
-                </th>
-                <th className="file-name-column sortable" onClick={() => handleSortClick("name")}>
-                  <div className="sort-header-cell">
-                    <span>名称</span>
-                    {sortField === "name" && (
-                      <span className="sort-arrow">{sortOrder === "asc" ? " ▲" : " ▼"}</span>
-                    )}
-                  </div>
-                </th>
-                <th className="file-size-column sortable" onClick={() => handleSortClick("size")}>
-                  <div className="sort-header-cell">
-                    <span>大小</span>
-                    {sortField === "size" && (
-                      <span className="sort-arrow">{sortOrder === "asc" ? " ▲" : " ▼"}</span>
-                    )}
-                  </div>
-                </th>
-                <th className="file-modified-column sortable" onClick={() => handleSortClick("modifiedAt")}>
-                  <div className="sort-header-cell">
-                    <span>修改时间</span>
-                    {sortField === "modifiedAt" && (
-                      <span className="sort-arrow">{sortOrder === "asc" ? " ▲" : " ▼"}</span>
-                    )}
-                  </div>
-                </th>
-                <th className="file-actions-column file-actions-heading"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredEntries.map((entry) => (
-                <tr
-                  className={[
-                    selectedPath === entry.path || selectedPaths.has(entry.path) ? "selected-row" : "",
-                    entry.type === "file" ? "draggable-file-row" : "",
-                    draggingFilePath === entry.path ? "dragging-row" : "",
-                    openFileActionMenuPath === entry.path ? "file-actions-open" : ""
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  draggable={entry.type === "file"}
-                  key={entry.path || entry.name}
-                  onDragStart={(event) => handleEntryDragStart(event, entry)}
-                  onDragEnd={handleEntryDragEnd}
-                  onPointerDown={(event) => handleEntryPointerDown(event, entry)}
-                  onPointerMove={handleEntryPointerMove}
-                  onPointerUp={finishMobileFileDrag}
-                  onPointerCancel={handleEntryPointerCancel}
-                  onContextMenu={(event) => handleEntryContextMenu(event, entry)}
-                >
-                  <td className="file-select-cell">
-                    <input
-                      className="file-select-checkbox"
-                      type="checkbox"
-                      aria-label={`选择 ${entry.name}`}
-                      checked={selectedPaths.has(entry.path)}
-                      onChange={(event) => toggleEntrySelection(entry, event.target.checked)}
-                      onClick={(event) => event.stopPropagation()}
-                    />
-                  </td>
-                  <td className="file-name-cell">
-                    <button
-                      className="file-name-button"
-                      draggable={entry.type === "file"}
-                      onClick={() => {
-                        if (suppressMobileFileClickRef.current) {
-                          suppressMobileFileClickRef.current = false;
-                          return;
-                        }
-                        void openEntry(entry);
-                      }}
-                      onDragStart={(event) => {
-                        event.stopPropagation();
-                        handleEntryDragStart(event, entry);
-                      }}
-                      onDragEnd={(event) => {
-                        event.stopPropagation();
-                        handleEntryDragEnd();
-                      }}
-                    >
-                      {entry.type === "directory" ? (
-                        <Folder size={16} />
-                      ) : isImageFile(entry.path) ? (
-                        <ImageIcon size={16} />
-                      ) : isArchiveFile(entry.path) ? (
-                        <FileArchive size={16} />
-                      ) : (
-                        <FileText size={16} />
-                      )}
-                      <span>{entry.name}</span>
-                    </button>
-                  </td>
-                  <td className="file-size-cell">{entry.type === "file" ? formatBytes(entry.size) : "-"}</td>
-                  <td className="file-modified-cell">{formatDate(entry.modifiedAt)}</td>
-                  <td className="file-actions-cell">
-                    <div className="row-actions">
-                      <button
-                        className="icon-button mini"
-                        title="下载"
-                        disabled={entry.type !== "file" && entry.type !== "directory"}
-                        onClick={() => void downloadEntry(entry)}
-                      >
-                        <Download size={15} />
-                      </button>
-                      <div className="file-action-menu-wrap">
-                        <button
-                          className="icon-button mini"
-                          title="更多操作"
-                          aria-haspopup="menu"
-                          aria-expanded={openFileActionMenuPath === entry.path}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setOpenFileActionMenuPath((current) => (current === entry.path ? null : entry.path));
-                          }}
-                        >
-                          <MoreHorizontal size={15} />
-                        </button>
-                        {openFileActionMenuPath === entry.path ? (
-                          <div className="file-action-menu" role="menu">
-                            {entry.type === "file" && isArchiveFile(entry.path) ? (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                disabled={extractingPath === entry.path}
-                                onClick={() => {
-                                  setOpenFileActionMenuPath(null);
-                                  void extractArchive(entry);
-                                }}
-                              >
-                                {extractingPath === entry.path ? <RotateCw size={15} /> : <Archive size={15} />}
-                                <span>解压</span>
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                disabled={(entry.type !== "file" && entry.type !== "directory") || archivingPath === entry.path}
-                                onClick={() => {
-                                  setOpenFileActionMenuPath(null);
-                                  void archiveEntry(entry);
-                                }}
-                              >
-                                {archivingPath === entry.path ? <RotateCw size={15} /> : <Archive size={15} />}
-                                <span>压缩</span>
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setOpenFileActionMenuPath(null);
-                                handleClipboardAction("copy", entry.path);
-                              }}
-                            >
-                              <ClipboardList size={15} />
-                              <span>复制</span>
-                            </button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setOpenFileActionMenuPath(null);
-                                handleClipboardAction("cut", entry.path);
-                              }}
-                            >
-                              <Layers size={15} />
-                              <span>剪切</span>
-                            </button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setOpenFileActionMenuPath(null);
-                                void renameEntry(entry);
-                              }}
-                            >
-                              <FileText size={15} />
-                              <span>重命名</span>
-                            </button>
-                            <button
-                              className="danger-action"
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setOpenFileActionMenuPath(null);
-                                void deleteEntry(entry);
-                              }}
-                            >
-                              <Trash2 size={15} />
-                              <span>删除</span>
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {filteredEntries.length === 0 ? (
-                <tr>
-                  <td colSpan={5}>
-                    <div className="empty-state">
-                      {loading ? "读取中" : entries.length > 0 && fileSearchQuery.trim() ? "没有匹配的文件" : "目录为空"}
-                    </div>
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-        <div className="file-editor" role={mobileEditorOpen ? "dialog" : undefined} aria-modal={mobileEditorOpen ? true : undefined}>
+          <div className="file-editor" role={mobileEditorOpen ? "dialog" : undefined} aria-modal={mobileEditorOpen ? true : undefined}>
           <div className="file-editor-heading">
             <div className="file-editor-title-row">
               <span>{editorPath ?? selectedEntry?.name ?? "未选择文件"}</span>
