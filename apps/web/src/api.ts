@@ -738,12 +738,16 @@ export const api = {
       token
     );
   },
-  extractInstanceArchive(token: string, id: string, path: string, outputPath?: string) {
+  extractInstanceArchive(token: string, id: string, path: string, outputPath?: string, overwrite?: boolean) {
     return requestJson<ExtractInstanceArchiveResponse>(
       `/api/instances/${id}/files/extract`,
       {
         method: "POST",
-        body: JSON.stringify({ path, ...(outputPath ? { outputPath } : {}) })
+        body: JSON.stringify({
+          path,
+          ...(outputPath ? { outputPath } : {}),
+          ...(overwrite ? { overwrite: true } : {})
+        })
       },
       token
     );

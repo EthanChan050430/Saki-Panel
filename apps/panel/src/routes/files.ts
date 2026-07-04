@@ -377,7 +377,8 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     try {
       const response = await extractDaemonInstanceArchive(instance.node, id, instance.workingDirectory, {
         path: body.path,
-        ...(body.outputPath ? { outputPath: body.outputPath } : {})
+        ...(body.outputPath ? { outputPath: body.outputPath } : {}),
+        ...(body.overwrite ? { overwrite: true } : {})
       });
       await writeAuditLog({
         request,

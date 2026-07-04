@@ -991,7 +991,10 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       throw new Error("Extraction target cannot be the instance working directory");
     }
     if (await pathExists(output.target)) {
-      throw new Error("Extraction target already exists");
+      if (!body.overwrite) {
+        throw new Error("Extraction target already exists");
+      }
+      await fs.rm(output.target, { force: true, recursive: true });
     }
 
     const result = await extractArchiveToDirectory(archive.target, output.target, kind);

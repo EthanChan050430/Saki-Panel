@@ -508,6 +508,7 @@ export interface RenameInstanceFileRequest {
 export interface ExtractInstanceArchiveRequest {
   path: string;
   outputPath?: string;
+  overwrite?: boolean;
 }
 
 export interface ExtractInstanceArchiveResponse {

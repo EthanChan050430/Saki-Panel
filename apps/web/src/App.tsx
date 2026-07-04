@@ -9020,6 +9020,17 @@ function FileManager({
     }
   }
 
+  async function finishExtract(entryPath: string, outputPath: string, overwrite: boolean) {
+    if (!instanceId) return;
+    const response = await api.extractInstanceArchive(token, instanceId, entryPath, outputPath, overwrite);
+    setEditorPath(null);
+    setEditorContent("");
+    setEditorMode("edit");
+    await loadDirectory(parentFilePath(response.outputPath));
+    setSelectedPath(response.outputPath);
+    showFileToast("解压完成", `已解压到 ${response.outputPath}`);
+  }
+
   async function extractArchive(entry: InstanceFileEntry) {
     if (!instanceId || entry.type !== "file" || !isArchiveFile(entry.path)) return;
     const suggestedPath = defaultExtractPath(entry.path);
@@ -9029,14 +9040,23 @@ function FileManager({
     setError("");
     setExtractingPath(entry.path);
     try {
-      const response = await api.extractInstanceArchive(token, instanceId, entry.path, outputPath);
-      setEditorPath(null);
-      setEditorContent("");
-      setEditorMode("edit");
-      await loadDirectory(parentFilePath(response.outputPath));
-      setSelectedPath(response.outputPath);
+      await finishExtract(entry.path, outputPath, false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "解压失败");
+      const message = err instanceof Error ? err.message : "";
+      if (message.includes("Extraction target already exists")) {
+        const overwrite = window.confirm(
+          `解压目标目录「${outputPath}」已存在。\n\n覆盖将删除该目录及其全部内容，是否继续？`
+        );
+        if (overwrite) {
+          try {
+            await finishExtract(entry.path, outputPath, true);
+          } catch (retryErr) {
+            setError(retryErr instanceof Error ? retryErr.message : "解压失败");
+          }
+        }
+      } else {
+        setError(message || "解压失败");
+      }
     } finally {
       setExtractingPath(null);
     }
