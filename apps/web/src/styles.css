@@ -16942,7 +16942,7 @@ button,
     inset: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom));
     z-index: 77;
     display: grid;
-    grid-template-rows: auto auto auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
     overflow: hidden;
     border: 1px solid rgba(226, 232, 240, 0.92);
     border-radius: 12px;
