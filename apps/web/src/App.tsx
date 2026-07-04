@@ -1,8 +1,9 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CodeEditor, type CodeEditorHandle, type FindRange, languageFromFileName } from "./CodeEditor.js";
 import {
   Activity,
+  AlertTriangle,
   Archive,
   BookOpen,
   BookMarked,
@@ -6216,7 +6217,9 @@ function SakiFloatingChat({
           return;
         }
 
-        applyFinalResponse(streamEvent.response);
+        if (streamEvent.type === "done") {
+          applyFinalResponse(streamEvent.response);
+        }
       };
       const response = await api.sakiChatStream(token, request, applyStreamEvent, abortController.signal);
       applyFinalResponse(response);
@@ -8020,11 +8023,48 @@ function FileManager({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  const [sortField, setSortField] = useState<"name" | "size" | "modifiedAt">("name");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
+  const [clipboard, setClipboard] = useState<{
+    action: "copy" | "cut";
+    paths: Set<string>;
+    instanceId: string;
+  } | null>(null);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
+  const [treeData, setTreeData] = useState<Record<string, InstanceFileEntry[]>>({});
+
   const filteredEntries = useMemo(() => {
     const query = fileSearchQuery.trim().toLowerCase();
-    if (!query) return entries;
-    return entries.filter((entry) => `${entry.name} ${entry.path}`.toLowerCase().includes(query));
-  }, [entries, fileSearchQuery]);
+    let result = [...entries];
+    if (query) {
+      result = result.filter((entry) => `${entry.name} ${entry.path}`.toLowerCase().includes(query));
+    }
+
+    result.sort((a, b) => {
+      if (a.type === "directory" && b.type !== "directory") return -1;
+      if (a.type !== "directory" && b.type === "directory") return 1;
+
+      let aValue: any;
+      let bValue: any;
+
+      if (sortField === "name") {
+        aValue = a.name.toLowerCase();
+        bValue = b.name.toLowerCase();
+      } else if (sortField === "size") {
+        aValue = a.type === "file" ? a.size : 0;
+        bValue = b.type === "file" ? b.size : 0;
+      } else {
+        aValue = new Date(a.modifiedAt).getTime();
+        bValue = new Date(b.modifiedAt).getTime();
+      }
+
+      if (aValue < bValue) return sortOrder === "asc" ? -1 : 1;
+      if (aValue > bValue) return sortOrder === "asc" ? 1 : -1;
+      return 0;
+    });
+
+    return result;
+  }, [entries, fileSearchQuery, sortField, sortOrder]);
   const selectedEntry = entries.find((entry) => entry.path === selectedPath) ?? null;
   const selectedEntries = useMemo(
     () => entries.filter((entry) => selectedPaths.has(entry.path)),
@@ -8069,6 +8109,12 @@ function FileManager({
         setSelectedPath(null);
         setSelectedPaths(new Set());
         setOpenFileActionMenuPath(null);
+
+        // Update treeData for this directory path
+        setTreeData(prev => ({
+          ...prev,
+          [response.path]: response.entries
+        }));
       } catch (err) {
         if (requestId !== directoryLoadRequestRef.current) return;
         setError(err instanceof Error ? err.message : "文件列表读取失败");
@@ -8080,6 +8126,213 @@ function FileManager({
     },
     [instanceId, token]
   );
+
+  const loadTreeDirectory = useCallback(async (pathToLoad: string) => {
+    if (!instanceId) return;
+    try {
+      const response = await api.listInstanceFiles(token, instanceId, pathToLoad);
+      setTreeData(prev => ({
+        ...prev,
+        [pathToLoad]: response.entries
+      }));
+    } catch (err) {
+      console.error("Failed to load tree directory:", err);
+    }
+  }, [instanceId, token]);
+
+  const toggleFolder = async (path: string) => {
+    const next = new Set(expandedFolders);
+    if (next.has(path)) {
+      next.delete(path);
+      setExpandedFolders(next);
+    } else {
+      next.add(path);
+      setExpandedFolders(next);
+      if (!treeData[path]) {
+        await loadTreeDirectory(path);
+      }
+    }
+  };
+
+  const handleTreeFolderClick = (path: string) => {
+    void loadDirectory(path);
+  };
+
+  async function moveFileToFolder(srcPath: string, destFolder: string) {
+    if (!instanceId) return;
+    const fileName = srcPath.split("/").pop() || srcPath;
+    const destPath = destFolder ? `${destFolder}/${fileName}` : fileName;
+    if (srcPath === destPath) return;
+    setError("");
+    try {
+      await api.renameInstancePath(token, instanceId, srcPath, destPath);
+      await loadDirectory(currentPath);
+      await loadTreeDirectory(destFolder);
+      const srcParent = srcPath.split("/").slice(0, -1).join("/");
+      await loadTreeDirectory(srcParent);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "移动文件失败");
+    }
+  }
+
+  function handleClipboardAction(action: "copy" | "cut", path?: string) {
+    if (!instanceId) return;
+    const paths = new Set<string>();
+    if (path) {
+      paths.add(path);
+    } else if (selectedEntries.length > 0) {
+      selectedEntries.forEach((entry) => paths.add(entry.path));
+    } else if (selectedPath) {
+      paths.add(selectedPath);
+    }
+
+    if (paths.size === 0) return;
+
+    setClipboard({
+      action,
+      paths,
+      instanceId
+    });
+
+    showFileToast(
+      action === "copy" ? "已复制到剪贴板" : "已剪切到剪贴板",
+      `已选择 ${paths.size} 个项目，可在目标目录粘贴。`
+    );
+  }
+
+  async function handleClipboardPaste() {
+    if (!instanceId || !clipboard) return;
+    setError("");
+    const pathsToPaste = Array.from(clipboard.paths);
+    const actionName = clipboard.action === "copy" ? "复制" : "移动";
+    setBulkFileAction(clipboard.action === "copy" ? "download" : "archive");
+
+    try {
+      for (const srcPath of pathsToPaste) {
+        const fileName = srcPath.split("/").pop() || srcPath;
+        const destPath = currentPath ? `${currentPath}/${fileName}` : fileName;
+
+        if (srcPath === destPath) {
+          throw new Error("源路径与目标路径相同");
+        }
+
+        if (clipboard.action === "copy") {
+          await api.copyInstancePath(token, instanceId, srcPath, destPath);
+        } else {
+          await api.renameInstancePath(token, instanceId, srcPath, destPath);
+        }
+      }
+
+      showFileToast(`${actionName}完成`, `成功${actionName}了 ${pathsToPaste.length} 个项目`);
+
+      if (clipboard.action === "cut") {
+        setClipboard(null);
+      }
+
+      clearFileSelection();
+      await loadDirectory(currentPath);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `${actionName}失败`);
+    } finally {
+      setBulkFileAction(null);
+    }
+  }
+
+  function handleSortClick(field: "name" | "size" | "modifiedAt") {
+    if (sortField === field) {
+      setSortOrder(current => current === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortOrder("asc");
+    }
+  }
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const activeEl = document.activeElement;
+      if (
+        activeEl &&
+        (activeEl.tagName === "INPUT" ||
+          activeEl.tagName === "TEXTAREA" ||
+          activeEl.closest(".cm-editor") ||
+          activeEl.getAttribute("contenteditable") === "true")
+      ) {
+        return;
+      }
+
+      if (!instanceId || editorPath) return;
+
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        if (filteredEntries.length === 0) return;
+        const index = filteredEntries.findIndex(e => e.path === selectedPath);
+        const nextIndex = index < filteredEntries.length - 1 ? index + 1 : 0;
+        const entry = filteredEntries[nextIndex];
+        if (entry) setSelectedPath(entry.path);
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        if (filteredEntries.length === 0) return;
+        const index = filteredEntries.findIndex(e => e.path === selectedPath);
+        const prevIndex = index > 0 ? index - 1 : filteredEntries.length - 1;
+        const entry = filteredEntries[prevIndex];
+        if (entry) setSelectedPath(entry.path);
+      } else if (event.key === "Enter") {
+        if (!selectedPath) return;
+        const entry = filteredEntries.find(e => e.path === selectedPath);
+        if (entry) {
+          event.preventDefault();
+          void openEntry(entry);
+        }
+      } else if (event.key === "Delete") {
+        if (selectedEntries.length > 0) {
+          event.preventDefault();
+          void deleteSelectedEntries();
+        } else if (selectedPath) {
+          const entry = filteredEntries.find(e => e.path === selectedPath);
+          if (entry) {
+            event.preventDefault();
+            void deleteEntry(entry);
+          }
+        }
+      } else if (event.key === "f" || event.key === "F2") {
+        if (event.key === "F2" || (event.ctrlKey && event.key === "f")) {
+          if (selectedPath) {
+            const entry = filteredEntries.find(e => e.path === selectedPath);
+            if (entry) {
+              event.preventDefault();
+              void renameEntry(entry);
+            }
+          }
+        }
+      } else if (event.key === "a" && (event.ctrlKey || event.metaKey)) {
+        if (filteredEntries.length > 0) {
+          event.preventDefault();
+          toggleAllFilteredEntries(true);
+        }
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        clearFileSelection();
+      } else if (event.key === "c" && (event.ctrlKey || event.metaKey)) {
+        if (selectedEntries.length > 0 || selectedPath) {
+          event.preventDefault();
+          handleClipboardAction("copy");
+        }
+      } else if (event.key === "x" && (event.ctrlKey || event.metaKey)) {
+        if (selectedEntries.length > 0 || selectedPath) {
+          event.preventDefault();
+          handleClipboardAction("cut");
+        }
+      } else if (event.key === "v" && (event.ctrlKey || event.metaKey)) {
+        if (clipboard) {
+          event.preventDefault();
+          void handleClipboardPaste();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [instanceId, editorPath, filteredEntries, selectedPath, selectedEntries, clipboard]);
 
   useEffect(() => {
     directoryLoadRequestRef.current += 1;
@@ -8105,10 +8358,13 @@ function FileManager({
     setFileToast(null);
     setMobileBrowserOpen(false);
     setMobileEditorOpen(false);
+    setTreeData({});
+    setExpandedFolders(new Set());
     if (instanceId) {
       void loadDirectory("");
+      void loadTreeDirectory("");
     }
-  }, [instanceId, loadDirectory]);
+  }, [instanceId, loadDirectory, loadTreeDirectory]);
 
   useEffect(() => {
     return () => {
@@ -8894,6 +9150,82 @@ function FileManager({
     }
   }
 
+  function renderTreeNodes(parentPath: string, depth: number) {
+    const folders = treeData[parentPath] || [];
+    return (
+      <div className="tree-node-children" style={{ marginLeft: depth > 0 ? "12px" : "0" }}>
+        {folders.map((folder) => {
+          const isExpanded = expandedFolders.has(folder.path);
+          const isCurrent = folder.type === "directory" ? currentPath === folder.path : selectedPath === folder.path;
+          return (
+            <div key={folder.path} className="tree-node-wrapper">
+              <div
+                className={`tree-node-item ${isCurrent ? "current" : ""} ${draggingFilePath === folder.path ? "dragging" : ""}`}
+                style={{ paddingLeft: `${depth * 8 + 6}px` }}
+                onClick={() => {
+                  if (folder.type === "directory") {
+                    handleTreeFolderClick(folder.path);
+                  } else {
+                    void openEntry(folder);
+                  }
+                }}
+                onDragOver={folder.type === "directory" ? (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.currentTarget.classList.add("drag-over");
+                } : undefined}
+                onDragLeave={folder.type === "directory" ? (e) => {
+                  e.currentTarget.classList.remove("drag-over");
+                } : undefined}
+                onDrop={folder.type === "directory" ? (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.currentTarget.classList.remove("drag-over");
+                  const dragDataStr = e.dataTransfer.getData("text/plain");
+                  if (dragDataStr && dragDataStr !== folder.path) {
+                    void moveFileToFolder(dragDataStr, folder.path);
+                  }
+                } : undefined}
+              >
+                {folder.type === "directory" ? (
+                  <button
+                    type="button"
+                    className="tree-node-toggle"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void toggleFolder(folder.path);
+                    }}
+                  >
+                    <ChevronDown
+                      size={14}
+                      style={{
+                        transform: isExpanded ? "rotate(0deg)" : "rotate(-90deg)",
+                        transition: "transform 0.15s ease"
+                      }}
+                    />
+                  </button>
+                ) : (
+                  <div style={{ width: "20px", height: "20px", flexShrink: 0 }} />
+                )}
+                {folder.type === "directory" ? (
+                  <Folder size={14} className="tree-node-icon" />
+                ) : isImageFile(folder.path) ? (
+                  <ImageIcon size={14} className="tree-node-icon" />
+                ) : isArchiveFile(folder.path) ? (
+                  <FileArchive size={14} className="tree-node-icon" />
+                ) : (
+                  <FileText size={14} className="tree-node-icon" />
+                )}
+                <span className="tree-node-label">{folder.name}</span>
+              </div>
+              {folder.type === "directory" && isExpanded && renderTreeNodes(folder.path, depth + 1)}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   if (!instance) {
     return <div className="empty-state">请选择实例</div>;
   }
@@ -8902,6 +9234,7 @@ function FileManager({
     <div
       className={[
         "file-manager",
+        editorPath ? "editor-open" : "",
         mobileBrowserOpen ? "mobile-browser-open" : "",
         mobileEditorOpen ? "mobile-editor-open" : ""
       ]
@@ -9001,11 +9334,29 @@ function FileManager({
             />
           </div>
         </div>
-        <div className={`file-status-area ${!error && !uploadProgress && selectedFileCount === 0 ? "empty" : ""}`}>
+        <div className={`file-status-area ${!error && !uploadProgress && selectedFileCount === 0 && !clipboard ? "empty" : ""}`}>
           {selectedFileCount > 0 ? (
             <div className="file-selection-bar" role="status" aria-live="polite">
               <span>已选择 {selectedFileCount} 项</span>
               <div className="file-selection-actions">
+                <button
+                  className="small-button compact-button"
+                  type="button"
+                  disabled={Boolean(bulkFileAction)}
+                  onClick={() => handleClipboardAction("copy")}
+                >
+                  <ClipboardList size={14} />
+                  <span>复制</span>
+                </button>
+                <button
+                  className="small-button compact-button"
+                  type="button"
+                  disabled={Boolean(bulkFileAction)}
+                  onClick={() => handleClipboardAction("cut")}
+                >
+                  <Layers size={14} />
+                  <span>剪切</span>
+                </button>
                 <button
                   className="small-button compact-button"
                   type="button"
@@ -9039,6 +9390,29 @@ function FileManager({
               </div>
             </div>
           ) : null}
+          {clipboard && clipboard.paths.size > 0 ? (
+            <div className="file-selection-bar clipboard-bar" role="status" aria-live="polite">
+              <span>已{clipboard.action === "copy" ? "复制" : "剪切"} {clipboard.paths.size} 个项目</span>
+              <div className="file-selection-actions">
+                <button
+                  className="small-button compact-button"
+                  type="button"
+                  onClick={() => void handleClipboardPaste()}
+                >
+                  <ClipboardList size={14} />
+                  <span>粘贴到此处</span>
+                </button>
+                <button
+                  className="icon-button mini"
+                  type="button"
+                  title="取消"
+                  onClick={() => setClipboard(null)}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+          ) : null}
           {uploadProgress ? (
             <div className="file-upload-progress" role="status" aria-live="polite">
               <div className="file-upload-progress-meta">
@@ -9054,7 +9428,20 @@ function FileManager({
           {error ? <div className="file-error">{error}</div> : null}
         </div>
         <div className="file-workspace">
-        <div className="file-browser">
+          <div className="file-tree-sidebar">
+            <div className="file-tree-sidebar-header">
+              <Folder size={14} />
+              <span>目录树</span>
+            </div>
+            <div className="file-tree-sidebar-body">
+              {(!treeData[""] || treeData[""].length === 0) ? (
+                <div className="tree-empty-state">
+                  {loading ? "载入中..." : "无子文件夹"}
+                </div>
+              ) : renderTreeNodes("", 0)}
+            </div>
+          </div>
+          <div className="file-browser">
           <table className="file-table">
             <thead>
               <tr>
@@ -9067,9 +9454,30 @@ function FileManager({
                     onChange={(event) => toggleAllFilteredEntries(event.target.checked)}
                   />
                 </th>
-                <th className="file-name-column">名称</th>
-                <th className="file-size-column">大小</th>
-                <th className="file-modified-column">修改时间</th>
+                <th className="file-name-column sortable" onClick={() => handleSortClick("name")}>
+                  <div className="sort-header-cell">
+                    <span>名称</span>
+                    {sortField === "name" && (
+                      <span className="sort-arrow">{sortOrder === "asc" ? " ▲" : " ▼"}</span>
+                    )}
+                  </div>
+                </th>
+                <th className="file-size-column sortable" onClick={() => handleSortClick("size")}>
+                  <div className="sort-header-cell">
+                    <span>大小</span>
+                    {sortField === "size" && (
+                      <span className="sort-arrow">{sortOrder === "asc" ? " ▲" : " ▼"}</span>
+                    )}
+                  </div>
+                </th>
+                <th className="file-modified-column sortable" onClick={() => handleSortClick("modifiedAt")}>
+                  <div className="sort-header-cell">
+                    <span>修改时间</span>
+                    {sortField === "modifiedAt" && (
+                      <span className="sort-arrow">{sortOrder === "asc" ? " ▲" : " ▼"}</span>
+                    )}
+                  </div>
+                </th>
                 <th className="file-actions-column file-actions-heading"></th>
               </tr>
             </thead>
@@ -9190,6 +9598,28 @@ function FileManager({
                                 <span>压缩</span>
                               </button>
                             )}
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setOpenFileActionMenuPath(null);
+                                handleClipboardAction("copy", entry.path);
+                              }}
+                            >
+                              <ClipboardList size={15} />
+                              <span>复制</span>
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setOpenFileActionMenuPath(null);
+                                handleClipboardAction("cut", entry.path);
+                              }}
+                            >
+                              <Layers size={15} />
+                              <span>剪切</span>
+                            </button>
                             <button
                               type="button"
                               role="menuitem"
@@ -12538,20 +12968,252 @@ function UsersView({
   );
 }
 
+function FilePreviewModal({
+  token,
+  instanceId,
+  filePath,
+  actionName,
+  onClose,
+  darkMode
+}: {
+  token: string;
+  instanceId: string;
+  filePath: string;
+  actionName: string;
+  onClose: () => void;
+  darkMode: boolean;
+}) {
+  const [content, setContent] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError("");
+    setContent("");
+
+    api
+      .readInstanceFile(token, instanceId, filePath)
+      .then((res) => {
+        if (!active) return;
+        setContent(res.content);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setError(err instanceof Error ? err.message : "无法读取文件，可能已被删除或实例已离线。");
+        setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [token, instanceId, filePath]);
+
+  return (
+    <div
+      className="modal-backdrop file-preview-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <div className="file-preview-modal" role="dialog" aria-modal="true">
+        <div className="file-preview-header">
+          <div className="file-preview-title">
+            <Eye size={18} />
+            <h3>快速文件预览</h3>
+            <span>{filePath}</span>
+          </div>
+          <button className="icon-button mini" title="关闭" type="button" onClick={onClose}>
+            <X size={15} />
+          </button>
+        </div>
+        <div className="file-preview-body">
+          {loading ? (
+            <div className="file-preview-loading">
+              <span className="spinner" />
+              <span>正在加载文件内容...</span>
+            </div>
+          ) : error ? (
+            <div className="file-preview-error">
+              <AlertTriangle size={32} />
+              <p>{error}</p>
+              <small>操作: {actionName} | 实例 ID: {instanceId}</small>
+            </div>
+          ) : (
+            <div className="file-preview-editor-wrapper">
+              <CodeEditor
+                value={content}
+                language={languageFromFileName(filePath) ?? "plaintext"}
+                readOnly={true}
+                darkMode={darkMode}
+                lineWrapping={true}
+                className="file-preview-editor"
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function renderAuditPayloadDetails(
+  log: AuditLogEntry,
+  token: string,
+  onPreview: (instanceId: string, path: string, action: string) => void
+) {
+  if (!log.payload) {
+    return <div className="audit-payload-empty">无载荷</div>;
+  }
+
+  let parsed: any = null;
+  try {
+    parsed = JSON.parse(log.payload);
+  } catch {
+    return <pre>{log.payload}</pre>;
+  }
+
+  // 1. AI Chat Logs: saki.chat
+  if (log.action === "saki.chat") {
+    const conversation = parsed.conversation;
+    if (conversation) {
+      return (
+        <div className="audit-payload-chat">
+          <div className="chat-message user">
+            <span className="chat-bubble-label">用户提问</span>
+            <div className="chat-bubble-content">{conversation.userMessage}</div>
+          </div>
+          {conversation.assistantMessage && (
+            <div className="chat-message assistant">
+              <span className="chat-bubble-label">Saki 回答</span>
+              <div className="chat-bubble-content">{conversation.assistantMessage}</div>
+            </div>
+          )}
+          {parsed.error && (
+            <div className="chat-message error-msg">
+              <span className="chat-bubble-label">错误信息</span>
+              <div className="chat-bubble-content error">{parsed.error}</div>
+            </div>
+          )}
+        </div>
+      );
+    }
+  }
+
+  // 2. AI Agent Tool Logs: saki.agent.tool
+  if (log.action === "saki.agent.tool") {
+    return (
+      <div className="audit-payload-tool">
+        <div className="tool-header">
+          <strong>工具:</strong> <code>{parsed.tool}</code>
+          <span className={`tool-status-badge ${parsed.ok ? "success" : "failure"}`}>
+            {parsed.status || (parsed.ok ? "completed" : "failed")}
+          </span>
+        </div>
+        {parsed.args && (
+          <div className="tool-section">
+            <span className="section-label">参数 (Arguments)</span>
+            <pre className="args-pre">{JSON.stringify(parsed.args, null, 2)}</pre>
+          </div>
+        )}
+        {parsed.observation && (
+          <div className="tool-section">
+            <span className="section-label">结果 (Observation)</span>
+            <pre className="observation-pre">{parsed.observation}</pre>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // 3. File Operations: file.write, file.upload, file.download, file.mkdir, file.delete, file.rename, file.copy
+  if (log.action.startsWith("file.")) {
+    const isWriteOrUpload = log.action === "file.write" || log.action === "file.upload";
+    const isDownloadOrRead = log.action === "file.download" || log.action === "file.read";
+    const isRenameOrCopy = log.action === "file.rename" || log.action === "file.copy";
+    const hasPreview = (isWriteOrUpload || isDownloadOrRead) && parsed.path && log.resourceId;
+
+    return (
+      <div className="audit-payload-file">
+        <div className="file-details">
+          {parsed.path && (
+            <div>
+              <span>文件路径</span>
+              <strong>{parsed.path}</strong>
+            </div>
+          )}
+          {isRenameOrCopy && (
+            <>
+              {parsed.fromPath && (
+                <div>
+                  <span>来源路径</span>
+                  <strong>{parsed.fromPath}</strong>
+                </div>
+              )}
+              {parsed.toPath && (
+                <div>
+                  <span>目标路径</span>
+                  <strong>{parsed.toPath}</strong>
+                </div>
+              )}
+            </>
+          )}
+          {parsed.size !== undefined && (
+            <div>
+              <span>大小</span>
+              <strong>{formatBytes(parsed.size)}</strong>
+            </div>
+          )}
+          {parsed.error && (
+            <div className="file-error">
+              <span>失败原因</span>
+              <strong className="error-text">{parsed.error}</strong>
+            </div>
+          )}
+        </div>
+        {hasPreview && (
+          <button
+            className="small-button preview-file-button"
+            type="button"
+            onClick={() => onPreview(log.resourceId!, parsed.path, log.action)}
+          >
+            <Eye size={14} />
+            快速预览当前文件
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return <pre>{JSON.stringify(parsed, null, 2)}</pre>;
+}
+
 function AuditView({
   token,
   onLogout,
   refreshTick,
   onAskSaki,
-  canDeleteLogs
+  canDeleteLogs,
+  darkMode
 }: {
   token: string;
   onLogout: () => void;
   refreshTick: number;
   onAskSaki?: ((seed: Omit<SakiPromptSeed, "nonce">) => void) | undefined;
   canDeleteLogs: boolean;
+  darkMode: boolean;
 }) {
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
+  const [previewFile, setPreviewFile] = useState<{
+    instanceId: string;
+    filePath: string;
+    actionName: string;
+  } | null>(null);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
@@ -12907,7 +13569,9 @@ function AuditView({
                       </button>
                     ) : null}
                   </div>
-                  {selectedPayloadText ? <pre>{selectedPayloadText}</pre> : <div className="audit-payload-empty">无载荷</div>}
+                  {renderAuditPayloadDetails(activeLog, token, (instanceId, filePath, actionName) => {
+                    setPreviewFile({ instanceId, filePath, actionName });
+                  })}
                 </div>
               </>
             ) : (
@@ -12934,6 +13598,16 @@ function AuditView({
         )}
       </section>
 
+      {previewFile && (
+        <FilePreviewModal
+          token={token}
+          instanceId={previewFile.instanceId}
+          filePath={previewFile.filePath}
+          actionName={previewFile.actionName}
+          onClose={() => setPreviewFile(null)}
+          darkMode={darkMode}
+        />
+      )}
     </>
   );
 }
@@ -15311,6 +15985,7 @@ function Workspace({
               refreshTick={refreshTick}
               onAskSaki={canUseSaki ? openSaki : undefined}
               canDeleteLogs={user.isSuperAdmin}
+              darkMode={darkMode}
             />
           )}
         </main>

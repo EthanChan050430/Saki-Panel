@@ -27,7 +27,7 @@ declare module "fastify" {
 
 export async function createPanelServer() {
   const app = Fastify({
-    bodyLimit: 16 * 1024 * 1024,
+    bodyLimit: Math.ceil(panelConfig.maxTransferBytes * 1.5),
     ...(panelConfig.https ? { https: panelConfig.https } : {}),
     logger: {
       level: process.env.LOG_LEVEL ?? "warn"
@@ -55,7 +55,7 @@ export async function createPanelServer() {
 
   await app.register(multipart, {
     limits: {
-      fileSize: 10 * 1024 * 1024,
+      fileSize: panelConfig.maxTransferBytes,
       files: 1
     }
   });

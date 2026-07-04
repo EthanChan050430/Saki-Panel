@@ -23,6 +23,7 @@ import {
   makeDaemonInstanceDirectory,
   readDaemonInstanceFile,
   renameDaemonInstancePath,
+  copyDaemonInstancePath,
   uploadDaemonInstanceFile,
   writeDaemonInstanceFile
 } from "../daemon-client.js";
@@ -319,6 +320,41 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       return response;
     } catch (error) {
       await handleFailure(request, reply, "file.rename", id, error, {
+        fromPath: body.fromPath,
+        toPath: body.toPath
+      });
+    }
+  });
+
+  app.post("/api/instances/:id/files/copy", { preHandler: requirePermission("file.write") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { fromPath?: string; toPath?: string };
+    const instance = await loadInstance(request, id);
+    if (!instance) {
+      await sendNotFound(reply);
+      return;
+    }
+    if (!body.fromPath || !body.toPath) {
+      reply.code(400).send({ message: "fromPath and toPath are required" });
+      return;
+    }
+
+    try {
+      const response = await copyDaemonInstancePath(instance.node, id, instance.workingDirectory, {
+        fromPath: body.fromPath,
+        toPath: body.toPath
+      });
+      await writeAuditLog({
+        request,
+        userId: request.user.sub,
+        action: "file.copy",
+        resourceType: "instance_file",
+        resourceId: id,
+        payload: { fromPath: body.fromPath, toPath: body.toPath }
+      });
+      return response;
+    } catch (error) {
+      await handleFailure(request, reply, "file.copy", id, error, {
         fromPath: body.fromPath,
         toPath: body.toPath
       });

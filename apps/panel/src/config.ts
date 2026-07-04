@@ -83,6 +83,7 @@ export const panelConfig = {
   daemonRegistrationToken: process.env.DAEMON_REGISTRATION_TOKEN ?? "dev-registration-token",
   heartbeatOfflineSeconds: numberFromEnv(process.env.HEARTBEAT_OFFLINE_SECONDS, 45),
   daemonHeartbeatSeconds: numberFromEnv(process.env.DAEMON_HEARTBEAT_SECONDS, 10),
+  maxTransferBytes: numberFromEnv(process.env.MAX_TRANSFER_LIMIT_MB || process.env.MAX_TRANSFER_MB, 100) * 1024 * 1024,
   sakiProvider: process.env.SAKI_PROVIDER,
   sakiModel: process.env.SAKI_MODEL,
   sakiOllamaUrl: process.env.SAKI_OLLAMA_URL,

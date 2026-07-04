@@ -424,6 +424,21 @@ export function renameDaemonInstancePath(
   });
 }
 
+export function copyDaemonInstancePath(
+  node: DaemonNodeCredentials,
+  instanceId: string,
+  workingDirectory: string,
+  input: { fromPath: string; toPath: string }
+) {
+  return requestDaemon<InstanceFileEntry>(node, `/api/instances/${instanceId}/files/copy`, {
+    method: "POST",
+    body: JSON.stringify({
+      workingDirectory,
+      ...input
+    })
+  });
+}
+
 export function extractDaemonInstanceArchive(
   node: DaemonNodeCredentials,
   instanceId: string,

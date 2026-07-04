@@ -23,11 +23,14 @@ function Test-PortInUse {
 }
 
 function Find-FreePort {
-  param([int]$PreferredPort)
+  param(
+    [int]$PreferredPort,
+    [int[]]$ReservedPorts = @()
+  )
 
   $port = $PreferredPort
-  while (Test-PortInUse -Port $port) {
-    Write-Host "Port $port is occupied, trying $($port + 1)..."
+  while ((Test-PortInUse -Port $port) -or ($ReservedPorts -contains $port)) {
+    Write-Host "Port $port is occupied or reserved, trying $($port + 1)..."
     $port += 1
   }
   return $port
@@ -96,8 +99,8 @@ $Root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Set-Location $Root
 
 $ChosenWebPort = Find-FreePort -PreferredPort $WebPort
-$ChosenPanelPort = Find-FreePort -PreferredPort $PanelPort
-$ChosenDaemonPort = Find-FreePort -PreferredPort $DaemonPort
+$ChosenPanelPort = Find-FreePort -PreferredPort $PanelPort -ReservedPorts @($ChosenWebPort)
+$ChosenDaemonPort = Find-FreePort -PreferredPort $DaemonPort -ReservedPorts @($ChosenWebPort, $ChosenPanelPort)
 $Scheme = if (Test-SslAvailable -RootPath $Root) { "https" } else { "http" }
 
 Set-ProjectEnv -ChosenWebPort $ChosenWebPort -ChosenPanelPort $ChosenPanelPort -ChosenDaemonPort $ChosenDaemonPort -Scheme $Scheme -RootPath $Root

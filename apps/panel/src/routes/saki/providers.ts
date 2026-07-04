@@ -8,6 +8,7 @@ import {
   chatTextFromContent,
   compactDebugText,
   createStreamingTextState,
+  flushStreamingTextState,
   effectiveSakiAgentPermissionMode,
   errorMessageFromJson,
   fetchWithTimeout,
@@ -24,6 +25,7 @@ import {
   providerConfigFor,
   providerDefaults,
   pushStreamingTextDelta,
+  streamingThinkingText,
   RequestTimeoutError,
   RouteError,
   safeModelLogUrl,
@@ -33,7 +35,7 @@ import {
   trimString,
   uniqueModels,
 } from "./types.js";
-import { normalizeStructuredToolCall, openAiToolSchemas, parseStructuredToolCalls, sakiToolSchemas } from "./tools.js";
+import { normalizeStructuredToolCall, openAiToolSchemas, parseJsonMaybe, parseStructuredToolCalls, sakiToolSchemas } from "./tools.js";
 import { buildDirectMessages, buildDirectSystemPrompt, type DirectChatMessage, type DirectProviderMessage } from "./prompt.js";
 
 const defaultTemperatureOnlyModelKeys = new Set<string>();
@@ -45,11 +47,14 @@ const RATE_LIMIT_STATUS = 429;
 function isRetryableError(error: unknown): boolean {
   if (!(error instanceof RouteError)) return false;
   const message = error.message.toLowerCase();
+  if (/quota exceeded|billing|credit|balance|insufficient|reset delay too long/i.test(message)) {
+    return false;
+  }
   return (
     error.statusCode === RATE_LIMIT_STATUS ||
     error.statusCode === 503 ||
     error.statusCode === 502 ||
-    /rate limit|too many requests|quota exceeded|capacity|overload|temporarily unavailable|timeout/i.test(message)
+    /rate limit|too many requests|capacity|overload|temporarily unavailable|timeout/i.test(message)
   );
 }
 
@@ -194,8 +199,13 @@ async function doRequestJsonPayload(url: string, options: RequestInit, timeoutMs
       ...(sakiVerboseModelLogsEnabled() ? { responsePreview: compactDebugText(text, 1200) } : {})
     });
     const retryAfter = parseRetryAfterMs(response);
-    const error = new RouteError(`Model API request failed with ${response.status}: ${message}`, statusCode);
-    if (retryAfter && statusCode === RATE_LIMIT_STATUS) {
+    const error = new RouteError(
+      retryAfter && retryAfter > 3000
+        ? `Model API rate limit exceeded (reset delay too long: ${Math.round(retryAfter / 1000)}s). Please try again later.`
+        : `Model API request failed with ${response.status}: ${message}`,
+      statusCode
+    );
+    if (retryAfter && retryAfter <= 3000 && statusCode === RATE_LIMIT_STATUS) {
       await sleep(retryAfter);
     }
     throw error;
@@ -281,8 +291,13 @@ async function doRequestStreamingPayload<T>(
         ...(sakiVerboseModelLogsEnabled() ? { responsePreview: compactDebugText(text, 1200) } : {})
       });
       const retryAfter = parseRetryAfterMs(response);
-      const error = new RouteError(`Model API request failed with ${response.status}: ${message}`, statusCode);
-      if (retryAfter && statusCode === RATE_LIMIT_STATUS) {
+      const error = new RouteError(
+        retryAfter && retryAfter > 3000
+          ? `Model API rate limit exceeded (reset delay too long: ${Math.round(retryAfter / 1000)}s). Please try again later.`
+          : `Model API request failed with ${response.status}: ${message}`,
+        statusCode
+      );
+      if (retryAfter && retryAfter <= 3000 && statusCode === RATE_LIMIT_STATUS) {
         await sleep(retryAfter);
       }
       throw error;
@@ -1052,16 +1067,71 @@ export async function readCopilotLoginState(): Promise<SakiCopilotLoginResponse>
   return copilotLoginState;
 }
 
+export interface CopilotConfigHost {
+  readEffectiveConfig(): Promise<SakiConfigResponse>;
+  persistCopilotToken(gitHubToken: string): Promise<void>;
+}
+
+let copilotConfigHost: CopilotConfigHost | null = null;
+
+export function registerCopilotConfigHost(host: CopilotConfigHost): void {
+  copilotConfigHost = host;
+}
+
+function requireCopilotConfigHost(): CopilotConfigHost {
+  if (!copilotConfigHost) {
+    throw new RouteError("Copilot config host is not registered.", 500);
+  }
+  return copilotConfigHost;
+}
+
 export async function readCopilotAuthStatus(): Promise<SakiCopilotAuthStatusResponse> {
-  throw new RouteError("readCopilotAuthStatus requires config access; use index.ts wrapper.", 500);
+  const config = await requireCopilotConfigHost().readEffectiveConfig();
+  const token = copilotTokenFromConfig(config);
+  const tokenProblem = copilotTokenProblem(token);
+  if (tokenProblem) {
+    return {
+      available: true,
+      authenticated: false,
+      message: tokenProblem
+    };
+  }
+  try {
+    const client = await getCopilotClient(token);
+    const status = await client.getAuthStatus();
+    return {
+      available: true,
+      authenticated: Boolean(status.isAuthenticated),
+      authType: status.authType || "token",
+      ...(status.host ? { host: status.host } : {}),
+      ...(status.login ? { login: status.login } : {}),
+      ...(status.statusMessage ? { message: status.statusMessage } : {})
+    };
+  } catch (error) {
+    return {
+      available: false,
+      authenticated: false,
+      message: copilotErrorMessage(error)
+    };
+  }
 }
 
 async function persistCopilotToken(gitHubToken: string): Promise<void> {
-  throw new RouteError("persistCopilotToken requires config access; use index.ts wrapper.", 500);
+  await requireCopilotConfigHost().persistCopilotToken(gitHubToken);
+  await resetCopilotClient();
 }
 
 export async function saveCopilotToken(gitHubToken: string): Promise<SakiCopilotLoginResponse> {
-  throw new RouteError("saveCopilotToken requires config access; use index.ts wrapper.", 500);
+  const token = trimString(gitHubToken);
+  await persistCopilotToken(token);
+  copilotDeviceLoginSession = null;
+  copilotLoginState = {
+    status: "completed",
+    command: "GitHub Token",
+    finishedAt: new Date().toISOString(),
+    message: token ? `GitHub Token 已保存。${copilotTokenProblem(token) ? ` ${copilotTokenProblem(token)}` : ""}` : "GitHub Token 已清除。"
+  };
+  return copilotLoginState;
 }
 
 function copilotPromptFromMessages(input: SakiChatRequest, prompt: string): string {
@@ -1130,7 +1200,8 @@ export async function callCopilotSdkModelStream(
   config: SakiConfigResponse,
   input: SakiChatRequest,
   prompt: string,
-  onDelta: (text: string) => void
+  onDelta: (text: string) => void,
+  onThinking?: (text: string) => void
 ): Promise<string> {
   let session: Awaited<ReturnType<typeof createCopilotSession>> | null = null;
   let unsubscribe: (() => void) | null = null;
@@ -1138,7 +1209,7 @@ export async function callCopilotSdkModelStream(
   try {
     session = await createCopilotSession(config, true);
     unsubscribe = session.on("assistant.message_delta", (event) => {
-      pushStreamingTextDelta(state, event.data.deltaContent, onDelta);
+      pushStreamingTextDelta(state, event.data.deltaContent, onDelta, onThinking);
     });
     const response = await session.sendAndWait(
       copilotMessageOptions(input, copilotPromptFromMessages(input, prompt)),
@@ -1204,11 +1275,13 @@ export async function callOpenAiCompatibleModel(
   return text;
 }
 
-function openAiStreamDelta(payload: unknown): string {
+function openAiStreamDelta(payload: unknown): { content: string; reasoningContent?: string | undefined } {
   const root = objectValue(payload);
   const choice = Array.isArray(root?.choices) ? objectValue(root.choices[0]) : null;
   const delta = objectValue(choice?.delta);
-  return chatTextFromContent(delta?.content) || trimString(delta?.text) || trimString(choice?.text);
+  const content = chatTextFromContent(delta?.content) || trimString(delta?.text) || trimString(choice?.text);
+  const reasoningContent = delta?.reasoning_content || delta?.reasoning || delta?.thinking;
+  return { content, reasoningContent: reasoningContent ? String(reasoningContent) : undefined };
 }
 
 export async function callOpenAiCompatibleModelStream(
@@ -1216,7 +1289,8 @@ export async function callOpenAiCompatibleModelStream(
   config: SakiConfigResponse,
   input: SakiChatRequest,
   prompt: string,
-  onDelta: (text: string) => void
+  onDelta: (text: string) => void,
+  onThinking?: (text: string) => void
 ): Promise<string> {
   const { baseUrl, apiKey, model } = requireCloudConfig(config, provider);
   const state = createStreamingTextState();
@@ -1244,10 +1318,11 @@ export async function callOpenAiCompatibleModelStream(
       await readServerSentEventData(response, (data) => {
         if (data === "[DONE]") return;
         const chunk = openAiStreamDelta(JSON.parse(data) as unknown);
-        pushStreamingTextDelta(state, chunk, onDelta);
+        pushStreamingTextDelta(state, chunk.content, onDelta, onThinking, chunk.reasoningContent);
       });
     }
   );
+  flushStreamingTextState(state, onDelta, onThinking);
   const text = stripThinking(state.raw);
   if (!text) throw new RouteError("Model API returned an empty response.", 502);
   return text;
@@ -1360,25 +1435,32 @@ export async function callAnthropicModel(config: SakiConfigResponse, input: Saki
   return text;
 }
 
-function anthropicStreamDelta(payload: unknown): string {
+function anthropicStreamDelta(payload: unknown): { content: string; reasoningContent?: string | undefined } {
   const item = objectValue(payload);
   const type = trimString(item?.type);
   if (type === "content_block_delta") {
     const delta = objectValue(item?.delta);
-    return trimString(delta?.text);
+    if (delta && delta.thinking !== undefined) {
+      return { content: "", reasoningContent: String(delta.thinking) };
+    }
+    return { content: trimString(delta?.text), reasoningContent: undefined };
   }
   if (type === "content_block_start") {
     const block = objectValue(item?.content_block);
-    return trimString(block?.text);
+    if (block && block.thinking !== undefined) {
+      return { content: "", reasoningContent: String(block.thinking) };
+    }
+    return { content: trimString(block?.text), reasoningContent: undefined };
   }
-  return "";
+  return { content: "", reasoningContent: undefined };
 }
 
 export async function callAnthropicModelStream(
   config: SakiConfigResponse,
   input: SakiChatRequest,
   prompt: string,
-  onDelta: (text: string) => void
+  onDelta: (text: string) => void,
+  onThinking?: (text: string) => void
 ): Promise<string> {
   const { baseUrl, apiKey, model } = requireCloudConfig(config, "anthropic");
   const messages = withAnthropicImageInputs(buildDirectMessages(input, prompt), input).filter((message) => message.role !== "system");
@@ -1404,10 +1486,11 @@ export async function callAnthropicModelStream(
     async (response) => {
       await readServerSentEventData(response, (data) => {
         const chunk = anthropicStreamDelta(JSON.parse(data) as unknown);
-        pushStreamingTextDelta(state, chunk, onDelta);
+        pushStreamingTextDelta(state, chunk.content, onDelta, onThinking, chunk.reasoningContent);
       });
     }
   );
+  flushStreamingTextState(state, onDelta, onThinking);
   const text = stripThinking(state.raw);
   if (!text) throw new RouteError("Model API returned an empty response.", 502);
   return text;
@@ -1479,17 +1562,20 @@ export async function callOllamaModel(config: SakiConfigResponse, input: SakiCha
   return text;
 }
 
-function ollamaStreamDelta(payload: unknown): string {
+function ollamaStreamDelta(payload: unknown): { content: string; reasoningContent?: string | undefined } {
   const item = objectValue(payload);
   const message = objectValue(item?.message);
-  return chatTextFromContent(message?.content) || trimString(item?.response);
+  const content = chatTextFromContent(message?.content) || trimString(item?.response);
+  const reasoningContent = message?.reasoning_content || item?.reasoning_content;
+  return { content, reasoningContent: reasoningContent ? String(reasoningContent) : undefined };
 }
 
 export async function callOllamaModelStream(
   config: SakiConfigResponse,
   input: SakiChatRequest,
   prompt: string,
-  onDelta: (text: string) => void
+  onDelta: (text: string) => void,
+  onThinking?: (text: string) => void
 ): Promise<string> {
   const baseUrl = normalizeHttpBaseUrl(config.ollamaUrl, localProviderUrls.ollama);
   const state = createStreamingTextState();
@@ -1510,10 +1596,11 @@ export async function callOllamaModelStream(
     async (response) => {
       await readJsonLineData(response, (payload) => {
         const chunk = ollamaStreamDelta(payload);
-        pushStreamingTextDelta(state, chunk, onDelta);
+        pushStreamingTextDelta(state, chunk.content, onDelta, onThinking, chunk.reasoningContent);
       });
     }
   );
+  flushStreamingTextState(state, onDelta, onThinking);
   const text = stripThinking(state.raw);
   if (!text) throw new RouteError("Ollama returned an empty response.", 502);
   return text;
@@ -1574,40 +1661,508 @@ export async function callConfiguredPrompt(input: SakiChatRequest, prompt: strin
   return callOpenAiCompatibleModel(provider, config, input, prompt);
 }
 
-export async function callConfiguredPromptStream(input: SakiChatRequest, prompt: string, onDelta: (text: string) => void, config: SakiConfigResponse) {
+export async function callConfiguredPromptStream(
+  input: SakiChatRequest,
+  prompt: string,
+  onDelta: (text: string) => void,
+  config: SakiConfigResponse,
+  onThinking?: (text: string) => void
+) {
   const provider = normalizeProviderId(config.provider);
 
   if (provider === "ollama") {
-    return callOllamaModelStream(config, input, prompt, onDelta);
+    return callOllamaModelStream(config, input, prompt, onDelta, onThinking);
   }
   if (provider === "lmstudio") {
-    return callOpenAiCompatibleModelStream("lmstudio", config, input, prompt, onDelta);
+    return callOpenAiCompatibleModelStream("lmstudio", config, input, prompt, onDelta, onThinking);
   }
   if (provider === "anthropic") {
-    return callAnthropicModelStream(config, input, prompt, onDelta);
+    return callAnthropicModelStream(config, input, prompt, onDelta, onThinking);
   }
   if (provider === "copilot") {
-    return callCopilotSdkModelStream(config, input, prompt, onDelta);
+    return callCopilotSdkModelStream(config, input, prompt, onDelta, onThinking);
   }
-  return callOpenAiCompatibleModelStream(provider, config, input, prompt, onDelta);
+  return callOpenAiCompatibleModelStream(provider, config, input, prompt, onDelta, onThinking);
 }
 
-export async function callConfiguredAgentTurn(runtime: SakiAgentRuntime, prompt: string): Promise<SakiModelToolTurn> {
+function openAiStreamChunk(payload: unknown): { content: string; toolCalls: unknown[]; reasoningContent?: string | undefined } {
+  const root = objectValue(payload);
+  const choice = Array.isArray(root?.choices) ? objectValue(root.choices[0]) : null;
+  const delta = objectValue(choice?.delta);
+  const content = chatTextFromContent(delta?.content) || trimString(delta?.text) || trimString(choice?.text);
+  const toolCalls = Array.isArray(delta?.tool_calls) ? delta.tool_calls : [];
+  const reasoningContent = delta?.reasoning_content || delta?.reasoning || delta?.thinking;
+  return { content, toolCalls, reasoningContent: reasoningContent ? String(reasoningContent) : undefined };
+}
+
+class OpenAiStreamToolCallAccumulator {
+  private readonly parts = new Map<number, { id?: string; name: string; arguments: string }>();
+
+  ingest(toolCalls: unknown[]): void {
+    for (const raw of toolCalls) {
+      const item = objectValue(raw);
+      if (!item) continue;
+      const index = typeof item.index === "number" ? item.index : 0;
+      const existing = this.parts.get(index) ?? { name: "", arguments: "" };
+      const id = trimString(item.id);
+      if (id) existing.id = id;
+      const fn = objectValue(item.function);
+      const name = trimString(fn?.name);
+      if (name) existing.name = name;
+      const args = fn?.arguments;
+      if (args !== undefined && args !== null) existing.arguments += String(args);
+      this.parts.set(index, existing);
+    }
+  }
+
+  toParsedToolCalls(): ParsedToolCall[] {
+    const calls: ParsedToolCall[] = [];
+    for (const index of [...this.parts.keys()].sort((left, right) => left - right)) {
+      const part = this.parts.get(index);
+      if (!part?.name) continue;
+      try {
+        calls.push(
+          normalizeStructuredToolCall({
+            ...(part.id ? { id: part.id } : {}),
+            name: part.name,
+            arguments: part.arguments ? parseJsonMaybe(part.arguments) : {}
+          })
+        );
+      } catch {
+        // Ignore malformed streamed tool calls; the agent loop can retry if none remain.
+      }
+    }
+    return calls;
+  }
+}
+
+function ollamaAgentStreamChunk(payload: unknown): { content: string; toolCalls: unknown[]; reasoningContent?: string | undefined } {
+  const item = objectValue(payload);
+  const message = objectValue(item?.message);
+  const content = chatTextFromContent(message?.content) || trimString(item?.response);
+  const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+  const reasoningContent = message?.reasoning_content || item?.reasoning_content;
+  return { content, toolCalls, reasoningContent: reasoningContent ? String(reasoningContent) : undefined };
+}
+
+class AnthropicStreamToolCallAccumulator {
+  private readonly blocks = new Map<number, { id?: string; name: string; input: string }>();
+
+  ingest(event: Record<string, unknown>): void {
+    const type = trimString(event.type);
+    const index = typeof event.index === "number" ? event.index : 0;
+    if (type === "content_block_start") {
+      const block = objectValue(event.content_block);
+      if (trimString(block?.type) !== "tool_use") return;
+      const id = trimString(block?.id);
+      this.blocks.set(index, {
+        ...(id ? { id } : {}),
+        name: trimString(block?.name),
+        input: ""
+      });
+      return;
+    }
+    if (type === "content_block_delta") {
+      const delta = objectValue(event.delta);
+      if (trimString(delta?.type) !== "input_json_delta") return;
+      const existing = this.blocks.get(index) ?? { name: "", input: "" };
+      existing.input += trimString(delta?.partial_json);
+      this.blocks.set(index, existing);
+    }
+  }
+
+  toParsedToolCalls(): ParsedToolCall[] {
+    const calls: ParsedToolCall[] = [];
+    for (const index of [...this.blocks.keys()].sort((left, right) => left - right)) {
+      const block = this.blocks.get(index);
+      if (!block?.name) continue;
+      try {
+        calls.push(
+          normalizeStructuredToolCall({
+            ...(block.id ? { id: block.id } : {}),
+            name: block.name,
+            arguments: block.input ? parseJsonMaybe(block.input) : {}
+          })
+        );
+      } catch {
+        // Ignore malformed streamed tool calls; the agent loop can retry if none remain.
+      }
+    }
+    return calls;
+  }
+}
+
+async function streamPromptAgentTurnWithFilteredDelta(
+  contentStream: (onDelta: (text: string) => void) => Promise<string>,
+  onDelta: (text: string) => void,
+  onThinking?: (text: string) => void
+): Promise<SakiModelToolTurn> {
+  let accumulated = "";
+  let stoppedStreaming = false;
+  let forwardedIndex = 0;
+  let thinkingEmitted = 0;
+  const emitThinking = () => {
+    if (!onThinking) return;
+    const thinking = streamingThinkingText(accumulated);
+    if (thinking.length > thinkingEmitted) {
+      onThinking(thinking.slice(thinkingEmitted));
+      thinkingEmitted = thinking.length;
+    }
+  };
+  const stopPatterns = ["```json", '{"tool_calls"', '{"toolcalls"', "<tool_call>"];
+  const maxPrefixLen = Math.max(...stopPatterns.map((pattern) => pattern.length));
+  const filteredDelta = (text: string) => {
+    accumulated += text;
+    emitThinking();
+    if (stoppedStreaming) return;
+    const lower = accumulated.toLowerCase();
+    let stopIndex = -1;
+    for (const pattern of stopPatterns) {
+      const index = lower.indexOf(pattern.toLowerCase());
+      if (index !== -1 && (stopIndex === -1 || index < stopIndex)) stopIndex = index;
+    }
+    if (stopIndex !== -1) {
+      stoppedStreaming = true;
+      if (stopIndex > forwardedIndex) onDelta(accumulated.slice(forwardedIndex, stopIndex));
+      forwardedIndex = stopIndex;
+      return;
+    }
+    const safeEnd = accumulated.length - maxPrefixLen;
+    if (safeEnd > forwardedIndex) {
+      onDelta(accumulated.slice(forwardedIndex, safeEnd));
+      forwardedIndex = safeEnd;
+    }
+  };
+
+  const content = await contentStream(filteredDelta);
+  emitThinking();
+  if (!stoppedStreaming) {
+    const visible = stripThinking(accumulated);
+    if (forwardedIndex < visible.length) {
+      const tail = visible.slice(forwardedIndex);
+      if (tail && !/<tool_call>/i.test(tail) && !/"?tool_calls"?\s*:/i.test(tail)) {
+        onDelta(tail);
+        forwardedIndex = visible.length;
+      }
+    }
+  }
+  return {
+    content,
+    toolCalls: parseToolCallsFromText(content),
+    forwardedDeltaText: forwardedIndex > 0,
+    forwardedDeltaContent: accumulated.slice(0, forwardedIndex)
+  };
+}
+
+async function callOpenAiCompatibleAgentTurnStream(
+  provider: string,
+  config: SakiConfigResponse,
+  input: SakiChatRequest,
+  prompt: string,
+  onDelta: (text: string) => void,
+  onThinking?: (text: string) => void
+): Promise<SakiModelToolTurn> {
+  const { baseUrl, apiKey, model } = requireCloudConfig(config, provider);
+  const state = createStreamingTextState();
+  const toolAccumulator = new OpenAiStreamToolCallAccumulator();
+  await requestOpenAiCompatibleStreamingPayload(
+    provider,
+    baseUrl,
+    model,
+    {
+      "content-type": "application/json",
+      ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {})
+    },
+    openAiCompatibleChatBody(
+      provider,
+      baseUrl,
+      model,
+      {
+        model,
+        messages: withOpenAiImageInputs(buildDirectMessages(input, prompt, buildDirectSystemPrompt(config)), input),
+        tools: openAiToolSchemas(),
+        tool_choice: "auto",
+        stream: true
+      },
+      0.2
+    ),
+    config.requestTimeoutMs,
+    async (response) => {
+      await readServerSentEventData(response, (data) => {
+        if (data === "[DONE]") return;
+        const chunk = openAiStreamChunk(JSON.parse(data) as unknown);
+        toolAccumulator.ingest(chunk.toolCalls);
+        pushStreamingTextDelta(state, chunk.content, onDelta, onThinking, chunk.reasoningContent);
+      });
+    }
+  );
+  flushStreamingTextState(state, onDelta, onThinking);
+  const content = stripThinking(state.raw);
+  const toolCalls = toolAccumulator.toParsedToolCalls();
+  return {
+    content,
+    toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content),
+    forwardedDeltaText: state.emittedLength > 0,
+    forwardedDeltaContent: state.raw.slice(0, state.emittedLength)
+  };
+}
+
+async function callOpenAiCompatiblePromptAgentTurnStream(
+  provider: string,
+  config: SakiConfigResponse,
+  input: SakiChatRequest,
+  prompt: string,
+  onDelta: (text: string) => void,
+  onThinking?: (text: string) => void
+): Promise<SakiModelToolTurn> {
+  return streamPromptAgentTurnWithFilteredDelta(
+    (filteredDelta) => callOpenAiCompatibleModelStream(provider, config, input, prompt, filteredDelta),
+    onDelta,
+    onThinking
+  );
+}
+
+async function callOpenAiCompatibleAgentTurnStreamWithFallback(
+  provider: string,
+  config: SakiConfigResponse,
+  input: SakiChatRequest,
+  prompt: string,
+  onDelta: (text: string) => void,
+  onThinking?: (text: string) => void
+): Promise<SakiModelToolTurn> {
+  try {
+    return await callOpenAiCompatibleAgentTurnStream(provider, config, input, prompt, onDelta, onThinking);
+  } catch (error) {
+    if (isToolCallingUnsupportedError(error)) {
+      return callOpenAiCompatiblePromptAgentTurnStream(provider, config, input, prompt, onDelta, onThinking);
+    }
+    throw error;
+  }
+}
+
+async function callOllamaAgentTurnStream(
+  config: SakiConfigResponse,
+  input: SakiChatRequest,
+  prompt: string,
+  onDelta: (text: string) => void,
+  withTools: boolean,
+  onThinking?: (text: string) => void
+): Promise<SakiModelToolTurn> {
+  const baseUrl = normalizeHttpBaseUrl(config.ollamaUrl, localProviderUrls.ollama);
+  const state = createStreamingTextState();
+  const toolAccumulator = new OpenAiStreamToolCallAccumulator();
+  await requestStreamingPayload(
+    `${baseUrl}/api/chat`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        model: requireChatModel(config, "ollama"),
+        stream: true,
+        messages: withOllamaImageInputs(buildDirectMessages(input, prompt, buildDirectSystemPrompt(config)), input),
+        ...(withTools ? { tools: openAiToolSchemas() } : {})
+      })
+    },
+    config.requestTimeoutMs,
+    async (response) => {
+      await readJsonLineData(response, (payload) => {
+        const chunk = ollamaAgentStreamChunk(payload);
+        toolAccumulator.ingest(chunk.toolCalls);
+        pushStreamingTextDelta(state, chunk.content, onDelta, onThinking, chunk.reasoningContent);
+      });
+    }
+  );
+  flushStreamingTextState(state, onDelta, onThinking);
+  const content = stripThinking(state.raw);
+  if (!content && !withTools) throw new RouteError("Ollama returned an empty response.", 502);
+  const toolCalls = toolAccumulator.toParsedToolCalls();
+  return {
+    content,
+    toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content),
+    forwardedDeltaText: state.emittedLength > 0,
+    forwardedDeltaContent: state.raw.slice(0, state.emittedLength)
+  };
+}
+
+async function callOllamaAgentTurnStreamWithFallback(
+  config: SakiConfigResponse,
+  input: SakiChatRequest,
+  prompt: string,
+  onDelta: (text: string) => void,
+  onThinking?: (text: string) => void
+): Promise<SakiModelToolTurn> {
+  try {
+    return await callOllamaAgentTurnStream(config, input, prompt, onDelta, true, onThinking);
+  } catch (error) {
+    if (isToolCallingUnsupportedError(error)) {
+      return streamPromptAgentTurnWithFilteredDelta(
+        (filteredDelta) => callOllamaModelStream(config, input, prompt, filteredDelta),
+        onDelta,
+        onThinking
+      );
+    }
+    throw error;
+  }
+}
+
+function anthropicAgentStreamDelta(payload: unknown): { content: string; reasoningContent?: string | undefined } {
+  const item = objectValue(payload);
+  const type = trimString(item?.type);
+  if (type === "content_block_delta") {
+    const delta = objectValue(item?.delta);
+    if (delta && delta.thinking !== undefined) {
+      return { content: "", reasoningContent: String(delta.thinking) };
+    }
+    return { content: trimString(delta?.text), reasoningContent: undefined };
+  }
+  if (type === "content_block_start") {
+    const block = objectValue(item?.content_block);
+    if (block && block.thinking !== undefined) {
+      return { content: "", reasoningContent: String(block.thinking) };
+    }
+    return { content: trimString(block?.text), reasoningContent: undefined };
+  }
+  return { content: "", reasoningContent: undefined };
+}
+
+async function callAnthropicAgentTurnStream(
+  config: SakiConfigResponse,
+  input: SakiChatRequest,
+  prompt: string,
+  onDelta: (text: string) => void,
+  onThinking?: (text: string) => void
+): Promise<SakiModelToolTurn> {
+  const { baseUrl, apiKey, model } = requireCloudConfig(config, "anthropic");
+  const messages = withAnthropicImageInputs(buildDirectMessages(input, prompt), input).filter((message) => message.role !== "system");
+  const state = createStreamingTextState();
+  const toolAccumulator = new AnthropicStreamToolCallAccumulator();
+  await requestStreamingPayload(
+    `${baseUrl}/messages`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 4096,
+        system: buildDirectSystemPrompt(config),
+        messages,
+        stream: true,
+        tools: sakiToolSchemas.map((schema) => ({
+          name: schema.name,
+          description: schema.description,
+          input_schema: schema.parameters
+        }))
+      })
+    },
+    config.requestTimeoutMs,
+    async (response) => {
+      await readServerSentEventData(response, (data) => {
+        const event = objectValue(JSON.parse(data) as unknown);
+        if (!event) return;
+        toolAccumulator.ingest(event);
+        const chunk = anthropicAgentStreamDelta(event);
+        pushStreamingTextDelta(state, chunk.content, onDelta, onThinking, chunk.reasoningContent);
+      });
+    }
+  );
+  flushStreamingTextState(state, onDelta, onThinking);
+  const content = stripThinking(state.raw);
+  const toolCalls = toolAccumulator.toParsedToolCalls();
+  return {
+    content,
+    toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content),
+    forwardedDeltaText: state.emittedLength > 0,
+    forwardedDeltaContent: state.raw.slice(0, state.emittedLength)
+  };
+}
+
+async function callAnthropicAgentTurnStreamWithFallback(
+  config: SakiConfigResponse,
+  input: SakiChatRequest,
+  prompt: string,
+  onDelta: (text: string) => void,
+  onThinking?: (text: string) => void
+): Promise<SakiModelToolTurn> {
+  try {
+    return await callAnthropicAgentTurnStream(config, input, prompt, onDelta, onThinking);
+  } catch (error) {
+    if (isToolCallingUnsupportedError(error)) {
+      return streamPromptAgentTurnWithFilteredDelta(
+        (filteredDelta) => callAnthropicModelStream(config, input, prompt, filteredDelta),
+        onDelta,
+        onThinking
+      );
+    }
+    throw error;
+  }
+}
+
+async function callCopilotPromptAgentTurnStream(
+  config: SakiConfigResponse,
+  input: SakiChatRequest,
+  prompt: string,
+  onDelta: (text: string) => void,
+  onThinking?: (text: string) => void
+): Promise<SakiModelToolTurn> {
+  return streamPromptAgentTurnWithFilteredDelta(
+    (filteredDelta) => callCopilotSdkModelStream(config, input, prompt, filteredDelta),
+    onDelta,
+    onThinking
+  );
+}
+
+async function callConfiguredAgentTurnStream(
+  runtime: SakiAgentRuntime,
+  prompt: string,
+  onDelta: (text: string) => void,
+  onThinking?: (text: string) => void
+): Promise<SakiModelToolTurn> {
+  const provider = normalizeProviderId(runtime.config.provider);
+  const config = agentModelConfig(runtime.config);
+  if (provider === "ollama") {
+    return callOllamaAgentTurnStreamWithFallback(config, runtime.input, prompt, onDelta, onThinking);
+  }
+  if (provider === "lmstudio") {
+    return callOpenAiCompatibleAgentTurnStreamWithFallback("lmstudio", config, runtime.input, prompt, onDelta, onThinking);
+  }
+  if (provider === "anthropic") {
+    return callAnthropicAgentTurnStreamWithFallback(config, runtime.input, prompt, onDelta, onThinking);
+  }
+  if (provider === "copilot") {
+    return callCopilotPromptAgentTurnStream(config, runtime.input, prompt, onDelta, onThinking);
+  }
+  return callOpenAiCompatibleAgentTurnStreamWithFallback(provider, config, runtime.input, prompt, onDelta, onThinking);
+}
+
+export async function callConfiguredAgentTurn(
+  runtime: SakiAgentRuntime,
+  prompt: string,
+  onDelta?: (text: string) => void,
+  onThinking?: (text: string) => void
+): Promise<SakiModelToolTurn> {
   const provider = normalizeProviderId(runtime.config.provider);
   const config = agentModelConfig(runtime.config);
   const startedAt = Date.now();
   try {
     let turn: SakiModelToolTurn;
-    if (provider === "ollama") {
-      turn = await callOllamaAgentTurn(config, runtime.input, prompt);
+    if (onDelta) {
+      turn = await callConfiguredAgentTurnStream(runtime, prompt, onDelta, onThinking);
+    } else if (provider === "ollama") {
+      turn = { ...(await callOllamaAgentTurn(config, runtime.input, prompt)), forwardedDeltaText: false };
     } else if (provider === "lmstudio") {
-      turn = await callOpenAiCompatibleAgentTurnWithFallback("lmstudio", config, runtime.input, prompt);
+      turn = { ...(await callOpenAiCompatibleAgentTurnWithFallback("lmstudio", config, runtime.input, prompt)), forwardedDeltaText: false };
     } else if (provider === "anthropic") {
-      turn = await callAnthropicAgentTurn(config, runtime.input, prompt);
+      turn = { ...(await callAnthropicAgentTurn(config, runtime.input, prompt)), forwardedDeltaText: false };
     } else if (provider === "copilot") {
-      turn = await callCopilotSdkAgentTurn(config, runtime.input, prompt);
+      turn = { ...(await callCopilotSdkAgentTurn(config, runtime.input, prompt)), forwardedDeltaText: false };
     } else {
-      turn = await callOpenAiCompatibleAgentTurnWithFallback(provider, config, runtime.input, prompt);
+      turn = { ...(await callOpenAiCompatibleAgentTurnWithFallback(provider, config, runtime.input, prompt)), forwardedDeltaText: false };
     }
     logSakiModelEvent("agent.turn", {
       provider,
@@ -1620,6 +2175,10 @@ export async function callConfiguredAgentTurn(runtime: SakiAgentRuntime, prompt:
       toolCalls: turn.toolCalls.map((call) => call.name),
       durationMs: Date.now() - startedAt
     });
+    if (sakiVerboseModelLogsEnabled()) {
+      console.info(`[Saki debug] agent.turn content:\n${turn.content}`);
+      console.info(`[Saki debug] agent.turn toolCalls (${turn.toolCalls.length}):\n${JSON.stringify(turn.toolCalls, null, 2)}`);
+    }
     return turn;
   } catch (error) {
     logSakiModelEvent("agent.turn.error", {

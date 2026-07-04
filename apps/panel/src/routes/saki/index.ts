@@ -139,13 +139,12 @@ export {
   callOllamaAgentTurn,
   callConfiguredPrompt,
   callConfiguredPromptStream,
-  callConfiguredAgentTurn
+  callConfiguredAgentTurn,
+  registerCopilotConfigHost
 } from "./providers.js";
+export type { CopilotConfigHost } from "./providers.js";
 
 export {
-  pendingSakiActions,
-  completedSakiActions,
-  sakiCheckpoints,
   emitSakiWorkflow,
   emitAgentFinalText,
   cacheableReadOnlyAgentToolNames,
@@ -156,5 +155,67 @@ export {
   actionStatusLabel
 } from "./loop.js";
 export type { ExecuteToolFn } from "./loop.js";
+
+export {
+  pendingSakiActions,
+  completedSakiActions,
+  sakiCheckpoints,
+  savePendingSakiAction,
+  removePendingSakiAction,
+  saveCheckpoint,
+  removeCheckpoint
+} from "./state.js";
+
+export {
+  auditAgentTool,
+  executeSakiAgentTool,
+  registerSakiExecutorHost,
+  rollbackCheckpoint
+} from "./executor.js";
+export type { SakiExecutorHost } from "./executor.js";
+
+export { ensureSakiModulesReady } from "./bootstrap.js";
+
+export { readEffectiveSakiConfig, saveSakiConfig } from "./config.js";
+
+export {
+  prepareSakiChatInvocation,
+  auditSakiChatResponse,
+  resolveSakiContext,
+  callConfiguredModel,
+  callConfiguredModelStream,
+  detectSakiModels,
+  directLocalFallback
+} from "./chat.js";
+
+export { buildAuditSearchContext } from "./audit.js";
+
+export {
+  approvePendingSakiAction,
+  rejectPendingSakiAction,
+  rollbackSakiAction
+} from "./approval.js";
+
+export {
+  loadSakiSkills,
+  readSakiSkill,
+  saveSakiSkill,
+  downloadSakiSkill,
+  readSakiSkillsByIds,
+  buildAutoAppliedSakiSkillContext,
+  formatSkillForAgent,
+  toSkillSummary
+} from "./skills.js";
+
+export {
+  browsePublicUrl,
+  simpleWebSearch,
+  crawlPublicSite,
+  researchWeb,
+  normalizeHttpUrl,
+  assertPublicHttpUrl
+} from "./web.js";
+
+export { registerSakiRoutes } from "./routes.js";
 
 export { startSakiEventStream, createSakiAgentEvents } from "./stream.js";

@@ -28,11 +28,11 @@ import type {
   UploadInstanceFileRequest,
   WriteInstanceFileRequest
 } from "@webops/shared";
-import { daemonPaths } from "../config.js";
+import { daemonPaths, daemonConfig } from "../config.js";
 import { authenticatePanelRequest } from "../daemon-auth.js";
 
 const maxEditableFileBytes = 1024 * 1024;
-const maxTransferBytes = 10 * 1024 * 1024;
+const maxTransferBytes = daemonConfig.maxTransferBytes;
 const maxArchiveEntries = 5000;
 const maxExtractedBytes = 512 * 1024 * 1024;
 const maxArchiveOutputBytes = 20 * 1024 * 1024;
@@ -127,6 +127,36 @@ async function pathExists(target: string): Promise<boolean> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
   }
+}
+
+function isCrossDeviceRenameError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "EXDEV"
+  );
+}
+
+async function moveEntry(source: string, destination: string): Promise<void> {
+  try {
+    await fs.rename(source, destination);
+    return;
+  } catch (error) {
+    if (!isCrossDeviceRenameError(error)) {
+      throw error;
+    }
+  }
+
+  const stats = await fs.lstat(source);
+  if (stats.isDirectory()) {
+    await fs.cp(source, destination, { recursive: true });
+    await fs.rm(source, { force: true, recursive: true });
+    return;
+  }
+
+  await fs.copyFile(source, destination);
+  await fs.unlink(source);
 }
 
 async function ensureRealPathInside(root: string, target: string, targetExists: boolean): Promise<void> {
@@ -250,7 +280,7 @@ function assertTextBuffer(buffer: Buffer): void {
 function decodeBase64Content(contentBase64: string): Buffer {
   const buffer = Buffer.from(contentBase64, "base64");
   if (buffer.byteLength > maxTransferBytes) {
-    throw new Error("File transfer size exceeds the 10 MB limit");
+    throw new Error(`File transfer size exceeds the ${Math.round(maxTransferBytes / (1024 * 1024))} MB limit`);
   }
   return buffer;
 }
@@ -479,7 +509,7 @@ async function extractArchiveToDirectory(
     }
 
     const scan = await scanExtractedTree(tempDirectory);
-    await fs.rename(tempDirectory, targetDirectory);
+    await moveEntry(tempDirectory, targetDirectory);
     moved = true;
     return scan;
   } finally {
@@ -613,7 +643,11 @@ async function resolveArchiveSources(
   return { root, sources };
 }
 
-async function createTemporaryZipArchive(root: string, sources: ArchiveSource[]): Promise<TemporaryZipArchive> {
+async function createTemporaryZipArchive(
+  root: string,
+  sources: ArchiveSource[],
+  tempParentDirectory?: string
+): Promise<TemporaryZipArchive> {
   const baseRelative = commonArchiveBaseRelative(sources.map((source) => source.relativePath));
   const baseDirectory = path.resolve(root, baseRelative);
   await ensureRealPathInside(root, baseDirectory, true);
@@ -626,7 +660,13 @@ async function createTemporaryZipArchive(root: string, sources: ArchiveSource[])
     return relative;
   });
 
-  const tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "webops-archive-"));
+  let tempDirectory: string;
+  if (tempParentDirectory) {
+    await ensureRealPathInside(root, tempParentDirectory, true);
+    tempDirectory = await fs.mkdtemp(path.join(tempParentDirectory, "webops-archive-"));
+  } else {
+    tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "webops-archive-"));
+  }
   const archivePath = path.join(tempDirectory, "archive.zip");
   const listPath = path.join(tempDirectory, "sources.txt");
 
@@ -660,10 +700,14 @@ async function archivePathsToOutput(
     throw new Error("Archive output already exists");
   }
 
-  const temporary = await createTemporaryZipArchive(resolvedSources.root, resolvedSources.sources);
+  const temporary = await createTemporaryZipArchive(
+    resolvedSources.root,
+    resolvedSources.sources,
+    path.dirname(output.target)
+  );
   let moved = false;
   try {
-    await fs.rename(temporary.archivePath, output.target);
+    await moveEntry(temporary.archivePath, output.target);
     moved = true;
     const stats = await fs.lstat(output.target);
     const entry = await toFileEntry(output.root, output.target, path.basename(output.target));
@@ -699,7 +743,7 @@ async function archivePathsForDownload(
   try {
     const stats = await fs.lstat(temporary.archivePath);
     if (stats.size > maxTransferBytes) {
-      throw new Error("Compressed download exceeds the 10 MB transfer limit");
+      throw new Error(`Compressed download exceeds the ${Math.round(maxTransferBytes / (1024 * 1024))} MB transfer limit`);
     }
     const buffer = await fs.readFile(temporary.archivePath);
     return {
@@ -883,7 +927,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
 
       const buffer = await data.toBuffer();
       if (buffer.byteLength > maxTransferBytes) {
-        throw new Error("File transfer size exceeds the 10 MB limit");
+        throw new Error(`File transfer size exceeds the ${Math.round(maxTransferBytes / (1024 * 1024))} MB limit`);
       }
       await fs.writeFile(resolved.target, buffer);
       return toFileEntry(resolved.root, resolved.target, path.basename(resolved.target));
@@ -911,7 +955,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     const stats = await fs.lstat(resolved.target);
     assertRegularFile(stats);
     if (stats.size > maxTransferBytes) {
-      throw new Error("File transfer size exceeds the 10 MB limit");
+      throw new Error(`File transfer size exceeds the ${Math.round(maxTransferBytes / (1024 * 1024))} MB limit`);
     }
 
     const buffer = await fs.readFile(resolved.target);
@@ -1013,7 +1057,23 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       throw new Error("Target path already exists");
     }
 
-    await fs.rename(from.target, to.target);
+    await moveEntry(from.target, to.target);
+    return toFileEntry(to.root, to.target, path.basename(to.target));
+  });
+
+  app.post("/api/instances/:id/files/copy", { preHandler: authenticatePanelRequest }, async (request) => {
+    const body = request.body as FileBody & { fromPath: string; toPath: string };
+    if (!body.fromPath || !body.toPath) {
+      throw new Error("fromPath and toPath are required");
+    }
+
+    const from = await resolveTarget(body.workingDirectory, body.fromPath);
+    const to = await resolveTarget(body.workingDirectory, body.toPath);
+    if (await pathExists(to.target)) {
+      throw new Error("Target path already exists");
+    }
+
+    await fs.cp(from.target, to.target, { recursive: true });
     return toFileEntry(to.root, to.target, path.basename(to.target));
   });
 

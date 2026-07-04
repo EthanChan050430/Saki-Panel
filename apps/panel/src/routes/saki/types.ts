@@ -9,12 +9,16 @@ import type {
   SakiAgentPermissionMode,
   SakiChatMode,
   SakiChatRequest,
+  SakiConfigResponse,
   SakiInputAttachment,
   SakiModelOption,
   SakiProviderConfig,
   SakiWorkspaceContext,
   UpdateScheduledTaskRequest
 } from "@webops/shared";
+export type { SakiSkillSummary } from "@webops/shared";
+import type { SakiSkillSummary } from "@webops/shared";
+import type { FastifyRequest } from "fastify";
 import type { InstanceWithAccess } from "../../instance-access.js";
 import { countTokens, truncateToTokenLimit } from "../../tokenizer.js";
 
@@ -487,13 +491,13 @@ export interface ParsedToolCall {
 }
 
 export interface SakiAgentRuntime {
-  request: any;
+  request: FastifyRequest;
   input: SakiChatRequest;
   context: ResolvedSakiContext;
-  skills: Array<{ id: string; name: string; description?: string | null; enabled?: boolean; sourceType?: string; sourceUrl?: string | null; tags?: string[]; updatedAt?: string | null; tokenEstimate?: number; builtin?: boolean }>;
+  skills: SakiSkillSummary[];
   userId: string;
   permissions: PermissionCode[];
-  config: any;
+  config: SakiConfigResponse;
 }
 
 export interface SakiAgentResumeState {
@@ -521,6 +525,7 @@ export interface SakiAgentRunEvents {
   workflow?: (event: SakiWorkflowUpdate) => void;
   action?: (action: SakiAgentAction) => void;
   delta?: (text: string) => void;
+  thinking?: (text: string) => void;
 }
 
 export type SakiCheckpoint =
@@ -599,10 +604,38 @@ export type DirectProviderMessage = {
 export interface StreamingTextState {
   raw: string;
   emittedLength: number;
+  thinkingEmittedLength: number;
+  inThinkingBlock?: boolean;
 }
 
 export function createStreamingTextState(): StreamingTextState {
-  return { raw: "", emittedLength: 0 };
+  return { raw: "", emittedLength: 0, thinkingEmittedLength: 0, inThinkingBlock: false };
+}
+
+export function streamingThinkingText(raw: string): string {
+  const thinkTag = "think";
+  const parts: string[] = [];
+  const closedRe = new RegExp(`<${thinkTag}>([\\s\\S]*?)<\\/${thinkTag}>`, "gi");
+  for (const match of raw.matchAll(closedRe)) {
+    const body = (match[1] ?? "").trim();
+    if (body) parts.push(body);
+  }
+  const remainder = raw.replace(closedRe, "");
+  const openMatch = remainder.match(new RegExp(`<${thinkTag}>([\\s\\S]*)$`, "i"));
+  if (openMatch) {
+    const body = (openMatch[1] ?? "").trim();
+    if (body) parts.push(body);
+  }
+  return parts.join("\n\n");
+}
+
+function emitStreamingThinkingDelta(state: StreamingTextState, raw: string, onThinking?: (text: string) => void): void {
+  if (!onThinking) return;
+  const thinking = streamingThinkingText(raw);
+  if (thinking.length > state.thinkingEmittedLength) {
+    onThinking(thinking.slice(state.thinkingEmittedLength));
+    state.thinkingEmittedLength = thinking.length;
+  }
 }
 
 export function stripUnstableThinkingSuffix(text: string): string {
@@ -630,15 +663,47 @@ export function visibleStreamingText(raw: string): string {
 export function pushStreamingTextDelta(
   state: StreamingTextState,
   chunk: string,
-  onDelta: (text: string) => void
+  onDelta: (text: string) => void,
+  onThinking?: (text: string) => void,
+  thinkingChunk?: string
 ): void {
-  if (!chunk) return;
-  state.raw += chunk;
+  if (thinkingChunk) {
+    if (!state.inThinkingBlock) {
+      state.raw += "<think>";
+      state.inThinkingBlock = true;
+    }
+    state.raw += thinkingChunk;
+  }
+  if (chunk) {
+    if (state.inThinkingBlock) {
+      state.raw += "</think>";
+      state.inThinkingBlock = false;
+    }
+    state.raw += chunk;
+  }
+  emitStreamingThinkingDelta(state, state.raw, onThinking);
   const visible = visibleStreamingText(state.raw);
   if (visible.length > state.emittedLength) {
     onDelta(visible.slice(state.emittedLength));
   }
   state.emittedLength = Math.max(state.emittedLength, visible.length);
+}
+
+export function flushStreamingTextState(
+  state: StreamingTextState,
+  onDelta: (text: string) => void,
+  onThinking?: (text: string) => void
+): void {
+  if (state.inThinkingBlock) {
+    state.raw += "</think>";
+    state.inThinkingBlock = false;
+  }
+  emitStreamingThinkingDelta(state, state.raw, onThinking);
+  const visible = visibleStreamingText(state.raw);
+  if (visible.length > state.emittedLength) {
+    onDelta(visible.slice(state.emittedLength));
+    state.emittedLength = visible.length;
+  }
 }
 
 export interface SakiSkillDocument {
@@ -665,19 +730,6 @@ export interface SakiSkillDetail {
   sourceType?: string;
   sourceUrl?: string | null;
   tags?: string[];
-  updatedAt?: string | null;
-  tokenEstimate?: number;
-  builtin?: boolean;
-}
-
-export interface SakiSkillSummary {
-  id: string;
-  name: string;
-  description?: string | null;
-  enabled?: boolean;
-  sourceType?: string;
-  tags?: string[];
-  sourceUrl?: string | null;
   updatedAt?: string | null;
   tokenEstimate?: number;
   builtin?: boolean;

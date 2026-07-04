@@ -22,6 +22,8 @@ import {
   redactSensitiveText,
   RouteError,
   stringArg,
+  logSakiModelEvent,
+  sakiVerboseModelLogsEnabled,
   stripThinking,
   truncateText,
   trimString,
@@ -29,10 +31,9 @@ import {
 import { isSakiReadOnlyAgentTool, normalizedAgentToolName, shouldRequestSakiApproval, assertSakiPermissionModeAllowsTool, toolArgs } from "./tools.js";
 import { callConfiguredAgentTurn } from "./providers.js";
 import { buildAgentPrompt, buildAgentContinuationPrompt } from "./prompt.js";
+import { completedSakiActions, pendingSakiActions, sakiCheckpoints } from "./state.js";
 
-export const pendingSakiActions = new Map<string, PendingSakiAction>();
-export const completedSakiActions = new Map<string, SakiAgentAction>();
-export const sakiCheckpoints = new Map<string, SakiCheckpoint>();
+export { completedSakiActions, pendingSakiActions, sakiCheckpoints } from "./state.js";
 
 export function emitSakiWorkflow(events: SakiAgentRunEvents | undefined, update: { id: string; stage: string; message: string; status: string; tool?: string; call?: string; actionId?: string; detail?: string }): void {
   events?.workflow?.(update as any);
@@ -97,7 +98,7 @@ function toolDisplayArgs(call: ParsedToolCall): string {
   return entries.map(([key, value]) => `${key}: ${value}`).join(", ");
 }
 
-function renderToolCall(call: ParsedToolCall): string {
+export function renderToolCall(call: ParsedToolCall): string {
   const args = toolCallArgsForDisplay(call);
   const OT = String.fromCharCode(60) + 'tool_call' + String.fromCharCode(62);
   const CT = String.fromCharCode(60) + '/tool_call' + String.fromCharCode(62);
@@ -233,10 +234,15 @@ function safeAgentFinalText(text: string): string {
 function emitAgentNarration(events: SakiAgentRunEvents | undefined, text: string): void {
   const cleaned = stripThinking(text).trim();
   if (!cleaned || looksLikeToolCallPayload(cleaned)) return;
+  const snippet = cleaned.slice(0, 500);
+  if (events?.delta) {
+    events.delta(snippet.endsWith("\n") ? snippet : `${snippet}\n\n`);
+    return;
+  }
   emitSakiWorkflow(events, {
     id: randomUUID(),
     stage: "narration",
-    message: cleaned.slice(0, 500),
+    message: snippet,
     status: "completed"
   });
 }
@@ -262,7 +268,7 @@ function promptObservationLimit(action: SakiAgentAction, modelId?: string): numb
   return maxAgentPromptObservationChars;
 }
 
-function observationForAgentPrompt(action: SakiAgentAction): string {
+export function observationForAgentPrompt(action: SakiAgentAction): string {
   const limit = promptObservationLimit(action);
   const observation = truncateText(redactSensitiveText(action.observation), limit);
   const status = action.status ?? (action.ok ? "completed" : "failed");
@@ -482,6 +488,16 @@ export async function runSakiAgent(
 
   rebuildCurrentPrompt();
 
+  logSakiModelEvent("agent.run.start", {
+    mode: runtime.input.mode ?? "agent",
+    permissionMode: agentPermissionMode,
+    maxLoops: maxAgentLoops,
+    resumed: Boolean(resume),
+    messageChars: runtime.input.message.length,
+    historyCount: runtime.input.history?.length ?? 0,
+    skillCount: runtime.skills.length
+  });
+
   let lastForwardedDeltaContent: string | undefined;
 
   const finishAgentResponse = async (reason: string, message: string): Promise<SakiChatResponse> => {
@@ -577,7 +593,7 @@ export async function runSakiAgent(
     loopsUsed = loop + 1;
     let turn: SakiModelToolTurn;
     try {
-      turn = await callConfiguredAgentTurn(runtime, currentPrompt);
+      turn = await callConfiguredAgentTurn(runtime, currentPrompt, events?.delta, events?.thinking);
     } catch (error) {
       if (toolExecutions > 0 || actions.length > 0) {
         const reason = error instanceof Error ? error.message : String(error);
@@ -590,6 +606,10 @@ export async function runSakiAgent(
     }
     const toolCalls = turn.toolCalls;
     if (toolCalls.length === 0) {
+      if (sakiVerboseModelLogsEnabled()) {
+        console.info(`[Saki debug] NO tool calls parsed. looksLikeToolCallPayload: ${looksLikeToolCallPayload(stripThinking(turn.content).trim())}`);
+        console.info(`[Saki debug] Full content for debugging:\n${turn.content}`);
+      }
       const cleaned = stripThinking(turn.content).trim();
       const progressOnlyToolIntent = looksLikeProgressOnlyToolIntent(cleaned);
       if (progressOnlyToolIntent && progressOnlyReplies < maxAgentProgressOnlyRetries) {

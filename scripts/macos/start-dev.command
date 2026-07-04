@@ -21,9 +21,9 @@ check_command() {
   if ! command -v "$1" &>/dev/null; then
     log_error "$1 is not installed. Please install it first."
     if [[ "$1" == "node" ]]; then
-      echo "  â†?https://nodejs.org/  or  brew install node"
+      echo "  ï¿½?https://nodejs.org/  or  brew install node"
     elif [[ "$1" == "npm" ]]; then
-      echo "  â†?Comes with Node.js"
+      echo "  ï¿½?Comes with Node.js"
     fi
     exit 1
   fi
@@ -31,9 +31,25 @@ check_command() {
 
 find_free_port() {
   local port=$1
-  while lsof -i ":$port" &>/dev/null; do
-    log_warn "Port $port is occupied, trying $((port + 1))..."
-    port=$((port + 1))
+  shift
+  local reserved=("$@")
+  while true; do
+    local occupied=false
+    if lsof -i ":$port" &>/dev/null; then
+      occupied=true
+    fi
+    local r
+    for r in "${reserved[@]}"; do
+      if [ "$r" -eq "$port" ]; then
+        occupied=true
+      fi
+    done
+    if [ "$occupied" = true ]; then
+      log_warn "Port $port is occupied or reserved, trying $((port + 1))..."
+      port=$((port + 1))
+    else
+      break
+    fi
   done
   echo "$port"
 }
@@ -62,7 +78,7 @@ PANEL_PORT=${PANEL_PORT:-5479}
 DAEMON_PORT=${DAEMON_PORT:-5480}
 
 echo ""
-echo -e "${MAGENTA}ðŸŒ¸ Saki Panel â€?macOS Development Launcher${NC}"
+echo -e "${MAGENTA}ðŸŒ¸ Saki Panel ï¿½?macOS Development Launcher${NC}"
 echo ""
 
 log_info "Checking prerequisites..."
@@ -75,8 +91,8 @@ log_ok "Node.js $NODE_VERSION / npm $NPM_VERSION"
 
 log_info "Detecting available ports..."
 WEB_PORT=$(find_free_port "$WEB_PORT")
-PANEL_PORT=$(find_free_port "$PANEL_PORT")
-DAEMON_PORT=$(find_free_port "$DAEMON_PORT")
+PANEL_PORT=$(find_free_port "$PANEL_PORT" "$WEB_PORT")
+DAEMON_PORT=$(find_free_port "$DAEMON_PORT" "$WEB_PORT" "$PANEL_PORT")
 SCHEME="http"
 if ssl_available; then
   SCHEME="https"

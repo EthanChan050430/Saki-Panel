@@ -9,7 +9,7 @@ import { registerTerminalRoutes } from "./routes/terminal.js";
 
 export async function createDaemonServer() {
   const app = Fastify({
-    bodyLimit: 16 * 1024 * 1024,
+    bodyLimit: Math.ceil(daemonConfig.maxTransferBytes * 1.5),
     ...(daemonConfig.https ? { https: daemonConfig.https } : {}),
     logger: {
       level: process.env.LOG_LEVEL ?? "warn"
@@ -24,7 +24,7 @@ export async function createDaemonServer() {
 
   await app.register(multipart, {
     limits: {
-      fileSize: 10 * 1024 * 1024,
+      fileSize: daemonConfig.maxTransferBytes,
       files: 1
     }
   });

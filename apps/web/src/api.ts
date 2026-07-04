@@ -711,6 +711,13 @@ export const api = {
       token
     );
   },
+  copyInstancePath(token: string, id: string, fromPath: string, toPath: string) {
+    return requestJson<InstanceFileEntry>(
+      `/api/instances/${id}/files/copy`,
+      { method: "POST", body: JSON.stringify({ fromPath, toPath }) },
+      token
+    );
+  },
   extractInstanceArchive(token: string, id: string, path: string, outputPath?: string) {
     return requestJson<ExtractInstanceArchiveResponse>(
       `/api/instances/${id}/files/extract`,
