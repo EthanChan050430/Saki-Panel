@@ -6,9 +6,9 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "prebuild": "node ../../scripts/generate-prisma.mjs",
+    "prebuild": "node ../../scripts/ensure-shared-built.mjs && node ../../scripts/generate-prisma.mjs",
+    "pretypecheck": "node ../../scripts/ensure-shared-built.mjs && node ../../scripts/generate-prisma.mjs",
     "build": "tsc -p tsconfig.json",
-    "pretypecheck": "node ../../scripts/generate-prisma.mjs",
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

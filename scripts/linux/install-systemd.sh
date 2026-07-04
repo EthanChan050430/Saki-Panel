@@ -124,8 +124,36 @@ set_env_var "DAEMON_PANEL_URL" "http://127.0.0.1:${PANEL_PORT}"
 set_env_var "DAEMON_IDENTITY_FILE" "${ROOT}/data/daemon/identity-${DAEMON_PORT}.json"
 chown "${SERVICE_USER}:${SERVICE_GROUP}" "${ROOT}/.env" || true
 
+require_repo_file() {
+  local relative="$1"
+  if [[ ! -f "${ROOT}/${relative}" ]]; then
+    echo "Missing required file: ${ROOT}/${relative}" >&2
+    echo "Run this installer from the monorepo root (package.json + apps/* + packages/*), not a single app directory." >&2
+    exit 1
+  fi
+}
+
+require_repo_file "package.json"
+require_repo_file "packages/shared/package.json"
+require_repo_file "apps/panel/package.json"
+require_repo_file "apps/daemon/package.json"
+require_repo_file "apps/web/package.json"
+require_repo_file "prisma/schema.prisma"
+
 echo "Installing dependencies and building..."
-run_as_service_user "cd '${ROOT}' && ${NPM_BIN} install && ${NPM_BIN} run db:generate && ${NPM_BIN} run build"
+# NODE_ENV=production skips devDependencies (typescript, prisma, vite). Force dev deps for the build.
+run_as_service_user "cd '${ROOT}' && NODE_ENV=development ${NPM_BIN} install && ${NPM_BIN} run db:generate && ${NPM_BIN} run build"
+
+for artifact in \
+  "packages/shared/dist/index.d.ts" \
+  "apps/panel/dist/index.js" \
+  "apps/daemon/dist/index.js" \
+  "apps/web/dist/index.html"; do
+  if [[ ! -f "${ROOT}/${artifact}" ]]; then
+    echo "Build finished but expected artifact is missing: ${ROOT}/${artifact}" >&2
+    exit 1
+  fi
+done
 
 write_service "${SERVICE_PREFIX}-panel" "[Unit]
 Description=Saki Panel API
