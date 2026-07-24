@@ -1258,13 +1258,27 @@ export async function executeSakiAgentTool(
       const { daemonWorkingDirectory } = commandWorkingDirectoryForAgent(instance, {
         ...(typeof call.args[3] === "string" ? { cwd: call.args[3] } : {})
       });
-      // ALWAYS execute terminal commands in a NEW independent shell (exactly like clicking + in UI terminal).
-      // Never on main instance console (use sendInput/sendCommand only for the actual running process stdin).
-      const shellCreate = await createDaemonInstanceShell(instance.node, instance.id, daemonWorkingDirectory);
-      const shellId = shellCreate.sessionId;
-      const fullCommand = input ? `${command}\n${input}\n` : `${command}\n`;
+
+      // Default: reuse the latest existing persistent shell (like having multiple tabs open).
+      // Only creates a new one if none exist. This matches "default reuse" behavior.
+      // (Agent can explicitly use createShell + runInShell for a brand new one if desired.)
+      let shellId: string;
+      let isNew = false;
+      const existing = await listDaemonInstanceShells(instance.node, instance.id);
+      if (existing.sessions && existing.sessions.length > 0) {
+        shellId = existing.sessions[existing.sessions.length - 1]; // reuse the most recently created
+      } else {
+        const shellCreate = await createDaemonInstanceShell(instance.node, instance.id, daemonWorkingDirectory);
+        shellId = shellCreate.sessionId;
+        isNew = true;
+      }
+
+      const cdPrefix = daemonWorkingDirectory ? `cd ${JSON.stringify(daemonWorkingDirectory)} && ` : '';
+      const commandToRun = cdPrefix + command;
+      const fullCommand = input ? `${commandToRun}\n${input}\n` : `${commandToRun}\n`;
       await sendDaemonShellInput(instance.node, instance.id, shellId, fullCommand);
-      observation = `Command executed in newly created independent shell (like + button): shellId=${shellId}\n${command}${input ? `\n+ stdin: ${input}` : ''}\n\nFull live output is in the UI shell tab. Use listShells() to list agent's shells. These shells are persistent and independent from the main process.`;
+
+      observation = `Command sent to ${isNew ? 'newly created' : 'reused'} independent shell (shellId=${shellId})${isNew ? ' (like + button)' : ''}${daemonWorkingDirectory ? ` (cwd=${daemonWorkingDirectory})` : ''}:\n${command}${input ? `\n+ stdin: ${input}` : ''}\n\nFull live output streams to the corresponding UI shell tab. Use listShells() to see all. These are persistent shells (not the main process console).`;
     } else if (toolName === "sendinput") {
       requireUserPermission(runtime.permissions, "terminal.input");
       const instance = activeInstance(runtime);

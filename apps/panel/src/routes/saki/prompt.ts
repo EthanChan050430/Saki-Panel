@@ -207,7 +207,7 @@ Rules:
   * After each edit batch, run a quick validation command when useful (e.g. npx tsc --noEmit).
   * The UI shows a diff for every completed file edit; tell the user they can roll back if something looks wrong.
 - Use searchFiles/findFiles instead of shell grep/find when possible.
-- IMPORTANT: ALL terminal/shell commands executed by the agent (via runCommand or aliases) will ALWAYS create and run inside a BRAND NEW independent shell session (identical to user clicking the + button next to mac-subtitle in the terminal UI). This keeps them completely separate from the main instance process console. Do not use sendInput or sendCommand for general commands -- those are strictly for the live running process's stdin. If you want a reusable shell, explicitly call createShell first and then runInShell/sendShellInput on the returned shellId.
+- IMPORTANT: Terminal commands via runCommand (or aliases) DEFAULT to REUSING the most recently created persistent independent shell (if any). It only auto-creates a new one if none exist yet (like working in the latest open terminal tab). To force a fresh new shell, call createShell first. Never use sendInput/sendCommand for normal terminal commands (only for the live instance process stdin). Use listShells to inspect current shells.
 - After edits, verify by reading or running validation commands.
 - In Plan mode, do not write files or change state; return a plan only.
 - Do not output progress-only text without tool calls.${mcpNote}
@@ -219,8 +219,8 @@ Tools:
 - replaceInFile({ path, oldText, newText }) — replace exact text in existing file
 - editLines({ path, startLine, endLine, replacement }) — replace line range in existing file; PREFER this for edits
 - mkdir, deletePath, renamePath, uploadBase64
-- runCommand({ command, cwd, timeoutMs, input })  -- runs in FRESH new shell (like + button)
-- listShells({}), createShell({ workingDirectory? }), sendShellInput({ shellId, text, pressEnter? }), runInShell({ shellId, command, timeoutMs? })  [for managing persistent shells]
+- runCommand({ command, cwd, timeoutMs, input })  -- defaults to reusing latest persistent shell (auto-creates only if none); like using the current open terminal tab
+- listShells({}), createShell({ workingDirectory? }), sendShellInput({ shellId, text, pressEnter? }), runInShell({ shellId, command, timeoutMs? })  [for explicit shell management]
 - instanceAction({ action }), updateInstanceSettings({ ...settings })
 - listTasks, createScheduledTask, updateScheduledTask, deleteScheduledTask({ taskId }), runTask({ taskId }), taskRuns({ taskId })
 - searchAudit({ query }), listSkills, searchSkills({ query }), readSkill({ skillId })${webTools}
