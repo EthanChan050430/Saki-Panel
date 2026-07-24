@@ -332,7 +332,7 @@ export function userFacingError(error: unknown): string {
     return `文件不存在：${path.basename(enoentMatch[1] ?? "")}。请先用 listFiles 确认当前实例目录里的实际文件名；如果用户要求创建这个文件，请改用 writeFile。`;
   }
   if (/Instance is not accepting terminal input/i.test(message)) {
-    return "当前实例进程不接受交互式 stdin。若要执行终端命令，请使用 runCommand(command)，它会在当前实例工作目录中启动一个临时 shell。";
+    return "当前实例进程不接受交互式 stdin。若要执行终端命令，请使用 runCommand(command)（临时）或 createShell+runInShell（持久化多tab shell）。";
   }
   return message;
 }

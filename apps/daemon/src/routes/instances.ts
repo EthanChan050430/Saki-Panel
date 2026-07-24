@@ -114,4 +114,14 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     const { id } = request.params as { id: string };
     return { instanceId: id, sessions: instanceManager.listShells(id) };
   });
+
+  app.post("/api/instances/:id/shells/:sid/input", { preHandler: authenticatePanelRequest }, async (request) => {
+    const { id, sid } = request.params as { id: string; sid: string };
+    const body = request.body as { data?: string; echo?: boolean };
+    if (typeof body.data !== "string") {
+      throw new Error("data is required");
+    }
+    instanceManager.writeShellInput(id, sid, body.data);
+    return { ok: true };
+  });
 }

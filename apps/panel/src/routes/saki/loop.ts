@@ -219,14 +219,14 @@ export async function emitAgentFinalText(events: SakiAgentRunEvents | undefined,
 function looksLikeToolCallPayload(text: string): boolean {
   if (/<tool_call>/i.test(text)) return true;
   if (/"?tool_calls"?\s*:/i.test(text) || /"?toolCalls"?\s*:/i.test(text)) return true;
-  if (/"(?:listInstances|describeInstance|instanceLogs|listFiles|readFile|writeFile|replaceInFile|editLines|mkdir|deletePath|renamePath|uploadBase64|runCommand|sendInput|sendCommand|instanceAction|updateInstanceSettings|searchAudit|listTasks|createScheduledTask|updateScheduledTask|deleteScheduledTask|runTask|taskRuns|searchWeb|browse|crawl|researchWeb|listSkills|searchSkills|readSkill|reportProgress|respond)"\s*:/i.test(text)) return true;
-  return /"name"\s*:\s*"(?:listInstances|describeInstance|instanceLogs|listFiles|readFile|writeFile|replaceInFile|editLines|mkdir|deletePath|renamePath|uploadBase64|runCommand|sendInput|sendCommand|instanceAction|updateInstanceSettings|searchAudit|listTasks|createScheduledTask|updateScheduledTask|deleteScheduledTask|runTask|taskRuns|searchWeb|browse|crawl|researchWeb|listSkills|searchSkills|readSkill|reportProgress|respond)"/i.test(text);
+  if (/"(?:listInstances|describeInstance|instanceLogs|listFiles|readFile|writeFile|replaceInFile|editLines|mkdir|deletePath|renamePath|uploadBase64|runCommand|sendInput|sendCommand|listShells|createShell|sendShellInput|runInShell|instanceAction|updateInstanceSettings|searchAudit|listTasks|createScheduledTask|updateScheduledTask|deleteScheduledTask|runTask|taskRuns|searchWeb|browse|crawl|researchWeb|listSkills|searchSkills|readSkill|reportProgress|respond)"\s*:/i.test(text)) return true;
+  return /"name"\s*:\s*"(?:listInstances|describeInstance|instanceLogs|listFiles|readFile|writeFile|replaceInFile|editLines|mkdir|deletePath|renamePath|uploadBase64|runCommand|sendInput|sendCommand|listShells|createShell|sendShellInput|runInShell|instanceAction|updateInstanceSettings|searchAudit|listTasks|createScheduledTask|updateScheduledTask|deleteScheduledTask|runTask|taskRuns|searchWeb|browse|crawl|researchWeb|listSkills|searchSkills|readSkill|reportProgress|respond)"/i.test(text);
 }
 
 function looksLikeProgressOnlyToolIntent(text: string): boolean {
   const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
   if (!normalized) return false;
-  if (/\b(?:listInstances|describeInstance|instanceLogs|listFiles|readFile|writeFile|replaceInFile|editLines|mkdir|deletePath|renamePath|uploadBase64|runCommand|sendInput|sendCommand|instanceAction|updateInstanceSettings|searchAudit|listTasks|createScheduledTask|updateScheduledTask|deleteScheduledTask|runTask|taskRuns|searchWeb|browse|crawl|researchWeb|listSkills|searchSkills|readSkill|reportProgress|respond)\b/i.test(normalized)) {
+  if (/\b(?:listInstances|describeInstance|instanceLogs|listFiles|readFile|writeFile|replaceInFile|editLines|mkdir|deletePath|renamePath|uploadBase64|runCommand|sendInput|sendCommand|listShells|createShell|sendShellInput|runInShell|instanceAction|updateInstanceSettings|searchAudit|listTasks|createScheduledTask|updateScheduledTask|deleteScheduledTask|runTask|taskRuns|searchWeb|browse|crawl|researchWeb|listSkills|searchSkills|readSkill|reportProgress|respond)\b/i.test(normalized)) {
     return true;
   }
   const actionVerb = /(?:read|inspect|search|run|execute|call|list|check|open|edit|modify|fix|write|create|delete|verify|test|look at)/i;

@@ -42,6 +42,7 @@ import {
   readDaemonInstanceStatus,
   restartDaemonInstance,
   runDaemonInstanceCommand,
+  sendDaemonShellInput,
   startDaemonInstance,
   stopDaemonInstance,
   type DaemonInstanceSpec
@@ -1101,6 +1102,25 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     }
     try {
       return await listDaemonInstanceShells(instance.node, id);
+    } catch (error) {
+      reply.code(502).send({ message: error instanceof Error ? error.message : "Daemon request failed" });
+    }
+  });
+
+  app.post("/api/instances/:id/shells/:sid/input", { preHandler: requirePermission("terminal.input") }, async (request, reply) => {
+    const { id, sid } = request.params as { id: string; sid: string };
+    const instance = await loadInstance(request, id);
+    if (!instance) {
+      await sendNotFound(reply);
+      return;
+    }
+    try {
+      const body = request.body as { data?: string; echo?: boolean };
+      if (typeof body.data !== "string") {
+        reply.code(400).send({ message: "data is required" });
+        return;
+      }
+      return await sendDaemonShellInput(instance.node, id, sid, body.data, { echo: body.echo });
     } catch (error) {
       reply.code(502).send({ message: error instanceof Error ? error.message : "Daemon request failed" });
     }

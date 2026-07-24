@@ -646,3 +646,10 @@ export function createDaemonInstanceShell(node: DaemonNodeCredentials, instanceI
 export function listDaemonInstanceShells(node: DaemonNodeCredentials, instanceId: string) {
   return requestDaemon<{ instanceId: string; sessions: string[] }>(node, `/api/instances/${instanceId}/shells`);
 }
+
+export function sendDaemonShellInput(node: DaemonNodeCredentials, instanceId: string, shellId: string, data: string, options: { echo?: boolean } = {}) {
+  return requestDaemon<{ ok: boolean }>(node, `/api/instances/${instanceId}/shells/${shellId}/input`, {
+    method: "POST",
+    body: JSON.stringify({ data, echo: options.echo })
+  });
+}

@@ -180,7 +180,7 @@ Rules:
   * After each edit batch, run a quick validation command when useful (e.g. npx tsc --noEmit).
   * The UI shows a diff for every completed file edit; tell the user they can roll back if something looks wrong.
 - Use searchFiles/findFiles instead of shell grep/find when possible.
-- Use runCommand for shell commands; sendInput/sendCommand only for running console/stdin.
+- Use runCommand for one-shot observable commands; use createShell + runInShell/sendShellInput for persistent/stateful shells (e.g. long builds, REPLs). sendInput/sendCommand only for the main instance console stdin.
 - After edits, verify by reading or running validation commands.
 - In Plan mode, do not write files or change state; return a plan only.
 - Do not output progress-only text without tool calls.${mcpNote}
@@ -202,6 +202,7 @@ Tools:
 - editLines({ path, startLine, endLine, replacement }) — replace line range in existing file; PREFER this for edits
 - mkdir, deletePath, renamePath, uploadBase64
 - runCommand({ command, cwd, timeoutMs, input }), sendInput({ text, pressEnter, echo }), sendCommand({ command })
+- listShells({}), createShell({ workingDirectory? }), sendShellInput({ shellId, text, pressEnter? }), runInShell({ shellId, command, timeoutMs? })  [for persistent UI shells]
 - instanceAction({ action }), updateInstanceSettings({ ...settings })
 - listTasks, createScheduledTask, updateScheduledTask, deleteScheduledTask({ taskId }), runTask({ taskId }), taskRuns({ taskId })
 - searchAudit({ query }), listSkills, searchSkills({ query }), readSkill({ skillId })${webTools}
@@ -315,7 +316,7 @@ Rules:
 - Verify after editing.
 - Do not output progress-only text without tool calls.${mcpNote}
 
-Tool names: listInstances, describeInstance, instanceLogs, listFiles, readFile, writeFile({ path, content } — new files only), replaceInFile({ path, oldText, newText }), editLines({ path, startLine, endLine, replacement } — preferred for edits), mkdir, deletePath, renamePath, uploadBase64, runCommand, sendInput, sendCommand, instanceAction, updateInstanceSettings, listTasks, createScheduledTask, updateScheduledTask, deleteScheduledTask, runTask, taskRuns, searchAudit, listSkills, searchSkills, readSkill, reportProgress, respond${webTools}
+Tool names: listInstances, describeInstance, instanceLogs, listFiles, readFile, writeFile({ path, content } — new files only), replaceInFile({ path, oldText, newText }), editLines({ path, startLine, endLine, replacement } — preferred for edits), mkdir, deletePath, renamePath, uploadBase64, runCommand, sendInput, sendCommand, listShells, createShell, sendShellInput, runInShell, instanceAction, updateInstanceSettings, listTasks, createScheduledTask, updateScheduledTask, deleteScheduledTask, runTask, taskRuns, searchAudit, listSkills, searchSkills, readSkill, reportProgress, respond${webTools}
 
 ---
 

@@ -8,12 +8,14 @@ import { instanceAccessInclude, listVisibleInstances, loadVisibleInstance } from
 import type { DaemonInstanceSpec } from "../../daemon-client.js";
 import {
   archiveDaemonInstancePaths,
+  createDaemonInstanceShell,
   deleteDaemonInstancePath,
   extractDaemonInstanceArchive,
   globDaemonInstanceFiles,
   grepDaemonInstanceFiles,
   killDaemonInstance,
   listDaemonInstanceFiles,
+  listDaemonInstanceShells,
   makeDaemonInstanceDirectory,
   readDaemonInstanceFile,
   readDaemonInstanceLogs,
@@ -21,6 +23,7 @@ import {
   restartDaemonInstance,
   runDaemonInstanceCommand,
   sendDaemonInstanceInput,
+  sendDaemonShellInput,
   startDaemonInstance,
   stopDaemonInstance,
   uploadDaemonInstanceFile,
@@ -1281,6 +1284,40 @@ export async function executeSakiAgentTool(
       const state = await sendDaemonInstanceInput(instance.node, instance.id, input.data, { echo: input.echo });
       await updateInstanceFromDaemonState(instance, state);
       observation = `${formatConsoleInputObservation("Command line", input, state)} For normal terminal commands, use runCommand(command).`;
+    } else if (toolName === "listshells") {
+      requireUserPermission(runtime.permissions, "terminal.view");
+      const instance = activeInstance(runtime);
+      const shells = await listDaemonInstanceShells(instance.node, instance.id);
+      observation = shells.sessions.length ? `Open shells: ${shells.sessions.join(", ")}` : "No persistent shells open. Use createShell to open one.";
+    } else if (toolName === "createshell") {
+      requireUserPermission(runtime.permissions, "terminal.input");
+      const instance = activeInstance(runtime);
+      const { daemonWorkingDirectory } = commandWorkingDirectoryForAgent(instance, { ...(typeof call.args[0] === "string" ? { cwd: call.args[0] } : {}) });
+      // Note: create uses working dir from spec or body
+      const result = await createDaemonInstanceShell(instance.node, instance.id, daemonWorkingDirectory);
+      observation = `Created persistent shell ${result.sessionId}. Use runInShell or sendShellInput with this shellId.`;
+    } else if (toolName === "sendshellinput") {
+      requireUserPermission(runtime.permissions, "terminal.input");
+      const instance = activeInstance(runtime);
+      const shellId = trimString(call.args[0]);
+      const text = trimString(call.args[1]);
+      if (!shellId || !text) throw new RouteError("sendShellInput requires shellId and text.", 400);
+      const pressEnter = call.args[2] === undefined ? true : trimString(call.args[2]) !== "false";
+      const data = pressEnter ? (text.endsWith("\n") ? text : text + "\n") : text;
+      await sendDaemonShellInput(instance.node, instance.id, shellId, data);
+      observation = `Sent to shell ${shellId}: ${text.substring(0, 100)}${text.length > 100 ? "..." : ""}`;
+    } else if (toolName === "runinshell") {
+      requireUserPermission(runtime.permissions, "terminal.input");
+      const instance = activeInstance(runtime);
+      const shellId = trimString(call.args[0]);
+      const command = trimString(call.args[1]);
+      if (!shellId || !command) throw new RouteError("runInShell requires shellId and command.", 400);
+      const timeoutMs = numericArg(call.args[2], 30000, 1000, 120000);
+      // For simplicity, send command + \n via input, but since no direct run, use send and note. For full, could enhance daemon.
+      // As optimization, send the command.
+      const data = command + "\n";
+      await sendDaemonShellInput(instance.node, instance.id, shellId, data);
+      observation = `Sent command to shell ${shellId}: ${command}. (Output will appear in UI shell tab; for agent observation use runCommand or extend with shell output capture.)`;
     } else if (toolName === "instanceaction") {
       const instance = activeInstance(runtime);
       const action = trimString(call.args[0]).toLowerCase();
