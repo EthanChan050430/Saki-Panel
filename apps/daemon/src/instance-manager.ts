@@ -80,7 +80,7 @@ interface ShellSession {
   instanceId: string;
   pty: IPty;
   exited: boolean;
-  exit?: RuntimeExit;
+  exit?: RuntimeExit | undefined;
   dataListeners: Set<(text: string) => void>;
   exitListeners: Set<RuntimeExitListener>;
   dataSubscription: IDisposable;

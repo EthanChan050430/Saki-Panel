@@ -71,6 +71,8 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
       send(socket, {
         type: "hello",
         instanceId: id,
+        status: "RUNNING",
+        exitCode: null,
         lines: []
       });
       try {

@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import * as fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Dirent, Stats } from "node:fs";
@@ -1120,7 +1121,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       reply.header("Content-Type", "application/octet-stream");
       reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
       reply.header("Content-Length", String(stats.size));
-      return fs.createReadStream(resolved.target);
+      return fsSync.createReadStream(resolved.target);
     }
 
     if (stats.size > maxTransferBytes) {
@@ -1229,7 +1230,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
         reply.header("Content-Type", "application/zip");
         reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
         reply.header("Content-Length", String(stats.size));
-        const stream = fs.createReadStream(temporary.archivePath);
+        const stream = fsSync.createReadStream(temporary.archivePath);
         const cleanup = () => {
           fs.rm(temporary.tempDirectory, { force: true, recursive: true }).catch(() => {});
         };

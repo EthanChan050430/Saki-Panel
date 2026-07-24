@@ -701,6 +701,10 @@ export type TerminalServerMessage =
       line: InstanceLogLine;
     }
   | {
+      type: "data";
+      data: string;
+    }
+  | {
       type: "status";
       instanceId: string;
       status: InstanceStatus;
