@@ -301,28 +301,6 @@ Continue the Agent task. Use working notes as memory. Never claim an action happ
 
 Request: ${runtime.input.message}
 
-Workspace:
-- Instance: ${workspace?.instanceName ?? "none selected"}
-- ID: ${workspace?.instanceId ?? "none"}
-- Node: ${workspace?.nodeName ?? "none"}
-- Working dir: ${workspace?.workingDirectory ?? "none"}
-- Status: ${workspace?.status ?? "unknown"}
-- Last exit: ${workspace?.lastExitCode ?? "none"}
-
-Command env:
-${commandEnvironment}
-
-Permission: ${sakiPermissionModeLabel(permissionMode)} — ${sakiPermissionModeBehavior(permissionMode)}
-
-Context${runtime.input.contextTitle ? ` (${runtime.input.contextTitle})` : ""}: ${additionalContext}
-
-Skills (metadata only — progressive disclosure):
-${skillText}
-
-Skill workflow:
-- Call searchSkills({ query }) when the task may need specialized procedures; then readSkill({ skillId }) for any likely match before making changes.
-- Follow auto-applied or auto-loaded skill instructions in Context as mandatory.
-
 Rules:
 - Batch read-only calls in multiple <tool_call> blocks.
 - Include arguments.note as a short user-visible progress sentence.

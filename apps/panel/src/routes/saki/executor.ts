@@ -813,14 +813,25 @@ export async function executeSakiAgentTool(
         const timeoutMs = numericArg(args.timeoutMs, 30000, 1000, 120000);
         const input = optionalCommandInputArg(args);
         const { daemonWorkingDirectory } = commandWorkingDirectoryForAgent(instance, args);
-        const result = await runDaemonInstanceCommand(instance.node, instance.id, {
-          command,
-          workingDirectory: daemonWorkingDirectory,
-          timeoutMs,
-          ...(input !== undefined ? { input } : {})
-        });
-        if (result.exitCode !== 0) ok = false;
-        observation = formatRunCommandObservation({ ...result, signal: result.signal ?? null }, input !== undefined);
+
+        // Same logic as the main path: default reuse latest shell (or create if none)
+        let shellId: string;
+        let isNew = false;
+        const existing = await listDaemonInstanceShells(instance.node, instance.id);
+        if (existing.sessions && existing.sessions.length > 0) {
+          shellId = existing.sessions[existing.sessions.length - 1]!;
+        } else {
+          const shellCreate = await createDaemonInstanceShell(instance.node, instance.id, daemonWorkingDirectory);
+          shellId = shellCreate.sessionId;
+          isNew = true;
+        }
+
+        const cdPrefix = daemonWorkingDirectory ? `cd ${JSON.stringify(daemonWorkingDirectory)} && ` : '';
+        const commandToRun = cdPrefix + command;
+        const fullCommand = input ? `${commandToRun}\n${input}\n` : `${commandToRun}\n`;
+        await sendDaemonShellInput(instance.node, instance.id, shellId, fullCommand);
+
+        observation = `Command sent to ${isNew ? 'newly created' : 'reused'} independent shell (shellId=${shellId})${isNew ? ' (like + button)' : ''}${daemonWorkingDirectory ? ` (cwd=${daemonWorkingDirectory})` : ''}:\n${command}${input ? `\n+ stdin: ${input}` : ''}\n\nFull live output streams to the corresponding UI shell tab.`;
       } else if (toolName === "sendinput") {
         requireUserPermission(runtime.permissions, "terminal.input");
         const instance = await resolveAgentInstance(runtime, args);
@@ -1266,7 +1277,7 @@ export async function executeSakiAgentTool(
       let isNew = false;
       const existing = await listDaemonInstanceShells(instance.node, instance.id);
       if (existing.sessions && existing.sessions.length > 0) {
-        shellId = existing.sessions[existing.sessions.length - 1]; // reuse the most recently created
+        shellId = existing.sessions[existing.sessions.length - 1]!; // reuse the most recently created
       } else {
         const shellCreate = await createDaemonInstanceShell(instance.node, instance.id, daemonWorkingDirectory);
         shellId = shellCreate.sessionId;
@@ -1328,7 +1339,7 @@ export async function executeSakiAgentTool(
       const timeoutMs = numericArg(call.args[2], 30000, 1000, 120000);
       const data = command.endsWith("\n") ? command : command + "\n";
       await sendDaemonShellInput(instance.node, instance.id, shellId, data);
-      observation = `Executed in persistent shell ${shellId} (cwd may differ): ${command}\n\nNote: Full output streams to the corresponding UI shell tab (shell${shellId} or similar). Use listShells to see tabs. For agent-visible output, prefer runCommand for one-shots.`;
+      observation = `Executed in persistent shell ${shellId} (cwd may differ): ${command}\n\nNote: Full output streams to the corresponding UI shell tab (shell${shellId} or similar). Use listShells to see tabs. runCommand now also uses these shells by default (reuse latest).`;
     } else if (toolName === "instanceaction") {
       const instance = activeInstance(runtime);
       const action = trimString(call.args[0]).toLowerCase();

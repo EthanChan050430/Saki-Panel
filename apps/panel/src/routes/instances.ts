@@ -1120,7 +1120,8 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
         reply.code(400).send({ message: "data is required" });
         return;
       }
-      return await sendDaemonShellInput(instance.node, id, sid, body.data, { echo: body.echo });
+      const shellInputOpts = body.echo !== undefined ? { echo: body.echo } : {};
+      return await sendDaemonShellInput(instance.node, id, sid, body.data, shellInputOpts);
     } catch (error) {
       reply.code(502).send({ message: error instanceof Error ? error.message : "Daemon request failed" });
     }

@@ -35,7 +35,9 @@ function parseClientMessage(raw: WebSocket.RawData): TerminalClientMessage | nul
   try {
     const parsed = JSON.parse(raw.toString()) as Partial<TerminalClientMessage>;
     if (parsed.type === "auth" && typeof parsed.token === "string" && typeof parsed.instanceId === "string") {
-      return { type: "auth", token: parsed.token, instanceId: parsed.instanceId, sessionId: parsed.sessionId };
+      const auth: any = { type: "auth", token: parsed.token, instanceId: parsed.instanceId };
+      if (parsed.sessionId) auth.sessionId = parsed.sessionId;
+      return auth;
     }
     if (parsed.type === "input" && typeof parsed.data === "string") {
       return { type: "input", data: parsed.data, echo: parsed.echo !== false };
