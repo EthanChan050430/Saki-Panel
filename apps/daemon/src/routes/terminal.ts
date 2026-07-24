@@ -12,9 +12,14 @@ function send(socket: WebSocket, payload: TerminalServerMessage): void {
 
 function parseClientMessage(raw: WebSocket.RawData): TerminalClientMessage | null {
   try {
-    const parsed = JSON.parse(raw.toString()) as Partial<TerminalClientMessage>;
+    const parsed: any = JSON.parse(raw.toString());
     if (parsed.type === "auth" && typeof parsed.token === "string" && typeof parsed.instanceId === "string") {
-      return { type: "auth", token: parsed.token, instanceId: parsed.instanceId, sessionId: parsed.sessionId };
+      return {
+        type: "auth",
+        token: parsed.token,
+        instanceId: parsed.instanceId,
+        ...(parsed.sessionId ? { sessionId: parsed.sessionId } : {})
+      };
     }
     if (parsed.type === "input" && typeof parsed.data === "string") {
       return { type: "input", data: parsed.data, echo: parsed.echo !== false };

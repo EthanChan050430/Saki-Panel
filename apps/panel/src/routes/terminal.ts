@@ -33,16 +33,20 @@ function websocketCloseReason(message: string): string {
 
 function parseClientMessage(raw: WebSocket.RawData): TerminalClientMessage | null {
   try {
-    const parsed = JSON.parse(raw.toString()) as Partial<TerminalClientMessage>;
-    if (parsed.type === "auth" && typeof parsed.token === "string" && typeof parsed.instanceId === "string") {
-      const auth: any = { type: "auth", token: parsed.token, instanceId: parsed.instanceId };
-      if (parsed.sessionId) auth.sessionId = parsed.sessionId;
-      return auth;
+    const parsed: any = JSON.parse(raw.toString());
+    if (parsed?.type === "auth" && typeof parsed.token === "string" && typeof parsed.instanceId === "string") {
+      const msg: any = {
+        type: "auth",
+        token: parsed.token,
+        instanceId: parsed.instanceId
+      };
+      if (parsed.sessionId != null) msg.sessionId = parsed.sessionId;
+      return msg;
     }
-    if (parsed.type === "input" && typeof parsed.data === "string") {
+    if (parsed?.type === "input" && typeof parsed.data === "string") {
       return { type: "input", data: parsed.data, echo: parsed.echo !== false };
     }
-    if (parsed.type === "ping") {
+    if (parsed?.type === "ping") {
       return { type: "ping" };
     }
     return null;
