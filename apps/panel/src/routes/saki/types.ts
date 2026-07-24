@@ -123,7 +123,14 @@ export function effectiveSakiAgentPermissionMode(input: Pick<SakiChatRequest, "m
 }
 
 export function truncateText(value: unknown, limit = maxAgentObservationChars, modelId?: string): string {
-  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  let text: string;
+  if (typeof value === "string") {
+    text = value;
+  } else if (value == null) {
+    return "";
+  } else {
+    text = JSON.stringify(value, null, 2);
+  }
   if (modelId) {
     const tokenLimit = limit === maxAgentObservationChars ? maxAgentObservationTokens : Math.floor(limit / 4);
     const tokenCount = countTokens(text, modelId);
@@ -131,10 +138,11 @@ export function truncateText(value: unknown, limit = maxAgentObservationChars, m
     const truncated = truncateToTokenLimit(text, tokenLimit, modelId);
     return `${truncated}\n... [truncated, ${tokenCount} total tokens] ...`;
   }
-  if (text.length <= limit) return text;
+  const len = text.length;
+  if (len <= limit) return text;
   const head = Math.floor(limit * 0.65);
   const tail = Math.max(0, limit - head - 80);
-  return `${text.slice(0, head)}\n... [truncated ${text.length - limit} chars] ...\n${text.slice(-tail)}`;
+  return `${text.slice(0, head)}\n... [truncated ${len - limit} chars] ...\n${text.slice(-tail)}`;
 }
 
 export function trimString(value: unknown): string {

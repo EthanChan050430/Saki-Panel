@@ -130,11 +130,13 @@ export function buildDirectMessages(input: SakiChatRequest, prompt: string, syst
   ];
 }
 
-export function buildAgentPrompt(runtime: SakiAgentRuntime): string {
+function buildCommonAgentHeader(runtime: SakiAgentRuntime, isContinuation: boolean = false): string {
   const workspace = runtime.context.workspace;
   const permissionMode = effectiveSakiAgentPermissionMode(runtime.input);
   const commandEnvironment = renderCommandEnvironment(runtime.context.instance);
-  const additionalContext = combinedSakiContextText(runtime.input);
+  const additionalContext = isContinuation
+    ? truncateText(redactSensitiveText(combinedSakiContextText(runtime.input) || "(none)"), maxAgentContinuationContextChars)
+    : combinedSakiContextText(runtime.input);
   const skillText = runtime.skills.length
     ? runtime.skills.map((skill) => `- ${skill.id}: ${skill.name} - ${skill.description ?? ""}`).join("\n")
     : "- No matching local skills.";
@@ -145,7 +147,7 @@ export function buildAgentPrompt(runtime: SakiAgentRuntime): string {
     ? "\nMCP is enabled but not yet available in this build. Do not invent MCP tool calls."
     : "";
 
-  return `You are Saki, an Agent in Saki Panel. Complete tasks by calling tools. Never claim an action was done unless a tool observation confirms it.
+  const header = `You are Saki, an Agent in Saki Panel. Complete tasks by calling tools. Never claim an action was done unless a tool observation confirms it.
 
 This project (DreamStarryRobot / WebOps) is a monorepo. Common paths:
 - apps/panel: Fastify panel API (Saki routes live under apps/panel/src/routes/saki/)
@@ -167,6 +169,31 @@ ${commandEnvironment}
 
 Permission: ${sakiPermissionModeLabel(permissionMode)} — ${sakiPermissionModeBehavior(permissionMode)}
 
+Context${runtime.input.contextTitle ? ` (${runtime.input.contextTitle})` : ""}: ${additionalContext}
+
+Skills (metadata only — progressive disclosure):
+${skillText}
+
+Skill workflow:
+- Skill summaries above are not enough to execute specialized work. Use searchSkills({ query }) early when the task may need domain procedures, plugins, deployments, or project-specific rules.
+- When a skill likely applies, call readSkill({ skillId }) and follow its instructions before editing files or running commands.
+- Auto-applied or auto-loaded skill instructions in Context are mandatory for this request.
+- If unsure whether a skill applies, search first — do not guess domain rules.${mcpNote}`;
+
+  return header;
+}
+
+export function buildAgentPrompt(runtime: SakiAgentRuntime): string {
+  const header = buildCommonAgentHeader(runtime, false);
+  const webTools = runtime.config.searchEnabled
+    ? "\n- searchWeb(query, maxResults): search the public web.\n- browse(url): fetch one public web page.\n- crawl(url, maxPages, maxDepth): crawl same-site pages.\n- researchWeb(query, maxPages): search then fetch top pages."
+    : "";
+  const mcpNote = runtime.config.mcpEnabled
+    ? "\nMCP is enabled but not yet available in this build. Do not invent MCP tool calls."
+    : "";
+
+  return `${header}
+
 Rules:
 - Batch independent read-only calls in multiple <tool_call> blocks.
 - Include arguments.note as a short user-visible progress sentence.
@@ -184,15 +211,6 @@ Rules:
 - After edits, verify by reading or running validation commands.
 - In Plan mode, do not write files or change state; return a plan only.
 - Do not output progress-only text without tool calls.${mcpNote}
-
-Skills (metadata only — progressive disclosure):
-${skillText}
-
-Skill workflow:
-- Skill summaries above are not enough to execute specialized work. Use searchSkills({ query }) early when the task may need domain procedures, plugins, deployments, or project-specific rules.
-- When a skill likely applies, call readSkill({ skillId }) and follow its instructions before editing files or running commands.
-- Auto-applied or auto-loaded skill instructions in Context are mandatory for this request.
-- If unsure whether a skill applies, search first — do not guess domain rules.
 
 Tools:
 - listInstances({ query, limit }), describeInstance({ instanceId }), instanceLogs({ instanceId, lines })
@@ -266,24 +284,20 @@ ${priorSakiHistory(runtime.input)
   .join("\n")}
 
 Error: ${redactSensitiveText(runtime.input.panelError ?? "(none)")}
-Context${runtime.input.contextTitle ? ` (${runtime.input.contextTitle})` : ""}: ${redactSensitiveText(additionalContext || "(none)")}
+Context${runtime.input.contextTitle ? ` (${runtime.input.contextTitle})` : ""}: ${redactSensitiveText(combinedSakiContextText(runtime.input) || "(none)")}
 Request: ${runtime.input.message}`;
 }
 
 export function buildAgentContinuationPrompt(runtime: SakiAgentRuntime): string {
-  const workspace = runtime.context.workspace;
-  const permissionMode = effectiveSakiAgentPermissionMode(runtime.input);
-  const commandEnvironment = renderCommandEnvironment(runtime.context.instance);
-  const additionalContext = truncateText(redactSensitiveText(combinedSakiContextText(runtime.input) || "(none)"), maxAgentContinuationContextChars);
-  const skillText = runtime.skills.length
-    ? runtime.skills.map((skill) => `- ${skill.id}: ${skill.name} - ${skill.description ?? ""}`).join("\n")
-    : "- No matching local skills.";
+  const header = buildCommonAgentHeader(runtime, true);
   const webTools = runtime.config.searchEnabled ? ", searchWeb, browse, crawl, researchWeb" : "";
   const mcpNote = runtime.config.mcpEnabled
     ? "\nMCP is enabled but not yet available. Do not invent MCP tool calls."
     : "";
 
-  return `Continue the Agent task. Use working notes as memory. Never claim an action happened unless the observation confirms it.
+  return `${header}
+
+Continue the Agent task. Use working notes as memory. Never claim an action happened unless the observation confirms it.
 
 Request: ${runtime.input.message}
 

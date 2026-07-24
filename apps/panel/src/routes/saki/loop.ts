@@ -381,47 +381,59 @@ function shouldInvalidateAgentToolCache(call: ParsedToolCall): boolean {
 
 export function compactAgentScratchpadEntry(entry: string, index: number): string {
   const cleaned = redactSensitiveText(entry).trim();
-  const toolMatch = cleaned.match(/Assistant:\s*({[^\n]+})/);
   let label = `entry ${index + 1}`;
+  const toolMatch = cleaned.match(/Assistant:\s*({[^}]+})/);
   if (toolMatch?.[1]) {
     try {
-      const parsed = JSON.parse(toolMatch[1]) as { name?: unknown; arguments?: unknown };
+      const parsed = JSON.parse(toolMatch[1]) as { name?: string; arguments?: Record<string, unknown> };
       const name = trimString(parsed.name) || "tool";
-      const args = parsed.arguments && typeof parsed.arguments === "object"
-        ? Object.entries(parsed.arguments as Record<string, unknown>)
-            .filter(([key]) => ["path", "fromPath", "toPath", "query", "url", "skillId", "taskId", "command", "startLine", "lineCount"].includes(key))
-            .map(([key, value]) => `${key}=${String(value).replace(/\s+/g, " ").slice(0, 80)}`)
-            .join(", ")
-        : "";
+      const argsObj = parsed.arguments || {};
+      const importantKeys = ["path", "fromPath", "toPath", "query", "url", "skillId", "taskId", "command", "startLine", "lineCount"];
+      const args = importantKeys
+        .map(key => {
+          const val = argsObj[key];
+          if (val === undefined || val === null) return null;
+          const str = String(val).replace(/\s+/g, " ").slice(0, 80);
+          return `${key}=${str}`;
+        })
+        .filter(Boolean)
+        .join(", ");
       label = args ? `${name}(${args})` : name;
     } catch {
       label = "tool";
     }
   }
 
-  const observation = cleaned.includes("Observation:")
-    ? cleaned.slice(cleaned.indexOf("Observation:") + "Observation:".length).trim()
-    : cleaned;
-  const status = observation.match(/^status=([^\n]+)/m)?.[1] ?? "";
-  const ok = observation.match(/^ok=([^\n]+)/m)?.[1] ?? "";
+  const obsIndex = cleaned.indexOf("Observation:");
+  const observation = obsIndex >= 0 ? cleaned.slice(obsIndex + 12).trim() : cleaned;
+  const statusMatch = observation.match(/^status=([^\n]+)/m);
+  const okMatch = observation.match(/^ok=([^\n]+)/m);
+  const status = statusMatch ? statusMatch[1] : "";
+  const ok = okMatch ? okMatch[1] : "";
   const body = observation
     .replace(/^status=[^\n]+\n?/m, "")
     .replace(/^ok=[^\n]+\n?/m, "")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
-  const snippet = truncateText(body.replace(/\n{3,}/g, "\n\n"), 520);
-  return [`[older ${index + 1}] ${label}`, status || ok ? `status=${status || "unknown"} ok=${ok || "unknown"}` : "", snippet].filter(Boolean).join("\n");
+  const snippet = truncateText(body, 520);
+  const parts = [`[older ${index + 1}] ${label}`];
+  if (status || ok) parts.push(`status=${status || "unknown"} ok=${ok || "unknown"}`);
+  if (snippet) parts.push(snippet);
+  return parts.join("\n");
 }
 
 export function renderAgentScratchpad(entries: string[], modelId?: string): string {
+  if (entries.length === 0) return "";
   const full = entries.join("");
+  const maxChars = maxAgentScratchpadChars;
+  const maxTokens = maxAgentScratchpadTokens;
   if (modelId) {
-    const tokenCount = countTokens(full, modelId);
-    if (tokenCount <= maxAgentScratchpadTokens) return full;
-  } else if (full.length <= maxAgentScratchpadChars) {
+    if (countTokens(full, modelId) <= maxTokens) return full;
+  } else if (full.length <= maxChars) {
     return full;
   }
 
-  const spaceLimit = modelId ? maxAgentScratchpadTokens * 0.65 : maxAgentScratchpadChars * 0.65;
+  const spaceLimit = modelId ? maxTokens * 0.65 : maxChars * 0.65;
   const compactedLimit = modelId ? maxAgentCompactedScratchpadTokens : maxAgentCompactedScratchpadChars;
 
   const recent: string[] = [];
@@ -437,22 +449,15 @@ export function renderAgentScratchpad(entries: string[], modelId?: string): stri
   const older = entries.slice(0, olderCount);
   const compacted = truncateText(
     older.map((entry, index) => compactAgentScratchpadEntry(entry, index)).join("\n\n---\n\n"),
-    Math.min(compactedLimit, Math.max(2000, maxAgentScratchpadChars - recentLength - 1200)),
+    Math.min(compactedLimit, Math.max(2000, maxChars - recentLength - 1200)),
     modelId
   );
-  const rendered = [
-    `... [${olderCount} older observations compacted deterministically to keep the agent fast]`,
-    compacted,
-    "",
-    "Recent full observations:",
-    recent.join("")
-  ].join("\n");
+  const rendered = `... [${olderCount} older observations compacted deterministically to keep the agent fast]\n${compacted}\n\nRecent full observations:\n${recent.join("")}`;
   if (modelId) {
-    const renderedTokenCount = countTokens(rendered, modelId);
-    if (renderedTokenCount <= maxAgentScratchpadTokens) return rendered;
-    return truncateText(rendered, maxAgentScratchpadChars, modelId);
+    if (countTokens(rendered, modelId) <= maxTokens) return rendered;
+    return truncateText(rendered, maxChars, modelId);
   }
-  return rendered.length <= maxAgentScratchpadChars ? rendered : truncateText(rendered, maxAgentScratchpadChars);
+  return rendered.length <= maxChars ? rendered : truncateText(rendered, maxChars);
 }
 
 function isParallelizableReadOnlyCall(call: ParsedToolCall): boolean {

@@ -1313,11 +1313,9 @@ export async function executeSakiAgentTool(
       const command = trimString(call.args[1]);
       if (!shellId || !command) throw new RouteError("runInShell requires shellId and command.", 400);
       const timeoutMs = numericArg(call.args[2], 30000, 1000, 120000);
-      // For simplicity, send command + \n via input, but since no direct run, use send and note. For full, could enhance daemon.
-      // As optimization, send the command.
-      const data = command + "\n";
+      const data = command.endsWith("\n") ? command : command + "\n";
       await sendDaemonShellInput(instance.node, instance.id, shellId, data);
-      observation = `Sent command to shell ${shellId}: ${command}. (Output will appear in UI shell tab; for agent observation use runCommand or extend with shell output capture.)`;
+      observation = `Executed in persistent shell ${shellId} (cwd may differ): ${command}\n\nNote: Full output streams to the corresponding UI shell tab (shell${shellId} or similar). Use listShells to see tabs. For agent-visible output, prefer runCommand for one-shots.`;
     } else if (toolName === "instanceaction") {
       const instance = activeInstance(runtime);
       const action = trimString(call.args[0]).toLowerCase();

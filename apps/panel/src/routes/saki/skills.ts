@@ -578,15 +578,19 @@ function skillQueryTerms(query: string): string[] {
 function expandedSkillQueryTerms(query: string): string[] {
   const normalized = query.toLowerCase();
   const terms: string[] = [];
+  const seen = new Set<string>();
   const addTerm = (value: string) => {
     const term = value.trim().replace(/^[._-]+|[._-]+$/g, "");
-    if (term.length < 2 || terms.includes(term)) return;
+    if (term.length < 2 || seen.has(term)) return;
+    seen.add(term);
     terms.push(term);
   };
 
   skillQueryTerms(query).forEach(addTerm);
-  (normalized.match(/[a-z0-9][a-z0-9_.-]{1,}/g) ?? []).forEach(addTerm);
-  for (const phrase of normalized.match(/[\u3400-\u9fff]{2,}/g) ?? []) {
+  const asciiMatches = normalized.match(/[a-z0-9][a-z0-9_.-]{1,}/g) ?? [];
+  asciiMatches.forEach(addTerm);
+  const cnMatches = normalized.match(/[\u3400-\u9fff]{2,}/g) ?? [];
+  for (const phrase of cnMatches) {
     addTerm(phrase);
     for (let index = 0; index < phrase.length - 1 && terms.length < 48; index += 1) {
       addTerm(phrase.slice(index, index + 2));
