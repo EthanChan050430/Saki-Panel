@@ -19,6 +19,8 @@ import {
   downloadDaemonInstanceArchive,
   downloadDaemonInstanceFile,
   extractDaemonInstanceArchive,
+  getDaemonArchiveDownloadStream,
+  getDaemonFileDownloadStream,
   listDaemonInstanceFiles,
   makeDaemonInstanceDirectory,
   readDaemonInstanceFile,
@@ -217,17 +219,59 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       return;
     }
 
+    const query = request.query as { base64?: string };
+    const wantsBase64 = String(query.base64 ?? "").toLowerCase() === "1" || String(query.base64 ?? "").toLowerCase() === "true";
+
     try {
-      const response = await downloadDaemonInstanceFile(instance.node, id, instance.workingDirectory, queryPath(request));
+      if (wantsBase64) {
+        const response = await downloadDaemonInstanceFile(instance.node, id, instance.workingDirectory, queryPath(request));
+        await writeAuditLog({
+          request,
+          userId: request.user.sub,
+          action: "file.download",
+          resourceType: "instance_file",
+          resourceId: id,
+          payload: { path: response.path, size: response.size }
+        });
+        return response;
+      }
+
+      // Stream raw file for downloads (supports files >100MB)
+      const daemonStream = await getDaemonFileDownloadStream(
+        instance.node,
+        id,
+        instance.workingDirectory,
+        queryPath(request)
+      );
+
+      if (daemonStream.statusCode && daemonStream.statusCode >= 400) {
+        let message = "";
+        daemonStream.setEncoding("utf8");
+        daemonStream.on("data", (c: string) => (message += c));
+        await new Promise((r) => daemonStream.on("end", r));
+        const err = new Error(message.trim() || `Daemon download failed with status ${daemonStream.statusCode}`);
+        (err as any).statusCode = daemonStream.statusCode;
+        throw err;
+      }
+
+      const disp = daemonStream.headers["content-disposition"];
+      if (disp) reply.header("content-disposition", disp);
+      const ct = daemonStream.headers["content-type"] || "application/octet-stream";
+      reply.header("content-type", ct);
+      if (daemonStream.headers["content-length"]) {
+        reply.header("content-length", daemonStream.headers["content-length"]);
+      }
+
       await writeAuditLog({
         request,
         userId: request.user.sub,
         action: "file.download",
         resourceType: "instance_file",
         resourceId: id,
-        payload: { path: response.path, size: response.size }
+        payload: { path: queryPath(request) }
       });
-      return response;
+
+      reply.send(daemonStream);
     } catch (error) {
       await handleFailure(request, reply, "file.download", id, error, { path: queryPath(request) });
     }
@@ -463,19 +507,39 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     }
 
     try {
-      const response = await downloadDaemonInstanceArchive(instance.node, id, instance.workingDirectory, {
+      const daemonStream = await getDaemonArchiveDownloadStream(instance.node, id, instance.workingDirectory, {
         paths: body.paths,
         ...(body.fileName ? { fileName: body.fileName } : {})
       });
+
+      if (daemonStream.statusCode && daemonStream.statusCode >= 400) {
+        let message = "";
+        daemonStream.setEncoding("utf8");
+        daemonStream.on("data", (c: string) => (message += c));
+        await new Promise((r) => daemonStream.on("end", r));
+        const err = new Error(message.trim() || `Daemon archive download failed with status ${daemonStream.statusCode}`);
+        (err as any).statusCode = daemonStream.statusCode;
+        throw err;
+      }
+
+      const disp = daemonStream.headers["content-disposition"];
+      if (disp) reply.header("content-disposition", disp);
+      const ct = daemonStream.headers["content-type"] || "application/zip";
+      reply.header("content-type", ct);
+      if (daemonStream.headers["content-length"]) {
+        reply.header("content-length", daemonStream.headers["content-length"]);
+      }
+
       await writeAuditLog({
         request,
         userId: request.user.sub,
         action: "file.archive.download",
         resourceType: "instance_file",
         resourceId: id,
-        payload: { paths: body.paths, fileName: response.fileName, size: response.size }
+        payload: { paths: body.paths, fileName: body.fileName }
       });
-      return response;
+
+      reply.send(daemonStream);
     } catch (error) {
       await handleFailure(request, reply, "file.archive.download", id, error, {
         paths: body.paths,

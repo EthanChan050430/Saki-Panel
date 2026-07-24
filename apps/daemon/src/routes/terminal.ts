@@ -13,6 +13,9 @@ function send(socket: WebSocket, payload: TerminalServerMessage): void {
 function parseClientMessage(raw: WebSocket.RawData): TerminalClientMessage | null {
   try {
     const parsed = JSON.parse(raw.toString()) as Partial<TerminalClientMessage>;
+    if (parsed.type === "auth" && typeof parsed.token === "string" && typeof parsed.instanceId === "string") {
+      return { type: "auth", token: parsed.token, instanceId: parsed.instanceId, sessionId: parsed.sessionId };
+    }
     if (parsed.type === "input" && typeof parsed.data === "string") {
       return { type: "input", data: parsed.data, echo: parsed.echo !== false };
     }
@@ -28,26 +31,55 @@ function parseClientMessage(raw: WebSocket.RawData): TerminalClientMessage | nul
 export async function registerTerminalRoutes(app: FastifyInstance): Promise<void> {
   app.get("/ws/instances/:id/terminal", { websocket: true, preHandler: authenticatePanelRequest }, (socket, request) => {
     const { id } = request.params as { id: string };
-    const initialState = instanceManager.state(id);
+    const query = request.query as Record<string, string | undefined>;
+    const initialSessionId = query.sessionId || undefined;
 
-    send(socket, {
-      type: "hello",
-      instanceId: id,
-      status: initialState.status,
-      exitCode: initialState.exitCode,
-      lines: initialState.logs.slice(-500)
-    });
+    let shellUnsubscribe: (() => void) | null = null;
+    let activeSessionId: string | null = initialSessionId || null;
 
-    const unsubscribe = instanceManager.subscribe(id, {
-      onLog: (line) => send(socket, { type: "line", line }),
-      onStatus: (state) =>
-        send(socket, {
-          type: "status",
-          instanceId: state.instanceId,
-          status: state.status,
-          exitCode: state.exitCode
-        })
-    });
+    const attachToMain = () => {
+      const initialState = instanceManager.state(id);
+      send(socket, {
+        type: "hello",
+        instanceId: id,
+        status: initialState.status,
+        exitCode: initialState.exitCode,
+        lines: initialState.logs.slice(-500)
+      });
+
+      const unsubscribe = instanceManager.subscribe(id, {
+        onLog: (line) => send(socket, { type: "line", line }),
+        onStatus: (state) =>
+          send(socket, {
+            type: "status",
+            instanceId: state.instanceId,
+            status: state.status,
+            exitCode: state.exitCode
+          })
+      });
+      return unsubscribe;
+    };
+
+    let unsubscribe: (() => void) | null = null;
+
+    if (activeSessionId) {
+      send(socket, {
+        type: "hello",
+        instanceId: id,
+        lines: []
+      });
+      try {
+        shellUnsubscribe = instanceManager.subscribeShell(activeSessionId, {
+          onData: (text: string) => {
+            send(socket, { type: "data", data: text });
+          }
+        });
+      } catch (e) {
+        send(socket, { type: "error", message: e instanceof Error ? e.message : "Failed to attach shell" });
+      }
+    } else {
+      unsubscribe = attachToMain();
+    }
 
     socket.on("message", (raw) => {
       const message = parseClientMessage(raw);
@@ -66,12 +98,27 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
         return;
       }
 
+      if (activeSessionId) {
+        try {
+          instanceManager.writeShellInput(id, activeSessionId, message.data);
+        } catch (error) {
+          send(socket, { type: "error", message: error instanceof Error ? error.message : "Shell input failed" });
+        }
+        return;
+      }
+
       void instanceManager.writeInput(id, message.data, { logInput: message.echo !== false }).catch((error: unknown) => {
         send(socket, { type: "error", message: error instanceof Error ? error.message : "Input failed" });
       });
     });
 
-    socket.on("close", unsubscribe);
-    socket.on("error", unsubscribe);
+    socket.on("close", () => {
+      if (shellUnsubscribe) shellUnsubscribe();
+      if (unsubscribe) unsubscribe();
+    });
+    socket.on("error", () => {
+      if (shellUnsubscribe) shellUnsubscribe();
+      if (unsubscribe) unsubscribe();
+    });
   });
 }

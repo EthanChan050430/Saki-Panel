@@ -677,6 +677,7 @@ export type TerminalClientMessage =
       type: "auth";
       token: string;
       instanceId: string;
+      sessionId?: string;
     }
   | {
       type: "input";

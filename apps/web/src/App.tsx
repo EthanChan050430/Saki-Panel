@@ -5821,7 +5821,7 @@ function SakiFloatingChat({
     setComposerBusy("file");
     try {
       if (isImageFile(payload.path || payload.name)) {
-        const response = await api.downloadInstanceFile(token, payload.instanceId, payload.path);
+        const response = await api.downloadInstanceFile(token, payload.instanceId, payload.path, { base64: true });
         const mimeType = imageMimeTypeFromPath(response.path || payload.name) ?? imageMimeTypeFromPath(payload.path) ?? "image/png";
         const file = new File([base64ToBlob(response.contentBase64, mimeType)], response.fileName || payload.name, {
           type: mimeType
@@ -7407,12 +7407,14 @@ function WebTerminal({
   token,
   instance,
   onStatus,
-  onAskSaki
+  onAskSaki,
+  shellSessionId
 }: {
   token: string;
   instance: ManagedInstance | null;
   onStatus: (instanceId: string, status: InstanceStatus, exitCode?: number | null) => void;
   onAskSaki?: ((seed: Omit<SakiPromptSeed, "nonce">) => void) | undefined;
+  shellSessionId?: string;
 }) {
   const [terminalHost, setTerminalHost] = useState<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
@@ -7795,18 +7797,26 @@ function WebTerminal({
       socket.onopen = () => {
         reconnectAttemptRef.current = 0;
         setConnectionState("connected");
-        socket.send(JSON.stringify({ type: "auth", token, instanceId }));
+        const authPayload: any = { type: "auth", token, instanceId };
+        if (shellSessionId) authPayload.sessionId = shellSessionId;
+        socket.send(JSON.stringify(authPayload));
       };
 
       socket.onmessage = (event) => {
         try {
-          const payload = JSON.parse(event.data as string) as TerminalServerMessage;
+          const payload = JSON.parse(event.data as string) as any;
+          if (payload.type === "data") {
+            terminal.write(payload.data || "");
+            return;
+          }
           if (payload.type === "hello") {
             terminal.clear();
-            for (const line of payload.lines) {
+            for (const line of payload.lines || []) {
               terminal.write(formatTerminalLine(line));
             }
-            onStatus(payload.instanceId, payload.status, payload.exitCode);
+            if (payload.instanceId && !shellSessionId) {
+              onStatus(payload.instanceId, payload.status, payload.exitCode);
+            }
             return;
           }
           if (payload.type === "line") {
@@ -7849,7 +7859,9 @@ function WebTerminal({
     };
 
     terminal.clear();
-    terminal.write(`\x1b[33mConnecting to ${instanceName}...\x1b[0m\r\n`);
+    if (!shellSessionId) {
+      terminal.write(`\x1b[33mConnecting to ${instanceName}...\x1b[0m\r\n`);
+    }
     reconnectAttemptRef.current = 0;
     connect();
 
@@ -7860,7 +7872,7 @@ function WebTerminal({
       socketRef.current?.close(1000, "Terminal view changed");
       socketRef.current = null;
     };
-  }, [instanceId, instanceName, onStatus, reconnectTick, terminalMountKey, terminalReady, token]);
+  }, [instanceId, instanceName, onStatus, reconnectTick, terminalMountKey, terminalReady, token, shellSessionId]);
 
   function sendInput(data: string, echo = true): boolean {
     const socket = socketRef.current;
@@ -7909,61 +7921,72 @@ function WebTerminal({
   const terminalActionDisabled = running ? !connected || terminalActionBusy : !instance || starting || stopping || terminalActionBusy;
   const terminalActionTitle = running ? "中断" : starting ? "启动中" : "启动";
 
-  terminalDataHandlerRef.current = (data: string) => {
-    if (data === "\u0003") {
-      directInputBufferRef.current = "";
-      resetTerminalInputNavigation();
-      sendInput("\u0003");
-      return;
-    }
-    if (!connected || !running) {
-      setError("实例运行并连接后才能输入");
-      return;
-    }
-    if (data === "\x1b[A" || data === "\x1bOA") {
-      navigateTerminalHistory("previous");
-      return;
-    }
-    if (data === "\x1b[B" || data === "\x1bOB") {
-      navigateTerminalHistory("next");
-      return;
-    }
-    if (data === "\t") {
-      autocompleteBufferedTerminalInput();
-      return;
-    }
-    if (data.startsWith("\x1b")) return;
-
-    const terminal = terminalRef.current;
-    let buffer = directInputBufferRef.current;
-    const normalized = data.replace(/\r\n/g, "\r");
-
-    for (const character of normalized) {
-      if (character === "\r" || character === "\n") {
-        terminal?.write("\r\n");
-        if (sendInput(`${buffer}\n`, false)) {
-          rememberInputHistory(buffer);
-        }
+  if (shellSessionId) {
+    // Raw passthrough for independent shells - let the shell handle echo, history, editing etc.
+    terminalDataHandlerRef.current = (data: string) => {
+      if (!connected) {
+        setError("终端未连接");
+        return;
+      }
+      sendInput(data, false);
+    };
+  } else {
+    terminalDataHandlerRef.current = (data: string) => {
+      if (data === "\u0003") {
+        directInputBufferRef.current = "";
         resetTerminalInputNavigation();
-        buffer = "";
-        continue;
+        sendInput("\u0003");
+        return;
       }
-      if (character === "\u007f" || character === "\b") {
-        if (buffer.length > 0) {
-          resetTerminalInputNavigation();
-          buffer = Array.from(buffer).slice(0, -1).join("");
-          terminal?.write("\b \b");
-        }
-        continue;
+      if (!connected || !running) {
+        setError("实例运行并连接后才能输入");
+        return;
       }
-      if (character < " " && character !== "\t") continue;
-      resetTerminalInputNavigation();
-      buffer += character;
-      terminal?.write(character);
-    }
+      if (data === "\x1b[A" || data === "\x1bOA") {
+        navigateTerminalHistory("previous");
+        return;
+      }
+      if (data === "\x1b[B" || data === "\x1bOB") {
+        navigateTerminalHistory("next");
+        return;
+      }
+      if (data === "\t") {
+        autocompleteBufferedTerminalInput();
+        return;
+      }
+      if (data.startsWith("\x1b")) return;
 
-    directInputBufferRef.current = buffer;
-  };
+      const terminal = terminalRef.current;
+      let buffer = directInputBufferRef.current;
+      const normalized = data.replace(/\r\n/g, "\r");
+
+      for (const character of normalized) {
+        if (character === "\r" || character === "\n") {
+          terminal?.write("\r\n");
+          if (sendInput(`${buffer}\n`, false)) {
+            rememberInputHistory(buffer);
+          }
+          resetTerminalInputNavigation();
+          buffer = "";
+          continue;
+        }
+        if (character === "\u007f" || character === "\b") {
+          if (buffer.length > 0) {
+            resetTerminalInputNavigation();
+            buffer = Array.from(buffer).slice(0, -1).join("");
+            terminal?.write("\b \b");
+          }
+          continue;
+        }
+        if (character < " " && character !== "\t") continue;
+        resetTerminalInputNavigation();
+        buffer += character;
+        terminal?.write(character);
+      }
+
+      directInputBufferRef.current = buffer;
+    };
+  }
 
   function sendTerminalShortcut(shortcut: TerminalShortcutKey) {
     terminalRef.current?.focus();
@@ -7973,8 +7996,8 @@ function WebTerminal({
       return;
     }
 
-    if (!connected || !running) {
-      setError("实例运行并连接后才能输入");
+    if (!connected || (!shellSessionId && !running)) {
+      setError(shellSessionId ? "终端未连接" : "实例运行并连接后才能输入");
       setMobileCtrlActive(false);
       return;
     }
@@ -8047,35 +8070,39 @@ function WebTerminal({
         </div>
       </div>
       <div className="xterm-host" ref={handleTerminalHostRef} onClick={() => terminalRef.current?.focus()} />
-      <form className="terminal-command-bar" onSubmit={submitCommand}>
-        <input
-          value={command}
-          onChange={handleCommandChange}
-          onKeyDown={handleCommandKeyDown}
-          disabled={!connected || !running}
-          placeholder={running ? "命令" : "实例未运行"}
-        />
-        <button className="primary-button terminal-send" type="submit" disabled={!connected || !running || !command.trim()}>
-          <Send size={17} />
-        </button>
-      </form>
-      <div className="terminal-mobile-keys" aria-label="移动端终端快捷键">
-        {terminalShortcutKeys.map((shortcut) => {
-          const active = shortcut.type === "modifier" && mobileCtrlActive;
-          return (
-            <button
-              key={shortcut.id}
-              className={`terminal-key-button ${shortcut.type === "modifier" ? "terminal-key-modifier" : ""} ${shortcut.type === "key" && shortcut.wide ? "wide" : ""} ${active ? "active" : ""}`}
-              type="button"
-              title={shortcut.title}
-              aria-pressed={shortcut.type === "modifier" ? active : undefined}
-              onClick={() => sendTerminalShortcut(shortcut)}
-            >
-              {shortcut.label}
+      {!shellSessionId && (
+        <>
+          <form className="terminal-command-bar" onSubmit={submitCommand}>
+            <input
+              value={command}
+              onChange={handleCommandChange}
+              onKeyDown={handleCommandKeyDown}
+              disabled={!connected || !running}
+              placeholder={running ? "命令" : "实例未运行"}
+            />
+            <button className="primary-button terminal-send" type="submit" disabled={!connected || !running || !command.trim()}>
+              <Send size={17} />
             </button>
-          );
-        })}
-      </div>
+          </form>
+          <div className="terminal-mobile-keys" aria-label="移动端终端快捷键">
+            {terminalShortcutKeys.map((shortcut) => {
+              const active = shortcut.type === "modifier" && mobileCtrlActive;
+              return (
+                <button
+                  key={shortcut.id}
+                  className={`terminal-key-button ${shortcut.type === "modifier" ? "terminal-key-modifier" : ""} ${shortcut.type === "key" && shortcut.wide ? "wide" : ""} ${active ? "active" : ""}`}
+                  type="button"
+                  title={shortcut.title}
+                  aria-pressed={shortcut.type === "modifier" ? active : undefined}
+                  onClick={() => sendTerminalShortcut(shortcut)}
+                >
+                  {shortcut.label}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
       {error ? <div className="terminal-error">{error}</div> : null}
       {lastIssue ? (
         <div className="terminal-issue">
@@ -8815,7 +8842,7 @@ function FileManager({
     if (!instanceId || entry.type !== "file") return;
     try {
       if (isImageFile(entry.path)) {
-        const response = await api.downloadInstanceFile(token, instanceId, entry.path);
+        const response = await api.downloadInstanceFile(token, instanceId, entry.path, { base64: true });
         if (requestId !== fileOpenRequestRef.current) return;
         const mimeType = imageMimeTypeFromPath(response.path) ?? imageMimeTypeFromPath(entry.path) ?? "image/png";
         setEditorPath(response.path);
@@ -9002,11 +9029,11 @@ function FileManager({
     if (!instanceId) return;
     setError("");
     try {
-      const response =
-        entry.type === "file"
-          ? await api.downloadInstanceFile(token, instanceId, entry.path)
-          : await api.downloadInstancePathsArchive(token, instanceId, [entry.path], defaultArchiveFileName(entry.path));
-      saveBase64Download(response.contentBase64, response.fileName);
+      if (entry.type === "file") {
+        await api.saveInstanceFileDownload(token, instanceId, entry.path);
+      } else {
+        await api.saveInstanceArchiveDownload(token, instanceId, [entry.path], defaultArchiveFileName(entry.path));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "下载失败");
     }
@@ -10032,6 +10059,10 @@ function InstancesView({
   const [nodes, setNodes] = useState<ManagedNode[]>([]);
   const [instances, setInstances] = useState<ManagedInstance[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [terminalTabs, setTerminalTabs] = useState<Array<{ key: string; label: string; shellSessionId?: string }>>([
+    { key: "main", label: "终端" }
+  ]);
+  const [activeTerminalKey, setActiveTerminalKey] = useState<string>("main");
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -10090,6 +10121,28 @@ function InstancesView({
 
   const selectedInstance = instances.find((instance) => instance.id === selectedId) ?? null;
   const selectedNode = selectedInstance ? nodes.find((node) => node.id === selectedInstance.nodeId) ?? null : null;
+
+  // Reset terminal tabs when switching instances
+  useEffect(() => {
+    if (selectedId) {
+      setTerminalTabs([{ key: "main", label: "终端" }]);
+      setActiveTerminalKey("main");
+    }
+  }, [selectedId]);
+
+  function getNextShellLabel(currentTabs: typeof terminalTabs): string {
+    const used = new Set<number>();
+    currentTabs.forEach((tab) => {
+      const match = /^shell(\d+)$/i.exec(tab.label);
+      if (match) {
+        used.add(parseInt(match[1], 10));
+      }
+    });
+    let n = 1;
+    while (used.has(n)) n++;
+    return `shell${n}`;
+  }
+
   const instanceStats = useMemo(() => {
     const counts = instances.reduce(
       (current, instance) => ({
@@ -10722,15 +10775,96 @@ function InstancesView({
               <span className="dot green"></span>
             </div>
             <div className="mac-title">终端</div>
-            <div className="mac-subtitle">{formatDate(selectedInstance.updatedAt)}</div>
+            <div className="mac-header-right">
+              <div className="mac-subtitle">{formatDate(selectedInstance.updatedAt)}</div>
+              <button
+                type="button"
+                className="terminal-add-btn"
+                title="新建终端 (Shell)"
+                onClick={async () => {
+                  if (!selectedId || !token) return;
+                  try {
+                    const wd = selectedInstance?.workingDirectory;
+                    const res = await api.createInstanceShell(token, selectedId, wd || undefined);
+                    const newKey = `shell-${res.sessionId}`;
+
+                    let updatedTabs = [...terminalTabs];
+                    // Rename original "终端" to shell1 on first +
+                    const mainIdx = updatedTabs.findIndex((t) => t.key === "main");
+                    if (mainIdx !== -1 && updatedTabs[mainIdx].label === "终端") {
+                      updatedTabs[mainIdx] = { ...updatedTabs[mainIdx], label: "shell1" };
+                    }
+
+                    const label = getNextShellLabel(updatedTabs);
+                    updatedTabs = [...updatedTabs, { key: newKey, label, shellSessionId: res.sessionId }];
+
+                    setTerminalTabs(updatedTabs);
+                    setActiveTerminalKey(newKey);
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : "无法创建新终端");
+                  }
+                }}
+              >
+                <Plus size={14} />
+              </button>
+            </div>
           </div>
+
+          {terminalTabs.length > 1 && (
+            <div className="terminal-tabstrip" role="tablist">
+              {terminalTabs.map((tab) => {
+                const isActive = tab.key === activeTerminalKey;
+                return (
+                  <div
+                    key={tab.key}
+                    role="tab"
+                    aria-selected={isActive}
+                    className={`terminal-tab ${isActive ? "active" : ""}`}
+                    onClick={() => setActiveTerminalKey(tab.key)}
+                  >
+                    <span className="tab-label">{tab.label}</span>
+                    {tab.key !== "main" && (
+                      <button
+                        type="button"
+                        className="tab-close"
+                        title="关闭终端"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const remaining = terminalTabs.filter((t) => t.key !== tab.key);
+                          if (remaining.length === 0) {
+                            setTerminalTabs([{ key: "main", label: "终端" }]);
+                            setActiveTerminalKey("main");
+                            return;
+                          }
+                          setTerminalTabs(remaining);
+                          if (activeTerminalKey === tab.key) {
+                            setActiveTerminalKey(remaining[remaining.length - 1]!.key);
+                          }
+                        }}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <div className="terminal-container">
-            <WebTerminal
-              token={token}
-              instance={selectedInstance}
-              onStatus={updateInstanceStatus}
-              onAskSaki={onAskSaki}
-            />
+            {(() => {
+              const activeTab = terminalTabs.find((t) => t.key === activeTerminalKey) || terminalTabs[0]!;
+              return (
+                <WebTerminal
+                  key={activeTab.key}
+                  token={token}
+                  instance={selectedInstance}
+                  onStatus={updateInstanceStatus}
+                  onAskSaki={onAskSaki}
+                  shellSessionId={activeTab.shellSessionId}
+                />
+              );
+            })()}
           </div>
         </section>
 

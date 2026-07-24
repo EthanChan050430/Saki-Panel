@@ -33,8 +33,10 @@ import {
 import { writeAuditLog } from "../audit.js";
 import { findDangerousCommandReason } from "../security.js";
 import {
+  createDaemonInstanceShell,
   killDaemonInstance,
   listDaemonInstanceFiles,
+  listDaemonInstanceShells,
   readDaemonInstanceFile,
   readDaemonInstanceLogs,
   readDaemonInstanceStatus,
@@ -1070,6 +1072,36 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
         payload: { error: error instanceof Error ? error.message : "Unknown error" },
         result: "FAILURE"
       });
+      reply.code(502).send({ message: error instanceof Error ? error.message : "Daemon request failed" });
+    }
+  });
+
+  app.post("/api/instances/:id/shells", { preHandler: requirePermission("terminal.view") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const instance = await loadInstance(request, id);
+    if (!instance) {
+      await sendNotFound(reply);
+      return;
+    }
+    try {
+      const body = request.body as { workingDirectory?: string } | undefined;
+      const result = await createDaemonInstanceShell(instance.node, id, body?.workingDirectory);
+      return result;
+    } catch (error) {
+      reply.code(502).send({ message: error instanceof Error ? error.message : "Daemon request failed" });
+    }
+  });
+
+  app.get("/api/instances/:id/shells", { preHandler: requirePermission("terminal.view") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const instance = await loadInstance(request, id);
+    if (!instance) {
+      await sendNotFound(reply);
+      return;
+    }
+    try {
+      return await listDaemonInstanceShells(instance.node, id);
+    } catch (error) {
       reply.code(502).send({ message: error instanceof Error ? error.message : "Daemon request failed" });
     }
   });

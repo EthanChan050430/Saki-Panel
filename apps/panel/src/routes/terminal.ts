@@ -35,7 +35,7 @@ function parseClientMessage(raw: WebSocket.RawData): TerminalClientMessage | nul
   try {
     const parsed = JSON.parse(raw.toString()) as Partial<TerminalClientMessage>;
     if (parsed.type === "auth" && typeof parsed.token === "string" && typeof parsed.instanceId === "string") {
-      return { type: "auth", token: parsed.token, instanceId: parsed.instanceId };
+      return { type: "auth", token: parsed.token, instanceId: parsed.instanceId, sessionId: parsed.sessionId };
     }
     if (parsed.type === "input" && typeof parsed.data === "string") {
       return { type: "input", data: parsed.data, echo: parsed.echo !== false };
@@ -155,7 +155,7 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
     let instanceId: string | null = null;
     let authInProgress = false;
 
-    const connectDaemon = async (token: string, requestedInstanceId: string) => {
+    const connectDaemon = async (token: string, requestedInstanceId: string, sessionId?: string) => {
       if (authInProgress || user) return;
       authInProgress = true;
       user = await authenticateTerminalUser(app, browserSocket, token);
@@ -168,11 +168,15 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
       }
 
       instanceId = instance.id;
-      const connectDaemonSocket = (protocolOverride?: string, hostOverride?: string) => {
+      const connectDaemonSocket = (protocolOverride?: string, hostOverride?: string, sid?: string) => {
         const activeProtocol = protocolOverride ?? instance.node.protocol;
         const activeHost = hostOverride ?? instance.node.host;
+        let daemonPath = `/ws/instances/${instance.id}/terminal`;
+        if (sid) {
+          daemonPath += `?sessionId=${encodeURIComponent(sid)}`;
+        }
         const socket = new WebSocket(
-          toWebSocketUrl(instance.node, `/ws/instances/${instance.id}/terminal`, protocolOverride, hostOverride),
+          toWebSocketUrl(instance.node, daemonPath, protocolOverride, hostOverride),
           {
             rejectUnauthorized: false,
             headers: {
@@ -203,17 +207,17 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
         socket.on("error", (error) => {
           if (!opened && shouldRetryWebSocketAsHttp(error, activeProtocol)) {
             socket.removeAllListeners("close");
-            connectDaemonSocket("http", hostOverride);
+            connectDaemonSocket("http", hostOverride, sid);
             return;
           }
           if (!opened && shouldRetryWebSocketAsHttps(error, activeProtocol)) {
             socket.removeAllListeners("close");
-            connectDaemonSocket("https", hostOverride);
+            connectDaemonSocket("https", hostOverride, sid);
             return;
           }
           if (!opened && shouldRetryWebSocketOnLoopback(error, activeHost)) {
             socket.removeAllListeners("close");
-            connectDaemonSocket(protocolOverride, "127.0.0.1");
+            connectDaemonSocket(protocolOverride, "127.0.0.1", sid);
             return;
           }
           request.log.error(error);
@@ -221,7 +225,8 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
         });
       };
 
-      connectDaemonSocket();
+      const sessionIdForDaemon = sessionId;
+      connectDaemonSocket(undefined, undefined, sessionIdForDaemon);
     };
 
     browserSocket.on("message", (raw) => {
@@ -232,7 +237,8 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
       }
 
       if (message.type === "auth") {
-        void connectDaemon(message.token, message.instanceId).catch((error: unknown) => {
+        const sid = (message as any).sessionId as string | undefined;
+        void connectDaemon(message.token, message.instanceId, sid).catch((error: unknown) => {
           request.log.error(error);
           closeWithError(browserSocket, error instanceof Error ? error.message : "Terminal bridge failed", 1011);
         });

@@ -202,6 +202,78 @@ async function requestDaemonRawWithFallback(
   }
 }
 
+function requestDaemonRawBinary(
+  node: DaemonNodeCredentials,
+  path: string,
+  options: RequestInit = {},
+  timeoutMs = 0
+): Promise<http.IncomingMessage> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(`${node.protocol}://${node.host}:${node.port}${path}`);
+    const body = requestBodyToString(options.body);
+    const headers: http.OutgoingHttpHeaders = {
+      "x-node-id": node.id,
+      "x-panel-token": node.tokenHash,
+      ...(body ? { "content-type": "application/json", "content-length": Buffer.byteLength(body) } : {}),
+      ...(options.headers as http.OutgoingHttpHeaders | undefined)
+    };
+    const requestOptions: https.RequestOptions = {
+      method: options.method ?? "GET",
+      hostname: url.hostname,
+      port: url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80,
+      path: `${url.pathname}${url.search}`,
+      headers,
+      timeout: timeoutMs,
+      ...(url.protocol === "https:" ? { rejectUnauthorized: false } : {})
+    };
+
+    const request = (url.protocol === "https:" ? https : http).request(requestOptions, (response) => {
+      resolve(response);
+    });
+
+    request.on("timeout", () => {
+      request.destroy(new Error(`Daemon request timed out after ${timeoutMs}ms`));
+    });
+    request.on("error", reject);
+
+    if (body) request.write(body);
+    request.end();
+  });
+}
+
+async function requestDaemonRawBinaryWithFallback(
+  node: DaemonNodeCredentials,
+  path: string,
+  options: RequestInit = {},
+  timeoutMs = 0
+): Promise<http.IncomingMessage> {
+  try {
+    return await requestDaemonRawBinary(node, path, options, timeoutMs);
+  } catch (error) {
+    if (shouldRetryDaemonRequestAsHttp(error, node)) {
+      return requestDaemonRawBinary(withProtocol(node, "http"), path, options, timeoutMs);
+    }
+    if (shouldRetryDaemonRequestAsHttps(error, node)) {
+      return requestDaemonRawBinary(withProtocol(node, "https"), path, options, timeoutMs);
+    }
+    if (shouldRetryDaemonRequestOnLoopback(error, node)) {
+      const loopbackNode = withHost(node, "127.0.0.1");
+      try {
+        return await requestDaemonRawBinary(loopbackNode, path, options, timeoutMs);
+      } catch (loopbackError) {
+        if (shouldRetryDaemonRequestAsHttp(loopbackError, loopbackNode)) {
+          return requestDaemonRawBinary(withProtocol(loopbackNode, "http"), path, options, timeoutMs);
+        }
+        if (shouldRetryDaemonRequestAsHttps(loopbackError, loopbackNode)) {
+          return requestDaemonRawBinary(withProtocol(loopbackNode, "https"), path, options, timeoutMs);
+        }
+        throw loopbackError;
+      }
+    }
+    throw error;
+  }
+}
+
 async function requestDaemon<T>(
   node: DaemonNodeCredentials,
   path: string,
@@ -527,4 +599,50 @@ export function globDaemonInstanceFiles(
       workingDirectory
     })
   }, 30000);
+}
+
+export async function getDaemonFileDownloadStream(
+  node: DaemonNodeCredentials,
+  instanceId: string,
+  workingDirectory: string,
+  relativePath: string
+): Promise<http.IncomingMessage> {
+  const downloadPath = pathWithQuery(`/api/instances/${instanceId}/files/download`, {
+    workingDirectory,
+    path: relativePath,
+    raw: "1"
+  });
+  const headers = { "x-raw-download": "1" };
+  return requestDaemonRawBinaryWithFallback(node, downloadPath, { headers }, 0);
+}
+
+export async function getDaemonArchiveDownloadStream(
+  node: DaemonNodeCredentials,
+  instanceId: string,
+  workingDirectory: string,
+  input: DownloadInstanceArchiveRequest
+): Promise<http.IncomingMessage> {
+  const archivePath = `/api/instances/${instanceId}/files/archive/download`;
+  const headers = { "x-raw-download": "1" };
+  return requestDaemonRawBinaryWithFallback(
+    node,
+    archivePath,
+    {
+      method: "POST",
+      body: JSON.stringify({ workingDirectory, ...input }),
+      headers
+    },
+    0
+  );
+}
+
+export function createDaemonInstanceShell(node: DaemonNodeCredentials, instanceId: string, workingDirectory?: string) {
+  return requestDaemon<{ sessionId: string }>(node, `/api/instances/${instanceId}/shells`, {
+    method: "POST",
+    body: workingDirectory ? JSON.stringify({ workingDirectory }) : JSON.stringify({})
+  });
+}
+
+export function listDaemonInstanceShells(node: DaemonNodeCredentials, instanceId: string) {
+  return requestDaemon<{ instanceId: string; sessions: string[] }>(node, `/api/instances/${instanceId}/shells`);
 }

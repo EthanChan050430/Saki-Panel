@@ -35,8 +35,8 @@ import { authenticatePanelRequest } from "../daemon-auth.js";
 
 const maxEditableFileBytes = 1024 * 1024;
 const maxTransferBytes = daemonConfig.maxTransferBytes;
-const maxArchiveEntries = 5000;
-const maxExtractedBytes = 512 * 1024 * 1024;
+const maxArchiveEntries = daemonConfig.maxArchiveEntries;
+const maxExtractedBytes = daemonConfig.maxExtractedBytes;
 const maxArchiveOutputBytes = 20 * 1024 * 1024;
 const maxArchiveSources = 200;
 
@@ -358,7 +358,7 @@ function validateArchiveEntries(entries: ArchiveListEntry[]): ArchiveScanResult 
     if (!entry.directory) {
       totalBytes += Math.max(0, entry.size);
       if (totalBytes > maxExtractedBytes) {
-        throw new Error("Archive expands beyond the 512 MB online extraction limit");
+        throw new Error(`Archive expands beyond the ${Math.round(maxExtractedBytes / (1024 * 1024))} MB online extraction limit`);
       }
     }
   }
@@ -518,7 +518,7 @@ async function scanExtractedTree(root: string): Promise<ArchiveScanResult> {
   for (const file of files) {
     totalBytes += file.size;
     if (totalBytes > maxExtractedBytes) {
-      throw new Error("Archive expands beyond the 512 MB online extraction limit");
+      throw new Error(`Archive expands beyond the ${Math.round(maxExtractedBytes / (1024 * 1024))} MB online extraction limit`);
     }
   }
   if (files.length > maxArchiveEntries) {
@@ -895,9 +895,6 @@ async function archivePathsForDownload(
   const temporary = await createTemporaryZipArchive(resolvedSources.root, resolvedSources.sources);
   try {
     const stats = await fs.lstat(temporary.archivePath);
-    if (stats.size > maxTransferBytes) {
-      throw new Error(`Compressed download exceeds the ${Math.round(maxTransferBytes / (1024 * 1024))} MB transfer limit`);
-    }
     const buffer = await fs.readFile(temporary.archivePath);
     return {
       instanceId: id,
@@ -1101,12 +1098,31 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     return toFileEntry(resolved.root, resolved.target, path.basename(resolved.target));
   });
 
-  app.get("/api/instances/:id/files/download", { preHandler: authenticatePanelRequest }, async (request) => {
+  app.get("/api/instances/:id/files/download", { preHandler: authenticatePanelRequest }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const query = request.query as FileQuery;
     const resolved = await resolveTarget(query.workingDirectory, query.path);
     const stats = await fs.lstat(resolved.target);
     assertRegularFile(stats);
+
+    const rawFlag = String(
+      (query as Record<string, unknown>).raw ??
+        request.headers["x-raw-download"] ??
+        ""
+    )
+      .toLowerCase()
+      .trim();
+    const wantsRaw = rawFlag === "1" || rawFlag === "true" || rawFlag === "yes";
+
+    const fileName = path.basename(resolved.target);
+
+    if (wantsRaw) {
+      reply.header("Content-Type", "application/octet-stream");
+      reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+      reply.header("Content-Length", String(stats.size));
+      return fs.createReadStream(resolved.target);
+    }
+
     if (stats.size > maxTransferBytes) {
       throw new Error(`File transfer size exceeds the ${Math.round(maxTransferBytes / (1024 * 1024))} MB limit`);
     }
@@ -1115,7 +1131,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     return {
       instanceId: id,
       path: resolved.relativePath,
-      fileName: path.basename(resolved.target),
+      fileName,
       contentBase64: buffer.toString("base64"),
       size: stats.size,
       modifiedAt: stats.mtime.toISOString()
@@ -1187,9 +1203,45 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     return archivePathsToOutput(id, body.workingDirectory, body);
   });
 
-  app.post("/api/instances/:id/files/archive/download", { preHandler: authenticatePanelRequest }, async (request) => {
+  app.post("/api/instances/:id/files/archive/download", { preHandler: authenticatePanelRequest }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as FileBody & Partial<DownloadInstanceArchiveRequest>;
+
+    const rawFlag = String(
+      (request.query as Record<string, unknown> | undefined)?.raw ??
+        request.headers["x-raw-download"] ??
+        ""
+    )
+      .toLowerCase()
+      .trim();
+    const wantsRaw = rawFlag === "1" || rawFlag === "true" || rawFlag === "yes";
+
+    if (wantsRaw) {
+      const resolvedSources = await resolveArchiveSources(body.workingDirectory, body.paths);
+      const defaultFileName =
+        resolvedSources.sources.length === 1
+          ? archiveFileNameForClientPath(resolvedSources.sources[0]!.relativePath)
+          : "selection.zip";
+      const fileName = normalizeArchiveFileName(body.fileName, defaultFileName);
+      const temporary = await createTemporaryZipArchive(resolvedSources.root, resolvedSources.sources);
+      try {
+        const stats = await fs.lstat(temporary.archivePath);
+        reply.header("Content-Type", "application/zip");
+        reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+        reply.header("Content-Length", String(stats.size));
+        const stream = fs.createReadStream(temporary.archivePath);
+        const cleanup = () => {
+          fs.rm(temporary.tempDirectory, { force: true, recursive: true }).catch(() => {});
+        };
+        stream.on("close", cleanup);
+        stream.on("error", cleanup);
+        return stream;
+      } catch (err) {
+        await fs.rm(temporary.tempDirectory, { force: true, recursive: true });
+        throw err;
+      }
+    }
+
     return archivePathsForDownload(id, body.workingDirectory, body);
   });
 

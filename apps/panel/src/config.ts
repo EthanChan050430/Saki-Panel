@@ -84,6 +84,8 @@ export const panelConfig = {
   heartbeatOfflineSeconds: numberFromEnv(process.env.HEARTBEAT_OFFLINE_SECONDS, 45),
   daemonHeartbeatSeconds: numberFromEnv(process.env.DAEMON_HEARTBEAT_SECONDS, 10),
   maxTransferBytes: numberFromEnv(process.env.MAX_TRANSFER_LIMIT_MB || process.env.MAX_TRANSFER_MB, 100) * 1024 * 1024,
+  maxExtractedBytes: numberFromEnv(process.env.MAX_EXTRACTED_LIMIT_MB || process.env.MAX_EXTRACT_MB, 512) * 1024 * 1024,
+  maxArchiveEntries: numberFromEnv(process.env.MAX_ARCHIVE_ENTRIES, 5000),
   sakiProvider: process.env.SAKI_PROVIDER,
   sakiModel: process.env.SAKI_MODEL,
   sakiOllamaUrl: process.env.SAKI_OLLAMA_URL,

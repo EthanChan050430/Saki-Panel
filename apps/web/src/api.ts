@@ -479,6 +479,15 @@ function readFileAsBase64(file: File, onProgress?: (progress: UploadProgressUpda
   });
 }
 
+function triggerBlobDownload(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 export const api = {
   login(input: LoginRequest) {
     return requestJson<LoginResponse>("/api/auth/login", {
@@ -704,12 +713,64 @@ export const api = {
   ) {
     return this.uploadInstanceFileMultipart(token, id, path, file, overwrite, onProgress);
   },
-  downloadInstanceFile(token: string, id: string, path: string) {
+  downloadInstanceFile(token: string, id: string, path: string, options: { base64?: boolean } = {}) {
+    const query: Record<string, string | number | undefined> = { path };
+    if (options.base64) {
+      query.base64 = "1";
+    }
     return requestJson<DownloadInstanceFileResponse>(
-      pathWithQuery(`/api/instances/${id}/files/download`, { path }),
+      pathWithQuery(`/api/instances/${id}/files/download`, query),
       {},
       token
     );
+  },
+  async saveInstanceFileDownload(token: string, id: string, path: string): Promise<void> {
+    const resp = await fetch(new URL(pathWithQuery(`/api/instances/${id}/files/download`, { path }), API_BASE), {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    if (!resp.ok) {
+      let message = `Download failed with ${resp.status}`;
+      try {
+        const payload = (await resp.json()) as { message?: string };
+        message = payload.message ?? message;
+      } catch {}
+      throw new ApiError(normalizeApiErrorMessage(message, resp.status), resp.status);
+    }
+    const blob = await resp.blob();
+    const cd = resp.headers.get("content-disposition") || "";
+    let fileName = path.split("/").pop() || "download";
+    const match = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i.exec(cd);
+    if (match && match[1]) {
+      fileName = match[1].replace(/['"]/g, "").trim();
+    }
+    triggerBlobDownload(blob, fileName);
+  },
+  async saveInstanceArchiveDownload(token: string, id: string, paths: string[], fileName?: string): Promise<void> {
+    const resp = await fetch(new URL(`/api/instances/${id}/files/archive/download`, API_BASE), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ paths, ...(fileName ? { fileName } : {}) })
+    });
+    if (!resp.ok) {
+      let message = `Download failed with ${resp.status}`;
+      try {
+        const payload = (await resp.json()) as { message?: string };
+        message = payload.message ?? message;
+      } catch {}
+      throw new ApiError(normalizeApiErrorMessage(message, resp.status), resp.status);
+    }
+    const blob = await resp.blob();
+    const cd = resp.headers.get("content-disposition") || "";
+    let resolvedName = fileName || (paths.length === 1 ? paths[0]!.split("/").pop() || "archive.zip" : "selection.zip");
+    const match = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i.exec(cd);
+    if (match && match[1]) {
+      resolvedName = match[1].replace(/['"]/g, "").trim();
+    }
+    if (!resolvedName.toLowerCase().endsWith(".zip")) resolvedName += ".zip";
+    triggerBlobDownload(blob, resolvedName);
   },
   makeInstanceDirectory(token: string, id: string, path: string) {
     return requestJson<InstanceFileEntry>(
@@ -871,6 +932,16 @@ export const api = {
   },
   terminalUrl() {
     return webSocketUrl("/ws/terminal", {});
+  },
+  createInstanceShell(token: string, id: string, workingDirectory?: string) {
+    return requestJson<{ sessionId: string }>(
+      `/api/instances/${id}/shells`,
+      { method: "POST", body: workingDirectory ? JSON.stringify({ workingDirectory }) : undefined },
+      token
+    );
+  },
+  listInstanceShells(token: string, id: string) {
+    return requestJson<{ instanceId: string; sessions: string[] }>(`/api/instances/${id}/shells`, {}, token);
   },
   sakiStatus(token: string) {
     return requestJson<SakiStatusResponse>("/api/saki/status", {}, token);
