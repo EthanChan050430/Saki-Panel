@@ -1258,14 +1258,13 @@ export async function executeSakiAgentTool(
       const { daemonWorkingDirectory } = commandWorkingDirectoryForAgent(instance, {
         ...(typeof call.args[3] === "string" ? { cwd: call.args[3] } : {})
       });
-      const result = await runDaemonInstanceCommand(instance.node, instance.id, {
-        command,
-        workingDirectory: daemonWorkingDirectory,
-        timeoutMs,
-        ...(input !== undefined ? { input } : {})
-      });
-      if (result.exitCode !== 0) ok = false;
-      observation = formatRunCommandObservation({ ...result, signal: result.signal ?? null }, input !== undefined);
+      // ALWAYS execute terminal commands in a NEW independent shell (exactly like clicking + in UI terminal).
+      // Never on main instance console (use sendInput/sendCommand only for the actual running process stdin).
+      const shellCreate = await createDaemonInstanceShell(instance.node, instance.id, daemonWorkingDirectory);
+      const shellId = shellCreate.sessionId;
+      const fullCommand = input ? `${command}\n${input}\n` : `${command}\n`;
+      await sendDaemonShellInput(instance.node, instance.id, shellId, fullCommand);
+      observation = `Command executed in newly created independent shell (like + button): shellId=${shellId}\n${command}${input ? `\n+ stdin: ${input}` : ''}\n\nFull live output is in the UI shell tab. Use listShells() to list agent's shells. These shells are persistent and independent from the main process.`;
     } else if (toolName === "sendinput") {
       requireUserPermission(runtime.permissions, "terminal.input");
       const instance = activeInstance(runtime);
@@ -1283,7 +1282,7 @@ export async function executeSakiAgentTool(
       const input = commandLineInputFromArgs({ command: call.args[0] ?? "" });
       const state = await sendDaemonInstanceInput(instance.node, instance.id, input.data, { echo: input.echo });
       await updateInstanceFromDaemonState(instance, state);
-      observation = `${formatConsoleInputObservation("Command line", input, state)} For normal terminal commands, use runCommand(command).`;
+      observation = `${formatConsoleInputObservation("Command line", input, state)} Note: For normal terminal commands, use runCommand (it will run in a fresh new shell like + button).`;
     } else if (toolName === "listshells") {
       requireUserPermission(runtime.permissions, "terminal.view");
       const instance = activeInstance(runtime);
