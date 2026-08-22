@@ -9,7 +9,7 @@ import type {
   UpdateSakiConfigRequest
 } from "@webops/shared";
 import { writeAuditLog } from "../../audit.js";
-import { readDaemonInstanceLogs } from "../../daemon-client.js";
+import { readDaemonInstanceFile, readDaemonInstanceLogs } from "../../daemon-client.js";
 import { loadVisibleInstance } from "../../instance-access.js";
 import { buildPrompt } from "./prompt.js";
 import {
@@ -24,6 +24,7 @@ import {
 import { buildAuditSearchContext } from "./audit.js";
 import { loadSakiSkills, readSakiSkillsByIds, buildAutoAppliedSakiSkillContext } from "./skills.js";
 import { readEffectiveSakiConfig } from "./config.js";
+import { getCachedInstanceFile, recordInstanceFileRead } from "./state.js";
 import {
   combinedSakiContextText,
   effectiveSakiAgentPermissionMode,
@@ -247,6 +248,9 @@ export async function prepareSakiChatInvocation(
   }
   const includeInstanceLogs = Boolean(input.instanceId && hasPermission(request.user.permissions, "instance.logs"));
   const context = await resolveSakiContext(request.user.sub, input.instanceId, includeInstanceLogs);
+  const projectMemory = await loadInstanceProjectMemory(context.instance);
+  const memoryContext = projectMemory ? `[Project Memory (SAKI.md)]\n${projectMemory}` : "";
+
   const skillQuery =
     `${message} ${modelInput.panelError ?? ""} ${modelInput.contextTitle ?? ""} ${combinedSakiContextText(modelInput).slice(0, 1200)}`.trim() ||
     "coding";
@@ -255,15 +259,37 @@ export async function prepareSakiChatInvocation(
     ? await readSakiSkillsByIds(input.selectedSkillIds)
     : skillState.skills;
   const autoAppliedSkillContext = await buildAutoAppliedSakiSkillContext(skills, skillQuery, input.selectedSkillIds ?? []);
-  const enhancedModelInput: SakiChatRequest = autoAppliedSkillContext
+
+  const combinedContextParts = [
+    modelInput.contextText,
+    memoryContext,
+    autoAppliedSkillContext
+  ].filter(Boolean);
+
+  const enhancedModelInput: SakiChatRequest = combinedContextParts.length > 0
     ? {
         ...modelInput,
-        contextTitle: modelInput.contextTitle ?? "Auto-applied Saki Skills",
-        contextText: [modelInput.contextText, autoAppliedSkillContext].filter(Boolean).join("\n\n")
+        contextText: combinedContextParts.join("\n\n")
       }
     : modelInput;
 
   return { input, modelInput: enhancedModelInput, context, skills };
+}
+
+async function loadInstanceProjectMemory(instance: InstanceWithNode | null): Promise<string | null> {
+  if (!instance) return null;
+  const cached = getCachedInstanceFile(instance.id, "SAKI.md");
+  if (cached?.content) return cached.content.slice(0, 3000);
+  try {
+    const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, "SAKI.md");
+    if (file?.content) {
+      recordInstanceFileRead(instance.id, "SAKI.md", { content: file.content, size: file.size, modifiedAt: file.modifiedAt });
+      return file.content.slice(0, 3000);
+    }
+  } catch {
+    // SAKI.md does not exist
+  }
+  return null;
 }
 
 export async function auditSakiChatResponse(

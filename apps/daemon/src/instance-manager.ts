@@ -3,6 +3,7 @@ import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { TextDecoder } from "node:util";
+import { randomUUID } from "node:crypto";
 import * as nodePty from "@homebridge/node-pty-prebuilt-multiarch";
 import type { IDisposable, IPty } from "@homebridge/node-pty-prebuilt-multiarch";
 import type { InstanceCommandResponse, InstanceLogLine, InstanceStatus, InstanceType, RestartPolicy } from "@webops/shared";
@@ -65,12 +66,26 @@ interface PtyRuntimeChild {
 type RuntimeChild = ProcessRuntimeChild | PtyRuntimeChild;
 
 const runtimes = new Map<string, RuntimeState>();
+const instanceSpecs = new Map<string, DaemonInstanceSpec>();
+const shellSessions = new Map<string, ShellSession>();
 const maxLogLines = 1000;
 const maxCommandCaptureChars = 80000;
 const maxCommandInputChars = 100000;
 const runtimeEvents = new EventEmitter();
 runtimeEvents.setMaxListeners(1000);
 const gbkDecoder = new TextDecoder("gbk");
+
+interface ShellSession {
+  id: string;
+  instanceId: string;
+  pty: IPty;
+  exited: boolean;
+  exit?: RuntimeExit | undefined;
+  dataListeners: Set<(text: string) => void>;
+  exitListeners: Set<RuntimeExitListener>;
+  dataSubscription: IDisposable;
+  exitSubscription: IDisposable;
+}
 
 function replacementCount(value: string): number {
   return value.match(/\uFFFD/g)?.length ?? 0;
@@ -243,7 +258,7 @@ function commandLauncher(command: string): { file: string; args: string[] } {
     if (psPath) {
       return {
         file: psPath,
-        args: ["-NoProfile", "-NonInteractive", "-Command", command]
+        args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]
       };
     }
     return {
@@ -303,6 +318,144 @@ function disposeRuntimeChild(child: RuntimeChild): void {
   child.dataSubscription.dispose();
   child.exitSubscription.dispose();
   child.exitListeners.clear();
+}
+
+function getShell(sessionId: string): ShellSession | undefined {
+  return shellSessions.get(sessionId);
+}
+
+function createInteractiveShellPty(instanceId: string, cwd: string): ShellSession {
+  const id = randomUUID();
+
+  let shellCmd: string;
+  let shellArgs: string[];
+  if (process.platform === "win32") {
+    const candidates = [
+      path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+      path.join(process.env.SystemRoot || "C:\\Windows", "System32", "pwsh.exe")
+    ];
+    const ps = candidates.find((p) => {
+      try {
+        require("fs").accessSync(p);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    if (ps) {
+      shellCmd = ps;
+      shellArgs = ["-NoLogo", "-NoProfile", "-NoExit"];
+    } else {
+      shellCmd = process.env.ComSpec || "cmd.exe";
+      shellArgs = [];
+    }
+  } else {
+    shellCmd = process.env.SHELL && path.isAbsolute(process.env.SHELL) ? process.env.SHELL : "/bin/bash";
+    shellArgs = ["-i", "-l"];
+  }
+
+  const pty = nodePty.spawn(shellCmd, shellArgs, {
+    name: "xterm-256color",
+    cols: 120,
+    rows: 30,
+    cwd,
+    env: commandEnvironment(),
+    encoding: "utf8",
+    useConpty: process.platform === "win32"
+  });
+
+  const dataListeners = new Set<(text: string) => void>();
+  const exitListeners = new Set<RuntimeExitListener>();
+  let exited = false;
+  let exitInfo: RuntimeExit | undefined = undefined;
+
+  const dataSubscription = pty.onData((data: string) => {
+    for (const listener of dataListeners) {
+      try {
+        listener(data);
+      } catch {}
+    }
+  });
+
+  const exitSubscription = pty.onExit((event) => {
+    exited = true;
+    exitInfo = typeof event.signal === "number"
+      ? { code: event.exitCode, signal: event.signal }
+      : { code: event.exitCode };
+    for (const listener of [...exitListeners]) {
+      listener(exitInfo);
+    }
+    exitListeners.clear();
+  });
+
+  const session: ShellSession = {
+    id,
+    instanceId,
+    pty,
+    exited,
+    exit: exitInfo,
+    dataListeners,
+    exitListeners,
+    dataSubscription,
+    exitSubscription
+  };
+
+  shellSessions.set(id, session);
+  return session;
+}
+
+function writeToShell(sessionId: string, data: string): void {
+  const session = shellSessions.get(sessionId);
+  if (!session || session.exited) {
+    throw new Error("Shell session is not available");
+  }
+  session.pty.write(data);
+}
+
+function subscribeToShell(
+  sessionId: string,
+  handlers: { onData?: (text: string) => void; onExit?: RuntimeExitListener }
+): () => void {
+  const session = shellSessions.get(sessionId);
+  if (!session) {
+    throw new Error("Shell session not found");
+  }
+  const unsubscribers: Array<() => void> = [];
+
+  if (handlers.onData) {
+    session.dataListeners.add(handlers.onData);
+    unsubscribers.push(() => session.dataListeners.delete(handlers.onData!));
+  }
+
+  if (handlers.onExit) {
+    if (session.exited && session.exit) {
+      queueMicrotask(() => handlers.onExit!(session.exit!));
+    } else {
+      session.exitListeners.add(handlers.onExit);
+      unsubscribers.push(() => session.exitListeners.delete(handlers.onExit!));
+    }
+  }
+
+  return () => {
+    unsubscribers.forEach((fn) => fn());
+  };
+}
+
+function closeShellSession(sessionId: string): void {
+  const session = shellSessions.get(sessionId);
+  if (!session) return;
+  try {
+    session.pty.kill();
+  } catch {}
+  try {
+    session.dataSubscription.dispose();
+  } catch {}
+  try {
+    session.exitSubscription.dispose();
+  } catch {}
+  session.dataListeners.clear();
+  session.exitListeners.clear();
+  shellSessions.delete(sessionId);
 }
 
 function startPtyRuntimeChild(
@@ -377,9 +530,6 @@ function validateCommandInput(input: string): void {
 function validateTerminalInput(input: string): void {
   if (input.length > maxCommandInputChars) {
     throw new Error("Terminal input is too long");
-  }
-  if (/\u0000/.test(input)) {
-    throw new Error("Terminal input contains unsupported control characters");
   }
 }
 
@@ -569,6 +719,7 @@ export class InstanceManager {
   }
 
   private async startInternal(spec: DaemonInstanceSpec, resetRestartAttempts: boolean): Promise<DaemonInstanceState> {
+    instanceSpecs.set(spec.id, spec);
     const runtime = getRuntime(spec.id);
     if (runtime.child && !runtimeChildExited(runtime.child) && runtime.status === "RUNNING") {
       appendLog(spec.id, runtime, "system", "Start requested while instance is already running.");
@@ -602,7 +753,10 @@ export class InstanceManager {
 
     let child: RuntimeChild;
     try {
-      child = startPtyRuntimeChild(launcher, cwd, (text) => appendLog(spec.id, runtime, "stdout", text));
+      child = startPtyRuntimeChild(launcher, cwd, (text) => {
+        runtimeEvents.emit(`data:${spec.id}`, text);
+        appendLog(spec.id, runtime, "stdout", text);
+      });
     } catch (error) {
       appendLog(
         spec.id,
@@ -613,8 +767,16 @@ export class InstanceManager {
       child = startProcessRuntimeChild(
         launcher,
         cwd,
-        (chunk) => appendLog(spec.id, runtime, "stdout", decodeProcessOutput(chunk)),
-        (chunk) => appendLog(spec.id, runtime, "stderr", decodeProcessOutput(chunk)),
+        (chunk) => {
+          const text = decodeProcessOutput(chunk);
+          runtimeEvents.emit(`data:${spec.id}`, text);
+          appendLog(spec.id, runtime, "stdout", text);
+        },
+        (chunk) => {
+          const text = decodeProcessOutput(chunk);
+          runtimeEvents.emit(`data:${spec.id}`, text);
+          appendLog(spec.id, runtime, "stderr", text);
+        },
         handleProcessError
       );
     }
@@ -792,9 +954,6 @@ export class InstanceManager {
     data: string,
     options: { logInput?: boolean } = {}
   ): Promise<DaemonInstanceState> {
-    if (data === "\u0003") {
-      return this.interrupt(instanceId);
-    }
     validateTerminalInput(data);
 
     const runtime = getRuntime(instanceId);
@@ -805,10 +964,73 @@ export class InstanceManager {
 
     writeRuntimeChild(runtime.child, data);
     const visibleInput = data.replace(/\r/g, "").replace(/\n$/, "");
-    if (options.logInput !== false && visibleInput.length > 0) {
+    if (options.logInput !== false && visibleInput.length > 0 && !data.startsWith("\x1b")) {
       appendLog(instanceId, runtime, "stdin", visibleInput);
     }
     return this.state(instanceId);
+  }
+
+  resize(instanceId: string, cols: number, rows: number): void {
+    const runtime = getRuntime(instanceId);
+    if (runtime.child && runtime.child.type === "pty") {
+      try {
+        const safeCols = Math.max(10, Math.min(cols, 500));
+        const safeRows = Math.max(5, Math.min(rows, 200));
+        runtime.child.pty.resize?.(safeCols, safeRows);
+      } catch {}
+    }
+  }
+
+  resizeShell(instanceId: string, sessionId: string, cols: number, rows: number): void {
+    const session = shellSessions.get(sessionId);
+    if (session && !session.exited) {
+      try {
+        const safeCols = Math.max(10, Math.min(cols, 500));
+        const safeRows = Math.max(5, Math.min(rows, 200));
+        session.pty.resize?.(safeCols, safeRows);
+      } catch {}
+    }
+  }
+
+  registerSpec(spec: DaemonInstanceSpec): void {
+    instanceSpecs.set(spec.id, spec);
+  }
+
+  async createShell(instanceId: string): Promise<{ sessionId: string }> {
+    const spec = instanceSpecs.get(instanceId);
+    if (!spec) {
+      throw new Error("Instance spec not found. Start or register the instance first.");
+    }
+    const cwd = await ensureInsideWorkspace(spec.workingDirectory);
+    await fs.mkdir(cwd, { recursive: true });
+    const session = createInteractiveShellPty(instanceId, cwd);
+    return { sessionId: session.id };
+  }
+
+  writeShellInput(instanceId: string, sessionId: string, data: string): void {
+    validateTerminalInput(data);
+    writeToShell(sessionId, data);
+  }
+
+  subscribeShell(
+    sessionId: string,
+    handlers: { onData?: (text: string) => void; onExit?: RuntimeExitListener }
+  ): () => void {
+    return subscribeToShell(sessionId, handlers);
+  }
+
+  closeShell(sessionId: string): void {
+    closeShellSession(sessionId);
+  }
+
+  listShells(instanceId: string): string[] {
+    const result: string[] = [];
+    for (const [sid, sess] of shellSessions.entries()) {
+      if (sess.instanceId === instanceId && !sess.exited) {
+        result.push(sid);
+      }
+    }
+    return result;
   }
 
   async runCommand(
@@ -896,17 +1118,21 @@ export class InstanceManager {
   subscribe(
     instanceId: string,
     handlers: {
-      onLog: (line: InstanceLogLine) => void;
-      onStatus: (state: Omit<DaemonInstanceState, "logs">) => void;
+      onLog?: (line: InstanceLogLine) => void;
+      onData?: (text: string) => void;
+      onStatus?: (state: Omit<DaemonInstanceState, "logs">) => void;
     }
   ): () => void {
     const logEvent = `log:${instanceId}`;
+    const dataEvent = `data:${instanceId}`;
     const statusEvent = `status:${instanceId}`;
-    runtimeEvents.on(logEvent, handlers.onLog);
-    runtimeEvents.on(statusEvent, handlers.onStatus);
+    if (handlers.onLog) runtimeEvents.on(logEvent, handlers.onLog);
+    if (handlers.onData) runtimeEvents.on(dataEvent, handlers.onData);
+    if (handlers.onStatus) runtimeEvents.on(statusEvent, handlers.onStatus);
     return () => {
-      runtimeEvents.off(logEvent, handlers.onLog);
-      runtimeEvents.off(statusEvent, handlers.onStatus);
+      if (handlers.onLog) runtimeEvents.off(logEvent, handlers.onLog);
+      if (handlers.onData) runtimeEvents.off(dataEvent, handlers.onData);
+      if (handlers.onStatus) runtimeEvents.off(statusEvent, handlers.onStatus);
     };
   }
 }

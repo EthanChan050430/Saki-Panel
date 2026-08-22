@@ -34,19 +34,19 @@ enum InstanceStatus {
 }
 
 model User {
-  id            String         @id @default(cuid())
-  username      String         @unique
-  passwordHash  String
-  displayName   String
-  avatarDataUrl String?
-  status        UserStatus     @default(ACTIVE)
-  lastLoginAt   DateTime?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  roles         UserRole[]
-  logs          OperationLog[]
-  createdInstances  Instance[] @relation("InstanceCreator")
-  assignedInstances Instance[] @relation("InstanceAssignee")
+  id                  String               @id @default(cuid())
+  username            String               @unique
+  passwordHash        String
+  displayName         String
+  avatarDataUrl       String?
+  status              UserStatus           @default(ACTIVE)
+  lastLoginAt         DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  roles               UserRole[]
+  logs                OperationLog[]
+  createdInstances    Instance[]           @relation("InstanceCreator")
+  assignedInstances   Instance[]           @relation("InstanceAssignee")
   instanceAssignments InstanceAssignment[]
 
   @@map("users")
@@ -158,17 +158,17 @@ model OperationLog {
 }
 
 model Instance {
-  id                String          @id @default(cuid())
+  id                String               @id @default(cuid())
   nodeId            String
   name              String
-  type              String          @default("generic_command")
+  type              String               @default("generic_command")
   workingDirectory  String
   startCommand      String
   stopCommand       String?
-  status            InstanceStatus  @default(CREATED)
-  autoStart         Boolean         @default(false)
-  restartPolicy     String          @default("never")
-  restartMaxRetries Int             @default(0)
+  status            InstanceStatus       @default(CREATED)
+  autoStart         Boolean              @default(false)
+  restartPolicy     String               @default("never")
+  restartMaxRetries Int                  @default(0)
   runAsUser         String?
   memoryLimit       Int?
   cpuLimit          Float?
@@ -178,11 +178,11 @@ model Instance {
   lastStartedAt     DateTime?
   lastStoppedAt     DateTime?
   lastExitCode      Int?
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
-  node              Node            @relation(fields: [nodeId], references: [id], onDelete: Restrict)
-  createdBy         User?           @relation("InstanceCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  assignedTo        User?           @relation("InstanceAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  node              Node                 @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  createdBy         User?                @relation("InstanceCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  assignedTo        User?                @relation("InstanceAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
   assignedUsers     InstanceAssignment[]
   tasks             ScheduledTask[]
 

@@ -317,21 +317,24 @@ function normalizeSkillTags(value: unknown): string[] {
 }
 
 function sanitizeSkillId(value: string): string {
-  const normalized = value
+  const raw = trimString(value);
+  const normalized = raw
     .normalize("NFKD")
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "")
+    .replace(/[-_]{2,}/g, "-")
     .slice(0, 80);
   return normalized || `skill-${randomUUID().slice(0, 8)}`;
 }
 
 function requireSkillId(value: string): string {
-  const id = trimString(value);
+  const raw = trimString(value).toLowerCase();
+  const id = sanitizeSkillId(raw);
   if (!/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(id)) {
-    throw new RouteError("Skill id must use letters, numbers, hyphens, or underscores.", 400);
+    return `skill-${randomUUID().slice(0, 8)}`;
   }
-  return id.toLowerCase();
+  return id;
 }
 
 export function sakiSkillDirectory(id: string): string {
@@ -578,15 +581,19 @@ function skillQueryTerms(query: string): string[] {
 function expandedSkillQueryTerms(query: string): string[] {
   const normalized = query.toLowerCase();
   const terms: string[] = [];
+  const seen = new Set<string>();
   const addTerm = (value: string) => {
     const term = value.trim().replace(/^[._-]+|[._-]+$/g, "");
-    if (term.length < 2 || terms.includes(term)) return;
+    if (term.length < 2 || seen.has(term)) return;
+    seen.add(term);
     terms.push(term);
   };
 
   skillQueryTerms(query).forEach(addTerm);
-  (normalized.match(/[a-z0-9][a-z0-9_.-]{1,}/g) ?? []).forEach(addTerm);
-  for (const phrase of normalized.match(/[\u3400-\u9fff]{2,}/g) ?? []) {
+  const asciiMatches = normalized.match(/[a-z0-9][a-z0-9_.-]{1,}/g) ?? [];
+  asciiMatches.forEach(addTerm);
+  const cnMatches = normalized.match(/[\u3400-\u9fff]{2,}/g) ?? [];
+  for (const phrase of cnMatches) {
     addTerm(phrase);
     for (let index = 0; index < phrase.length - 1 && terms.length < 48; index += 1) {
       addTerm(phrase.slice(index, index + 2));
@@ -716,16 +723,19 @@ export async function readSakiSkillsByIds(skillIds: readonly string[]): Promise<
 }
 
 export function normalizeSkillInput(input: CreateSakiSkillRequest | UpdateSakiSkillRequest, current?: SakiSkillDocument): SakiSkillDetail {
-  const name = trimString(input.name ?? current?.name);
-  if (!name) throw new RouteError("Skill name is required.", 400);
-  const content = input.content !== undefined ? trimString(input.content) : current?.content ?? "";
-  if (!content) throw new RouteError("Skill content is required.", 400);
+  const name = trimString(input.name ?? current?.name) || "Untitled Skill";
+  let content = input.content !== undefined ? trimString(input.content) : current?.content ?? "";
+  if (!content) {
+    const desc = trimString(input.description ?? current?.description);
+    content = `# ${name}\n\n${desc || "Custom Saki Skill instructions"}`;
+  }
   if (content.length > maxSakiSkillContentChars) {
     throw new RouteError(`Skill content is too large; limit is ${maxSakiSkillContentChars} characters.`, 400);
   }
   const description = input.description !== undefined ? trimString(input.description) : current?.description ?? "";
+  const rawId = (input as { id?: string }).id;
   return {
-    id: current?.id ?? sanitizeSkillId(name),
+    id: current?.id ?? sanitizeSkillId(rawId ? trimString(rawId) : name),
     name,
     description,
     content,

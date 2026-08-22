@@ -677,11 +677,19 @@ export type TerminalClientMessage =
       type: "auth";
       token: string;
       instanceId: string;
+      sessionId?: string;
     }
   | {
       type: "input";
       data: string;
       echo?: boolean;
+      sessionId?: string;
+    }
+  | {
+      type: "resize";
+      cols: number;
+      rows: number;
+      sessionId?: string;
     }
   | {
       type: "ping";
@@ -698,6 +706,10 @@ export type TerminalServerMessage =
   | {
       type: "line";
       line: InstanceLogLine;
+    }
+  | {
+      type: "data";
+      data: string;
     }
   | {
       type: "status";
@@ -925,3 +937,183 @@ export interface SakiCopilotLoginResponse {
   message?: string;
   output?: string;
 }
+
+export type DatabaseEngine = "sqlite" | "mysql" | "postgres" | "redis" | "mariadb" | "generic";
+
+export interface DiscoveredDatabase {
+  engine: DatabaseEngine;
+  name: string;
+  path?: string;
+  host?: string;
+  port?: number;
+  sizeBytes?: number;
+  tableCount?: number | undefined;
+  modifiedAt?: string | undefined;
+  source: string;
+  status?: "online" | "available" | "ready" | undefined;
+  isSystem?: boolean | undefined;
+}
+
+export interface DatabaseVisualizerConfig {
+  path?: string | undefined;
+  host?: string | undefined;
+  port?: number | undefined;
+  user?: string | undefined;
+  password?: string | undefined;
+  database?: string | undefined;
+  isReadOnly?: boolean | undefined;
+}
+
+export interface DatabaseVisualizerInstance {
+  id: string;
+  nodeId: string;
+  nodeName?: string | null | undefined;
+  name: string;
+  engine: DatabaseEngine;
+  description?: string | null | undefined;
+  config: DatabaseVisualizerConfig;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateDatabaseVisualizerRequest {
+  nodeId: string;
+  name: string;
+  engine?: DatabaseEngine | undefined;
+  description?: string | null | undefined;
+  config: DatabaseVisualizerConfig;
+}
+
+export interface UpdateDatabaseVisualizerRequest {
+  nodeId?: string | undefined;
+  name?: string | undefined;
+  engine?: DatabaseEngine | undefined;
+  description?: string | null | undefined;
+  config?: DatabaseVisualizerConfig | undefined;
+}
+
+export interface DatabaseTableSummary {
+  name: string;
+  type: "table" | "view";
+  rowCount?: number | undefined;
+  columnCount?: number | undefined;
+  sizeBytes?: number | undefined;
+}
+
+export interface DatabaseColumnInfo {
+  name: string;
+  type: string;
+  notNull: boolean;
+  defaultValue?: string | null | undefined;
+  primaryKey: boolean;
+  autoIncrement?: boolean | undefined;
+}
+
+export interface DatabaseTableSchema {
+  tableName: string;
+  columns: DatabaseColumnInfo[];
+  primaryKeys: string[];
+  foreignKeys?: Array<{
+    column: string;
+    targetTable: string;
+    targetColumn: string;
+  }> | undefined;
+  indexes?: Array<{
+    name: string;
+    unique: boolean;
+    columns: string[];
+  }> | undefined;
+  ddl?: string | null | undefined;
+}
+
+export interface DatabaseRowsRequest {
+  tableName: string;
+  page?: number | undefined;
+  pageSize?: number | undefined;
+  search?: string | undefined;
+  sortBy?: string | undefined;
+  sortOrder?: "asc" | "desc" | undefined;
+  filterColumn?: string | undefined;
+  filterValue?: string | undefined;
+}
+
+export interface DatabaseRowsResponse {
+  tableName: string;
+  columns: DatabaseColumnInfo[];
+  rows: Record<string, unknown>[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export interface DatabaseInsertRowRequest {
+  tableName: string;
+  row: Record<string, unknown>;
+}
+
+export interface DatabaseUpdateRowRequest {
+  tableName: string;
+  primaryKeys: Record<string, unknown>;
+  values: Record<string, unknown>;
+}
+
+export interface DatabaseDeleteRowRequest {
+  tableName: string;
+  primaryKeys: Record<string, unknown>;
+}
+
+export interface DatabaseCreateTableRequest {
+  tableName: string;
+  columns: DatabaseColumnInfo[];
+}
+
+export interface DatabaseDropTableRequest {
+  tableName: string;
+}
+
+export interface DatabaseTruncateTableRequest {
+  tableName: string;
+}
+
+export interface DatabaseExecuteQueryRequest {
+  sql: string;
+  maxRows?: number | undefined;
+}
+
+export interface DatabaseQueryResult {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  totalRows?: number | undefined;
+  executionTimeMs: number;
+  affectedRows?: number | undefined;
+  lastInsertRowId?: number | string | undefined;
+  error?: string | undefined;
+}
+
+export interface DatabaseExportRequest {
+  tableName?: string | undefined;
+  format: "csv" | "json" | "sql";
+}
+
+export interface DatabaseExportResponse {
+  ok?: boolean | undefined;
+  fileName: string;
+  contentType: string;
+  content: string;
+  totalRows?: number | undefined;
+}
+
+export interface DatabaseImportRequest {
+  tableName?: string | undefined;
+  format: "csv" | "json" | "sql";
+  content: string;
+  mode?: "append" | "replace" | undefined;
+}
+
+export interface DatabaseImportResponse {
+  success: boolean;
+  importedRows: number;
+  message?: string | undefined;
+}
+

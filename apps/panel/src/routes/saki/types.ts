@@ -76,18 +76,18 @@ export const maxAgentProgressOnlyRetries = 2;
 export const maxAgentVerificationRetries = 2;
 export const maxAgentObservationTokens = 1200;
 export const maxAgentPromptObservationTokens = 600;
-export const maxAgentScratchpadTokens = 4000;
-export const maxAgentContinuationContextTokens = 3500;
-export const maxAgentRecentScratchpadEntries = 8;
-export const maxAgentCompactedScratchpadTokens = 1000;
+export const maxAgentScratchpadTokens = 3500;
+export const maxAgentContinuationContextTokens = 3000;
+export const maxAgentRecentScratchpadEntries = 6;
+export const maxAgentCompactedScratchpadTokens = 800;
 export const maxParallelReadOnlyTools = 6;
-export const defaultAgentReadFileLineCount = 200;
+export const defaultAgentReadFileLineCount = 60;
 export const minAgentModelRequestTimeoutMs = 120000;
-export const maxAgentObservationChars = 16000;
-export const maxAgentPromptObservationChars = 9000;
-export const maxAgentScratchpadChars = 50000;
-export const maxAgentContinuationContextChars = 42000;
-export const maxAgentCompactedScratchpadChars = 14000;
+export const maxAgentObservationChars = 14000;
+export const maxAgentPromptObservationChars = 6000;
+export const maxAgentScratchpadChars = 32000;
+export const maxAgentContinuationContextChars = 28000;
+export const maxAgentCompactedScratchpadChars = 8000;
 export const maxHistoryMessages = 12;
 export const sakiUsePermissions = ["saki.chat", "saki.agent"] as const satisfies readonly PermissionCode[];
 
@@ -123,7 +123,14 @@ export function effectiveSakiAgentPermissionMode(input: Pick<SakiChatRequest, "m
 }
 
 export function truncateText(value: unknown, limit = maxAgentObservationChars, modelId?: string): string {
-  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  let text: string;
+  if (typeof value === "string") {
+    text = value;
+  } else if (value == null) {
+    return "";
+  } else {
+    text = JSON.stringify(value, null, 2);
+  }
   if (modelId) {
     const tokenLimit = limit === maxAgentObservationChars ? maxAgentObservationTokens : Math.floor(limit / 4);
     const tokenCount = countTokens(text, modelId);
@@ -131,10 +138,11 @@ export function truncateText(value: unknown, limit = maxAgentObservationChars, m
     const truncated = truncateToTokenLimit(text, tokenLimit, modelId);
     return `${truncated}\n... [truncated, ${tokenCount} total tokens] ...`;
   }
-  if (text.length <= limit) return text;
+  const len = text.length;
+  if (len <= limit) return text;
   const head = Math.floor(limit * 0.65);
   const tail = Math.max(0, limit - head - 80);
-  return `${text.slice(0, head)}\n... [truncated ${text.length - limit} chars] ...\n${text.slice(-tail)}`;
+  return `${text.slice(0, head)}\n... [truncated ${len - limit} chars] ...\n${text.slice(-tail)}`;
 }
 
 export function trimString(value: unknown): string {
@@ -332,7 +340,7 @@ export function userFacingError(error: unknown): string {
     return `文件不存在：${path.basename(enoentMatch[1] ?? "")}。请先用 listFiles 确认当前实例目录里的实际文件名；如果用户要求创建这个文件，请改用 writeFile。`;
   }
   if (/Instance is not accepting terminal input/i.test(message)) {
-    return "当前实例进程不接受交互式 stdin。若要执行终端命令，请使用 runCommand(command)，它会在当前实例工作目录中启动一个临时 shell。";
+    return "当前实例进程不接受交互式 stdin。Agent 执行的终端命令会自动在新建的独立 shell 中运行（和点击 + 按钮完全一样），返回 shellId。不要直接用 sendInput/sendCommand 跑普通命令。";
   }
   return message;
 }

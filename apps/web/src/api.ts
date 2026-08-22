@@ -55,7 +55,28 @@ import type {
   UpdateInstanceRequest,
   UpdateNodeRequest,
   CreateScheduledTaskRequest,
-  UpdateScheduledTaskRequest
+  UpdateScheduledTaskRequest,
+  CreateDatabaseVisualizerRequest,
+  DatabaseCreateTableRequest,
+  DatabaseDeleteRowRequest,
+  DatabaseEngine,
+  DatabaseExecuteQueryRequest,
+  DatabaseExportRequest,
+  DatabaseExportResponse,
+  DatabaseImportRequest,
+  DatabaseImportResponse,
+  DatabaseInsertRowRequest,
+  DatabaseQueryResult,
+  DatabaseRowsRequest,
+  DatabaseRowsResponse,
+  DatabaseTableSchema,
+  DatabaseTableSummary,
+  DatabaseTruncateTableRequest,
+  DatabaseUpdateRowRequest,
+  DatabaseVisualizerConfig,
+  DatabaseVisualizerInstance,
+  DiscoveredDatabase,
+  UpdateDatabaseVisualizerRequest
 } from "@webops/shared";
 
 function isLoopbackHostname(hostname: string): boolean {
@@ -479,6 +500,38 @@ function readFileAsBase64(file: File, onProgress?: (progress: UploadProgressUpda
   });
 }
 
+function parseContentDispositionFileName(cd: string, fallback: string): string {
+  if (!cd) return fallback;
+  const starMatch = /filename\*\s*=\s*(?:UTF-8''|utf-8'')([^;\n]+)/i.exec(cd);
+  if (starMatch && starMatch[1]) {
+    try {
+      return decodeURIComponent(starMatch[1].trim());
+    } catch {}
+  }
+  const match = /filename\s*=\s*((['"])(.*?)\2|[^;\n]*)/i.exec(cd);
+  if (match) {
+    const val = (match[3] !== undefined ? match[3] : match[1] || "").trim();
+    if (val) return val;
+  }
+  return fallback;
+}
+
+function triggerBlobDownload(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.style.display = "none";
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  window.setTimeout(() => {
+    try {
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch {}
+  }, 1000);
+}
+
 export const api = {
   login(input: LoginRequest) {
     return requestJson<LoginResponse>("/api/auth/login", {
@@ -704,12 +757,58 @@ export const api = {
   ) {
     return this.uploadInstanceFileMultipart(token, id, path, file, overwrite, onProgress);
   },
-  downloadInstanceFile(token: string, id: string, path: string) {
+  downloadInstanceFile(token: string, id: string, path: string, options: { base64?: boolean } = {}) {
+    const query: Record<string, string | undefined> = { path };
+    if (options.base64) {
+      query.base64 = "1";
+    }
     return requestJson<DownloadInstanceFileResponse>(
-      pathWithQuery(`/api/instances/${id}/files/download`, { path }),
+      pathWithQuery(`/api/instances/${id}/files/download`, query),
       {},
       token
     );
+  },
+  async saveInstanceFileDownload(token: string, id: string, path: string): Promise<void> {
+    const resp = await fetch(new URL(pathWithQuery(`/api/instances/${id}/files/download`, { path }), API_BASE), {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    if (!resp.ok) {
+      let message = `Download failed with ${resp.status}`;
+      try {
+        const payload = (await resp.json()) as { message?: string };
+        message = payload.message ?? message;
+      } catch {}
+      throw new ApiError(normalizeApiErrorMessage(message, resp.status), resp.status);
+    }
+    const blob = await resp.blob();
+    const cd = resp.headers.get("content-disposition") || "";
+    const defaultName = path.split("/").pop() || "download";
+    const fileName = parseContentDispositionFileName(cd, defaultName);
+    triggerBlobDownload(blob, fileName);
+  },
+  async saveInstanceArchiveDownload(token: string, id: string, paths: string[], fileName?: string): Promise<void> {
+    const resp = await fetch(new URL(`/api/instances/${id}/files/archive/download`, API_BASE), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ paths, ...(fileName ? { fileName } : {}) })
+    });
+    if (!resp.ok) {
+      let message = `Download failed with ${resp.status}`;
+      try {
+        const payload = (await resp.json()) as { message?: string };
+        message = payload.message ?? message;
+      } catch {}
+      throw new ApiError(normalizeApiErrorMessage(message, resp.status), resp.status);
+    }
+    const blob = await resp.blob();
+    const cd = resp.headers.get("content-disposition") || "";
+    const fallbackName = fileName || (paths.length === 1 ? paths[0]!.split("/").pop() || "archive.zip" : "selection.zip");
+    let resolvedName = parseContentDispositionFileName(cd, fallbackName);
+    if (!resolvedName.toLowerCase().endsWith(".zip")) resolvedName += ".zip";
+    triggerBlobDownload(blob, resolvedName);
   },
   makeInstanceDirectory(token: string, id: string, path: string) {
     return requestJson<InstanceFileEntry>(
@@ -872,6 +971,17 @@ export const api = {
   terminalUrl() {
     return webSocketUrl("/ws/terminal", {});
   },
+  createInstanceShell(token: string, id: string, workingDirectory?: string) {
+    const body = workingDirectory ? JSON.stringify({ workingDirectory }) : undefined;
+    return requestJson<{ sessionId: string }>(
+      `/api/instances/${id}/shells`,
+      { method: "POST", ...(body !== undefined ? { body } : {}) },
+      token
+    );
+  },
+  listInstanceShells(token: string, id: string) {
+    return requestJson<{ instanceId: string; sessions: string[] }>(`/api/instances/${id}/shells`, {}, token);
+  },
   sakiStatus(token: string) {
     return requestJson<SakiStatusResponse>("/api/saki/status", {}, token);
   },
@@ -990,5 +1100,128 @@ export const api = {
   },
   logout(token: string) {
     return requestJson<{ ok: boolean }>("/api/auth/logout", { method: "POST", body: JSON.stringify({}) }, token);
+  },
+  listDatabases(token: string) {
+    return requestJson<{ ok: boolean; databases: DatabaseVisualizerInstance[] }>("/api/databases", {}, token);
+  },
+  discoverDatabases(token: string, nodeId?: string) {
+    return requestJson<{ ok: boolean; databases: Array<DiscoveredDatabase & { nodeId: string; nodeName: string }> }>(
+      pathWithQuery("/api/databases/discover", { nodeId }),
+      {},
+      token
+    );
+  },
+  createDatabase(token: string, input: CreateDatabaseVisualizerRequest) {
+    return requestJson<{ ok: boolean; database: DatabaseVisualizerInstance }>(
+      "/api/databases",
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  updateDatabase(token: string, id: string, input: UpdateDatabaseVisualizerRequest) {
+    return requestJson<{ ok: boolean; database: DatabaseVisualizerInstance }>(
+      `/api/databases/${id}`,
+      { method: "PUT", body: JSON.stringify(input) },
+      token
+    );
+  },
+  deleteDatabase(token: string, id: string) {
+    return requestJson<{ ok: boolean; deleted: boolean }>(
+      `/api/databases/${id}`,
+      { method: "DELETE" },
+      token
+    );
+  },
+  getDatabaseTables(token: string, id: string) {
+    return requestJson<{ ok: boolean; tables: DatabaseTableSummary[] }>(
+      `/api/databases/${id}/tables`,
+      { method: "POST", body: JSON.stringify({}) },
+      token
+    );
+  },
+  getDatabaseTableSchema(token: string, id: string, tableName: string) {
+    return requestJson<{ ok: boolean; schema: DatabaseTableSchema }>(
+      `/api/databases/${id}/tables/schema`,
+      { method: "POST", body: JSON.stringify({ tableName }) },
+      token
+    );
+  },
+  getDatabaseTableRows(token: string, id: string, input: DatabaseRowsRequest) {
+    return requestJson<{ ok: boolean } & DatabaseRowsResponse>(
+      `/api/databases/${id}/tables/rows`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  insertDatabaseTableRow(token: string, id: string, input: DatabaseInsertRowRequest) {
+    return requestJson<{ ok: boolean; lastInsertRowId?: string; affectedRows?: number }>(
+      `/api/databases/${id}/tables/insert`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  updateDatabaseTableRow(token: string, id: string, input: DatabaseUpdateRowRequest) {
+    return requestJson<{ ok: boolean; affectedRows?: number }>(
+      `/api/databases/${id}/tables/update`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  deleteDatabaseTableRow(token: string, id: string, input: DatabaseDeleteRowRequest) {
+    return requestJson<{ ok: boolean; affectedRows?: number }>(
+      `/api/databases/${id}/tables/delete`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  createDatabaseTable(token: string, id: string, input: DatabaseCreateTableRequest) {
+    return requestJson<{ ok: boolean; ddl?: string }>(
+      `/api/databases/${id}/tables/create`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  dropDatabaseTable(token: string, id: string, tableName: string) {
+    return requestJson<{ ok: boolean }>(
+      `/api/databases/${id}/tables/drop`,
+      { method: "POST", body: JSON.stringify({ tableName }) },
+      token
+    );
+  },
+  truncateDatabaseTable(token: string, id: string, tableName: string) {
+    return requestJson<{ ok: boolean; affectedRows?: number }>(
+      `/api/databases/${id}/tables/truncate`,
+      { method: "POST", body: JSON.stringify({ tableName }) },
+      token
+    );
+  },
+  executeDatabaseQuery(token: string, id: string, input: DatabaseExecuteQueryRequest) {
+    return requestJson<{ ok: boolean; result: DatabaseQueryResult }>(
+      `/api/databases/${id}/query`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  exportDatabaseData(token: string, id: string, input: DatabaseExportRequest) {
+    return requestJson<{ ok: boolean; fileName: string; contentType: string; content: string; totalRows?: number }>(
+      `/api/databases/${id}/export`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  importDatabaseData(token: string, id: string, input: DatabaseImportRequest) {
+    return requestJson<{ ok: boolean; importedRows: number; message?: string }>(
+      `/api/databases/${id}/import`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  testDatabaseConnection(token: string, input: { host?: string; port?: number; user?: string; password?: string; database?: string }) {
+    return requestJson<{ ok: boolean; message?: string }>(
+      "/api/databases/test-connection",
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
   }
 };
+

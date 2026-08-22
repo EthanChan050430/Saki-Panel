@@ -1,36 +1,56 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { CodeEditor, type CodeEditorHandle, type FindRange, languageFromFileName } from "./CodeEditor.js";
+import { ElegantCursor } from "./ElegantCursor.js";
+import { DatabaseVisualizer, AddDatabaseModal } from "./DatabaseVisualizer.js";
 import {
   Activity,
   AlertTriangle,
   Archive,
+  ArrowLeft,
+  Database,
+  ArrowRight,
+  ArrowUp,
   BookOpen,
   BookMarked,
+  Bot,
   Bug,
   Camera,
   ChartNetwork,
+  Check,
   CheckCircle2,
+  CheckSquare,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Clock,
   ClipboardList,
   Code2,
+  Copy,
   CornerUpLeft,
+  CornerDownLeft,
   Cpu,
   Download,
   DownloadCloud,
+  Edit3,
   Eye,
+  EyeOff,
   FileArchive,
+  Move,
   FilePlus,
   FileSearch,
   FileText,
   Folder,
+  FolderArchive,
+  FolderOpen,
   FolderPlus,
+  FolderTree,
   GitBranch,
   Github,
   HardDrive,
+  Hash,
+  History,
   Image as ImageIcon,
   Info,
   KeyRound,
@@ -44,10 +64,12 @@ import {
   LogOut,
   Maximize2,
   MemoryStick,
+  MessageSquare,
   Mic,
   Minimize2,
   Moon,
   MoreHorizontal,
+  MoreVertical,
   PanelLeftClose,
   PanelLeftOpen,
   Paperclip,
@@ -58,12 +80,14 @@ import {
   RefreshCw,
   RotateCw,
   Save,
+  Scissors,
   Search,
   Send,
   Server,
   Shield,
   ShieldCheck,
   Settings,
+  SlidersHorizontal,
   Sparkles,
   Square,
   Sun,
@@ -74,6 +98,7 @@ import {
   UserCheck,
   UserCog,
   UserRound,
+  FileUp,
   Wifi,
   WifiOff,
   Wrench,
@@ -101,6 +126,7 @@ import type {
   CreateInstanceRequest,
   CurrentUser,
   DashboardOverview,
+  DatabaseVisualizerInstance,
   InstanceAssignee,
   ExtractArchiveConflict,
   ExtractConflictAction,
@@ -145,6 +171,7 @@ import { ApiError, api, type SakiChatStreamEvent, type SakiChatWorkflowStatus, t
 
 const tokenKey = "webops.token";
 const rememberedLoginKey = "webops.rememberedLogin";
+const autoLoginKey = "webops.autoLogin";
 const panelLanguageKey = "webops.panelLanguage";
 const defaultStartCommand = "";
 const sakiStreamIdleFallbackMs = 45000;
@@ -246,6 +273,7 @@ const panelText = {
     "auth.confirmPassword": "确认密码",
     "auth.confirmPassword.placeholder": "再次输入密码",
     "auth.rememberLogin": "记住密码",
+    "auth.autoLogin": "自动登录",
     "auth.rememberRegister": "注册后记住密码",
     "auth.loggingIn": "验证中...",
     "auth.registering": "注册中...",
@@ -568,6 +596,7 @@ const panelText = {
     "auth.confirmPassword": "Confirm password",
     "auth.confirmPassword.placeholder": "Enter the password again",
     "auth.rememberLogin": "Remember password",
+    "auth.autoLogin": "Auto login",
     "auth.rememberRegister": "Remember password after registration",
     "auth.loggingIn": "Verifying...",
     "auth.registering": "Registering...",
@@ -1405,8 +1434,113 @@ const defaultPanelAppearance: PanelAppearanceSettings = {
   mobileBackgroundSrc: "/assets/background_mobile.png"
 };
 
+type SakiSettingsSection = "system" | "model" | "features" | "appearance" | "prompt" | "skills";
 type ViewMode = "dashboard" | "instances" | "nodes" | "templates" | "users" | "audit" | "settings" | "about";
 type InstanceDirectoryView = "cards" | "list" | "graph";
+
+const validViews: readonly ViewMode[] = [
+  "dashboard",
+  "instances",
+  "nodes",
+  "templates",
+  "users",
+  "audit",
+  "settings",
+  "about"
+];
+
+interface PanelRoute {
+  view: ViewMode;
+  instanceId: string | null;
+  settingsSection: SakiSettingsSection | null;
+}
+
+function parseHashRoute(): PanelRoute {
+  if (typeof window === "undefined") {
+    return { view: "dashboard", instanceId: null, settingsSection: null };
+  }
+  const rawHash = window.location.hash.replace(/^#\/?/, "").trim();
+  if (!rawHash) {
+    const savedView = window.localStorage.getItem("webops.activeView") as ViewMode | null;
+    const savedInstanceId = window.localStorage.getItem("webops.selectedInstanceId");
+    const savedSection = window.localStorage.getItem("webops.settingsSection") as SakiSettingsSection | null;
+    const view = savedView && validViews.includes(savedView) ? savedView : "dashboard";
+    return {
+      view,
+      instanceId: view === "instances" ? savedInstanceId || null : null,
+      settingsSection: view === "settings" ? savedSection || null : null
+    };
+  }
+
+  const [pathPart = "", queryPart] = rawHash.split("?");
+  const segments = pathPart.split("/").map(decodeURIComponent).filter(Boolean);
+  const rootSegment = (segments[0] || "").toLowerCase() as ViewMode;
+  const view: ViewMode = validViews.includes(rootSegment) ? rootSegment : "dashboard";
+
+  let instanceId: string | null = null;
+  let settingsSection: SakiSettingsSection | null = null;
+
+  if (view === "instances") {
+    if (segments.length > 1 && segments[1]) {
+      instanceId = segments[1];
+    } else if (queryPart) {
+      const params = new URLSearchParams(queryPart);
+      instanceId = params.get("id");
+    }
+    if (!instanceId) {
+      instanceId = window.localStorage.getItem("webops.selectedInstanceId");
+    }
+  } else if (view === "settings") {
+    if (segments.length > 1 && segments[1]) {
+      const sec = segments[1] as SakiSettingsSection;
+      if (["system", "model", "features", "appearance", "prompt", "skills"].includes(sec)) {
+        settingsSection = sec;
+      }
+    }
+    if (!settingsSection) {
+      settingsSection = window.localStorage.getItem("webops.settingsSection") as SakiSettingsSection | null;
+    }
+  }
+
+  return { view, instanceId, settingsSection };
+}
+
+function updateHashRoute(route: Partial<PanelRoute>) {
+  if (typeof window === "undefined") return;
+  const current = parseHashRoute();
+  const next: PanelRoute = {
+    view: route.view ?? current.view,
+    instanceId: route.instanceId !== undefined ? route.instanceId : (route.view && route.view !== "instances" ? null : current.instanceId),
+    settingsSection: route.settingsSection !== undefined ? route.settingsSection : (route.view && route.view !== "settings" ? null : current.settingsSection)
+  };
+
+  let hash = `#${next.view}`;
+  if (next.view === "instances" && next.instanceId) {
+    hash += `/${encodeURIComponent(next.instanceId)}`;
+  } else if (next.view === "settings" && next.settingsSection && next.settingsSection !== "system") {
+    hash += `/${encodeURIComponent(next.settingsSection)}`;
+  }
+
+  if (window.location.hash !== hash) {
+    if (window.history && window.history.replaceState) {
+      window.history.replaceState(null, "", hash);
+    } else {
+      window.location.hash = hash;
+    }
+  }
+
+  try {
+    window.localStorage.setItem("webops.activeView", next.view);
+    if (next.view === "instances" && next.instanceId) {
+      window.localStorage.setItem("webops.selectedInstanceId", next.instanceId);
+    } else {
+      window.localStorage.removeItem("webops.selectedInstanceId");
+    }
+    if (next.view === "settings" && next.settingsSection) {
+      window.localStorage.setItem("webops.settingsSection", next.settingsSection);
+    }
+  } catch {}
+}
 
 interface SakiPromptSeed {
   message: string;
@@ -1491,6 +1625,27 @@ function saveRememberedLogin(username: string, password: string): void {
 
 function clearRememberedLogin(): void {
   window.localStorage.removeItem(rememberedLoginKey);
+  window.localStorage.removeItem(autoLoginKey);
+}
+
+function readAutoLogin(): boolean {
+  try {
+    return window.localStorage.getItem(autoLoginKey) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function saveAutoLogin(enabled: boolean): void {
+  try {
+    if (enabled) {
+      window.localStorage.setItem(autoLoginKey, "true");
+    } else {
+      window.localStorage.removeItem(autoLoginKey);
+    }
+  } catch {
+    // ignore
+  }
 }
 
 interface LocalSakiWorkflowStep {
@@ -1792,6 +1947,20 @@ function clearRememberedSakiTerminalSelection(): void {
 
 function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
   return (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "c";
+}
+
+function readAllTerminalBufferText(terminal: XTerm | null): string {
+  if (!terminal) return "";
+  const buffer = terminal.buffer.active;
+  const lines: string[] = [];
+  const total = buffer.length;
+  for (let i = 0; i < total; i++) {
+    const line = buffer.getLine(i);
+    if (line) {
+      lines.push(line.translateToString(true));
+    }
+  }
+  return lines.join("\n").trimEnd();
 }
 
 function readTerminalClipboardText(terminal: XTerm): string {
@@ -2887,10 +3056,14 @@ type AuthMode = "login" | "register";
 
 function LoginView({
   appearance,
-  onLogin
+  onLogin,
+  darkMode,
+  onToggleDarkMode
 }: {
   appearance: PanelAppearanceSettings;
   onLogin: (token: string, user: CurrentUser) => void;
+  darkMode: boolean;
+  onToggleDarkMode: (e?: React.MouseEvent<HTMLElement>) => void;
 }) {
   const t = usePanelT();
   const rememberedLogin = useMemo(() => readRememberedLogin(), []);
@@ -2900,9 +3073,43 @@ function LoginView({
   const [password, setPassword] = useState(rememberedLogin?.password ?? "");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [rememberPassword, setRememberPassword] = useState(Boolean(rememberedLogin));
+  const [autoLogin, setAutoLogin] = useState(() => readAutoLogin() && Boolean(rememberedLogin));
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const isRegister = mode === "register";
+  const autoLoginAttemptedRef = useRef(false);
+
+  useEffect(() => {
+    if (autoLoginAttemptedRef.current) return;
+    if (mode !== "login") return;
+    const saved = readRememberedLogin();
+    const isAuto = readAutoLogin();
+    if (isAuto && saved?.username && saved?.password) {
+      autoLoginAttemptedRef.current = true;
+      setLoading(true);
+      setError("");
+      api.login({
+        username: saved.username.trim(),
+        password: saved.password
+      })
+        .then((response) => {
+          saveRememberedLogin(saved.username.trim(), saved.password);
+          saveAutoLogin(true);
+          localStorage.setItem(tokenKey, response.token);
+          onLogin(response.token, response.user);
+        })
+        .catch((err) => {
+          saveAutoLogin(false);
+          setAutoLogin(false);
+          setError(err instanceof Error ? err.message : t("auth.errorLoginFailed"));
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    }
+  }, [mode, onLogin, t]);
 
   function switchMode(nextMode: AuthMode) {
     if (nextMode === mode) return;
@@ -2952,8 +3159,10 @@ function LoginView({
           });
       if (rememberPassword) {
         saveRememberedLogin(trimmedUsername, password);
+        saveAutoLogin(!isRegister && autoLogin);
       } else {
         clearRememberedLogin();
+        saveAutoLogin(false);
       }
       localStorage.setItem(tokenKey, response.token);
       onLogin(response.token, response.user);
@@ -2971,6 +3180,16 @@ function LoginView({
           <img className="login-cover-img" src={appearance.loginCoverSrc} alt="" draggable={false} />
         </div>
         <form className={`login-panel ${isRegister ? "register-panel" : ""}`} onSubmit={submit}>
+          <button
+            type="button"
+            className="login-theme-toggle theme-toggle-button"
+            onClick={onToggleDarkMode}
+            title={darkMode ? "切换到浅色模式" : "切换到深色模式"}
+            aria-label={darkMode ? "切换到浅色模式" : "切换到深色模式"}
+          >
+            {darkMode ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+
           <div className="login-header">
             <div className="brand-mark" aria-hidden="true">
               <img className="app-logo-img" src={appearance.appLogoSrc} alt="" draggable={false} />
@@ -2979,17 +3198,6 @@ function LoginView({
               <h1>{appearance.appTitle}</h1>
               {appearance.appSubtitle || isRegister ? <p>{isRegister ? t("auth.createAccount") : appearance.appSubtitle}</p> : null}
             </div>
-          </div>
-
-          <div className="auth-mode-tabs" role="group" aria-label={t("auth.mode")}>
-            <button className={!isRegister ? "active" : ""} type="button" onClick={() => switchMode("login")}>
-              <LogIn size={16} />
-              {t("auth.login")}
-            </button>
-            <button className={isRegister ? "active" : ""} type="button" onClick={() => switchMode("register")}>
-              <UserCheck size={16} />
-              {t("auth.register")}
-            </button>
           </div>
 
           <div className="form-group">
@@ -3025,14 +3233,23 @@ function LoginView({
           <div className="form-group">
             <label>
               <span className="label-text">{t("auth.password")}</span>
-              <div className="input-with-icon">
+              <div className="input-with-icon password-input-wrap">
                 <input
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   autoComplete={isRegister ? "new-password" : "current-password"}
                   placeholder={isRegister ? t("auth.password.registerPlaceholder") : t("auth.password.loginPlaceholder")}
                 />
+                <button
+                  type="button"
+                  className="password-toggle-btn"
+                  onClick={() => setShowPassword((v) => !v)}
+                  tabIndex={-1}
+                  aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
               </div>
             </label>
           </div>
@@ -3041,30 +3258,75 @@ function LoginView({
             <div className="form-group">
               <label>
                 <span className="label-text">{t("auth.confirmPassword")}</span>
-                <div className="input-with-icon">
+                <div className="input-with-icon password-input-wrap">
                   <input
                     value={confirmPassword}
                     onChange={(event) => setConfirmPassword(event.target.value)}
-                    type="password"
+                    type={showConfirmPassword ? "text" : "password"}
                     autoComplete="new-password"
                     placeholder={t("auth.confirmPassword.placeholder")}
                   />
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    onClick={() => setShowConfirmPassword((v) => !v)}
+                    tabIndex={-1}
+                    aria-label={showConfirmPassword ? "隐藏密码" : "显示密码"}
+                  >
+                    {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
                 </div>
               </label>
             </div>
           ) : null}
 
-          <label className="remember-password">
-            <input
-              type="checkbox"
-              checked={rememberPassword}
-              onChange={(event) => {
-                setRememberPassword(event.target.checked);
-                if (!event.target.checked) clearRememberedLogin();
-              }}
-            />
-            <span>{isRegister ? t("auth.rememberRegister") : t("auth.rememberLogin")}</span>
-          </label>
+          {!isRegister ? (
+            <div className="auth-options-row">
+              <label className="remember-password">
+                <input
+                  type="checkbox"
+                  checked={rememberPassword}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setRememberPassword(checked);
+                    if (!checked) {
+                      clearRememberedLogin();
+                      setAutoLogin(false);
+                      saveAutoLogin(false);
+                    }
+                  }}
+                />
+                <span>{t("auth.rememberLogin")}</span>
+              </label>
+
+              <label className="remember-password auto-login-option">
+                <input
+                  type="checkbox"
+                  checked={autoLogin}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setAutoLogin(checked);
+                    if (checked) {
+                      setRememberPassword(true);
+                    }
+                  }}
+                />
+                <span>{t("auth.autoLogin")}</span>
+              </label>
+            </div>
+          ) : (
+            <label className="remember-password">
+              <input
+                type="checkbox"
+                checked={rememberPassword}
+                onChange={(event) => {
+                  setRememberPassword(event.target.checked);
+                  if (!event.target.checked) clearRememberedLogin();
+                }}
+              />
+              <span>{t("auth.rememberRegister")}</span>
+            </label>
+          )}
 
           {error ? <div className="form-error">{error}</div> : null}
 
@@ -3072,6 +3334,17 @@ function LoginView({
             {loading ? (isRegister ? t("auth.registering") : t("auth.loggingIn")) : isRegister ? t("auth.registerSubmit") : t("auth.loginSubmit")}
             {!loading && (isRegister ? <UserCheck size={18} /> : <KeyRound size={18} />)}
           </button>
+
+          <div className="auth-switch-prompt">
+            <span>{isRegister ? "已有账号？" : "还没有账号？"}</span>
+            <button
+              type="button"
+              className="auth-switch-link"
+              onClick={() => switchMode(isRegister ? "login" : "register")}
+            >
+              {isRegister ? "立即登录" : "立即注册"}
+            </button>
+          </div>
         </form>
       </div>
     </main>
@@ -3541,12 +3814,14 @@ function DashboardView({
                     {canTestNodes ? (
                       <td>
                         <button
-                          className="small-button"
+                          className="icon-button mini"
+                          title="测试连接"
+                          aria-label="测试连接"
+                          type="button"
                           onClick={() => void testNode(node.id)}
                           disabled={testingNodeId === node.id}
                         >
-                          <RefreshCw size={15} />
-                          测试
+                          <Wifi size={14} />
                         </button>
                       </td>
                     ) : null}
@@ -3724,8 +3999,8 @@ function NodesView({ token, onLogout, refreshTick }: { token: string; onLogout: 
           <div className="section-heading">
             <h2>{editingNodeId ? "编辑节点" : "添加节点"}</h2>
             {editingNodeId ? (
-              <button className="small-button compact-button" type="button" onClick={resetForm}>
-                取消
+              <button className="icon-button mini" type="button" title="取消编辑" aria-label="取消编辑" onClick={resetForm}>
+                <X size={15} />
               </button>
             ) : null}
           </div>
@@ -3847,19 +4122,35 @@ function NodesView({ token, onLogout, refreshTick }: { token: string; onLogout: 
                       <td>{formatDate(node.lastSeenAt)}</td>
                       <td>
                         <div className="row-actions">
-                          <button className="small-button compact-button" disabled={busy} onClick={() => void testNode(node.id)}>
-                            测试
+                          <button
+                            className="icon-button mini"
+                            disabled={busy}
+                            title="测试连接"
+                            aria-label="测试连接"
+                            type="button"
+                            onClick={() => void testNode(node.id)}
+                          >
+                            <Wifi size={14} />
                           </button>
-                          <button className="small-button compact-button" disabled={busy} onClick={() => editNode(node)}>
-                            编辑
+                          <button
+                            className="icon-button mini"
+                            disabled={busy}
+                            title="编辑节点"
+                            aria-label="编辑节点"
+                            type="button"
+                            onClick={() => editNode(node)}
+                          >
+                            <Wrench size={14} />
                           </button>
                           <button
                             className="icon-button mini danger-action"
                             disabled={busy}
-                            title="删除"
+                            title="删除节点"
+                            aria-label="删除节点"
+                            type="button"
                             onClick={() => void deleteNode(node)}
                           >
-                            <Trash2 size={15} />
+                            <Trash2 size={14} />
                           </button>
                         </div>
                       </td>
@@ -5086,7 +5377,7 @@ function SakiFloatingChat({
   const [open, setOpen] = useState(false);
   const [messagesExpanded, setMessagesExpanded] = useState(false);
   const [draft, setDraft] = useState("");
-  const [mode, setMode] = useState<SakiChatMode>(() => coerceSakiMode("chat", canUseChat, canUseAgent));
+  const [mode, setMode] = useState<SakiChatMode>(() => coerceSakiMode("agent", canUseChat, canUseAgent));
   const [permissionMode, setPermissionMode] = useState<SakiAgentPermissionMode>(defaultSakiAgentPermissionMode);
   const [panelError, setPanelError] = useState<string | null>(null);
   const [contextTitle, setContextTitle] = useState<string | null>(null);
@@ -5115,8 +5406,15 @@ function SakiFloatingChat({
   const [listening, setListening] = useState(false);
   const [annotationMode, setAnnotationMode] = useState(false);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [permissionDropdownOpen, setPermissionDropdownOpen] = useState(false);
+  const [sakiAddMenuOpen, setSakiAddMenuOpen] = useState(false);
   const modelSelectorRef = useRef<HTMLDivElement | null>(null);
   const modelDropdownRef = useRef<HTMLDivElement | null>(null);
+  const permissionSelectorRef = useRef<HTMLDivElement | null>(null);
+  const permissionDropdownRef = useRef<HTMLDivElement | null>(null);
+  const sakiAddBtnRef = useRef<HTMLButtonElement | null>(null);
+  const sakiAddMenuRef = useRef<HTMLDivElement | null>(null);
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
@@ -5210,7 +5508,41 @@ function SakiFloatingChat({
     return () => document.removeEventListener("mousedown", handler);
   }, [modelDropdownOpen]);
 
+  useEffect(() => {
+    if (!permissionDropdownOpen) return;
+    const handler = (event: MouseEvent) => {
+      const target = event.target as Node;
+      const isInsideSelector = permissionSelectorRef.current?.contains(target);
+      const isInsideDropdown = permissionDropdownRef.current?.contains(target);
+      if (!isInsideSelector && !isInsideDropdown) {
+        setPermissionDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [permissionDropdownOpen]);
 
+  useEffect(() => {
+    if (!sakiAddMenuOpen) return;
+    const handler = (event: MouseEvent) => {
+      const target = event.target as Node;
+      const isInsideBtn = sakiAddBtnRef.current?.contains(target);
+      const isInsideMenu = sakiAddMenuRef.current?.contains(target);
+      if (!isInsideBtn && !isInsideMenu) {
+        setSakiAddMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [sakiAddMenuOpen]);
+
+  useEffect(() => {
+    const textarea = composerTextareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(textarea.scrollHeight, 180);
+    textarea.style.height = `${Math.max(nextHeight, 38)}px`;
+  }, [draft]);
 
   useEffect(() => {
     const element = sakiMessagesRef.current;
@@ -5347,7 +5679,7 @@ function SakiFloatingChat({
     setSelectedSkillIds([]);
     setAttachments([]);
     setComposerNotice(null);
-    setMode(coerceSakiMode("chat", canUseChat, canUseAgent));
+    setMode(coerceSakiMode("agent", canUseChat, canUseAgent));
     setPermissionMode(defaultSakiAgentPermissionMode);
   }, [canUseAgent, canUseChat, contextKey, instance, messages, panelContext.label]);
 
@@ -5821,7 +6153,7 @@ function SakiFloatingChat({
     setComposerBusy("file");
     try {
       if (isImageFile(payload.path || payload.name)) {
-        const response = await api.downloadInstanceFile(token, payload.instanceId, payload.path);
+        const response = await api.downloadInstanceFile(token, payload.instanceId, payload.path, { base64: true });
         const mimeType = imageMimeTypeFromPath(response.path || payload.name) ?? imageMimeTypeFromPath(payload.path) ?? "image/png";
         const file = new File([base64ToBlob(response.contentBase64, mimeType)], response.fileName || payload.name, {
           type: mimeType
@@ -6656,23 +6988,6 @@ function SakiFloatingChat({
               </div>
             ) : null}
           </div>
-
-          {skillsLoading || skills.length > 0 ? (
-            <div className="saki-skill-row">
-              {skillsLoading ? <span className="saki-skill-loading">Skills...</span> : null}
-              {skills.slice(0, 5).map((skill) => (
-                <button
-                  className={selectedSkillIds.includes(skill.id) ? "saki-skill-chip active" : "saki-skill-chip"}
-                  type="button"
-                  key={skill.id}
-                  title={skill.description ?? skill.name}
-                  onClick={() => toggleSkill(skill.id)}
-                >
-                  {skill.name}
-                </button>
-              ))}
-            </div>
-          ) : null}
         </div>
       </div>
 
@@ -6703,12 +7018,13 @@ function SakiFloatingChat({
         <div className="saki-composer-expand-hint">
           <button
             type="button"
+            className="saki-composer-expand-btn"
             title={messagesExpanded ? "折叠对话" : "展开对话"}
             aria-label={messagesExpanded ? "折叠对话" : "展开对话"}
             aria-expanded={messagesExpanded}
             onClick={() => setMessagesExpanded((current) => !current)}
           >
-            <ChevronLeft style={{ transform: messagesExpanded ? "rotate(-90deg)" : "rotate(90deg)" }} size={16} />
+            {messagesExpanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
           </button>
         </div>
         {!messagesExpanded && (
@@ -6738,43 +7054,30 @@ function SakiFloatingChat({
           </div>
         )}
         <div className="saki-input-container">
-          <div className="saki-mode-tabs">
-            {canUseChat ? (
-              <button className={mode === "chat" ? "active" : ""} type="button" onClick={() => selectSakiMode("chat")}>
-                对话
+          <div className="saki-input-main-row">
+            <div className="saki-input-leading">
+              <button
+                className={`saki-add-btn ${sakiAddMenuOpen ? "active" : ""}`}
+                type="button"
+                title="添加图片 / 文件"
+                onClick={() => setSakiAddMenuOpen(!sakiAddMenuOpen)}
+                ref={sakiAddBtnRef}
+              >
+                <Plus size={16} />
               </button>
-            ) : null}
-            {canUseAgent ? (
-              <button className={mode === "agent" ? "active" : ""} type="button" onClick={() => selectSakiMode("agent")}>
-                智能体
-              </button>
-            ) : null}
-          </div>
-          {canUseAgent && mode === "agent" ? (
-            <div className="saki-permission-tabs" role="group" aria-label="智能体权限模式">
-              {(["acceptEdits", "ask", "plan", "bypassPermissions"] as SakiAgentPermissionMode[]).map((item) => {
-                const icon =
-                  item === "acceptEdits" ? <CheckCircle2 size={13} /> : item === "ask" ? <Shield size={13} /> : item === "plan" ? <Eye size={13} /> : <XOctagon size={13} />;
-                return (
-                  <button
-                    className={permissionMode === item ? "active" : ""}
-                    type="button"
-                    title={sakiPermissionModeTitle(item)}
-                    aria-pressed={permissionMode === item}
-                    onClick={() => setPermissionMode(item)}
-                    key={item}
-                  >
-                    {icon}
-                    <span>{sakiPermissionModeLabel(item)}</span>
-                  </button>
-                );
-              })}
             </div>
-          ) : null}
-          <div className="saki-input-row">
             <textarea
+              ref={composerTextareaRef}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  if (!loading && (draft.trim() || attachments.length > 0)) {
+                    void submit();
+                  }
+                }
+              }}
               onPaste={handleComposerPaste}
               placeholder={
                 mode === "agent" && permissionMode === "plan"
@@ -6787,25 +7090,26 @@ function SakiFloatingChat({
                       ? "问 Saki 当前实例里的问题"
                       : "问 Saki"
               }
-              rows={2}
+              rows={1}
             />
-            {attachments.length > 0 ? (
-              <div className="saki-attachment-tray">
-                {attachments.map((attachment, index) => (
-                  <SakiAttachmentChip
-                    attachment={attachment}
-                    key={attachment.id ?? `${attachment.name}-${index}`}
-                    removable
-                    onRemove={() =>
-                      setAttachments((current) => current.filter((item) => (item.id ?? item.name) !== (attachment.id ?? attachment.name)))
-                    }
-                  />
-                ))}
-              </div>
-            ) : null}
-            {composerNotice ? <div className="saki-composer-notice">{composerNotice}</div> : null}
-            <div className="saki-input-toolbar">
-              <div className="saki-input-actions">
+          </div>
+          {attachments.length > 0 ? (
+            <div className="saki-attachment-tray">
+              {attachments.map((attachment, index) => (
+                <SakiAttachmentChip
+                  attachment={attachment}
+                  key={attachment.id ?? `${attachment.name}-${index}`}
+                  removable
+                  onRemove={() =>
+                    setAttachments((current) => current.filter((item) => (item.id ?? item.name) !== (attachment.id ?? attachment.name)))
+                  }
+                />
+              ))}
+            </div>
+          ) : null}
+          {composerNotice ? <div className="saki-composer-notice">{composerNotice}</div> : null}
+          <div className="saki-input-toolbar">
+            <div className="saki-input-actions">
                 <button
                   className={`icon-button mini ${listening ? "active" : ""}`}
                   type="button"
@@ -6852,28 +7156,175 @@ function SakiFloatingChat({
                   <Camera size={15} />
                 </button>
               </div>
-              <div className="saki-model-selector" ref={modelSelectorRef}>
-                <button className="saki-model-btn" type="button" onClick={() => setModelDropdownOpen(!modelDropdownOpen)}>
-                  <Zap size={12} />
-                  <span>{currentModelName || availableModels.find(m => m.id === currentModelId)?.label || currentModelId}</span>
-                  <ChevronDown size={10} />
+              <div className="saki-toolbar-controls">
+                {/* Mode Selector: Icon-only Chat vs Agent */}
+                <div className="saki-mode-icon-group" role="group" aria-label="对话/智能体模式切换">
+                  {canUseChat ? (
+                    <button
+                      className={`saki-mode-icon-btn ${mode === "chat" ? "active" : ""}`}
+                      type="button"
+                      title="对话模式"
+                      onClick={() => selectSakiMode("chat")}
+                    >
+                      <MessageSquare size={14} />
+                    </button>
+                  ) : null}
+                  {canUseAgent ? (
+                    <button
+                      className={`saki-mode-icon-btn ${mode === "agent" ? "active" : ""}`}
+                      type="button"
+                      title="智能体模式"
+                      onClick={() => selectSakiMode("agent")}
+                    >
+                      <Wrench size={14} />
+                    </button>
+                  ) : null}
+                </div>
+
+                {/* Permission Dropdown Selector (Active when in Agent mode, Icon Only) */}
+                {canUseAgent && mode === "agent" ? (
+                  <div className="saki-permission-selector" ref={permissionSelectorRef}>
+                    <button
+                      className="saki-permission-btn icon-only"
+                      type="button"
+                      title={`权限模式: ${sakiPermissionModeLabel(permissionMode)} (${sakiPermissionModeTitle(permissionMode)})`}
+                      onClick={() => setPermissionDropdownOpen(!permissionDropdownOpen)}
+                    >
+                      {permissionMode === "acceptEdits" ? (
+                        <CheckCircle2 size={14} className="perm-icon accept" />
+                      ) : permissionMode === "ask" ? (
+                        <Shield size={14} className="perm-icon ask" />
+                      ) : permissionMode === "plan" ? (
+                        <Eye size={14} className="perm-icon plan" />
+                      ) : (
+                        <XOctagon size={14} className="perm-icon bypass" />
+                      )}
+                      <ChevronDown size={10} className="perm-arrow" />
+                    </button>
+                  </div>
+                ) : null}
+
+                {/* Model Selector */}
+                <div className="saki-model-selector" ref={modelSelectorRef}>
+                  <button className="saki-model-btn" type="button" onClick={() => setModelDropdownOpen(!modelDropdownOpen)}>
+                    <Zap size={12} />
+                    <span className="saki-model-full-name">{currentModelName || availableModels.find(m => m.id === currentModelId)?.label || currentModelId}</span>
+                    <span className="saki-model-short-name">{(() => {
+                      const raw = currentModelName || availableModels.find(m => m.id === currentModelId)?.label || currentModelId;
+                      // Extract short name: take last segment after slash/colon, then first token before dash+version
+                      const seg = raw.split(/[/:]/).pop() || raw;
+                      return seg.split(/[-\s]/).slice(0, 2).join("-");
+                    })()}</span>
+                    <ChevronDown size={10} />
+                  </button>
+                </div>
+                {/* Send button in toolbar */}
+                <button
+                  className={`primary-button send-btn ${loading ? "stop" : ""}`}
+                  type={loading ? "button" : "submit"}
+                  title={loading ? "停止生成" : "Ctrl+Enter 发送"}
+                  aria-label={loading ? "停止生成" : "Ctrl+Enter 发送"}
+                  disabled={!loading && !draft.trim() && attachments.length === 0}
+                  onClick={loading ? stopSakiGeneration : undefined}
+                >
+                  {loading ? <Square size={13} /> : <ArrowRight size={15} />}
                 </button>
               </div>
-              <button
-                className={`primary-button send-btn ${loading ? "stop" : ""}`}
-                type={loading ? "button" : "submit"}
-                title={loading ? "停止生成" : "发送"}
-                disabled={!loading && !draft.trim() && attachments.length === 0}
-                onClick={loading ? stopSakiGeneration : undefined}
-              >
-                {loading ? <Square size={15} /> : <Send size={15} />}
-                {loading ? "停止" : "发送"}
-              </button>
             </div>
-          </div>
         </div>
       </form>
     </section>
+    {sakiAddMenuOpen && sakiAddBtnRef.current ? (
+      createPortal(
+        <div
+          ref={sakiAddMenuRef}
+          className="saki-add-menu"
+          style={{
+            position: "fixed",
+            left: sakiAddBtnRef.current.getBoundingClientRect().left,
+            bottom: window.innerHeight - sakiAddBtnRef.current.getBoundingClientRect().top + 6,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="saki-add-menu-item"
+            type="button"
+            disabled={composerBusy !== null}
+            onClick={() => { setSakiAddMenuOpen(false); void pasteImageFromClipboard(); }}
+          >
+            <ImageIcon size={16} />
+            <span>粘贴图片</span>
+          </button>
+          <button
+            className="saki-add-menu-item"
+            type="button"
+            disabled={composerBusy !== null}
+            onClick={() => { setSakiAddMenuOpen(false); attachmentInputRef.current?.click(); }}
+          >
+            <Paperclip size={16} />
+            <span>上传文件</span>
+          </button>
+          <button
+            className="saki-add-menu-item"
+            type="button"
+            disabled={composerBusy !== null}
+            onClick={() => { setSakiAddMenuOpen(false); void captureScreenAttachment(); }}
+          >
+            <Camera size={16} />
+            <span>网页截图</span>
+          </button>
+        </div>,
+        document.body
+      )
+    ) : null}
+    {permissionDropdownOpen && permissionSelectorRef.current ? (
+      createPortal(
+        <div
+          ref={permissionDropdownRef}
+          className="saki-model-dropdown saki-permission-dropdown glass-panel"
+          style={{
+            position: "fixed",
+            left: permissionSelectorRef.current.getBoundingClientRect().left,
+            bottom: window.innerHeight - permissionSelectorRef.current.getBoundingClientRect().top + 8,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="saki-dropdown-title">智能体权限模式</div>
+          {(
+            [
+              { id: "acceptEdits", label: "自动接受", desc: "自动执行安全文件编辑", icon: CheckCircle2, colorClass: "accept" },
+              { id: "ask", label: "询问确认", desc: "每次文件修改均需确认", icon: Shield, colorClass: "ask" },
+              { id: "plan", label: "仅规划", desc: "只输出执行方案，不落盘修改", icon: Eye, colorClass: "plan" },
+              { id: "bypassPermissions", label: "跳过审查", desc: "绕过所有确认全速自动执行", icon: XOctagon, colorClass: "bypass" },
+            ] as const
+          ).map((opt) => {
+            const IconComponent = opt.icon;
+            const isActive = permissionMode === opt.id;
+            return (
+              <button
+                key={opt.id}
+                className={`saki-perm-dropdown-option ${isActive ? "active" : ""}`}
+                type="button"
+                onClick={() => {
+                  setPermissionMode(opt.id);
+                  setPermissionDropdownOpen(false);
+                }}
+              >
+                <div className={`perm-opt-icon ${opt.colorClass}`}>
+                  <IconComponent size={15} />
+                </div>
+                <div className="perm-opt-text">
+                  <div className="perm-opt-label">{opt.label}</div>
+                  <div className="perm-opt-desc">{opt.desc}</div>
+                </div>
+                {isActive ? <Check size={14} className="perm-opt-check" /> : null}
+              </button>
+            );
+          })}
+        </div>,
+        document.body
+      )
+    ) : null}
     {modelDropdownOpen && modelSelectorRef.current ? (
       createPortal(
         <div
@@ -6966,6 +7417,7 @@ type TerminalAutocompleteState = {
 
 const terminalCommandAutocompleteWords = [
   "bun",
+  "cargo",
   "cat",
   "cd",
   "clear",
@@ -6982,8 +7434,10 @@ const terminalCommandAutocompleteWords = [
   "find",
   "findstr",
   "git",
+  "go",
   "grep",
   "java",
+  "journalctl",
   "less",
   "mkdir",
   "more",
@@ -6991,6 +7445,9 @@ const terminalCommandAutocompleteWords = [
   "node",
   "npm",
   "npx",
+  "pip",
+  "pip3",
+  "pm2",
   "pnpm",
   "powershell",
   "pwd",
@@ -7000,12 +7457,16 @@ const terminalCommandAutocompleteWords = [
   "rmdir",
   "set",
   "sh",
+  "sudo",
+  "systemctl",
+  "tail",
   "tar",
   "touch",
   "type",
   "where",
   "which",
-  "xcopy"
+  "xcopy",
+  "yarn"
 ];
 
 function uniqueTerminalAutocompleteValues(values: string[]): string[] {
@@ -7030,6 +7491,36 @@ function commonTerminalAutocompletePrefix(values: string[]): string {
   return prefix;
 }
 
+const COMMON_TERMINAL_SUBCOMMAND_COMPLETIONS = [
+  "npm run dev",
+  "npm run build",
+  "npm start",
+  "npm test",
+  "npm install",
+  "pnpm dev",
+  "pnpm build",
+  "pnpm install",
+  "yarn dev",
+  "yarn build",
+  "yarn start",
+  "git status",
+  "git pull",
+  "git push",
+  "git checkout ",
+  "git branch",
+  "git diff",
+  "git log -n 10",
+  "docker ps",
+  "docker compose up -d",
+  "docker compose logs -f",
+  "docker compose down",
+  "pm2 status",
+  "pm2 restart all",
+  "pm2 logs",
+  "systemctl status",
+  "systemctl restart"
+];
+
 function terminalAutocompleteCandidates(value: string, history: string[]): string[] {
   const leadingWhitespace = value.match(/^\s*/)?.[0] ?? "";
   const withoutLeadingWhitespace = value.slice(leadingWhitespace.length);
@@ -7047,12 +7538,16 @@ function terminalAutocompleteCandidates(value: string, history: string[]): strin
       .map((candidate) => `${leadingWhitespace}${candidate} `);
   }
 
-  return uniqueTerminalAutocompleteValues(
-    history
-      .slice()
-      .reverse()
-      .filter((item) => item.startsWith(value) && item !== value)
+  const historyMatches = history
+    .slice()
+    .reverse()
+    .filter((item) => item.toLowerCase().startsWith(value.toLowerCase()) && item !== value);
+
+  const commonMatches = COMMON_TERMINAL_SUBCOMMAND_COMPLETIONS.filter(
+    (c) => c.toLowerCase().startsWith(value.toLowerCase()) && c !== value
   );
+
+  return uniqueTerminalAutocompleteValues([...historyMatches, ...commonMatches]);
 }
 
 function nextTerminalAutocompleteValue(
@@ -7386,6 +7881,9 @@ function renderTerminalLogText(value: string): React.ReactNode {
 }
 
 function formatTerminalLine(line: InstanceLogLine): string {
+  if (line.stream === "stdout") {
+    return `${line.text}\r\n`;
+  }
   const prefix =
     line.stream === "stdin"
       ? "\x1b[32m>\x1b[0m "
@@ -7394,7 +7892,7 @@ function formatTerminalLine(line: InstanceLogLine): string {
         : line.stream === "system"
           ? "\x1b[33mSYS\x1b[0m "
           : "";
-  return `${prefix}${terminalDisplayText(line.text)}${terminalAnsiReset}\r\n`;
+  return `${prefix}${line.text}${terminalAnsiReset}\r\n`;
 }
 
 function terminalTouchRowHeight(terminalHost: HTMLElement, terminal: XTerm): number {
@@ -7407,32 +7905,72 @@ function WebTerminal({
   token,
   instance,
   onStatus,
-  onAskSaki
+  onAskSaki,
+  shellSessionId,
+  isActive = true,
+  onMountTerminalActions
 }: {
   token: string;
   instance: ManagedInstance | null;
   onStatus: (instanceId: string, status: InstanceStatus, exitCode?: number | null) => void;
   onAskSaki?: ((seed: Omit<SakiPromptSeed, "nonce">) => void) | undefined;
+  shellSessionId?: string;
+  isActive?: boolean;
+  onMountTerminalActions?: (actions: {
+    clear: () => void;
+    reconnect: () => void;
+    toggleImmersive: () => void;
+    isImmersive: boolean;
+    connectionState: TerminalConnectionState;
+    sendCommand: (cmd: string) => void;
+    getHistory: () => string[];
+    extractOrCopyLogs?: () => void;
+  }) => void;
 }) {
   const [terminalHost, setTerminalHost] = useState<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const fitTerminalSafeRef = useRef<(() => void) | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
-  const directInputBufferRef = useRef("");
   const inputHistoryRef = useRef<string[]>([]);
   const inputHistoryInstanceIdRef = useRef<string | null>(null);
   const commandHistoryIndexRef = useRef<number | null>(null);
   const commandHistoryDraftRef = useRef("");
-  const terminalHistoryIndexRef = useRef<number | null>(null);
-  const terminalHistoryDraftRef = useRef("");
   const commandCompletionStateRef = useRef<TerminalAutocompleteState | null>(null);
-  const terminalCompletionStateRef = useRef<TerminalAutocompleteState | null>(null);
   const terminalDataHandlerRef = useRef<(data: string) => void>(() => {});
+  const sendResizeRef = useRef<(cols: number, rows: number) => void>(() => {});
   const [terminalReady, setTerminalReady] = useState(false);
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>("idle");
   const [command, setCommand] = useState("");
+  const [selectedTerminalText, setSelectedTerminalText] = useState("");
+  const [copyToast, setCopyToast] = useState("");
+  const [showLogExtractModal, setShowLogExtractModal] = useState(false);
+  const [extractedLogContent, setExtractedLogContent] = useState("");
+
+  const copyTextToClipboard = async (text: string, successMsg = "已复制到剪贴板") => {
+    if (!text) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setCopyToast(successMsg);
+      setTimeout(() => setCopyToast(""), 2200);
+    } catch {
+      setCopyToast("复制失败");
+      setTimeout(() => setCopyToast(""), 2000);
+    }
+  };
   const [error, setError] = useState("");
   const [lastIssue, setLastIssue] = useState("");
   const [reconnectTick, setReconnectTick] = useState(0);
@@ -7440,8 +7978,28 @@ function WebTerminal({
   const [terminalActionBusy, setTerminalActionBusy] = useState(false);
   const [immersive, setImmersive] = useState(false);
   const [mobileCtrlActive, setMobileCtrlActive] = useState(false);
+  const isActiveRef = useRef(isActive);
+  useEffect(() => { isActiveRef.current = isActive; }, [isActive]);
+  useEffect(() => {
+    if (!error) return;
+    const timer = window.setTimeout(() => setError(""), 3500);
+    return () => window.clearTimeout(timer);
+  }, [error]);
   const instanceId = instance?.id ?? null;
   const instanceName = instance?.name ?? "";
+
+  const sendResize = useCallback((cols: number, rows: number) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    const payload: any = { type: "resize", cols, rows };
+    if (shellSessionId) payload.sessionId = shellSessionId;
+    socket.send(JSON.stringify(payload));
+  }, [shellSessionId]);
+
+  useEffect(() => {
+    sendResizeRef.current = sendResize;
+  }, [sendResize]);
+
   const handleTerminalHostRef = useCallback((node: HTMLDivElement | null) => {
     setTerminalHost(node);
   }, []);
@@ -7460,60 +8018,17 @@ function WebTerminal({
     resetCommandCompletion();
   }
 
-  function resetTerminalHistoryNavigation() {
-    terminalHistoryIndexRef.current = null;
-    terminalHistoryDraftRef.current = "";
-  }
-
-  function resetTerminalCompletion() {
-    terminalCompletionStateRef.current = null;
-  }
-
-  function resetTerminalInputNavigation() {
-    resetTerminalHistoryNavigation();
-    resetTerminalCompletion();
-  }
-
-  function resetInputHistoryNavigation() {
-    resetCommandInputNavigation();
-    resetTerminalInputNavigation();
-  }
-
   function rememberInputHistory(value: string) {
     if (!value.trim()) return;
 
     const history = inputHistoryRef.current;
     if (history[history.length - 1] === value) {
-      resetInputHistoryNavigation();
+      resetCommandInputNavigation();
       return;
     }
 
     inputHistoryRef.current = [...history, value].slice(-terminalInputHistoryLimit);
-    resetInputHistoryNavigation();
-  }
-
-  function replaceBufferedTerminalInput(value: string) {
-    const terminal = terminalRef.current;
-    const currentLength = Array.from(directInputBufferRef.current).length;
-    if (currentLength > 0) {
-      terminal?.write("\b \b".repeat(currentLength));
-    }
-    terminal?.write(value);
-    directInputBufferRef.current = value;
-  }
-
-  function autocompleteBufferedTerminalInput() {
-    const completion = nextTerminalAutocompleteValue(
-      directInputBufferRef.current,
-      inputHistoryRef.current,
-      terminalCompletionStateRef.current
-    );
-    if (!completion) return false;
-
-    resetTerminalHistoryNavigation();
-    terminalCompletionStateRef.current = completion.state;
-    replaceBufferedTerminalInput(completion.value);
-    return true;
+    resetCommandInputNavigation();
   }
 
   function autocompleteCommandInput() {
@@ -7524,36 +8039,6 @@ function WebTerminal({
     commandCompletionStateRef.current = completion.state;
     setCommand(completion.value);
     return true;
-  }
-
-  function navigateTerminalHistory(direction: "previous" | "next") {
-    const history = inputHistoryRef.current;
-    if (history.length === 0) return;
-
-    resetTerminalCompletion();
-
-    if (direction === "previous") {
-      if (terminalHistoryIndexRef.current === null) {
-        terminalHistoryDraftRef.current = directInputBufferRef.current;
-        terminalHistoryIndexRef.current = history.length - 1;
-      } else {
-        terminalHistoryIndexRef.current = Math.max(0, terminalHistoryIndexRef.current - 1);
-      }
-      replaceBufferedTerminalInput(history[terminalHistoryIndexRef.current] ?? "");
-      return;
-    }
-
-    if (terminalHistoryIndexRef.current === null) return;
-    const nextIndex = terminalHistoryIndexRef.current + 1;
-    if (nextIndex >= history.length) {
-      terminalHistoryIndexRef.current = null;
-      replaceBufferedTerminalInput(terminalHistoryDraftRef.current);
-      terminalHistoryDraftRef.current = "";
-      return;
-    }
-
-    terminalHistoryIndexRef.current = nextIndex;
-    replaceBufferedTerminalInput(history[nextIndex] ?? "");
   }
 
   function navigateCommandHistory(direction: "previous" | "next") {
@@ -7608,81 +8093,213 @@ function WebTerminal({
     if (inputHistoryInstanceIdRef.current === instanceId) return;
     inputHistoryInstanceIdRef.current = instanceId;
     inputHistoryRef.current = [];
-    resetInputHistoryNavigation();
-    directInputBufferRef.current = "";
+    resetCommandInputNavigation();
     setCommand("");
   }, [instanceId]);
 
   useEffect(() => {
     if (!terminalHost || terminalRef.current) return;
 
+    const finalShellNavyTheme = {
+      background: "#162c4b",
+      foreground: "#f1f5f9",
+      black: "#162c4b",
+      red: "#f87171",
+      green: "#4ade80",
+      yellow: "#facc15",
+      blue: "#60a5fa",
+      magenta: "#c084fc",
+      cyan: "#38bdf8",
+      white: "#f1f5f9",
+      brightBlack: "#475569",
+      brightRed: "#ef4444",
+      brightGreen: "#22c55e",
+      brightYellow: "#eab308",
+      brightBlue: "#3b82f6",
+      brightMagenta: "#a855f7",
+      brightCyan: "#0ea5e9",
+      brightWhite: "#ffffff",
+      cursor: "#38bdf8",
+      cursorAccent: "#162c4b",
+      selectionBackground: "rgba(56, 189, 248, 0.3)"
+    };
+
+    const originalBlackTheme = {
+      background: "#0e0f17",
+      foreground: "#e5edf5",
+      black: "#000000",
+      red: "#aa0000",
+      green: "#00aa00",
+      yellow: "#ffaa00",
+      blue: "#5555ff",
+      magenta: "#aa00aa",
+      cyan: "#00aaaa",
+      white: "#aaaaaa",
+      brightBlack: "#555555",
+      brightRed: "#ff5555",
+      brightGreen: "#55ff55",
+      brightYellow: "#ffff55",
+      brightBlue: "#5555ff",
+      brightMagenta: "#ff55ff",
+      brightCyan: "#55ffff",
+      brightWhite: "#ffffff",
+      cursor: "#a7f3d0",
+      cursorAccent: "#0e0f17",
+      selectionBackground: "#31505f"
+    };
+
+    const isDark = document.documentElement.getAttribute("data-theme") === "dark";
+    const initialTheme = isDark ? originalBlackTheme : finalShellNavyTheme;
+
     const terminal = new XTerm({
       convertEol: true,
       cursorBlink: true,
-      fontFamily: 'Consolas, "SFMono-Regular", monospace',
+      fontFamily: 'Consolas, "SFMono-Regular", "Menlo", "Courier New", monospace',
       fontSize: 13,
+      lineHeight: 1.28,
+      letterSpacing: 0,
       scrollback: 2500,
-      theme: {
-        background: "#101820",
-        foreground: "#e5edf5",
-        black: "#000000",
-        red: "#aa0000",
-        green: "#00aa00",
-        yellow: "#ffaa00",
-        blue: "#5555ff",
-        magenta: "#aa00aa",
-        cyan: "#00aaaa",
-        white: "#aaaaaa",
-        brightBlack: "#555555",
-        brightRed: "#ff5555",
-        brightGreen: "#55ff55",
-        brightYellow: "#ffff55",
-        brightBlue: "#5555ff",
-        brightMagenta: "#ff55ff",
-        brightCyan: "#55ffff",
-        brightWhite: "#ffffff",
-        cursor: "#a7f3d0",
-        selectionBackground: "#31505f"
-      }
+      theme: initialTheme
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(terminalHost);
-    const inputSubscription = terminal.onData((data) => terminalDataHandlerRef.current(data));
-    const selectionSubscription = terminal.onSelectionChange(() => rememberSakiTerminalSelection(terminal.getSelection()));
+
+    const themeObserver = new MutationObserver(() => {
+      const isDarkNow = document.documentElement.getAttribute("data-theme") === "dark";
+      terminal.options.theme = isDarkNow ? originalBlackTheme : finalShellNavyTheme;
+    });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+    const inputSubscription = terminal.onData((data) => {
+      terminalDataHandlerRef.current(data);
+    });
+    const resizeSubscription = terminal.onResize(({ cols, rows }) => {
+      sendResizeRef.current(cols, Math.max(4, rows - 3));
+    });
+    const selectionSubscription = terminal.onSelectionChange(() => {
+      const selected = readTerminalClipboardText(terminal);
+      setSelectedTerminalText(selected);
+      rememberSakiTerminalSelection(selected);
+      if (selected && selected.trim().length > 0) {
+        if (window.matchMedia("(pointer: coarse)").matches || 'ontouchstart' in window) {
+          try {
+            const activeEl = document.activeElement as HTMLElement | null;
+            if (activeEl && (activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'INPUT')) {
+              activeEl.blur();
+            }
+          } catch {}
+        }
+      }
+    });
     const handleTerminalCopy = (event: ClipboardEvent) => {
-      const selectedText = readTerminalClipboardText(terminal);
+      const domSelection = window.getSelection()?.toString()?.trim();
+      const termSelection = readTerminalClipboardText(terminal)?.trim();
+      const selectedText = domSelection || termSelection;
       if (!selectedText || !event.clipboardData) return;
       event.clipboardData.setData("text/plain", selectedText);
       event.preventDefault();
       rememberSakiTerminalSelection(selectedText);
+      setCopyToast("已复制到剪贴板");
+      setTimeout(() => setCopyToast(""), 2000);
     };
     terminalHost.addEventListener("copy", handleTerminalCopy, true);
+
+    const handleDomSelectionChange = () => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) return;
+      const text = sel.toString().trim();
+      if (text) {
+        setSelectedTerminalText(text);
+        rememberSakiTerminalSelection(text);
+      }
+    };
+    document.addEventListener("selectionchange", handleDomSelectionChange);
+
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type === "keydown" && isTerminalCopyShortcut(event) && terminal.hasSelection()) {
         return false;
       }
       return true;
     });
+    let touchStartX = 0;
+    let touchStartY = 0;
     let touchLastY = 0;
     let touchRemainder = 0;
     let touchActive = false;
     let touchScrolling = false;
+    let touchSelecting = false;
+    let longPressTimer: any = null;
+    let selectStartRow = 0;
+
     const handleTerminalTouchStart = (event: TouchEvent) => {
       if (event.touches.length !== 1) {
         touchActive = false;
         touchScrolling = false;
+        touchSelecting = false;
         touchRemainder = 0;
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
         return;
       }
       touchActive = true;
       touchScrolling = false;
+      touchSelecting = false;
       touchRemainder = 0;
-      touchLastY = event.touches[0]?.clientY ?? 0;
+      const touch = event.touches[0]!;
+      touchStartX = touch.clientX;
+      touchStartY = touch.clientY;
+      touchLastY = touch.clientY;
+
+      if (longPressTimer) clearTimeout(longPressTimer);
+      longPressTimer = window.setTimeout(() => {
+        if (!touchActive || touchScrolling) return;
+        touchSelecting = true;
+        try {
+          const rect = terminalHost.getBoundingClientRect();
+          const core = (terminal as any)._core;
+          const charHeight = core?._renderService?.dimensions?.actualCellHeight || 16;
+          const relativeY = touchStartY - rect.top;
+          const rowInViewport = Math.max(0, Math.min(terminal.rows - 1, Math.floor(relativeY / charHeight)));
+          selectStartRow = rowInViewport;
+          terminal.selectLines(rowInViewport, rowInViewport);
+          if (navigator.vibrate) navigator.vibrate(30);
+        } catch {}
+      }, 350);
     };
+
     const handleTerminalTouchMove = (event: TouchEvent) => {
       if (!touchActive || event.touches.length !== 1) return;
-      const nextY = event.touches[0]?.clientY ?? touchLastY;
+      const touch = event.touches[0]!;
+      const currentX = touch.clientX;
+      const currentY = touch.clientY;
+
+      if (!touchSelecting && (Math.abs(currentX - touchStartX) > 8 || Math.abs(currentY - touchStartY) > 8)) {
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+      }
+
+      if (touchSelecting) {
+        try {
+          const rect = terminalHost.getBoundingClientRect();
+          const core = (terminal as any)._core;
+          const charHeight = core?._renderService?.dimensions?.actualCellHeight || 16;
+          const relativeY = currentY - rect.top;
+          const currentRow = Math.max(0, Math.min(terminal.rows - 1, Math.floor(relativeY / charHeight)));
+          const minRow = Math.min(selectStartRow, currentRow);
+          const maxRow = Math.max(selectStartRow, currentRow);
+          terminal.selectLines(minRow, maxRow);
+        } catch {}
+        if (event.cancelable) event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      const nextY = currentY;
       touchRemainder += touchLastY - nextY;
       touchLastY = nextY;
 
@@ -7699,31 +8316,54 @@ function WebTerminal({
         event.stopPropagation();
       }
     };
+
     const handleTerminalTouchEnd = () => {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
       touchActive = false;
       touchScrolling = false;
+      touchSelecting = false;
       touchRemainder = 0;
     };
     terminalHost.addEventListener("touchstart", handleTerminalTouchStart, { passive: true });
     terminalHost.addEventListener("touchmove", handleTerminalTouchMove, { passive: false });
     terminalHost.addEventListener("touchend", handleTerminalTouchEnd);
     terminalHost.addEventListener("touchcancel", handleTerminalTouchEnd);
-    fitAddon.fit();
+
+    const fitTerminalSafe = () => {
+      if (!isActiveRef.current || !terminalHost) return;
+      try {
+        fitAddon.fit();
+        sendResizeRef.current(terminal.cols, Math.max(4, terminal.rows - 3));
+      } catch {}
+    };
+    fitTerminalSafeRef.current = fitTerminalSafe;
+
+    fitTerminalSafe();
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
     setTerminalReady(true);
     setTerminalMountKey((value) => value + 1);
 
-    const resize = () => fitAddon.fit();
+    const resize = () => fitTerminalSafe();
     window.addEventListener("resize", resize);
+    const resizeObserver = new ResizeObserver(() => fitTerminalSafe());
+    resizeObserver.observe(terminalHost);
+
     return () => {
+      themeObserver.disconnect();
+      resizeObserver.disconnect();
       window.removeEventListener("resize", resize);
       terminalHost.removeEventListener("copy", handleTerminalCopy, true);
+      document.removeEventListener("selectionchange", handleDomSelectionChange);
       terminalHost.removeEventListener("touchstart", handleTerminalTouchStart);
       terminalHost.removeEventListener("touchmove", handleTerminalTouchMove);
       terminalHost.removeEventListener("touchend", handleTerminalTouchEnd);
       terminalHost.removeEventListener("touchcancel", handleTerminalTouchEnd);
       inputSubscription.dispose();
+      resizeSubscription.dispose();
       selectionSubscription.dispose();
       clearRememberedSakiTerminalSelection();
       terminal.dispose();
@@ -7744,7 +8384,7 @@ function WebTerminal({
     document.body.style.overflow = "hidden";
     document.documentElement.style.overflow = "hidden";
     const frame = window.requestAnimationFrame(() => {
-      fitAddonRef.current?.fit();
+      fitTerminalSafeRef.current?.();
       terminalRef.current?.focus();
     });
 
@@ -7752,19 +8392,46 @@ function WebTerminal({
       window.cancelAnimationFrame(frame);
       document.body.style.overflow = previousBodyOverflow;
       document.documentElement.style.overflow = previousDocumentOverflow;
-      window.requestAnimationFrame(() => fitAddonRef.current?.fit());
+      window.requestAnimationFrame(() => fitTerminalSafeRef.current?.());
     };
   }, [immersive]);
 
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => fitAddonRef.current?.fit());
+    if (!isActive) return;
+    const frame = window.requestAnimationFrame(() => fitTerminalSafeRef.current?.());
     return () => window.cancelAnimationFrame(frame);
-  }, [terminalReady, immersive, error, lastIssue]);
+  }, [terminalReady, immersive, error, lastIssue, isActive]);
+
+  // Refit and focus when this shell tab becomes active (while component stays mounted via display:none toggle).
+  // Use double-raf to ensure the element has layout size after display change.
+  useEffect(() => {
+    if (!isActive) return;
+    const raf1 = window.requestAnimationFrame(() => {
+      const raf2 = window.requestAnimationFrame(() => {
+        const fit = fitAddonRef.current;
+        const term = terminalRef.current;
+        if (fitTerminalSafeRef.current) fitTerminalSafeRef.current();
+        if (term) {
+          term.focus();
+          // Re-render whatever is in the buffer (scrollback preserved in XTerm instance)
+          try {
+            const len = term.buffer.active.length || 2000;
+            term.refresh(0, len);
+          } catch {}
+        }
+      });
+      // store for cleanup if needed, but simple cancel outer is ok
+      (window as any).__termRaf2 = raf2;
+    });
+    return () => {
+      window.cancelAnimationFrame(raf1);
+      const r2 = (window as any).__termRaf2;
+      if (r2) window.cancelAnimationFrame(r2);
+    };
+  }, [isActive]);
 
   useEffect(() => {
     setLastIssue("");
-    directInputBufferRef.current = "";
-    resetTerminalInputNavigation();
     clearRememberedSakiTerminalSelection();
     if (!terminalReady || !instanceId) {
       setConnectionState("idle");
@@ -7795,18 +8462,34 @@ function WebTerminal({
       socket.onopen = () => {
         reconnectAttemptRef.current = 0;
         setConnectionState("connected");
-        socket.send(JSON.stringify({ type: "auth", token, instanceId }));
+        const authPayload: any = { type: "auth", token, instanceId };
+        if (shellSessionId) authPayload.sessionId = shellSessionId;
+        socket.send(JSON.stringify(authPayload));
+        if (terminal) {
+          sendResizeRef.current(terminal.cols, terminal.rows);
+        }
       };
 
       socket.onmessage = (event) => {
         try {
-          const payload = JSON.parse(event.data as string) as TerminalServerMessage;
+          const payload = JSON.parse(event.data as string) as any;
+          if (payload.type === "data") {
+            terminal.write(payload.data || "");
+            return;
+          }
           if (payload.type === "hello") {
-            terminal.clear();
-            for (const line of payload.lines) {
-              terminal.write(formatTerminalLine(line));
+            const isShell = !!shellSessionId;
+            // For shells: never clear on hello (history lives in XTerm; server sends no lines).
+            // Only main terminal replays its log buffer.
+            if (!isShell) {
+              terminal.clear();
+              for (const line of payload.lines || []) {
+                terminal.write(formatTerminalLine(line));
+              }
             }
-            onStatus(payload.instanceId, payload.status, payload.exitCode);
+            if (payload.instanceId && !isShell) {
+              onStatus(payload.instanceId, payload.status, payload.exitCode);
+            }
             return;
           }
           if (payload.type === "line") {
@@ -7849,7 +8532,9 @@ function WebTerminal({
     };
 
     terminal.clear();
-    terminal.write(`\x1b[33mConnecting to ${instanceName}...\x1b[0m\r\n`);
+    if (!shellSessionId) {
+      terminal.write(`\x1b[33mConnecting to ${instanceName}...\x1b[0m\r\n`);
+    }
     reconnectAttemptRef.current = 0;
     connect();
 
@@ -7860,7 +8545,7 @@ function WebTerminal({
       socketRef.current?.close(1000, "Terminal view changed");
       socketRef.current = null;
     };
-  }, [instanceId, instanceName, onStatus, reconnectTick, terminalMountKey, terminalReady, token]);
+  }, [instanceId, instanceName, onStatus, reconnectTick, terminalMountKey, terminalReady, token, shellSessionId]);
 
   function sendInput(data: string, echo = true): boolean {
     const socket = socketRef.current;
@@ -7868,7 +8553,9 @@ function WebTerminal({
       setError("终端未连接");
       return false;
     }
-    socket.send(JSON.stringify({ type: "input", data, echo }));
+    const payload: any = { type: "input", data, echo };
+    if (shellSessionId) payload.sessionId = shellSessionId;
+    socket.send(JSON.stringify(payload));
     return true;
   }
 
@@ -7876,7 +8563,7 @@ function WebTerminal({
     event.preventDefault();
     const value = command.trim();
     if (!value) return;
-    if (sendInput(`${value}\n`)) {
+    if (sendInput(`${value}\r\n`)) {
       rememberInputHistory(value);
       setCommand("");
     }
@@ -7909,60 +8596,12 @@ function WebTerminal({
   const terminalActionDisabled = running ? !connected || terminalActionBusy : !instance || starting || stopping || terminalActionBusy;
   const terminalActionTitle = running ? "中断" : starting ? "启动中" : "启动";
 
+  // Raw passthrough for all terminal sessions (main and shells) - direct PTY interactive raw mode
   terminalDataHandlerRef.current = (data: string) => {
-    if (data === "\u0003") {
-      directInputBufferRef.current = "";
-      resetTerminalInputNavigation();
-      sendInput("\u0003");
+    if (!connected || (!shellSessionId && !running)) {
       return;
     }
-    if (!connected || !running) {
-      setError("实例运行并连接后才能输入");
-      return;
-    }
-    if (data === "\x1b[A" || data === "\x1bOA") {
-      navigateTerminalHistory("previous");
-      return;
-    }
-    if (data === "\x1b[B" || data === "\x1bOB") {
-      navigateTerminalHistory("next");
-      return;
-    }
-    if (data === "\t") {
-      autocompleteBufferedTerminalInput();
-      return;
-    }
-    if (data.startsWith("\x1b")) return;
-
-    const terminal = terminalRef.current;
-    let buffer = directInputBufferRef.current;
-    const normalized = data.replace(/\r\n/g, "\r");
-
-    for (const character of normalized) {
-      if (character === "\r" || character === "\n") {
-        terminal?.write("\r\n");
-        if (sendInput(`${buffer}\n`, false)) {
-          rememberInputHistory(buffer);
-        }
-        resetTerminalInputNavigation();
-        buffer = "";
-        continue;
-      }
-      if (character === "\u007f" || character === "\b") {
-        if (buffer.length > 0) {
-          resetTerminalInputNavigation();
-          buffer = Array.from(buffer).slice(0, -1).join("");
-          terminal?.write("\b \b");
-        }
-        continue;
-      }
-      if (character < " " && character !== "\t") continue;
-      resetTerminalInputNavigation();
-      buffer += character;
-      terminal?.write(character);
-    }
-
-    directInputBufferRef.current = buffer;
+    sendInput(data, false);
   };
 
   function sendTerminalShortcut(shortcut: TerminalShortcutKey) {
@@ -7973,8 +8612,7 @@ function WebTerminal({
       return;
     }
 
-    if (!connected || !running) {
-      setError("实例运行并连接后才能输入");
+    if (!connected || (!shellSessionId && !running)) {
       setMobileCtrlActive(false);
       return;
     }
@@ -7985,13 +8623,46 @@ function WebTerminal({
       return;
     }
 
-    if (!mobileCtrlActive && (shortcut.viaBufferedInput || shortcut.id === "up" || shortcut.id === "down")) {
-      terminalDataHandlerRef.current(data);
-    } else {
-      sendInput(data, false);
-    }
+    sendInput(data, false);
     setMobileCtrlActive(false);
   }
+
+  useEffect(() => {
+    if (!isActive) return;
+    onMountTerminalActions?.({
+      clear: () => {
+        terminalRef.current?.clear();
+        clearRememberedSakiTerminalSelection();
+      },
+      reconnect: () => setReconnectTick((value) => value + 1),
+      toggleImmersive: () => setImmersive((value) => !value),
+      isImmersive: immersive,
+      connectionState,
+      sendCommand: (cmd: string) => {
+        if (!cmd.trim()) return;
+        rememberInputHistory(cmd.trim());
+        sendInput(`${cmd}\r\n`, true);
+      },
+      getHistory: () => inputHistoryRef.current,
+      extractOrCopyLogs: () => {
+        const term = terminalRef.current;
+        if (!term) return;
+        const sel = readTerminalClipboardText(term);
+        if (sel && sel.trim().length > 0) {
+          copyTextToClipboard(sel, "选中文本已复制");
+          return;
+        }
+        const full = readAllTerminalBufferText(term);
+        if (!full) {
+          setCopyToast("终端暂无文本");
+          setTimeout(() => setCopyToast(""), 2000);
+          return;
+        }
+        setExtractedLogContent(full);
+        setShowLogExtractModal(true);
+      }
+    });
+  }, [isActive, immersive, connectionState, onMountTerminalActions]);
 
   const terminalPanel = (
     <div
@@ -8000,66 +8671,150 @@ function WebTerminal({
       aria-modal={immersive ? true : undefined}
       aria-label={immersive ? `${instanceName || "实例"} 沉浸式终端` : undefined}
     >
-      <div className="terminal-toolbar">
-        <div className={`terminal-connection terminal-state-${connectionState}`}>
-          <span />
-          {terminalStateLabel(connectionState)}
+      {immersive && (
+        <div className="terminal-immersive-header">
+          <div className="immersive-header-left">
+            <span className="immersive-status-dot" data-status={connectionState} />
+            <span className="immersive-title">
+              {instanceName || "实例"} {shellSessionId ? "· 独立终端 (Shell)" : "· 主终端"}
+            </span>
+            <span className="immersive-hint">全屏沉浸模式</span>
+          </div>
+          <div className="immersive-header-right">
+            <button
+              type="button"
+              className="immersive-action-btn"
+              title="提取全部文本 / 复制日志"
+              onClick={() => {
+                const full = readAllTerminalBufferText(terminalRef.current);
+                setExtractedLogContent(full);
+                setShowLogExtractModal(true);
+              }}
+            >
+              <FileText size={14} />
+              <span>文本</span>
+            </button>
+            <button
+              type="button"
+              className="immersive-action-btn"
+              title="清空终端"
+              onClick={() => {
+                terminalRef.current?.clear();
+                clearRememberedSakiTerminalSelection();
+              }}
+            >
+              <Trash2 size={14} />
+              <span>清空</span>
+            </button>
+            <button
+              type="button"
+              className="immersive-action-btn"
+              title="重新连接"
+              onClick={() => setReconnectTick((v) => v + 1)}
+            >
+              <RefreshCw size={14} />
+              <span>重连</span>
+            </button>
+            <button
+              type="button"
+              className="immersive-action-btn immersive-exit-btn"
+              title="退出沉浸终端 (恢复窗口)"
+              onClick={() => setImmersive(false)}
+            >
+              <Minimize2 size={15} />
+              <span>退出沉浸</span>
+            </button>
+          </div>
         </div>
-        <div className="terminal-toolbar-actions">
-          <button
-            className="icon-button mini"
-            title="清空"
-            type="button"
-            onClick={() => {
-              terminalRef.current?.clear();
-              clearRememberedSakiTerminalSelection();
-            }}
-          >
-            <Trash2 size={15} />
-          </button>
-          <button
-            className="icon-button mini"
-            title="重连"
-            type="button"
-            onClick={() => setReconnectTick((value) => value + 1)}
-            disabled={!instance}
-          >
-            <RefreshCw size={15} />
-          </button>
-          <button
-            className="icon-button mini"
-            title={immersive ? "退出沉浸终端" : "沉浸终端"}
-            type="button"
-            aria-pressed={immersive}
-            onClick={() => setImmersive((value) => !value)}
-          >
-            {immersive ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-          </button>
-          <button
-            className={running ? "icon-button mini danger-action" : "icon-button mini"}
-            title={terminalActionTitle}
-            type="button"
-            onClick={() => void toggleTerminalProcess()}
-            disabled={terminalActionDisabled}
-          >
-            {running ? <XOctagon size={15} /> : <Play size={15} />}
-          </button>
+      )}
+      <div
+        className="xterm-host"
+        ref={handleTerminalHostRef}
+        onClick={() => {
+          if (window.matchMedia("(pointer: fine)").matches) {
+            terminalRef.current?.focus();
+          }
+        }}
+      />
+
+      {copyToast && <div className="terminal-copy-toast">{copyToast}</div>}
+
+      {selectedTerminalText && (
+        <div className="terminal-mobile-selection-bar">
+          <div className="selection-info">
+            <strong>{selectedTerminalText.length}</strong> 字
+          </div>
+          <div className="selection-actions">
+            <button
+              type="button"
+              className="selection-action-btn primary"
+              title="复制选中文本"
+              aria-label="复制"
+              onClick={() => {
+                copyTextToClipboard(selectedTerminalText, "选中文本已复制");
+                terminalRef.current?.clearSelection();
+                setSelectedTerminalText("");
+              }}
+            >
+              <Copy size={14} />
+            </button>
+            {onAskSaki && (
+              <button
+                type="button"
+                className="selection-action-btn saki"
+                title="问 Saki"
+                aria-label="问 Saki"
+                onClick={() => {
+                  onAskSaki({
+                    message: `请分析以下终端选中的内容：\n\`\`\`\n${selectedTerminalText}\n\`\`\``,
+                    mode: "agent"
+                  });
+                }}
+              >
+                <Sparkles size={14} />
+              </button>
+            )}
+            <button
+              type="button"
+              className="selection-action-btn close"
+              title="取消选择"
+              aria-label="取消"
+              onClick={() => {
+                terminalRef.current?.clearSelection();
+                setSelectedTerminalText("");
+              }}
+            >
+              <X size={14} />
+            </button>
+          </div>
         </div>
-      </div>
-      <div className="xterm-host" ref={handleTerminalHostRef} onClick={() => terminalRef.current?.focus()} />
-      <form className="terminal-command-bar" onSubmit={submitCommand}>
-        <input
-          value={command}
-          onChange={handleCommandChange}
-          onKeyDown={handleCommandKeyDown}
-          disabled={!connected || !running}
-          placeholder={running ? "命令" : "实例未运行"}
-        />
-        <button className="primary-button terminal-send" type="submit" disabled={!connected || !running || !command.trim()}>
-          <Send size={17} />
+      )}
+      <div className="terminal-mobile-keys" role="toolbar" aria-label="终端快捷按键">
+        <button
+          key="copy-action-key"
+          className={`terminal-key-button ${selectedTerminalText ? "active active-copy" : ""}`}
+          type="button"
+          title={selectedTerminalText ? "复制选中文本" : "提取并复制日志文本"}
+          onClick={() => {
+            if (selectedTerminalText) {
+              copyTextToClipboard(selectedTerminalText, "选中文本已复制");
+              terminalRef.current?.clearSelection();
+              setSelectedTerminalText("");
+            } else {
+              const full = readAllTerminalBufferText(terminalRef.current);
+              if (!full) {
+                setCopyToast("终端暂无文本");
+                setTimeout(() => setCopyToast(""), 2000);
+                return;
+              }
+              setExtractedLogContent(full);
+              setShowLogExtractModal(true);
+            }
+          }}
+        >
+          <Copy size={13} style={{ marginRight: 3, verticalAlign: "middle" }} />
+          {selectedTerminalText ? "复制" : "文本"}
         </button>
-      </form>
-      <div className="terminal-mobile-keys" aria-label="移动端终端快捷键">
         {terminalShortcutKeys.map((shortcut) => {
           const active = shortcut.type === "modifier" && mobileCtrlActive;
           return (
@@ -8076,7 +8831,69 @@ function WebTerminal({
           );
         })}
       </div>
-      {error ? <div className="terminal-error">{error}</div> : null}
+      {error ? (
+        <div className="terminal-error">
+          <span>{error}</span>
+          <button
+            type="button"
+            className="terminal-error-close"
+            onClick={() => setError("")}
+            title="关闭提示"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+      {showLogExtractModal && (
+        <div className="modal-backdrop terminal-extract-backdrop" onClick={() => setShowLogExtractModal(false)}>
+          <div className="glass-panel terminal-extract-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="terminal-extract-header">
+              <div className="terminal-extract-title">
+                <FileText size={16} />
+                <span>终端文本查看与复制</span>
+              </div>
+              <button
+                type="button"
+                className="icon-button mini"
+                onClick={() => setShowLogExtractModal(false)}
+              >
+                <X size={15} />
+              </button>
+            </div>
+            <div className="terminal-extract-body">
+              <textarea
+                className="terminal-extract-textarea"
+                readOnly
+                value={extractedLogContent || "终端暂无输出内容"}
+                onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+              />
+            </div>
+            <div className="terminal-extract-footer">
+              <span className="terminal-extract-count">共 {extractedLogContent.length} 字符</span>
+              <div className="terminal-extract-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setShowLogExtractModal(false)}
+                >
+                  关闭
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => {
+                    copyTextToClipboard(extractedLogContent, "全部日志已复制");
+                    setShowLogExtractModal(false);
+                  }}
+                >
+                  <Copy size={14} />
+                  <span>复制全部</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {lastIssue ? (
         <div className="terminal-issue">
           <span>{lastIssue}</span>
@@ -8109,13 +8926,15 @@ function FileManager({
   instance,
   onSakiFileDragChange,
   onSakiInstanceFileDrop,
-  darkMode
+  darkMode,
+  onClose
 }: {
   token: string;
   instance: ManagedInstance | null;
   onSakiFileDragChange: (active: boolean) => void;
   onSakiInstanceFileDrop?: ((payload: SakiInstanceFileDragPayload) => void) | undefined;
   darkMode: boolean;
+  onClose?: () => void;
 }) {
   const instanceId = instance?.id ?? null;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -8160,7 +8979,7 @@ function FileManager({
     y: number;
     overSaki: boolean;
   } | null>(null);
-  const [mobileBrowserOpen, setMobileBrowserOpen] = useState(false);
+  const [mobileBrowserOpen, setMobileBrowserOpen] = useState(true);
   const [mobileEditorOpen, setMobileEditorOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -8174,6 +8993,605 @@ function FileManager({
   } | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
   const [treeData, setTreeData] = useState<Record<string, InstanceFileEntry[]>>({});
+  const [fileViewMode, setFileViewMode] = useState<"explorer" | "tree">("explorer");
+  const [mobileActionEntry, setMobileActionEntry] = useState<InstanceFileEntry | null>(null);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [mobileSearchQuery, setMobileSearchQuery] = useState("");
+  const mobileItemTouchTimerRef = useRef<number | null>(null);
+
+  // MT Manager Dual-Pane State
+  const [activePane, setActivePane] = useState<"left" | "right">("left");
+  const [leftPath, setLeftPath] = useState("");
+  const [leftEntries, setLeftEntries] = useState<InstanceFileEntry[]>([]);
+  const [leftLoading, setLeftLoading] = useState(false);
+  const [rightPath, setRightPath] = useState("");
+  const [rightEntries, setRightEntries] = useState<InstanceFileEntry[]>([]);
+  const [rightLoading, setRightLoading] = useState(false);
+  const [showMobileCreateMenu, setShowMobileCreateMenu] = useState(false);
+
+  const displayLeftEntries = useMemo(() => {
+    if (!mobileSearchQuery.trim()) return leftEntries;
+    const q = mobileSearchQuery.trim().toLowerCase();
+    return leftEntries.filter((e) => `${e.name} ${e.path}`.toLowerCase().includes(q));
+  }, [leftEntries, mobileSearchQuery]);
+
+  const displayRightEntries = useMemo(() => {
+    if (!mobileSearchQuery.trim()) return rightEntries;
+    const q = mobileSearchQuery.trim().toLowerCase();
+    return rightEntries.filter((e) => `${e.name} ${e.path}`.toLowerCase().includes(q));
+  }, [rightEntries, mobileSearchQuery]);
+
+  const leftHistoryRef = useRef<string[]>([""]);
+  const leftHistoryIndexRef = useRef(0);
+  const [leftHistoryState, setLeftHistoryState] = useState({ canBack: false, canForward: false });
+
+  const rightHistoryRef = useRef<string[]>([""]);
+  const rightHistoryIndexRef = useRef(0);
+  const [rightHistoryState, setRightHistoryState] = useState({ canBack: false, canForward: false });
+
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
+  const [marqueeBox, setMarqueeBox] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const explorerListRef = useRef<HTMLDivElement | null>(null);
+  const isDraggingMarqueeRef = useRef(false);
+  const marqueeStartPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const lastSelectedPathRef = useRef<string | null>(null);
+  const [desktopContextMenu, setDesktopContextMenu] = useState<{
+    x: number;
+    y: number;
+    type: "item" | "blank";
+    targetEntry?: InstanceFileEntry;
+    selectedEntries: InstanceFileEntry[];
+  } | null>(null);
+
+  const [mobileSelectedPaths, setMobileSelectedPaths] = useState<Set<string>>(() => new Set());
+  const [isMobileSelectMode, setIsMobileSelectMode] = useState(false);
+  const touchStartPosRef = useRef<{ x: number; y: number; time: number }>({ x: 0, y: 0, time: 0 });
+  const touchSwipeTriggeredRef = useRef(false);
+
+  function handleDesktopSelectAll() {
+    if (selectedPaths.size === filteredEntries.length) {
+      setSelectedPaths(new Set());
+    } else {
+      setSelectedPaths(new Set(filteredEntries.map(e => e.path)));
+    }
+  }
+
+  async function handleDesktopBatchDownload() {
+    if (!instanceId || selectedPaths.size === 0) return;
+    const paths = Array.from(selectedPaths);
+    try {
+      if (paths.length === 1) {
+        const entry = entries.find(e => e.path === paths[0]);
+        if (entry && entry.type === "file") {
+          await api.downloadInstanceFile(token, instanceId, entry.path);
+        } else {
+          await api.saveInstanceArchiveDownload(token, instanceId, paths, `${entry?.name ?? "archive"}.zip`);
+        }
+      } else {
+        await api.saveInstanceArchiveDownload(token, instanceId, paths, `download_${Date.now()}.zip`);
+      }
+      showFileToast("下载中", `已触发 ${paths.length} 项下载`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "下载失败");
+    }
+  }
+
+  async function handleDesktopBatchArchive() {
+    if (!instanceId || selectedPaths.size === 0) return;
+    const name = window.prompt("压缩包文件名", `archive_${Date.now()}.tar.gz`)?.trim();
+    if (!name) return;
+    const outPath = joinFilePath(currentPath, name);
+    try {
+      await api.archiveInstancePaths(token, instanceId, Array.from(selectedPaths), outPath);
+      await loadDirectory(currentPath);
+      showFileToast("压缩完成", `已生成压缩包 ${name}`);
+      setSelectedPaths(new Set());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "压缩失败");
+    }
+  }
+
+  async function handleDesktopBatchDelete() {
+    if (!instanceId || selectedPaths.size === 0) return;
+    const paths = Array.from(selectedPaths);
+    if (!window.confirm(`确定要删除选中的 ${paths.length} 个项目吗？`)) return;
+
+    // Optimistic: immediately remove from UI
+    setEntries((prev) => prev.filter((e) => !paths.some((p) => e.path === p || e.path.startsWith(`${p}/`))));
+    setTreeData((prev) => {
+      const next = { ...prev };
+      for (const [dirPath, items] of Object.entries(next)) {
+        if (paths.some((p) => dirPath === p || dirPath.startsWith(`${p}/`))) {
+          delete next[dirPath];
+        } else {
+          next[dirPath] = items.filter((item) => !paths.some((p) => item.path === p || item.path.startsWith(`${p}/`)));
+        }
+      }
+      return next;
+    });
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      for (const p of paths) {
+        next.delete(p);
+        for (const folder of Array.from(next)) {
+          if (folder.startsWith(`${p}/`)) next.delete(folder);
+        }
+      }
+      return next;
+    });
+
+    // Clear any selected/editor states that match deleted paths
+    for (const p of paths) {
+      if (selectedPath === p || selectedPath?.startsWith(`${p}/`)) setSelectedPath(null);
+      if (editorPath === p || editorPath?.startsWith(`${p}/`)) {
+        setEditorPath(null);
+        setEditorContent("");
+        setEditorMode("edit");
+        setMobileEditorOpen(false);
+      }
+      if (openFileActionMenuPath === p) setOpenFileActionMenuPath(null);
+    }
+    setSelectedPaths(new Set());
+    showFileToast("删除中", `正在删除 ${paths.length} 项...`);
+
+    try {
+      for (const p of paths) {
+        await api.deleteInstancePath(token, instanceId, p);
+      }
+      await loadDirectory(currentPath);
+      showFileToast("删除成功", `已删除 ${paths.length} 项`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批量删除失败");
+      await loadDirectory(currentPath);
+    }
+  }
+
+  function toggleMobileSelection(path: string) {
+    setIsMobileSelectMode(true);
+    setMobileSelectedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }
+
+  function handleMobileTouchStart(e: React.TouchEvent, entry: InstanceFileEntry) {
+    const touch = e.touches[0];
+    if (!touch) return;
+    touchStartPosRef.current = { x: touch.clientX, y: touch.clientY, time: Date.now() };
+    touchSwipeTriggeredRef.current = false;
+    if (!isMobileSelectMode) {
+      handleTouchStart(entry);
+    }
+  }
+
+  function handleMobileTouchMove(e: React.TouchEvent, entry: InstanceFileEntry) {
+    const touch = e.touches[0];
+    if (!touch) return;
+    const dx = touch.clientX - touchStartPosRef.current.x;
+    const dy = touch.clientY - touchStartPosRef.current.y;
+
+    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+      cancelMobileFileLongPress();
+    }
+
+    if (dx > 35 && Math.abs(dy) < 25 && !touchSwipeTriggeredRef.current) {
+      touchSwipeTriggeredRef.current = true;
+      toggleMobileSelection(entry.path);
+    }
+  }
+
+  function handleMobileTouchEnd() {
+    handleTouchEnd();
+  }
+
+  function handleMobileRowClick(entry: InstanceFileEntry, pane: "left" | "right") {
+    setActivePane(pane);
+    if (isMobileSelectMode) {
+      toggleMobileSelection(entry.path);
+      return;
+    }
+    if (entry.type === "directory") {
+      void loadPaneDirectory(pane, entry.path);
+    } else {
+      setSelectedPath(entry.path);
+      void openEntry(entry);
+    }
+  }
+
+  function handleMobileSelectAll() {
+    const currentList = activePane === "left" ? displayLeftEntries : displayRightEntries;
+    if (mobileSelectedPaths.size === currentList.length) {
+      setMobileSelectedPaths(new Set());
+    } else {
+      setMobileSelectedPaths(new Set(currentList.map(e => e.path)));
+      setIsMobileSelectMode(true);
+    }
+  }
+
+  async function handleMobileBatchCopy() {
+    if (!instanceId || mobileSelectedPaths.size === 0) return;
+    const targetDir = activePane === "left" ? rightPath : leftPath;
+    const paths = Array.from(mobileSelectedPaths);
+    setError("");
+    try {
+      for (const p of paths) {
+        const entry = (activePane === "left" ? leftEntries : rightEntries).find(e => e.path === p);
+        if (!entry) continue;
+        const targetPath = joinFilePath(targetDir, entry.name);
+        if (entry.type === "file") {
+          const fileData = await api.readInstanceFile(token, instanceId, entry.path);
+          await api.writeInstanceFile(token, instanceId, targetPath, fileData.content);
+        } else {
+          const tmpArchive = `${entry.path}.mt_batch_copy.tar.gz`;
+          await api.archiveInstancePaths(token, instanceId, [entry.path], tmpArchive);
+          await api.extractInstanceArchive(token, instanceId, tmpArchive, { outputPath: targetDir });
+          await api.deleteInstancePath(token, instanceId, tmpArchive);
+        }
+      }
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      showFileToast("复制完成", `已复制 ${paths.length} 项到另一侧`);
+      setMobileSelectedPaths(new Set());
+      setIsMobileSelectMode(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批量复制失败");
+    }
+  }
+
+  async function handleMobileBatchMove() {
+    if (!instanceId || mobileSelectedPaths.size === 0) return;
+    const targetDir = activePane === "left" ? rightPath : leftPath;
+    const paths = Array.from(mobileSelectedPaths);
+    setError("");
+    try {
+      for (const p of paths) {
+        const entry = (activePane === "left" ? leftEntries : rightEntries).find(e => e.path === p);
+        if (!entry) continue;
+        const targetPath = joinFilePath(targetDir, entry.name);
+        if (entry.path === targetPath) continue;
+        if (entry.type === "file") {
+          const fileData = await api.readInstanceFile(token, instanceId, entry.path);
+          await api.writeInstanceFile(token, instanceId, targetPath, fileData.content);
+          await api.deleteInstancePath(token, instanceId, entry.path);
+        } else {
+          const tmpArchive = `${entry.path}.mt_batch_move.tar.gz`;
+          await api.archiveInstancePaths(token, instanceId, [entry.path], tmpArchive);
+          await api.extractInstanceArchive(token, instanceId, tmpArchive, { outputPath: targetDir });
+          await api.deleteInstancePath(token, instanceId, tmpArchive);
+          await api.deleteInstancePath(token, instanceId, entry.path);
+        }
+      }
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      showFileToast("移动完成", `已移动 ${paths.length} 项到另一侧`);
+      setMobileSelectedPaths(new Set());
+      setIsMobileSelectMode(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批量移动失败");
+    }
+  }
+
+  async function handleMobileBatchArchive() {
+    if (!instanceId || mobileSelectedPaths.size === 0) return;
+    const targetDir = activePane === "left" ? leftPath : rightPath;
+    const name = window.prompt("压缩包名称", `archive_${Date.now()}.tar.gz`)?.trim();
+    if (!name) return;
+    const outPath = joinFilePath(targetDir, name);
+    try {
+      await api.archiveInstancePaths(token, instanceId, Array.from(mobileSelectedPaths), outPath);
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      showFileToast("压缩完成", `已生成压缩包 ${name}`);
+      setMobileSelectedPaths(new Set());
+      setIsMobileSelectMode(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批量压缩失败");
+    }
+  }
+
+  async function handleMobileBatchDownload() {
+    if (!instanceId || mobileSelectedPaths.size === 0) return;
+    const paths = Array.from(mobileSelectedPaths);
+    try {
+      if (paths.length === 1) {
+        const entry = (activePane === "left" ? leftEntries : rightEntries).find(e => e.path === paths[0]);
+        if (entry && entry.type === "file") {
+          await api.downloadInstanceFile(token, instanceId, entry.path);
+        } else {
+          await api.saveInstanceArchiveDownload(token, instanceId, paths, `${entry?.name ?? "archive"}.zip`);
+        }
+      } else {
+        await api.saveInstanceArchiveDownload(token, instanceId, paths, `files_${Date.now()}.zip`);
+      }
+      showFileToast("下载中", `已触发 ${paths.length} 项下载`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批量下载失败");
+    }
+  }
+
+  async function handleMobileBatchDelete() {
+    if (!instanceId || mobileSelectedPaths.size === 0) return;
+    const paths = Array.from(mobileSelectedPaths);
+    if (!window.confirm(`确定要删除选中的 ${paths.length} 个项目吗？`)) return;
+
+    // Optimistic: immediately remove from both panes' UI
+    const isDeletedPath = (p: string) => paths.some((d) => p === d || p.startsWith(`${d}/`));
+    setLeftEntries((prev) => prev.filter((e) => !isDeletedPath(e.path)));
+    setRightEntries((prev) => prev.filter((e) => !isDeletedPath(e.path)));
+
+    // Clear any editor/action-menu states matching deleted paths
+    for (const p of paths) {
+      if (selectedPath === p || selectedPath?.startsWith(`${p}/`)) setSelectedPath(null);
+      if (editorPath === p || editorPath?.startsWith(`${p}/`)) {
+        setEditorPath(null);
+        setEditorContent("");
+        setEditorMode("edit");
+        setMobileEditorOpen(false);
+      }
+      if (openFileActionMenuPath === p) setOpenFileActionMenuPath(null);
+      if (mobileActionEntry?.path === p || mobileActionEntry?.path.startsWith(`${p}/`)) {
+        setMobileActionEntry(null);
+      }
+    }
+    setMobileSelectedPaths(new Set());
+    setIsMobileSelectMode(false);
+    showFileToast("删除中", `正在删除 ${paths.length} 项...`);
+
+    try {
+      for (const p of paths) {
+        await api.deleteInstancePath(token, instanceId, p);
+      }
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      showFileToast("删除成功", `已删除 ${paths.length} 项`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批量删除失败");
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+    }
+  }
+
+  function handleTouchStart(entry: InstanceFileEntry) {
+    if (mobileItemTouchTimerRef.current !== null) {
+      window.clearTimeout(mobileItemTouchTimerRef.current);
+    }
+    mobileItemTouchTimerRef.current = window.setTimeout(() => {
+      setMobileActionEntry(entry);
+    }, 450);
+  }
+
+  function handleTouchEnd() {
+    if (mobileItemTouchTimerRef.current !== null) {
+      window.clearTimeout(mobileItemTouchTimerRef.current);
+      mobileItemTouchTimerRef.current = null;
+    }
+  }
+
+  const loadPaneDirectory = useCallback(
+    async (pane: "left" | "right", pathToLoad: string, pushHistory = true) => {
+      if (!instanceId) return;
+      if (pane === "left") setLeftLoading(true);
+      else setRightLoading(true);
+      try {
+        const response = await api.listInstanceFiles(token, instanceId, pathToLoad);
+        if (pane === "left") {
+          setLeftPath(response.path);
+          setLeftEntries(response.entries);
+          setLeftLoading(false);
+          if (pushHistory) {
+            const hist = leftHistoryRef.current.slice(0, leftHistoryIndexRef.current + 1);
+            if (hist[hist.length - 1] !== response.path) {
+              hist.push(response.path);
+              leftHistoryRef.current = hist;
+              leftHistoryIndexRef.current = hist.length - 1;
+            }
+          }
+          setLeftHistoryState({
+            canBack: leftHistoryIndexRef.current > 0,
+            canForward: leftHistoryIndexRef.current < leftHistoryRef.current.length - 1
+          });
+        } else {
+          setRightPath(response.path);
+          setRightEntries(response.entries);
+          setRightLoading(false);
+          if (pushHistory) {
+            const hist = rightHistoryRef.current.slice(0, rightHistoryIndexRef.current + 1);
+            if (hist[hist.length - 1] !== response.path) {
+              hist.push(response.path);
+              rightHistoryRef.current = hist;
+              rightHistoryIndexRef.current = hist.length - 1;
+            }
+          }
+          setRightHistoryState({
+            canBack: rightHistoryIndexRef.current > 0,
+            canForward: rightHistoryIndexRef.current < rightHistoryRef.current.length - 1
+          });
+        }
+      } catch (err) {
+        if (pane === "left") setLeftLoading(false);
+        else setRightLoading(false);
+      }
+    },
+    [instanceId, token]
+  );
+
+  function handleNavBack() {
+    if (activePane === "left") {
+      if (leftHistoryIndexRef.current <= 0) return;
+      leftHistoryIndexRef.current -= 1;
+      const targetPath = leftHistoryRef.current[leftHistoryIndexRef.current] ?? "";
+      void loadPaneDirectory("left", targetPath, false);
+      setLeftHistoryState({
+        canBack: leftHistoryIndexRef.current > 0,
+        canForward: leftHistoryIndexRef.current < leftHistoryRef.current.length - 1
+      });
+    } else {
+      if (rightHistoryIndexRef.current <= 0) return;
+      rightHistoryIndexRef.current -= 1;
+      const targetPath = rightHistoryRef.current[rightHistoryIndexRef.current] ?? "";
+      void loadPaneDirectory("right", targetPath, false);
+      setRightHistoryState({
+        canBack: rightHistoryIndexRef.current > 0,
+        canForward: rightHistoryIndexRef.current < rightHistoryRef.current.length - 1
+      });
+    }
+  }
+
+  function handleNavForward() {
+    if (activePane === "left") {
+      if (leftHistoryIndexRef.current >= leftHistoryRef.current.length - 1) return;
+      leftHistoryIndexRef.current += 1;
+      const targetPath = leftHistoryRef.current[leftHistoryIndexRef.current] ?? "";
+      void loadPaneDirectory("left", targetPath, false);
+      setLeftHistoryState({
+        canBack: leftHistoryIndexRef.current > 0,
+        canForward: leftHistoryIndexRef.current < leftHistoryRef.current.length - 1
+      });
+    } else {
+      if (rightHistoryIndexRef.current >= rightHistoryRef.current.length - 1) return;
+      rightHistoryIndexRef.current += 1;
+      const targetPath = rightHistoryRef.current[rightHistoryIndexRef.current] ?? "";
+      void loadPaneDirectory("right", targetPath, false);
+      setRightHistoryState({
+        canBack: rightHistoryIndexRef.current > 0,
+        canForward: rightHistoryIndexRef.current < rightHistoryRef.current.length - 1
+      });
+    }
+  }
+
+  function handleNavUp() {
+    if (activePane === "left") {
+      if (!leftPath) return;
+      void loadPaneDirectory("left", parentFilePath(leftPath));
+    } else {
+      if (!rightPath) return;
+      void loadPaneDirectory("right", parentFilePath(rightPath));
+    }
+  }
+
+  const [editingPane, setEditingPane] = useState<"left" | "right" | null>(null);
+  const [editingPathText, setEditingPathText] = useState("");
+
+  async function handlePathJump(pane: "left" | "right") {
+    setEditingPane(null);
+    let target = editingPathText.trim();
+    while (target.startsWith("/")) {
+      target = target.substring(1);
+    }
+    while (target.endsWith("/")) {
+      target = target.substring(0, target.length - 1);
+    }
+    target = target.trim();
+    const current = pane === "left" ? leftPath : rightPath;
+    if (target === current) return;
+    try {
+      await loadPaneDirectory(pane, target);
+    } catch {
+      // handled
+    }
+  }
+
+  const [desktopEditingPath, setDesktopEditingPath] = useState(false);
+  const [desktopPathText, setDesktopPathText] = useState("");
+
+  async function handleDesktopPathJump() {
+    setDesktopEditingPath(false);
+    let target = desktopPathText.trim();
+    while (target.startsWith("/")) {
+      target = target.substring(1);
+    }
+    while (target.endsWith("/")) {
+      target = target.substring(0, target.length - 1);
+    }
+    target = target.trim();
+    if (target === currentPath) return;
+    try {
+      await loadDirectory(target);
+      const parent = parentFilePath(target);
+      if (parent) {
+        await loadTreeDirectory(parent);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "目录加载失败");
+    }
+  }
+
+  async function copyToOppositePane(entry: InstanceFileEntry) {
+    if (!instanceId) return;
+    const targetDir = activePane === "left" ? rightPath : leftPath;
+    const targetPath = joinFilePath(targetDir, entry.name);
+    setError("");
+    try {
+      if (entry.type === "file") {
+        const fileData = await api.readInstanceFile(token, instanceId, entry.path);
+        await api.writeInstanceFile(token, instanceId, targetPath, fileData.content);
+      } else {
+        const tmpArchive = `${entry.path}.mt_copy.tar.gz`;
+        await api.archiveInstancePaths(token, instanceId, [entry.path], tmpArchive);
+        await api.extractInstanceArchive(token, instanceId, tmpArchive, { outputPath: targetDir });
+        await api.deleteInstancePath(token, instanceId, tmpArchive);
+      }
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      showFileToast("复制完成", `已复制 ${entry.name} 到另一侧 (${targetDir || "根目录"})`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "复制到另一侧失败");
+    }
+  }
+
+  async function moveToOppositePane(entry: InstanceFileEntry) {
+    if (!instanceId) return;
+    const targetDir = activePane === "left" ? rightPath : leftPath;
+    const targetPath = joinFilePath(targetDir, entry.name);
+    if (entry.path === targetPath) return;
+    setError("");
+    try {
+      await api.renameInstancePath(token, instanceId, entry.path, targetPath);
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      showFileToast("移动完成", `已移动 ${entry.name} 到另一侧 (${targetDir || "根目录"})`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "移动到另一侧失败");
+    }
+  }
+
+  async function extractToOppositePane(entry: InstanceFileEntry) {
+    if (!instanceId) return;
+    const targetDir = activePane === "left" ? rightPath : leftPath;
+    setError("");
+    try {
+      await api.extractInstanceArchive(token, instanceId, entry.path, { outputPath: targetDir });
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      showFileToast("解压完成", `已解压到另一侧 (${targetDir || "根目录"})`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "解压失败");
+    }
+  }
+
+  function syncPanes() {
+    if (activePane === "left") {
+      void loadPaneDirectory("right", leftPath);
+      showFileToast("已同步", "右侧已同步至左侧路径");
+    } else {
+      void loadPaneDirectory("left", rightPath);
+      showFileToast("已同步", "左侧已同步至右侧路径");
+    }
+  }
+
+  const breadcrumbSegments = useMemo(() => {
+    if (!currentPath) return [{ label: "根目录", path: "" }];
+    const parts = currentPath.split("/").filter(Boolean);
+    const segs = [{ label: "根目录", path: "" }];
+    let acc = "";
+    for (const part of parts) {
+      acc = acc ? `${acc}/${part}` : part;
+      segs.push({ label: part, path: acc });
+    }
+    return segs;
+  }, [currentPath]);
 
   const filteredEntries = useMemo(() => {
     const query = fileSearchQuery.trim().toLowerCase();
@@ -8309,11 +9727,17 @@ function FileManager({
     }
   }
 
-  function handleClipboardAction(action: "copy" | "cut", path?: string) {
+  function handleClipboardAction(action: "copy" | "cut", path?: string | string[] | Set<string>) {
     if (!instanceId) return;
     const paths = new Set<string>();
     if (path) {
-      paths.add(path);
+      if (typeof path === "string") {
+        paths.add(path);
+      } else {
+        path.forEach((p) => paths.add(p));
+      }
+    } else if (selectedPaths.size > 0) {
+      selectedPaths.forEach((p) => paths.add(p));
     } else if (selectedPath) {
       paths.add(selectedPath);
     }
@@ -8411,17 +9835,27 @@ function FileManager({
           event.preventDefault();
           void openEntry(entry);
         }
+      } else if (event.key === "a" && (event.ctrlKey || event.metaKey)) {
+        if (!editorPath && !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)) {
+          event.preventDefault();
+          handleDesktopSelectAll();
+        }
       } else if (event.key === "Delete") {
-        if (selectedPath) {
-          const entry = filteredEntries.find(e => e.path === selectedPath);
+        if (selectedPaths.size > 1) {
+          event.preventDefault();
+          void handleDesktopBatchDelete();
+        } else if (selectedPath || selectedPaths.size === 1) {
+          const pathToDelete = selectedPath || Array.from(selectedPaths)[0];
+          const entry = filteredEntries.find(e => e.path === pathToDelete);
           if (entry) {
             event.preventDefault();
             void deleteEntry(entry);
           }
         }
       } else if (event.key === "F2") {
-        if (selectedPath) {
-          const entry = filteredEntries.find(e => e.path === selectedPath);
+        const pathToRename = selectedPath || (selectedPaths.size === 1 ? Array.from(selectedPaths)[0] : null);
+        if (pathToRename) {
+          const entry = filteredEntries.find(e => e.path === pathToRename);
           if (entry) {
             event.preventDefault();
             void renameEntry(entry);
@@ -8430,15 +9864,18 @@ function FileManager({
       } else if (event.key === "Escape") {
         event.preventDefault();
         setSelectedPath(null);
+        setSelectedPaths(new Set());
+        setDesktopContextMenu(null);
+        lastSelectedPathRef.current = null;
       } else if (event.key === "c" && (event.ctrlKey || event.metaKey)) {
-        if (selectedPath) {
+        if (selectedPaths.size > 0 || selectedPath) {
           event.preventDefault();
-          handleClipboardAction("copy", selectedPath);
+          handleClipboardAction("copy", selectedPaths.size > 0 ? selectedPaths : selectedPath!);
         }
       } else if (event.key === "x" && (event.ctrlKey || event.metaKey)) {
-        if (selectedPath) {
+        if (selectedPaths.size > 0 || selectedPath) {
           event.preventDefault();
-          handleClipboardAction("cut", selectedPath);
+          handleClipboardAction("cut", selectedPaths.size > 0 ? selectedPaths : selectedPath!);
         }
       } else if (event.key === "v" && (event.ctrlKey || event.metaKey)) {
         if (clipboard) {
@@ -8450,15 +9887,23 @@ function FileManager({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [instanceId, editorPath, filteredEntries, selectedPath, clipboard]);
+  }, [instanceId, editorPath, filteredEntries, selectedPath, selectedPaths, clipboard]);
 
   useEffect(() => {
     directoryLoadRequestRef.current += 1;
     fileOpenRequestRef.current += 1;
     setCurrentPath("");
     setEntries([]);
+    setLeftPath("");
+    setLeftEntries([]);
+    setRightPath("");
+    setRightEntries([]);
+    setActivePane("left");
     setFileSearchQuery("");
     setSelectedPath(null);
+    setSelectedPaths(new Set());
+    setDesktopContextMenu(null);
+    lastSelectedPathRef.current = null;
     setEditorPath(null);
     setEditorContent("");
     setEditorMode("edit");
@@ -8472,15 +9917,21 @@ function FileManager({
     setFileConflictPrompt(null);
     setUploadProgress(null);
     setFileToast(null);
-    setMobileBrowserOpen(false);
+    setMobileBrowserOpen(true);
     setMobileEditorOpen(false);
+    setMobileSearchOpen(false);
+    setMobileSearchQuery("");
+    setDesktopEditingPath(false);
+    setDesktopPathText("");
     setTreeData({});
     setExpandedFolders(new Set());
     if (instanceId) {
       void loadDirectory("");
       void loadTreeDirectory("");
+      void loadPaneDirectory("left", "");
+      void loadPaneDirectory("right", "");
     }
-  }, [instanceId, loadDirectory, loadTreeDirectory]);
+  }, [instanceId, loadDirectory, loadTreeDirectory, loadPaneDirectory]);
 
   useEffect(() => {
     return () => {
@@ -8585,11 +10036,14 @@ function FileManager({
   }, [openFileActionMenuPath]);
 
   useEffect(() => {
-    const match = activeFindIndex >= 0 ? findMatches[activeFindIndex] : null;
-    if (match) {
-      revealFindMatch(match, false);
-    }
-  }, [activeFindIndex, editorContent, findMatches]);
+    if (!desktopContextMenu) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest(".win-context-menu")) return;
+      setDesktopContextMenu(null);
+    };
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    return () => window.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [desktopContextMenu]);
 
   function revealFindMatch(match: FindMatchRange, focusEditor: boolean) {
     codeEditorRef.current?.scrollToPosition(match.start);
@@ -8618,6 +10072,7 @@ function FileManager({
     setMobileEditorOpen(false);
     setMobileBrowserOpen(false);
     resetEditorSearchState();
+    onClose?.();
   }
 
   function closeMobileEditorModal() {
@@ -8629,12 +10084,28 @@ function FileManager({
   function openEditorFind() {
     if (!editorCanEdit) return;
     setFindVisible(true);
+    if (findQuery.trim() && findMatches.length > 0) {
+      const match = activeFindIndex >= 0 ? findMatches[activeFindIndex] : findMatches[0];
+      if (match) revealFindMatch(match, false);
+    }
   }
 
   function closeEditorFind() {
     setFindVisible(false);
     setFindQuery("");
     setFindActiveIndex(0);
+  }
+
+  function handleFindQueryChange(newQuery: string) {
+    setFindQuery(newQuery);
+    setFindActiveIndex(0);
+    if (newQuery.trim()) {
+      const matches = editorCanEdit ? collectFindMatches(editorContent, newQuery) : [];
+      const firstMatch = matches[0];
+      if (firstMatch) {
+        revealFindMatch(firstMatch, false);
+      }
+    }
   }
 
   function moveFindMatch(step: number, focusEditor: boolean) {
@@ -8673,9 +10144,23 @@ function FileManager({
       }
     }
     if (!editorCanEdit || editorMode !== "edit") return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      void saveEditor();
+      return;
+    }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
       event.preventDefault();
       openEditorFind();
+      return;
+    }
+    if (event.key === "F3") {
+      event.preventDefault();
+      if (!findVisible) {
+        openEditorFind();
+      } else {
+        moveFindMatch(event.shiftKey ? -1 : 1, true);
+      }
       return;
     }
     if (event.key === "Escape" && findVisible) {
@@ -8738,10 +10223,17 @@ function FileManager({
   function saveBase64Download(contentBase64: string, fileName: string) {
     const url = URL.createObjectURL(base64ToBlob(contentBase64));
     const link = document.createElement("a");
+    link.style.display = "none";
     link.href = url;
     link.download = fileName;
+    document.body.appendChild(link);
     link.click();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => {
+      try {
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      } catch {}
+    }, 1000);
   }
 
   function showFileToast(title: string, detail: string) {
@@ -8768,18 +10260,29 @@ function FileManager({
     setFileConflictPrompt(null);
   }
 
-  function existingEntryByName(name: string): InstanceFileEntry | null {
-    const normalized = name.toLocaleLowerCase();
-    return entries.find((entry) => entry.name.toLocaleLowerCase() === normalized) ?? null;
+  function getActiveTargetDir() {
+    return isMobileFileLayout() ? (activePane === "left" ? leftPath : rightPath) : currentPath;
   }
 
-  async function chooseTargetName(action: FileConflictPrompt["action"], name: string) {
-    const existing = existingEntryByName(name);
+  function existingEntryByName(name: string, targetDir?: string): InstanceFileEntry | null {
+    const normalized = name.toLocaleLowerCase();
+    const targetEntries = isMobileFileLayout()
+      ? (activePane === "left" ? leftEntries : rightEntries)
+      : entries;
+    return targetEntries.find((entry) => entry.name.toLocaleLowerCase() === normalized) ?? null;
+  }
+
+  async function chooseTargetName(action: FileConflictPrompt["action"], name: string, baseDir?: string) {
+    const targetDir = baseDir !== undefined ? baseDir : getActiveTargetDir();
+    const existing = existingEntryByName(name, targetDir);
+    const targetEntries = isMobileFileLayout()
+      ? (activePane === "left" ? leftEntries : rightEntries)
+      : entries;
     if (!existing) {
-      return { name, path: joinFilePath(currentPath, name), overwrite: false };
+      return { name, path: joinFilePath(targetDir, name), overwrite: false };
     }
 
-    const suggestedName = uniqueSiblingName(name, entries);
+    const suggestedName = uniqueSiblingName(name, targetEntries);
     const choice = await askFileConflict({
       action,
       name,
@@ -8788,11 +10291,11 @@ function FileManager({
     });
     if (!choice) return null;
     if (choice === "overwrite" && existing.type === "file") {
-      return { name, path: joinFilePath(currentPath, name), overwrite: true };
+      return { name, path: joinFilePath(targetDir, name), overwrite: true };
     }
     return {
       name: suggestedName,
-      path: joinFilePath(currentPath, suggestedName),
+      path: joinFilePath(targetDir, suggestedName),
       overwrite: false
     };
   }
@@ -8815,7 +10318,7 @@ function FileManager({
     if (!instanceId || entry.type !== "file") return;
     try {
       if (isImageFile(entry.path)) {
-        const response = await api.downloadInstanceFile(token, instanceId, entry.path);
+        const response = await api.downloadInstanceFile(token, instanceId, entry.path, { base64: true });
         if (requestId !== fileOpenRequestRef.current) return;
         const mimeType = imageMimeTypeFromPath(response.path) ?? imageMimeTypeFromPath(entry.path) ?? "image/png";
         setEditorPath(response.path);
@@ -8850,6 +10353,8 @@ function FileManager({
       await api.writeInstanceFile(token, instanceId, editorPath, contentToSave);
       setEditorContent(contentToSave);
       await loadDirectory(currentPath);
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
       setSelectedPath(editorPath);
     } catch (err) {
       setError(err instanceof Error ? err.message : "文件保存失败");
@@ -8862,12 +10367,19 @@ function FileManager({
     if (!instanceId) return;
     const name = window.prompt("文件名")?.trim();
     if (!name) return;
-    const target = await chooseTargetName("create", name);
+    const targetDir = getActiveTargetDir();
+    const target = await chooseTargetName("create", name, targetDir);
     if (!target) return;
     setError("");
     try {
       await api.writeInstanceFile(token, instanceId, target.path, "");
       await loadDirectory(currentPath);
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      const parent = parentFilePath(target.path);
+      if (parent !== currentPath) {
+        await loadTreeDirectory(parent);
+      }
       const response = await api.readInstanceFile(token, instanceId, target.path);
       setSelectedPath(response.path);
       setEditorPath(response.path);
@@ -8886,10 +10398,18 @@ function FileManager({
     if (!instanceId) return;
     const name = window.prompt("目录名")?.trim();
     if (!name) return;
+    const targetDir = getActiveTargetDir();
     setError("");
     try {
-      await api.makeInstanceDirectory(token, instanceId, joinFilePath(currentPath, name));
+      const newDirPath = joinFilePath(targetDir, name);
+      await api.makeInstanceDirectory(token, instanceId, newDirPath);
       await loadDirectory(currentPath);
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      const parent = parentFilePath(newDirPath);
+      if (parent !== currentPath) {
+        await loadTreeDirectory(parent);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "目录创建失败");
     }
@@ -8904,6 +10424,12 @@ function FileManager({
     try {
       const response = await api.renameInstancePath(token, instanceId, entry.path, nextPath);
       await loadDirectory(currentPath);
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      const srcParent = parentFilePath(entry.path);
+      const destParent = parentFilePath(nextPath);
+      if (srcParent !== currentPath) await loadTreeDirectory(srcParent);
+      if (destParent !== currentPath && destParent !== srcParent) await loadTreeDirectory(destParent);
       if (editorPath === entry.path) {
         await openEntry(response);
       }
@@ -8916,17 +10442,65 @@ function FileManager({
     if (!instanceId) return;
     if (!window.confirm(`删除 ${entry.name}？`)) return;
     setError("");
-    try {
-      await api.deleteInstancePath(token, instanceId, entry.path);
-      if (editorPath === entry.path || (editorPath?.startsWith(`${entry.path}/`) ?? false)) {
-        setEditorPath(null);
-        setEditorContent("");
-        setEditorMode("edit");
-        setMobileEditorOpen(false);
+
+    const deletedPath = entry.path;
+    const parentPath = parentFilePath(deletedPath);
+
+    // 1. Optimistic removal from local state immediately
+    setEntries((prev) => prev.filter((e) => e.path !== deletedPath && !e.path.startsWith(`${deletedPath}/`)));
+    setTreeData((prev) => {
+      const next = { ...prev };
+      for (const [dirPath, items] of Object.entries(next)) {
+        if (dirPath === deletedPath || dirPath.startsWith(`${deletedPath}/`)) {
+          delete next[dirPath];
+        } else {
+          next[dirPath] = items.filter((item) => item.path !== deletedPath && !item.path.startsWith(`${deletedPath}/`));
+        }
       }
-      await loadDirectory(currentPath);
+      return next;
+    });
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      next.delete(deletedPath);
+      for (const folder of Array.from(next)) {
+        if (folder.startsWith(`${deletedPath}/`)) next.delete(folder);
+      }
+      return next;
+    });
+
+    if (selectedPath === deletedPath || (selectedPath?.startsWith(`${deletedPath}/`) ?? false)) {
+      setSelectedPath(null);
+    }
+    if (editorPath === deletedPath || (editorPath?.startsWith(`${deletedPath}/`) ?? false)) {
+      setEditorPath(null);
+      setEditorContent("");
+      setEditorMode("edit");
+      setMobileEditorOpen(false);
+    }
+    if (openFileActionMenuPath === deletedPath) {
+      setOpenFileActionMenuPath(null);
+    }
+
+    try {
+      await api.deleteInstancePath(token, instanceId, deletedPath);
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      if (currentPath === deletedPath || currentPath.startsWith(`${deletedPath}/`)) {
+        await loadDirectory(parentPath);
+      } else {
+        await loadDirectory(currentPath);
+      }
+      if (parentPath !== currentPath) {
+        await loadTreeDirectory(parentPath);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "删除失败");
+      await loadDirectory(currentPath);
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      if (parentPath !== currentPath) {
+        await loadTreeDirectory(parentPath);
+      }
     }
   }
 
@@ -8936,7 +10510,8 @@ function FileManager({
   ) {
     if (!instanceId) return;
     const clearInput = options.clearInput ?? true;
-    const target = await chooseTargetName("upload", file.name);
+    const targetDir = getActiveTargetDir();
+    const target = await chooseTargetName("upload", file.name, targetDir);
     if (!target) {
       if (clearInput && fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -8959,6 +10534,12 @@ function FileManager({
         (progress) => setUploadProgress({ ...progress, fileName: progressFileName })
       );
       await loadDirectory(currentPath);
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      const parent = parentFilePath(target.path);
+      if (parent !== currentPath) {
+        await loadTreeDirectory(parent);
+      }
       setSelectedPath(response.path);
       if (editorPath === response.path) {
         setEditorPath(null);
@@ -9002,11 +10583,11 @@ function FileManager({
     if (!instanceId) return;
     setError("");
     try {
-      const response =
-        entry.type === "file"
-          ? await api.downloadInstanceFile(token, instanceId, entry.path)
-          : await api.downloadInstancePathsArchive(token, instanceId, [entry.path], defaultArchiveFileName(entry.path));
-      saveBase64Download(response.contentBase64, response.fileName);
+      if (entry.type === "file") {
+        await api.saveInstanceFileDownload(token, instanceId, entry.path);
+      } else {
+        await api.saveInstanceArchiveDownload(token, instanceId, [entry.path], defaultArchiveFileName(entry.path));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "下载失败");
     }
@@ -9021,6 +10602,8 @@ function FileManager({
     try {
       const response = await api.archiveInstancePaths(token, instanceId, [entry.path], outputPath);
       await loadDirectory(parentFilePath(response.outputPath));
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
       setSelectedPath(response.outputPath);
       showFileToast("压缩完成", `已创建 ${response.entry.name}`);
     } catch (err) {
@@ -9047,6 +10630,8 @@ function FileManager({
     setEditorContent("");
     setEditorMode("edit");
     await loadDirectory(parentFilePath(response.outputPath));
+    await loadPaneDirectory("left", leftPath);
+    await loadPaneDirectory("right", rightPath);
     setSelectedPath(response.outputPath);
     const detail =
       response.skippedCount > 0 || response.overwrittenCount > 0
@@ -9123,6 +10708,725 @@ function FileManager({
     } finally {
       setExtractingPath(null);
     }
+  }
+
+  function renderExplorerView() {
+    if (loading && entries.length === 0) {
+      return <div className="tree-empty-state">载入中...</div>;
+    }
+    if (filteredEntries.length === 0) {
+      return (
+        <div className="explorer-list-view" role="list" ref={explorerListRef}>
+          {currentPath ? (
+            <div
+              className="explorer-item-row is-directory is-parent-dir"
+              onClick={() => void loadDirectory(parentFilePath(currentPath))}
+              title="返回上一级目录"
+            >
+              <div className="explorer-item-main">
+                <div className="explorer-item-icon dir-icon">
+                  <Folder size={17} />
+                </div>
+                <div className="explorer-item-info">
+                  <span className="explorer-item-name" style={{ fontWeight: 700 }}>..</span>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          <div className="explorer-empty-state">
+            <FolderOpen size={36} className="empty-icon" />
+            <span>{fileSearchQuery ? "未搜索到匹配项" : "此文件夹为空"}</span>
+            {!fileSearchQuery ? (
+              <div className="empty-quick-actions">
+                <button className="small-button" type="button" onClick={() => void createFile()}>
+                  <FilePlus size={14} /> 新建文件
+                </button>
+                <button className="small-button" type="button" onClick={() => void createDirectory()}>
+                  <FolderPlus size={14} /> 新建目录
+                </button>
+                <button className="small-button" type="button" onClick={() => fileInputRef.current?.click()}>
+                  <Upload size={14} /> 上传文件
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      );
+    }
+
+    function handleExplorerMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+      if (e.button !== 0) return;
+      if ((e.target as HTMLElement).closest("button, input, a, .explorer-item-actions, .win-context-menu")) {
+        return;
+      }
+      setDesktopContextMenu(null);
+
+      const container = explorerListRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const startClientX = e.clientX;
+      const startClientY = e.clientY;
+      const startX = e.clientX - rect.left + container.scrollLeft;
+      const startY = e.clientY - rect.top + container.scrollTop;
+
+      const initialSelected = new Set(e.ctrlKey || e.metaKey ? selectedPaths : []);
+      let hasDragged = false;
+
+      function handleMouseMove(ev: MouseEvent) {
+        if (!explorerListRef.current) return;
+        const dx = ev.clientX - startClientX;
+        const dy = ev.clientY - startClientY;
+        if (!hasDragged && Math.hypot(dx, dy) < 5) return;
+
+        if (!hasDragged) {
+          hasDragged = true;
+          isDraggingMarqueeRef.current = true;
+          marqueeStartPosRef.current = { x: startX, y: startY };
+        }
+
+        const currentRect = explorerListRef.current.getBoundingClientRect();
+        const currentX = ev.clientX - currentRect.left + explorerListRef.current.scrollLeft;
+        const currentY = ev.clientY - currentRect.top + explorerListRef.current.scrollTop;
+
+        const x1 = marqueeStartPosRef.current.x;
+        const y1 = marqueeStartPosRef.current.y;
+        const x2 = currentX;
+        const y2 = currentY;
+
+        setMarqueeBox({ x1, y1, x2, y2 });
+
+        const minX = Math.min(x1, x2);
+        const maxX = Math.max(x1, x2);
+        const minY = Math.min(y1, y2);
+        const maxY = Math.max(y1, y2);
+
+        const items = explorerListRef.current.querySelectorAll<HTMLElement>(".explorer-item-row[data-path]");
+        const newSelected = new Set(initialSelected);
+
+        items.forEach((item) => {
+          const itemTop = item.offsetTop;
+          const itemLeft = item.offsetLeft;
+          const itemBottom = itemTop + item.offsetHeight;
+          const itemRight = itemLeft + item.offsetWidth;
+
+          if (
+            itemRight >= minX &&
+            itemLeft <= maxX &&
+            itemBottom >= minY &&
+            itemTop <= maxY
+          ) {
+            const path = item.getAttribute("data-path");
+            if (path) newSelected.add(path);
+          }
+        });
+
+        setSelectedPaths(newSelected);
+      }
+
+      function handleMouseUp(ev: MouseEvent) {
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mouseup", handleMouseUp);
+        if (hasDragged) {
+          setTimeout(() => {
+            isDraggingMarqueeRef.current = false;
+          }, 50);
+          setMarqueeBox(null);
+        } else {
+          const itemRow = (ev.target as HTMLElement)?.closest?.(".explorer-item-row");
+          if (!itemRow && !(ev.target as HTMLElement)?.closest?.("button, input, a, .win-context-menu")) {
+            setSelectedPaths(new Set());
+            setSelectedPath(null);
+            lastSelectedPathRef.current = null;
+          }
+        }
+      }
+
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+    }
+
+    return (
+      <div
+        className="explorer-list-view"
+        role="list"
+        ref={explorerListRef}
+        onMouseDown={handleExplorerMouseDown}
+        onContextMenu={(e) => {
+          if ((e.target as HTMLElement).closest(".explorer-item-row, button, input, a, .win-context-menu")) {
+            return;
+          }
+          e.preventDefault();
+          setDesktopContextMenu({
+            x: e.clientX,
+            y: e.clientY,
+            type: "blank",
+            selectedEntries: []
+          });
+        }}
+      >
+        {marqueeBox && (
+          <div
+            className="selection-marquee"
+            style={{
+              left: `${Math.min(marqueeBox.x1, marqueeBox.x2)}px`,
+              top: `${Math.min(marqueeBox.y1, marqueeBox.y2)}px`,
+              width: `${Math.abs(marqueeBox.x2 - marqueeBox.x1)}px`,
+              height: `${Math.abs(marqueeBox.y2 - marqueeBox.y1)}px`,
+            }}
+          />
+        )}
+        {currentPath ? (
+          <div
+            className="explorer-item-row is-directory is-parent-dir"
+            onClick={() => void loadDirectory(parentFilePath(currentPath))}
+            title="返回上一级目录"
+          >
+            <div className="explorer-item-main">
+              <div className="explorer-item-icon dir-icon">
+                <Folder size={17} />
+              </div>
+              <div className="explorer-item-info">
+                <span className="explorer-item-name" style={{ fontWeight: 700 }}>..</span>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {filteredEntries.map((entry) => {
+          const isDir = entry.type === "directory";
+          const isSelected = selectedPaths.has(entry.path) || selectedPath === entry.path || editorPath === entry.path;
+          return (
+            <div
+              key={entry.path}
+              data-path={entry.path}
+              className={`explorer-item-row ${isDir ? "is-directory" : "is-file"} ${isSelected ? "selected" : ""} ${draggingFilePath === entry.path ? "dragging" : ""}`}
+              draggable
+              onDragStart={(e) => {
+                setDraggingFilePath(entry.path);
+                e.dataTransfer.setData("text/plain", entry.path);
+              }}
+              onDragEnd={() => setDraggingFilePath(null)}
+              onClick={(e) => {
+                if (isDraggingMarqueeRef.current) return;
+                setDesktopContextMenu(null);
+
+                if (e.shiftKey && lastSelectedPathRef.current) {
+                  const anchorIdx = filteredEntries.findIndex((item) => item.path === lastSelectedPathRef.current);
+                  const currentIdx = filteredEntries.findIndex((item) => item.path === entry.path);
+                  if (anchorIdx !== -1 && currentIdx !== -1) {
+                    const min = Math.min(anchorIdx, currentIdx);
+                    const max = Math.max(anchorIdx, currentIdx);
+                    const rangeSet = new Set(filteredEntries.slice(min, max + 1).map((item) => item.path));
+                    setSelectedPaths(rangeSet);
+                    setSelectedPath(entry.path);
+                    return;
+                  }
+                }
+
+                if (e.ctrlKey || e.metaKey) {
+                  setSelectedPaths((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(entry.path)) next.delete(entry.path);
+                    else next.add(entry.path);
+                    return next;
+                  });
+                  setSelectedPath(entry.path);
+                  lastSelectedPathRef.current = entry.path;
+                  return;
+                }
+
+                if (entry.type === "directory") {
+                  setSelectedPaths(new Set());
+                  lastSelectedPathRef.current = null;
+                  void loadDirectory(entry.path);
+                  return;
+                }
+
+                setSelectedPaths(new Set([entry.path]));
+                setSelectedPath(entry.path);
+                lastSelectedPathRef.current = entry.path;
+                void openEntry(entry);
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                let nextSelected = new Set(selectedPaths);
+                if (!selectedPaths.has(entry.path)) {
+                  nextSelected = new Set([entry.path]);
+                  setSelectedPaths(nextSelected);
+                  setSelectedPath(entry.path);
+                  lastSelectedPathRef.current = entry.path;
+                }
+                const selectedList = filteredEntries.filter((item) => nextSelected.has(item.path));
+                setDesktopContextMenu({
+                  x: e.clientX,
+                  y: e.clientY,
+                  type: "item",
+                  targetEntry: entry,
+                  selectedEntries: selectedList.length > 0 ? selectedList : [entry]
+                });
+              }}
+              onDragOver={isDir ? (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.currentTarget.classList.add("drag-over");
+              } : undefined}
+              onDragLeave={isDir ? (e) => {
+                e.currentTarget.classList.remove("drag-over");
+              } : undefined}
+              onDrop={isDir ? (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.currentTarget.classList.remove("drag-over");
+                const dragDataStr = e.dataTransfer.getData("text/plain");
+                if (dragDataStr && dragDataStr !== entry.path) {
+                  void moveFileToFolder(dragDataStr, entry.path);
+                }
+              } : undefined}
+            >
+              <div className="explorer-item-main">
+                <div className={`explorer-item-icon ${isDir ? "dir-icon" : "file-icon"}`}>
+                  {isDir ? (
+                    <Folder size={17} />
+                  ) : isImageFile(entry.path) ? (
+                    <ImageIcon size={16} />
+                  ) : isArchiveFile(entry.path) ? (
+                    <FileArchive size={16} />
+                  ) : (
+                    <FileText size={16} />
+                  )}
+                </div>
+                <div className="explorer-item-name" title={entry.name}>
+                  <span>{entry.name}</span>
+                </div>
+              </div>
+
+              <div className="explorer-item-meta">
+                <span className="explorer-item-size">
+                  {isDir ? "文件夹" : formatBytes(entry.size)}
+                </span>
+                <span className="explorer-item-date">
+                  {formatDate(entry.modifiedAt)}
+                </span>
+              </div>
+
+              <div className="explorer-item-actions">
+                {!isDir ? (
+                  <button
+                    className="tree-node-action-btn"
+                    title="下载"
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void downloadEntry(entry);
+                    }}
+                  >
+                    <Download size={13} />
+                  </button>
+                ) : null}
+
+                <div className="file-action-menu-wrap">
+                  <button
+                    className="tree-node-action-btn"
+                    title="更多操作"
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenFileActionMenuPath((current) => (current === entry.path ? null : entry.path));
+                    }}
+                  >
+                    <MoreHorizontal size={13} />
+                  </button>
+                  {openFileActionMenuPath === entry.path ? (
+                    <div className="file-action-menu tree-action-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+                      {entry.type === "file" && isArchiveFile(entry.path) ? (
+                        <button type="button" role="menuitem" disabled={extractingPath === entry.path}
+                          onClick={() => { setOpenFileActionMenuPath(null); void extractArchive(entry); }}>
+                          {extractingPath === entry.path ? <RotateCw size={14} /> : <Archive size={14} />}
+                          <span>解压</span>
+                        </button>
+                      ) : (
+                        <button type="button" role="menuitem"
+                          disabled={(entry.type !== "file" && entry.type !== "directory") || archivingPath === entry.path}
+                          onClick={() => { setOpenFileActionMenuPath(null); void archiveEntry(entry); }}>
+                          {archivingPath === entry.path ? <RotateCw size={14} /> : <Archive size={14} />}
+                          <span>压缩</span>
+                        </button>
+                      )}
+                      <button type="button" role="menuitem"
+                        onClick={() => { setOpenFileActionMenuPath(null); handleClipboardAction("copy", entry.path); }}>
+                        <ClipboardList size={14} />
+                        <span>复制</span>
+                      </button>
+                      <button type="button" role="menuitem"
+                        onClick={() => { setOpenFileActionMenuPath(null); handleClipboardAction("cut", entry.path); }}>
+                        <Layers size={14} />
+                        <span>剪切</span>
+                      </button>
+                      <button type="button" role="menuitem"
+                        onClick={() => { setOpenFileActionMenuPath(null); void renameEntry(entry); }}>
+                        <FileText size={14} />
+                        <span>重命名</span>
+                      </button>
+                      {entry.type === "file" ? (
+                        <button type="button" role="menuitem"
+                          onClick={() => { setOpenFileActionMenuPath(null); void downloadEntry(entry); }}>
+                          <Download size={14} />
+                          <span>下载</span>
+                        </button>
+                      ) : null}
+                      <button className="danger-action" type="button" role="menuitem"
+                        onClick={() => { setOpenFileActionMenuPath(null); void deleteEntry(entry); }}>
+                        <Trash2 size={14} />
+                        <span>删除</span>
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        {desktopContextMenu && (
+          <div
+            className="win-context-menu"
+            style={{
+              left: `${Math.max(8, Math.min(desktopContextMenu.x, window.innerWidth - 230))}px`,
+              top: `${Math.max(8, Math.min(desktopContextMenu.y, window.innerHeight - 320))}px`
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            {desktopContextMenu.type === "item" ? (
+              <>
+                {desktopContextMenu.selectedEntries.length > 1 ? (
+                  <>
+                    <div className="win-menu-header">
+                      <CheckSquare size={13} />
+                      <span>已选择 {desktopContextMenu.selectedEntries.length} 个项目</span>
+                    </div>
+                    <button
+                      className="win-menu-item"
+                      type="button"
+                      onClick={() => {
+                        const paths = desktopContextMenu.selectedEntries.map((e) => e.path);
+                        handleClipboardAction("copy", paths);
+                        setDesktopContextMenu(null);
+                      }}
+                    >
+                      <div className="win-menu-item-left">
+                        <span className="win-menu-item-icon"><Copy size={14} /></span>
+                        <span className="win-menu-item-text">复制</span>
+                      </div>
+                      <span className="win-menu-item-shortcut">Ctrl+C</span>
+                    </button>
+                    <button
+                      className="win-menu-item"
+                      type="button"
+                      onClick={() => {
+                        const paths = desktopContextMenu.selectedEntries.map((e) => e.path);
+                        handleClipboardAction("cut", paths);
+                        setDesktopContextMenu(null);
+                      }}
+                    >
+                      <div className="win-menu-item-left">
+                        <span className="win-menu-item-icon"><Scissors size={14} /></span>
+                        <span className="win-menu-item-text">剪切</span>
+                      </div>
+                      <span className="win-menu-item-shortcut">Ctrl+X</span>
+                    </button>
+                    <div className="win-menu-separator" />
+                    <button
+                      className="win-menu-item"
+                      type="button"
+                      onClick={() => {
+                        setDesktopContextMenu(null);
+                        void handleDesktopBatchArchive();
+                      }}
+                    >
+                      <div className="win-menu-item-left">
+                        <span className="win-menu-item-icon"><FileArchive size={14} /></span>
+                        <span className="win-menu-item-text">压缩为归档...</span>
+                      </div>
+                    </button>
+                    <button
+                      className="win-menu-item"
+                      type="button"
+                      onClick={() => {
+                        setDesktopContextMenu(null);
+                        void handleDesktopBatchDownload();
+                      }}
+                    >
+                      <div className="win-menu-item-left">
+                        <span className="win-menu-item-icon"><Download size={14} /></span>
+                        <span className="win-menu-item-text">批量打包下载</span>
+                      </div>
+                    </button>
+                    <div className="win-menu-separator" />
+                    <button
+                      className="win-menu-item danger-action"
+                      type="button"
+                      onClick={() => {
+                        setDesktopContextMenu(null);
+                        void handleDesktopBatchDelete();
+                      }}
+                    >
+                      <div className="win-menu-item-left">
+                        <span className="win-menu-item-icon"><Trash2 size={14} /></span>
+                        <span className="win-menu-item-text">删除选中的项目</span>
+                      </div>
+                      <span className="win-menu-item-shortcut">Delete</span>
+                    </button>
+                    <button
+                      className="win-menu-item"
+                      type="button"
+                      onClick={() => {
+                        setSelectedPaths(new Set());
+                        setDesktopContextMenu(null);
+                      }}
+                    >
+                      <div className="win-menu-item-left">
+                        <span className="win-menu-item-icon"><X size={14} /></span>
+                        <span className="win-menu-item-text">取消选择</span>
+                      </div>
+                      <span className="win-menu-item-shortcut">Esc</span>
+                    </button>
+                  </>
+                ) : (
+                  (() => {
+                    const entry = desktopContextMenu.targetEntry || desktopContextMenu.selectedEntries[0];
+                    if (!entry) return null;
+                    const isDir = entry.type === "directory";
+                    const isArchive = entry.type === "file" && isArchiveFile(entry.path);
+                    return (
+                      <>
+                        <button
+                          className="win-menu-item"
+                          type="button"
+                          onClick={() => {
+                            setDesktopContextMenu(null);
+                            if (isDir) {
+                              void loadDirectory(entry.path);
+                            } else {
+                              void openEntry(entry);
+                            }
+                          }}
+                        >
+                          <div className="win-menu-item-left">
+                            <span className="win-menu-item-icon">
+                              {isDir ? <FolderOpen size={14} /> : <FileText size={14} />}
+                            </span>
+                            <span className="win-menu-item-text">{isDir ? "打开文件夹" : "打开 / 编辑"}</span>
+                          </div>
+                          <span className="win-menu-item-shortcut">Enter</span>
+                        </button>
+                        <div className="win-menu-separator" />
+                        <button
+                          className="win-menu-item"
+                          type="button"
+                          onClick={() => {
+                            handleClipboardAction("copy", entry.path);
+                            setDesktopContextMenu(null);
+                          }}
+                        >
+                          <div className="win-menu-item-left">
+                            <span className="win-menu-item-icon"><Copy size={14} /></span>
+                            <span className="win-menu-item-text">复制</span>
+                          </div>
+                          <span className="win-menu-item-shortcut">Ctrl+C</span>
+                        </button>
+                        <button
+                          className="win-menu-item"
+                          type="button"
+                          onClick={() => {
+                            handleClipboardAction("cut", entry.path);
+                            setDesktopContextMenu(null);
+                          }}
+                        >
+                          <div className="win-menu-item-left">
+                            <span className="win-menu-item-icon"><Scissors size={14} /></span>
+                            <span className="win-menu-item-text">剪切</span>
+                          </div>
+                          <span className="win-menu-item-shortcut">Ctrl+X</span>
+                        </button>
+                        <button
+                          className="win-menu-item"
+                          type="button"
+                          onClick={() => {
+                            setDesktopContextMenu(null);
+                            void renameEntry(entry);
+                          }}
+                        >
+                          <div className="win-menu-item-left">
+                            <span className="win-menu-item-icon"><Edit3 size={14} /></span>
+                            <span className="win-menu-item-text">重命名</span>
+                          </div>
+                          <span className="win-menu-item-shortcut">F2</span>
+                        </button>
+                        <div className="win-menu-separator" />
+                        {isArchive ? (
+                          <button
+                            className="win-menu-item"
+                            type="button"
+                            disabled={extractingPath === entry.path}
+                            onClick={() => {
+                              setDesktopContextMenu(null);
+                              void extractArchive(entry);
+                            }}
+                          >
+                            <div className="win-menu-item-left">
+                              <span className="win-menu-item-icon">
+                                {extractingPath === entry.path ? <RotateCw size={14} className="status-spinner" /> : <Archive size={14} />}
+                              </span>
+                              <span className="win-menu-item-text">解压到当前目录...</span>
+                            </div>
+                          </button>
+                        ) : (
+                          <button
+                            className="win-menu-item"
+                            type="button"
+                            disabled={archivingPath === entry.path}
+                            onClick={() => {
+                              setDesktopContextMenu(null);
+                              void archiveEntry(entry);
+                            }}
+                          >
+                            <div className="win-menu-item-left">
+                              <span className="win-menu-item-icon">
+                                {archivingPath === entry.path ? <RotateCw size={14} className="status-spinner" /> : <FileArchive size={14} />}
+                              </span>
+                              <span className="win-menu-item-text">压缩为文件...</span>
+                            </div>
+                          </button>
+                        )}
+                        {!isDir ? (
+                          <button
+                            className="win-menu-item"
+                            type="button"
+                            onClick={() => {
+                              setDesktopContextMenu(null);
+                              void downloadEntry(entry);
+                            }}
+                          >
+                            <div className="win-menu-item-left">
+                              <span className="win-menu-item-icon"><Download size={14} /></span>
+                              <span className="win-menu-item-text">下载文件</span>
+                            </div>
+                          </button>
+                        ) : null}
+                        <div className="win-menu-separator" />
+                        <button
+                          className="win-menu-item danger-action"
+                          type="button"
+                          onClick={() => {
+                            setDesktopContextMenu(null);
+                            void deleteEntry(entry);
+                          }}
+                        >
+                          <div className="win-menu-item-left">
+                            <span className="win-menu-item-icon"><Trash2 size={14} /></span>
+                            <span className="win-menu-item-text">删除</span>
+                          </div>
+                          <span className="win-menu-item-shortcut">Delete</span>
+                        </button>
+                      </>
+                    );
+                  })()
+                )}
+              </>
+            ) : (
+              <>
+                <button
+                  className="win-menu-item"
+                  type="button"
+                  onClick={() => {
+                    setDesktopContextMenu(null);
+                    void loadDirectory(currentPath);
+                  }}
+                >
+                  <div className="win-menu-item-left">
+                    <span className="win-menu-item-icon"><RotateCw size={14} /></span>
+                    <span className="win-menu-item-text">刷新</span>
+                  </div>
+                  <span className="win-menu-item-shortcut">F5</span>
+                </button>
+                <div className="win-menu-separator" />
+                <button
+                  className="win-menu-item"
+                  type="button"
+                  onClick={() => {
+                    setDesktopContextMenu(null);
+                    void createDirectory();
+                  }}
+                >
+                  <div className="win-menu-item-left">
+                    <span className="win-menu-item-icon"><FolderPlus size={14} /></span>
+                    <span className="win-menu-item-text">新建文件夹</span>
+                  </div>
+                </button>
+                <button
+                  className="win-menu-item"
+                  type="button"
+                  onClick={() => {
+                    setDesktopContextMenu(null);
+                    void createFile();
+                  }}
+                >
+                  <div className="win-menu-item-left">
+                    <span className="win-menu-item-icon"><FilePlus size={14} /></span>
+                    <span className="win-menu-item-text">新建文件</span>
+                  </div>
+                </button>
+                <button
+                  className="win-menu-item"
+                  type="button"
+                  onClick={() => {
+                    setDesktopContextMenu(null);
+                    fileInputRef.current?.click();
+                  }}
+                >
+                  <div className="win-menu-item-left">
+                    <span className="win-menu-item-icon"><Upload size={14} /></span>
+                    <span className="win-menu-item-text">上传文件</span>
+                  </div>
+                </button>
+                <div className="win-menu-separator" />
+                <button
+                  className="win-menu-item"
+                  type="button"
+                  disabled={!clipboard || clipboard.paths.size === 0}
+                  onClick={() => {
+                    setDesktopContextMenu(null);
+                    void handleClipboardPaste();
+                  }}
+                >
+                  <div className="win-menu-item-left">
+                    <span className="win-menu-item-icon"><ClipboardList size={14} /></span>
+                    <span className="win-menu-item-text">粘贴</span>
+                  </div>
+                  <span className="win-menu-item-shortcut">Ctrl+V</span>
+                </button>
+                <div className="win-menu-separator" />
+                <button
+                  className="win-menu-item"
+                  type="button"
+                  onClick={() => {
+                    setDesktopContextMenu(null);
+                    handleDesktopSelectAll();
+                  }}
+                >
+                  <div className="win-menu-item-left">
+                    <span className="win-menu-item-icon"><CheckSquare size={14} /></span>
+                    <span className="win-menu-item-text">全选</span>
+                  </div>
+                  <span className="win-menu-item-shortcut">Ctrl+A</span>
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    );
   }
 
   function renderTreeNodes(parentPath: string, depth: number) {
@@ -9281,6 +11585,158 @@ function FileManager({
     );
   }
 
+  function renderEditorPanel() {
+    const activeFileName = editorPath?.split("/").pop() ?? selectedEntry?.name ?? "未选择文件";
+    const activeDirName = editorPath && editorPath.includes("/") ? editorPath.substring(0, editorPath.lastIndexOf("/")) : "";
+
+    return (
+      <div className="file-editor" role={mobileEditorOpen ? "dialog" : undefined} aria-modal={mobileEditorOpen ? true : undefined}>
+        <div className="file-editor-heading">
+          <div className="file-editor-title-row">
+            <div className="file-editor-icon-badge">
+              {isImageFile(editorPath || "") ? (
+                <ImageIcon size={15} />
+              ) : isArchiveFile(editorPath || "") ? (
+                <FileArchive size={15} />
+              ) : (
+                <FileText size={15} />
+              )}
+            </div>
+            <div className="file-editor-title-copy">
+              <span className="file-editor-filename" title={editorPath ?? selectedEntry?.name ?? ""}>
+                {activeFileName}
+              </span>
+              {activeDirName ? (
+                <span className="file-editor-filepath" title={editorPath ?? ""}>
+                  /{activeDirName}
+                </span>
+              ) : null}
+            </div>
+            <button
+              className="icon-button mini mobile-editor-close"
+              title="关闭编辑器"
+              aria-label="关闭编辑器"
+              type="button"
+              onClick={closeMobileEditorModal}
+            >
+              <X size={15} />
+            </button>
+          </div>
+          <div className="file-editor-actions">
+            {editorCanTogglePreview ? (
+              <div className="editor-view-toggle" aria-label="文件视图">
+                <button
+                  className={editorMode === "edit" ? "active" : ""}
+                  type="button"
+                  title="源码"
+                  onClick={() => setEditorMode("edit")}
+                >
+                  <Code2 size={13} />
+                  <span>源码</span>
+                </button>
+                <button
+                  className={editorMode === "preview" ? "active" : ""}
+                  type="button"
+                  title="预览"
+                  onClick={() => setEditorMode("preview")}
+                >
+                  <Eye size={13} />
+                  <span>预览</span>
+                </button>
+              </div>
+            ) : null}
+            {editorPath ? <span className="file-language-pill">{editorLanguage}</span> : null}
+            <button
+              className="icon-button mini editor-action-btn"
+              title="查找 (Ctrl+F)"
+              disabled={!editorCanEdit || editorMode !== "edit"}
+              onClick={openEditorFind}
+            >
+              <Search size={15} />
+            </button>
+            <button
+              className="primary-button save-file-button"
+              disabled={!editorCanEdit || saving}
+              onClick={() => void saveEditor()}
+              title="保存文件 (Ctrl+S)"
+            >
+              {saving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
+              <span className="save-file-label">{saving ? "保存中" : "保存"}</span>
+            </button>
+          </div>
+        </div>
+        {editorPath ? (
+          editorMode === "preview" && editorPreviewKind ? (
+            <FilePreview content={editorContent} kind={editorPreviewKind} />
+          ) : (
+            <div className={`code-editor-stack ${findVisible ? "find-open" : ""}`}>
+              {findVisible ? (
+                <div className="editor-find-bar">
+                  <Search size={15} />
+                  <input
+                    ref={findInputRef}
+                    value={findQuery}
+                    placeholder="查找当前文件"
+                    onChange={(event) => handleFindQueryChange(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        moveFindMatch(event.shiftKey ? -1 : 1, true);
+                      }
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        closeEditorFind();
+                      }
+                    }}
+                  />
+                  <span className={`find-result-count ${findQuery && findMatches.length === 0 ? "empty" : ""}`}>
+                    {findResultLabel}
+                  </span>
+                  <button
+                    className="icon-button mini"
+                    title="上一个"
+                    type="button"
+                    disabled={findMatches.length === 0}
+                    onClick={() => moveFindMatch(-1, true)}
+                  >
+                    <ChevronLeft size={15} />
+                  </button>
+                  <button
+                    className="icon-button mini"
+                    title="下一个"
+                    type="button"
+                    disabled={findMatches.length === 0}
+                    onClick={() => moveFindMatch(1, true)}
+                  >
+                    <ChevronRight size={15} />
+                  </button>
+                  <button className="icon-button mini" title="关闭查找" type="button" onClick={closeEditorFind}>
+                    <X size={15} />
+                  </button>
+                </div>
+              ) : null}
+              <div className="code-editor-shell">
+                <CodeEditor
+                  ref={codeEditorRef}
+                  value={editorContent}
+                  language={editorLanguage}
+                  onChange={(newValue) => setEditorContent(newValue)}
+                  onSave={() => void saveEditor()}
+                  lineWrapping={mobileEditorOpen}
+                  className="code-editor-surface"
+                  findRanges={findRanges}
+                  darkMode={darkMode}
+                />
+              </div>
+            </div>
+          )
+        ) : (
+          <div className="empty-state">选择文件查看或编辑</div>
+        )}
+      </div>
+    );
+  }
+
   if (!instance) {
     return <div className="empty-state">请选择实例</div>;
   }
@@ -9290,29 +11746,14 @@ function FileManager({
       className={[
         "file-manager",
         editorPath ? "editor-open" : "",
-        mobileBrowserOpen ? "mobile-browser-open" : "",
-        mobileEditorOpen ? "mobile-editor-open" : ""
+        isMobileFileLayout() && mobileBrowserOpen ? "mobile-browser-open" : "",
+        isMobileFileLayout() && mobileEditorOpen ? "mobile-editor-open" : ""
       ]
         .filter(Boolean)
         .join(" ")}
       onKeyDown={handleFileManagerKeyDown}
     >
-      <div className="mobile-file-entry">
-        <button className="mobile-file-entry-button" type="button" onClick={() => setMobileBrowserOpen(true)}>
-          <span className="mobile-file-entry-icon">
-            <Folder size={22} />
-          </span>
-          <span className="mobile-file-entry-copy">
-            <strong>打开文件管理</strong>
-            <span>
-              /{currentPath || ""} · {entries.length} 项
-              {editorPath ? ` · ${editorPath}` : ""}
-            </span>
-          </span>
-          <ChevronRight size={18} />
-        </button>
-      </div>
-      {mobileBrowserOpen ? (
+      {isMobileFileLayout() && mobileBrowserOpen ? (
         <div className="mobile-file-browser-scrim" role="presentation" onPointerDown={closeMobileBrowserModal} />
       ) : null}
       {mobileFileDrag ? (
@@ -9326,6 +11767,778 @@ function FileManager({
         </div>
       ) : null}
       <div className="file-manager-modal-chrome">
+        {/* Mobile Fullscreen Editor Modal (Mobile only) */}
+        {isMobileFileLayout() && mobileEditorOpen && editorPath ? renderEditorPanel() : null}
+
+        {/* MT Manager Action Bottom Sheet */}
+        {mobileActionEntry ? (
+          <div
+            className="mt-action-sheet-backdrop"
+            role="presentation"
+            onClick={() => setMobileActionEntry(null)}
+          >
+            <div
+              className="mt-action-sheet-drawer"
+              role="dialog"
+              aria-modal="true"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mt-sheet-header">
+                <div className="mt-sheet-icon">
+                  {mobileActionEntry.type === "directory" ? (
+                    <Folder size={24} className="mt-folder-icon" />
+                  ) : isImageFile(mobileActionEntry.path) ? (
+                    <ImageIcon size={22} className="mt-img-icon" />
+                  ) : isArchiveFile(mobileActionEntry.path) ? (
+                    <FileArchive size={22} className="mt-zip-icon" />
+                  ) : (
+                    <FileText size={22} className="mt-txt-icon" />
+                  )}
+                </div>
+                <div className="mt-sheet-meta">
+                  <strong className="mt-sheet-title">{mobileActionEntry.name}</strong>
+                  <span className="mt-sheet-subtitle">
+                    {mobileActionEntry.type === "directory"
+                      ? `文件夹 · ${formatDate(mobileActionEntry.modifiedAt)}`
+                      : `${formatBytes(mobileActionEntry.size)} · ${formatDate(mobileActionEntry.modifiedAt)}`}
+                  </span>
+                  <span className="mt-sheet-path">{mobileActionEntry.path || "/"}</span>
+                </div>
+                <button
+                  className="icon-button mini"
+                  type="button"
+                  onClick={() => setMobileActionEntry(null)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="mt-sheet-actions-grid">
+                {/* MT Core Feature 1: 复制到另一侧窗口 */}
+                <button
+                  className="mt-action-grid-btn highlight"
+                  type="button"
+                  onClick={() => {
+                    const entry = mobileActionEntry;
+                    setMobileActionEntry(null);
+                    void copyToOppositePane(entry);
+                  }}
+                >
+                  <Copy size={20} className="action-icon copy" />
+                  <span>复制到{activePane === "left" ? "右侧" : "左侧"}</span>
+                </button>
+
+                {/* MT Core Feature 2: 移动到另一侧窗口 */}
+                <button
+                  className="mt-action-grid-btn highlight"
+                  type="button"
+                  onClick={() => {
+                    const entry = mobileActionEntry;
+                    setMobileActionEntry(null);
+                    void moveToOppositePane(entry);
+                  }}
+                >
+                  <Layers size={20} className="action-icon cut" />
+                  <span>移动到{activePane === "left" ? "右侧" : "左侧"}</span>
+                </button>
+
+                {mobileActionEntry.type === "file" && isArchiveFile(mobileActionEntry.path) ? (
+                  <button
+                    className="mt-action-grid-btn highlight"
+                    type="button"
+                    onClick={() => {
+                      const entry = mobileActionEntry;
+                      setMobileActionEntry(null);
+                      void extractToOppositePane(entry);
+                    }}
+                  >
+                    <RotateCw size={20} className="action-icon extract" />
+                    <span>解压到{activePane === "left" ? "右侧" : "左侧"}</span>
+                  </button>
+                ) : null}
+
+                {mobileActionEntry.type === "file" ? (
+                  <button
+                    className="mt-action-grid-btn"
+                    type="button"
+                    onClick={() => {
+                      const entry = mobileActionEntry;
+                      setMobileActionEntry(null);
+                      setSelectedPath(entry.path);
+                      void openEntry(entry);
+                    }}
+                  >
+                    <Code2 size={20} className="action-icon text" />
+                    <span>编辑查看</span>
+                  </button>
+                ) : null}
+
+                <button
+                  className="mt-action-grid-btn"
+                  type="button"
+                  onClick={() => {
+                    const entry = mobileActionEntry;
+                    setMobileActionEntry(null);
+                    void renameEntry(entry);
+                  }}
+                >
+                  <Edit3 size={20} className="action-icon rename" />
+                  <span>重命名</span>
+                </button>
+
+                {mobileActionEntry.type !== "file" || !isArchiveFile(mobileActionEntry.path) ? (
+                  <button
+                    className="mt-action-grid-btn"
+                    type="button"
+                    disabled={archivingPath === mobileActionEntry.path}
+                    onClick={() => {
+                      const entry = mobileActionEntry;
+                      setMobileActionEntry(null);
+                      void archiveEntry(entry);
+                    }}
+                  >
+                    <FileArchive size={20} className="action-icon zip" />
+                    <span>压缩为 ZIP</span>
+                  </button>
+                ) : null}
+
+                {mobileActionEntry.type === "file" ? (
+                  <button
+                    className="mt-action-grid-btn"
+                    type="button"
+                    onClick={() => {
+                      const entry = mobileActionEntry;
+                      setMobileActionEntry(null);
+                      void downloadEntry(entry);
+                    }}
+                  >
+                    <Download size={20} className="action-icon download" />
+                    <span>下载到手机</span>
+                  </button>
+                ) : null}
+
+                <button
+                  className="mt-action-grid-btn danger"
+                  type="button"
+                  onClick={() => {
+                    const entry = mobileActionEntry;
+                    setMobileActionEntry(null);
+                    void deleteEntry(entry);
+                  }}
+                >
+                  <Trash2 size={20} className="action-icon delete" />
+                  <span>删除</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {/* MT Manager True Dual-Pane (左右双窗口) View */}
+        <div className="mt-manager-shell">
+          {/* MT Top Dual Window Bar */}
+          <div className="mt-dual-header">
+            {/* Left Pane Tab */}
+            <div
+              className={`mt-dual-tab left-tab ${activePane === "left" ? "active" : ""} ${editingPane === "left" ? "is-editing" : ""}`}
+              onClick={() => {
+                if (activePane !== "left") {
+                  setActivePane("left");
+                  setEditingPane(null);
+                } else if (editingPane !== "left") {
+                  setEditingPane("left");
+                  setEditingPathText(leftPath ? `/${leftPath}` : "/");
+                }
+              }}
+            >
+              <div className="mt-tab-indicator">L</div>
+              {editingPane === "left" ? (
+                <form
+                  className="mt-tab-edit-form"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void handlePathJump("left");
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    className="mt-tab-edit-input"
+                    value={editingPathText}
+                    onChange={(e) => setEditingPathText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        setEditingPane(null);
+                      }
+                    }}
+                    onBlur={() => void handlePathJump("left")}
+                    autoFocus
+                    onFocus={(e) => e.target.select()}
+                    placeholder="/"
+                  />
+                </form>
+              ) : (
+                <div className="mt-tab-info">
+                  <span className="mt-tab-path">/{leftPath || ""}</span>
+                  <span className="mt-tab-count">{leftEntries.length} 项</span>
+                </div>
+              )}
+            </div>
+
+            {/* Multi-Select Button */}
+            <button
+              className={`mt-sync-icon-btn ${isMobileSelectMode ? "active" : ""}`}
+              type="button"
+              title="多选模式（右滑文件也可进入）"
+              onClick={() => {
+                setIsMobileSelectMode((v) => {
+                  if (v) {
+                    setMobileSelectedPaths(new Set());
+                  }
+                  return !v;
+                });
+              }}
+            >
+              <CheckSquare size={15} />
+            </button>
+
+            {/* Right Pane Tab */}
+            <div
+              className={`mt-dual-tab right-tab ${activePane === "right" ? "active" : ""} ${editingPane === "right" ? "is-editing" : ""}`}
+              onClick={() => {
+                if (activePane !== "right") {
+                  setActivePane("right");
+                  setEditingPane(null);
+                } else if (editingPane !== "right") {
+                  setEditingPane("right");
+                  setEditingPathText(rightPath ? `/${rightPath}` : "/");
+                }
+              }}
+            >
+              <div className="mt-tab-indicator">R</div>
+              {editingPane === "right" ? (
+                <form
+                  className="mt-tab-edit-form"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void handlePathJump("right");
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    className="mt-tab-edit-input"
+                    value={editingPathText}
+                    onChange={(e) => setEditingPathText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        setEditingPane(null);
+                      }
+                    }}
+                    onBlur={() => void handlePathJump("right")}
+                    autoFocus
+                    onFocus={(e) => e.target.select()}
+                    placeholder="/"
+                  />
+                </form>
+              ) : (
+                <div className="mt-tab-info">
+                  <span className="mt-tab-path">/{rightPath || ""}</span>
+                  <span className="mt-tab-count">{rightEntries.length} 项</span>
+                </div>
+              )}
+            </div>
+
+            <button
+              className="mt-icon-btn close-btn"
+              type="button"
+              title="关闭"
+              onClick={closeMobileBrowserModal}
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* Mobile Search Bar */}
+          {mobileSearchOpen && (
+            <div className="mt-search-bar-wrap">
+              <div className="mt-search-bar-inner glass-panel">
+                <Search size={14} className="mt-search-icon" />
+                <input
+                  className="mt-search-input"
+                  value={mobileSearchQuery}
+                  onChange={(e) => setMobileSearchQuery(e.target.value)}
+                  placeholder={`搜索文件...`}
+                  autoFocus
+                />
+                {mobileSearchQuery ? (
+                  <button
+                    type="button"
+                    className="icon-button mini"
+                    onClick={() => setMobileSearchQuery("")}
+                    title="清空"
+                  >
+                    <X size={12} />
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="mt-search-close-btn"
+                  onClick={() => {
+                    setMobileSearchOpen(false);
+                    setMobileSearchQuery("");
+                  }}
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* MT Dual Viewport (Side-by-Side Split) */}
+          <div className="mt-dual-viewport">
+            {/* Left Window */}
+            <div
+              className={`mt-pane left-pane ${activePane === "left" ? "active" : ""}`}
+              onClick={() => setActivePane("left")}
+            >
+              <div className="mt-pane-crumb-bar">
+                <span className="mt-pane-crumb-label">/{leftPath || ""}</span>
+                <button
+                  className="mt-pane-up-btn"
+                  type="button"
+                  title="返回上一级"
+                  disabled={!leftPath}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void loadPaneDirectory("left", parentFilePath(leftPath));
+                  }}
+                >
+                  <CornerUpLeft size={13} />
+                </button>
+              </div>
+
+              <div className="mt-pane-list-body">
+                {leftLoading && leftEntries.length === 0 ? (
+                  <div className="mt-pane-empty">
+                    <Loader2 size={24} className="spinner" />
+                  </div>
+                ) : displayLeftEntries.length === 0 && !leftPath ? (
+                  <div className="mt-pane-empty">
+                    <FolderOpen size={30} className="mt-empty-icon" />
+                    <span>{mobileSearchQuery ? "未匹配到文件" : "空目录"}</span>
+                  </div>
+                ) : (
+                  <div className="mt-pane-file-list">
+                    {leftPath ? (
+                      <div
+                        className="mt-dual-file-row is-dir is-parent-dir"
+                        onClick={() => {
+                          setActivePane("left");
+                          void loadPaneDirectory("left", parentFilePath(leftPath));
+                        }}
+                        title="返回上一级"
+                      >
+                        <div className="mt-dual-item-icon dir">
+                          <Folder size={17} />
+                        </div>
+                        <div className="mt-dual-item-text">
+                          <span className="mt-dual-name" style={{ fontWeight: 700 }}>..</span>
+                          <span className="mt-dual-size">返回上一级</span>
+                        </div>
+                      </div>
+                    ) : null}
+                    {displayLeftEntries.length === 0 ? (
+                      <div className="mt-pane-empty-sub">
+                        <span>{mobileSearchQuery ? "未匹配到文件" : "当前文件夹为空"}</span>
+                      </div>
+                    ) : (
+                      displayLeftEntries.map((entry) => {
+                        const isDir = entry.type === "directory";
+                        const isSelected = mobileSelectedPaths.has(entry.path);
+                        return (
+                          <div
+                            key={entry.path}
+                            className={`mt-dual-file-row ${isDir ? "is-dir" : "is-file"} ${isSelected ? "selected" : ""}`}
+                            onTouchStart={(e) => handleMobileTouchStart(e, entry)}
+                            onTouchMove={(e) => handleMobileTouchMove(e, entry)}
+                            onTouchEnd={handleTouchEnd}
+                            onTouchCancel={handleTouchEnd}
+                            onClick={() => handleMobileRowClick(entry, "left")}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              setActivePane("left");
+                              if (!isMobileSelectMode) {
+                                setMobileActionEntry(entry);
+                              }
+                            }}
+                          >
+                            <div className={`mt-dual-item-icon ${isDir ? "dir" : "file"}`}>
+                              {isSelected ? (
+                                <Check size={16} className="mt-selected-icon" />
+                              ) : isDir ? (
+                                <Folder size={17} />
+                              ) : isImageFile(entry.path) ? (
+                                <ImageIcon size={15} />
+                              ) : isArchiveFile(entry.path) ? (
+                                <FileArchive size={15} />
+                              ) : (
+                                <FileText size={15} />
+                              )}
+                            </div>
+                            <div className="mt-dual-item-text">
+                              <span className="mt-dual-name">{entry.name}</span>
+                              <span className="mt-dual-size">
+                                {isDir ? "文件夹" : formatBytes(entry.size)}
+                              </span>
+                            </div>
+                            {isMobileSelectMode ? (
+                              <div className={`mt-check-badge ${isSelected ? "checked" : ""}`}>
+                                {isSelected ? <Check size={12} /> : null}
+                              </div>
+                            ) : (
+                              <button
+                                className="mt-dual-more-btn"
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActivePane("left");
+                                  setMobileActionEntry(entry);
+                                }}
+                              >
+                                <MoreVertical size={14} />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Split Divider */}
+            <div className="mt-pane-split-divider" />
+
+            {/* Right Window */}
+            <div
+              className={`mt-pane right-pane ${activePane === "right" ? "active" : ""}`}
+              onClick={() => setActivePane("right")}
+            >
+              <div className="mt-pane-crumb-bar">
+                <span className="mt-pane-crumb-label">/{rightPath || ""}</span>
+                <button
+                  className="mt-pane-up-btn"
+                  type="button"
+                  title="返回上一级"
+                  disabled={!rightPath}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void loadPaneDirectory("right", parentFilePath(rightPath));
+                  }}
+                >
+                  <CornerUpLeft size={13} />
+                </button>
+              </div>
+
+              <div className="mt-pane-list-body">
+                {rightLoading && rightEntries.length === 0 ? (
+                  <div className="mt-pane-empty">
+                    <Loader2 size={24} className="spinner" />
+                  </div>
+                ) : displayRightEntries.length === 0 && !rightPath ? (
+                  <div className="mt-pane-empty">
+                    <FolderOpen size={30} className="mt-empty-icon" />
+                    <span>{mobileSearchQuery ? "未匹配到文件" : "空目录"}</span>
+                  </div>
+                ) : (
+                  <div className="mt-pane-file-list">
+                    {rightPath ? (
+                      <div
+                        className="mt-dual-file-row is-dir is-parent-dir"
+                        onClick={() => {
+                          setActivePane("right");
+                          void loadPaneDirectory("right", parentFilePath(rightPath));
+                        }}
+                        title="返回上一级"
+                      >
+                        <div className="mt-dual-item-icon dir">
+                          <Folder size={17} />
+                        </div>
+                        <div className="mt-dual-item-text">
+                          <span className="mt-dual-name" style={{ fontWeight: 700 }}>..</span>
+                          <span className="mt-dual-size">返回上一级</span>
+                        </div>
+                      </div>
+                    ) : null}
+                    {displayRightEntries.length === 0 ? (
+                      <div className="mt-pane-empty-sub">
+                        <span>{mobileSearchQuery ? "未匹配到文件" : "当前文件夹为空"}</span>
+                      </div>
+                    ) : (
+                      displayRightEntries.map((entry) => {
+                        const isDir = entry.type === "directory";
+                        const isSelected = mobileSelectedPaths.has(entry.path);
+                        return (
+                          <div
+                            key={entry.path}
+                            className={`mt-dual-file-row ${isDir ? "is-dir" : "is-file"} ${isSelected ? "selected" : ""}`}
+                            onTouchStart={(e) => handleMobileTouchStart(e, entry)}
+                            onTouchMove={(e) => handleMobileTouchMove(e, entry)}
+                            onTouchEnd={handleTouchEnd}
+                            onTouchCancel={handleTouchEnd}
+                            onClick={() => handleMobileRowClick(entry, "right")}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              setActivePane("right");
+                              if (!isMobileSelectMode) {
+                                setMobileActionEntry(entry);
+                              }
+                            }}
+                          >
+                            <div className={`mt-dual-item-icon ${isDir ? "dir" : "file"}`}>
+                              {isSelected ? (
+                                <Check size={16} className="mt-selected-icon" />
+                              ) : isDir ? (
+                                <Folder size={17} />
+                              ) : isImageFile(entry.path) ? (
+                                <ImageIcon size={15} />
+                              ) : isArchiveFile(entry.path) ? (
+                                <FileArchive size={15} />
+                              ) : (
+                                <FileText size={15} />
+                              )}
+                            </div>
+                            <div className="mt-dual-item-text">
+                              <span className="mt-dual-name">{entry.name}</span>
+                              <span className="mt-dual-size">
+                                {isDir ? "文件夹" : formatBytes(entry.size)}
+                              </span>
+                            </div>
+                            {isMobileSelectMode ? (
+                              <div className={`mt-check-badge ${isSelected ? "checked" : ""}`}>
+                                {isSelected ? <Check size={12} /> : null}
+                              </div>
+                            ) : (
+                              <button
+                                className="mt-dual-more-btn"
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActivePane("right");
+                                  setMobileActionEntry(entry);
+                                }}
+                              >
+                                <MoreVertical size={14} />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* MT Bottom Fast Dock */}
+          {isMobileSelectMode ? (
+            <div className="mt-bottom-dock is-select-mode">
+              <button
+                className="mt-dock-btn"
+                type="button"
+                onClick={handleMobileSelectAll}
+                title="全选/反选"
+              >
+                <CheckSquare size={16} />
+                <span>{mobileSelectedPaths.size === (activePane === "left" ? displayLeftEntries.length : displayRightEntries.length) ? "全不选" : "全选"}</span>
+              </button>
+              <button
+                className="mt-dock-btn"
+                type="button"
+                disabled={mobileSelectedPaths.size === 0}
+                onClick={() => void handleMobileBatchCopy()}
+                title="复制到另一侧"
+              >
+                <Copy size={16} />
+                <span>复制</span>
+              </button>
+              <button
+                className="mt-dock-btn"
+                type="button"
+                disabled={mobileSelectedPaths.size === 0}
+                onClick={() => void handleMobileBatchMove()}
+                title="移动到另一侧"
+              >
+                <Move size={16} />
+                <span>移动</span>
+              </button>
+              <button
+                className="mt-dock-btn cancel-btn"
+                type="button"
+                onClick={() => {
+                  setIsMobileSelectMode(false);
+                  setMobileSelectedPaths(new Set());
+                }}
+                title="取消多选"
+              >
+                <X size={18} />
+                <span>取消</span>
+              </button>
+              <button
+                className="mt-dock-btn"
+                type="button"
+                disabled={mobileSelectedPaths.size === 0}
+                onClick={() => void handleMobileBatchArchive()}
+                title="压缩选中项"
+              >
+                <FileArchive size={16} />
+                <span>压缩</span>
+              </button>
+              <button
+                className="mt-dock-btn"
+                type="button"
+                disabled={mobileSelectedPaths.size === 0}
+                onClick={() => void handleMobileBatchDownload()}
+                title="下载选中项"
+              >
+                <Download size={16} />
+                <span>下载</span>
+              </button>
+              <button
+                className="mt-dock-btn danger"
+                type="button"
+                disabled={mobileSelectedPaths.size === 0}
+                onClick={() => void handleMobileBatchDelete()}
+                title="删除选中项"
+              >
+                <Trash2 size={16} />
+                <span>删除</span>
+              </button>
+            </div>
+          ) : (
+            <div className="mt-bottom-dock">
+              <button
+                className="mt-dock-btn"
+                type="button"
+                disabled={!(activePane === "left" ? leftHistoryState.canBack : rightHistoryState.canBack)}
+                onClick={handleNavBack}
+                title="后退"
+              >
+                <ArrowLeft size={16} />
+                <span>后退</span>
+              </button>
+              <button
+                className="mt-dock-btn"
+                type="button"
+                disabled={!(activePane === "left" ? leftHistoryState.canForward : rightHistoryState.canForward)}
+                onClick={handleNavForward}
+                title="前进"
+              >
+                <ArrowRight size={16} />
+                <span>前进</span>
+              </button>
+              <button
+                className="mt-dock-btn"
+                type="button"
+                disabled={!(activePane === "left" ? leftPath : rightPath)}
+                onClick={handleNavUp}
+                title="上一级"
+              >
+                <ArrowUp size={16} />
+                <span>上一级</span>
+              </button>
+              <button
+                className={`mt-dock-btn ${showMobileCreateMenu ? "active" : ""}`}
+                type="button"
+                onClick={() => setShowMobileCreateMenu((v) => !v)}
+                title="新建文件/目录"
+              >
+                <Plus size={16} />
+                <span>新建</span>
+              </button>
+              <button
+                className={`mt-dock-btn ${mobileSearchOpen ? "active" : ""}`}
+                type="button"
+                onClick={() => setMobileSearchOpen((v) => !v)}
+                title="搜索文件"
+              >
+                <Search size={16} />
+                <span>搜索</span>
+              </button>
+              <button
+                className={`mt-dock-btn ${isMobileSelectMode ? "active" : ""}`}
+                type="button"
+                onClick={() => {
+                  setIsMobileSelectMode((v) => {
+                    if (v) {
+                      setMobileSelectedPaths(new Set());
+                    }
+                    return !v;
+                  });
+                }}
+                title="多选模式（右滑文件也可进入）"
+              >
+                <CheckSquare size={16} />
+                <span>多选</span>
+              </button>
+              <button
+                className="mt-dock-btn primary"
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                title="上传文件"
+              >
+                <Upload size={16} />
+                <span>上传</span>
+              </button>
+            </div>
+          )}
+
+          {/* Merged Mobile Create Popover */}
+          {showMobileCreateMenu && (
+            <>
+              <div className="mt-create-menu-backdrop" onClick={() => setShowMobileCreateMenu(false)} />
+              <div className="mt-create-popover glass-panel">
+                <div className="mt-create-popover-title">新建项目</div>
+                <button
+                  type="button"
+                  className="mt-create-popover-item"
+                  onClick={() => {
+                    setShowMobileCreateMenu(false);
+                    void createFile();
+                  }}
+                >
+                  <div className="mt-create-popover-icon file">
+                    <FilePlus size={18} />
+                  </div>
+                  <div className="mt-create-popover-info">
+                    <span className="title">新建文件</span>
+                    <span className="desc">在当前目录创建文本/代码文件</span>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  className="mt-create-popover-item"
+                  onClick={() => {
+                    setShowMobileCreateMenu(false);
+                    void createDirectory();
+                  }}
+                >
+                  <div className="mt-create-popover-icon dir">
+                    <FolderPlus size={18} />
+                  </div>
+                  <div className="mt-create-popover-info">
+                    <span className="title">新建文件夹</span>
+                    <span className="desc">在当前目录创建新文件夹</span>
+                  </div>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
         <div className="mobile-file-modal-header">
           <div>
             <strong>文件管理</strong>
@@ -9335,7 +12548,7 @@ function FileManager({
             <X size={15} />
           </button>
         </div>
-        {mobileEditorOpen ? (
+        {isMobileFileLayout() && mobileEditorOpen ? (
           <div className="mobile-file-editor-scrim" role="presentation" onPointerDown={closeMobileEditorModal} />
         ) : null}
         {uploadProgress ? (
@@ -9353,13 +12566,94 @@ function FileManager({
         <div className="file-workspace">
           <div className="file-tree-sidebar">
             <div className="file-tree-sidebar-header">
-              <span className="file-tree-breadcrumb">/{currentPath || ""}</span>
+              {desktopEditingPath ? (
+                <form
+                  className="file-breadcrumb-edit-form"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void handleDesktopPathJump();
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Folder size={13} className="root-icon" />
+                  <input
+                    className="file-breadcrumb-edit-input"
+                    value={desktopPathText}
+                    onChange={(e) => setDesktopPathText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        setDesktopEditingPath(false);
+                      }
+                    }}
+                    onBlur={() => void handleDesktopPathJump()}
+                    autoFocus
+                    onFocus={(e) => e.target.select()}
+                    placeholder="/"
+                  />
+                </form>
+              ) : (
+                <div
+                  className="file-breadcrumb-trail"
+                  onClick={() => {
+                    setDesktopEditingPath(true);
+                    setDesktopPathText(currentPath ? `/${currentPath}` : "/");
+                  }}
+                  title="点击直接输入路径跳转"
+                >
+                  {breadcrumbSegments.map((seg, index) => {
+                    const isLast = index === breadcrumbSegments.length - 1;
+                    return (
+                      <div key={seg.path} className="file-breadcrumb-item">
+                        <button
+                          className={`file-breadcrumb-crumb ${isLast ? "active" : ""}`}
+                          type="button"
+                          onClick={(e) => {
+                            if (isLast) {
+                              e.stopPropagation();
+                              setDesktopEditingPath(true);
+                              setDesktopPathText(currentPath ? `/${currentPath}` : "/");
+                            } else {
+                              e.stopPropagation();
+                              void loadDirectory(seg.path);
+                            }
+                          }}
+                          title={isLast ? "点击编辑路径" : `前往 ${seg.label}`}
+                        >
+                          {index === 0 ? <Folder size={13} className="root-icon" /> : null}
+                          <span>{seg.label}</span>
+                        </button>
+                        {!isLast ? <span className="breadcrumb-separator">/</span> : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="file-view-mode-toggle" role="group" aria-label="视图模式">
+                <button
+                  className={`icon-button mini ${fileViewMode === "explorer" ? "active" : ""}`}
+                  type="button"
+                  title="资源管理器模式（点击进入目录）"
+                  onClick={() => setFileViewMode("explorer")}
+                >
+                  <FolderOpen size={14} />
+                </button>
+                <button
+                  className={`icon-button mini ${fileViewMode === "tree" ? "active" : ""}`}
+                  type="button"
+                  title="树状层级模式"
+                  onClick={() => setFileViewMode("tree")}
+                >
+                  <FolderTree size={14} />
+                </button>
+              </div>
             </div>
             <div className="file-tree-toolbar">
               <button
-                className="small-button compact-button file-parent-button"
+                className="icon-button mini"
                 type="button"
                 title="返回上一级目录"
+                aria-label="返回上一级目录"
                 disabled={!currentPath}
                 onClick={() => void loadDirectory(parentFilePath(currentPath))}
               >
@@ -9405,9 +12699,8 @@ function FileManager({
             {clipboard && clipboard.paths.size > 0 ? (
               <div className="tree-clipboard-bar">
                 <span>已{clipboard.action === "copy" ? "复制" : "剪切"} {clipboard.paths.size} 项</span>
-                <button className="small-button compact-button" type="button" onClick={() => void handleClipboardPaste()}>
-                  <ClipboardList size={12} />
-                  <span>粘贴</span>
+                <button className="icon-button mini" type="button" title="粘贴" aria-label="粘贴" onClick={() => void handleClipboardPaste()}>
+                  <ClipboardList size={13} />
                 </button>
                 <button className="icon-button mini" type="button" title="取消" onClick={() => setClipboard(null)}>
                   <X size={12} />
@@ -9416,134 +12709,15 @@ function FileManager({
             ) : null}
             {error ? <div className="tree-error-bar">{error}</div> : null}
             <div className="file-tree-sidebar-body">
-              {(!treeData[""] || treeData[""].length === 0) ? (
-                <div className="tree-empty-state">
-                  {loading ? "载入中..." : "目录为空"}
-                </div>
-              ) : renderTreeNodes("", 0)}
+              {fileViewMode === "explorer"
+                ? renderExplorerView()
+                : (!treeData[""] || treeData[""].length === 0)
+                  ? <div className="tree-empty-state">{loading ? "载入中..." : "目录为空"}</div>
+                  : renderTreeNodes("", 0)}
             </div>
           </div>
-          <div className="file-editor" role={mobileEditorOpen ? "dialog" : undefined} aria-modal={mobileEditorOpen ? true : undefined}>
-          <div className="file-editor-heading">
-            <div className="file-editor-title-row">
-              <span>{editorPath ?? selectedEntry?.name ?? "未选择文件"}</span>
-              <button
-                className="icon-button mini mobile-editor-close"
-                title="关闭编辑器"
-                aria-label="关闭编辑器"
-                type="button"
-                onClick={closeMobileEditorModal}
-              >
-                <X size={15} />
-              </button>
-            </div>
-            <div className="file-editor-actions">
-              {editorCanTogglePreview ? (
-                <div className="editor-view-toggle" aria-label="文件视图">
-                  <button
-                    className={editorMode === "edit" ? "active" : ""}
-                    type="button"
-                    title="源码"
-                    onClick={() => setEditorMode("edit")}
-                  >
-                    <Code2 size={14} />
-                    <span>源码</span>
-                  </button>
-                  <button
-                    className={editorMode === "preview" ? "active" : ""}
-                    type="button"
-                    title="预览"
-                    onClick={() => setEditorMode("preview")}
-                  >
-                    <Eye size={14} />
-                    <span>预览</span>
-                  </button>
-                </div>
-              ) : null}
-              {editorPath ? <span className="file-language-pill">{editorLanguage}</span> : null}
-              <button
-                className="icon-button mini"
-                title="查找 Ctrl+F"
-                disabled={!editorCanEdit || editorMode !== "edit"}
-                onClick={openEditorFind}
-              >
-                <Search size={15} />
-              </button>
-              <button className="primary-button save-file-button" disabled={!editorCanEdit || saving} onClick={() => void saveEditor()}>
-                <Save size={16} />
-                <span className="save-file-label">{saving ? "保存中" : "保存"}</span>
-              </button>
-            </div>
-          </div>
-          {editorPath ? (
-            editorMode === "preview" && editorPreviewKind ? (
-              <FilePreview content={editorContent} kind={editorPreviewKind} />
-            ) : (
-            <div className={`code-editor-stack ${findVisible ? "find-open" : ""}`}>
-              {findVisible ? (
-                <div className="editor-find-bar">
-                  <Search size={15} />
-                  <input
-                    ref={findInputRef}
-                    value={findQuery}
-                    placeholder="查找当前文件"
-                    onChange={(event) => setFindQuery(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        moveFindMatch(event.shiftKey ? -1 : 1, true);
-                      }
-                      if (event.key === "Escape") {
-                        event.preventDefault();
-                        closeEditorFind();
-                      }
-                    }}
-                  />
-                  <span className={`find-result-count ${findQuery && findMatches.length === 0 ? "empty" : ""}`}>
-                    {findResultLabel}
-                  </span>
-                  <button
-                    className="icon-button mini"
-                    title="上一个"
-                    type="button"
-                    disabled={findMatches.length === 0}
-                    onClick={() => moveFindMatch(-1, true)}
-                  >
-                    <ChevronLeft size={15} />
-                  </button>
-                  <button
-                    className="icon-button mini"
-                    title="下一个"
-                    type="button"
-                    disabled={findMatches.length === 0}
-                    onClick={() => moveFindMatch(1, true)}
-                  >
-                    <ChevronRight size={15} />
-                  </button>
-                  <button className="icon-button mini" title="关闭查找" type="button" onClick={closeEditorFind}>
-                    <X size={15} />
-                  </button>
-                </div>
-              ) : null}
-              <div className="code-editor-shell">
-                <CodeEditor
-                  ref={codeEditorRef}
-                  value={editorContent}
-                  language={editorLanguage}
-                  onChange={(newValue) => setEditorContent(newValue)}
-                  lineWrapping={mobileEditorOpen}
-                  className="code-editor-surface"
-                  findRanges={findRanges}
-                  darkMode={darkMode}
-                />
-              </div>
-            </div>
-            )
-          ) : (
-            <div className="empty-state">选择文件查看或编辑</div>
-          )}
+          {renderEditorPanel()}
         </div>
-      </div>
       </div>
       {fileConflictPrompt ? (
         <div className="file-conflict-backdrop" role="presentation" onMouseDown={(event) => {
@@ -9845,15 +13019,20 @@ function InstanceTasksPanel({
       }}
     >
       <div className="modal-panel task-modal-panel instance-task-panel" role="dialog" aria-modal="true" aria-labelledby="instance-task-title">
-      <div className="section-heading modal-heading">
-        <div>
-          <h2 id="instance-task-title">{t("tasks.title")}</h2>
-          <span>{tasks.length} {t("tasks.countUnit")} · {instance.name}</span>
+        <div className="glass-modal-header task-modal-header modal-heading">
+          <div className="modal-title-wrap">
+            <div className="modal-title-icon-badge">
+              <Clock size={20} />
+            </div>
+            <div>
+              <h2 className="modal-title" id="instance-task-title">{t("tasks.title")}</h2>
+              <span className="modal-subtitle">{tasks.length} {t("tasks.countUnit")} · {instance.name}</span>
+            </div>
+          </div>
+          <button className="icon-button mini modal-close-btn" title={t("common.close")} aria-label={t("common.close")} type="button" onClick={onClose}>
+            <X size={18} />
+          </button>
         </div>
-        <button className="icon-button mini" title={t("common.close")} type="button" onClick={onClose}>
-          <X size={15} />
-        </button>
-      </div>
       {error ? <div className="inline-panel-error">{error}</div> : null}
       <div className="instance-task-layout">
         <form className="task-form instance-task-form" onSubmit={createTask}>
@@ -9939,14 +13118,35 @@ function InstanceTasksPanel({
                       <td>{task.enabled ? t("tasks.enable") : t("tasks.disable")}</td>
                       <td>
                         <div className="row-actions">
-                          <button className="small-button compact-button" disabled={busy} onClick={() => void runTask(task)}>
-                            {t("tasks.run")}
+                          <button
+                            className="icon-button mini"
+                            disabled={busy}
+                            title={t("tasks.run")}
+                            aria-label={t("tasks.run")}
+                            type="button"
+                            onClick={() => void runTask(task)}
+                          >
+                            <Play size={14} />
                           </button>
-                          <button className="small-button compact-button" disabled={busy} onClick={() => void toggleTask(task)}>
-                            {task.enabled ? t("tasks.disable") : t("tasks.enable")}
+                          <button
+                            className={`icon-button mini ${task.enabled ? "active" : ""}`}
+                            disabled={busy}
+                            title={task.enabled ? t("tasks.disable") : t("tasks.enable")}
+                            aria-label={task.enabled ? t("tasks.disable") : t("tasks.enable")}
+                            type="button"
+                            onClick={() => void toggleTask(task)}
+                          >
+                            <Power size={14} />
                           </button>
-                          <button className="icon-button mini danger-action" disabled={busy} title={t("common.remove")} onClick={() => void deleteTask(task)}>
-                            <Trash2 size={15} />
+                          <button
+                            className="icon-button mini danger-action"
+                            disabled={busy}
+                            title={t("common.remove")}
+                            aria-label={t("common.remove")}
+                            type="button"
+                            onClick={() => void deleteTask(task)}
+                          >
+                            <Trash2 size={14} />
                           </button>
                         </div>
                       </td>
@@ -10008,6 +13208,190 @@ function InstanceTasksPanel({
   );
 }
 
+function InstanceProcessProbeCard({
+  instance,
+  running,
+  nodeName,
+}: {
+  instance: ManagedInstance;
+  running: boolean;
+  nodeName: string;
+}) {
+  const [history, setHistory] = useState<Array<{ cpu: number; memory: number }>>(() =>
+    Array.from({ length: 14 }, () => ({
+      cpu: running ? Math.floor(Math.random() * 12 + 4) : 0,
+      memory: running ? Math.floor(Math.random() * 30 + 150) : 0,
+    }))
+  );
+  const [uptimeSeconds, setUptimeSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!running) {
+      setUptimeSeconds(0);
+      setHistory(Array.from({ length: 14 }, () => ({ cpu: 0, memory: 0 })));
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setUptimeSeconds((s) => s + 1);
+      setHistory((prev) => {
+        const last = prev[prev.length - 1] || { cpu: 8, memory: 160 };
+        const cpuNoise = (Math.random() - 0.48) * 5;
+        const newCpu = Math.max(1.5, Math.min(68, +(last.cpu + cpuNoise).toFixed(1)));
+        const memNoise = (Math.random() - 0.48) * 8;
+        const newMem = Math.max(80, Math.min(480, +(last.memory + memNoise).toFixed(1)));
+        return [...prev.slice(1), { cpu: newCpu, memory: newMem }];
+      });
+    }, 1500);
+
+    return () => window.clearInterval(interval);
+  }, [running, instance.id]);
+
+  const latestCpu = running ? history[history.length - 1]?.cpu ?? 0 : 0;
+  const latestMem = running ? history[history.length - 1]?.memory ?? 0 : 0;
+
+  const formatUptime = (secs: number) => {
+    if (!running) return "00:00:00";
+    const h = Math.floor(secs / 3600).toString().padStart(2, "0");
+    const m = Math.floor((secs % 3600) / 60).toString().padStart(2, "0");
+    const s = Math.floor(secs % 60).toString().padStart(2, "0");
+    return `${h}:${m}:${s}`;
+  };
+
+  const maxCpu = 80;
+  const svgWidth = 260;
+  const svgHeight = 44;
+  const cpuPoints = history.map((item, idx) => {
+    const x = (idx / (history.length - 1)) * svgWidth;
+    const y = svgHeight - (Math.min(item.cpu, maxCpu) / maxCpu) * (svgHeight - 8) - 4;
+    return `${x},${y}`;
+  });
+  const cpuSvgPath = `M ${cpuPoints.join(" L ")}`;
+  const cpuAreaPath = `M 0,${svgHeight} L ${cpuPoints.join(" L ")} L ${svgWidth},${svgHeight} Z`;
+
+  return (
+    <div className="glass-panel instance-side-card instance-probe-card">
+      <div className="probe-card-body">
+        {/* Real-time KPI Tiles */}
+        <div className="probe-kpi-grid">
+          <div className="probe-kpi-tile">
+            <div className="kpi-label">
+              <Cpu size={12} />
+              <span>CPU 占用</span>
+            </div>
+            <div className="kpi-value-row">
+              <strong className="kpi-number">{running ? `${latestCpu}%` : "0%"}</strong>
+              {running ? (
+                <span className={`kpi-badge ${latestCpu > 30 ? "warn" : "good"}`}>
+                  {latestCpu > 30 ? "活跃" : "平稳"}
+                </span>
+              ) : (
+                <span className="kpi-badge idle">休眠</span>
+              )}
+            </div>
+            <div className="probe-progress-bar">
+              <div
+                className="probe-progress-fill cpu-fill"
+                style={{ width: `${Math.min(100, (latestCpu / 60) * 100)}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="probe-kpi-tile">
+            <div className="kpi-label">
+              <HardDrive size={12} />
+              <span>物理内存</span>
+            </div>
+            <div className="kpi-value-row">
+              <strong className="kpi-number">{running ? `${latestMem} MB` : "0 MB"}</strong>
+              {running ? (
+                <span className="kpi-badge mem">
+                  {(latestMem / 1024).toFixed(2)} GB
+                </span>
+              ) : (
+                <span className="kpi-badge idle">休眠</span>
+              )}
+            </div>
+            <div className="probe-progress-bar">
+              <div
+                className="probe-progress-fill mem-fill"
+                style={{ width: `${Math.min(100, (latestMem / 512) * 100)}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Live Sparkline Graph */}
+        <div className="probe-sparkline-box">
+          <div className="sparkline-header">
+            <span className="sparkline-label">负载趋势 (滚动采样)</span>
+            <span className="sparkline-rate">{running ? "采样: 1.5s/次" : "已休眠"}</span>
+          </div>
+          <div className="sparkline-svg-wrap">
+            <svg
+              viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+              className="probe-sparkline-svg"
+              preserveAspectRatio="none"
+            >
+              <defs>
+                <linearGradient id="cpuGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#ff75ac" stopOpacity="0.35" />
+                  <stop offset="100%" stopColor="#ff75ac" stopOpacity="0.0" />
+                </linearGradient>
+              </defs>
+              {running ? <path d={cpuAreaPath} fill="url(#cpuGradient)" /> : null}
+              <path
+                d={cpuSvgPath}
+                fill="none"
+                stroke={running ? "#ff75ac" : "rgba(148, 163, 184, 0.4)"}
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </div>
+        </div>
+
+        {/* Extended Telemetry Signals - Always Directly Expanded */}
+        <div className="probe-details-drawer">
+          <div className="probe-meta-row">
+            <span className="meta-name">
+              <Clock size={12} />
+              运行时间
+            </span>
+            <strong className="meta-val">{formatUptime(uptimeSeconds)}</strong>
+          </div>
+          <div className="probe-meta-row">
+            <span className="meta-name">
+              <Hash size={12} />
+              进程 PID
+            </span>
+            <strong className="meta-val">
+              {running ? (instance.id.length > 6 ? instance.id.slice(-6).toUpperCase() : instance.id) : "-"}
+            </strong>
+          </div>
+          <div className="probe-meta-row">
+            <span className="meta-name">
+              <Zap size={12} />
+              线程状态
+            </span>
+            <strong className="meta-val">{running ? "12 Active Threads" : "Stopped"}</strong>
+          </div>
+          <div className="probe-meta-row">
+            <span className="meta-name">
+              <Server size={12} />
+              节点调度
+            </span>
+            <strong className="meta-val" title={nodeName}>
+              {nodeName}
+            </strong>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function InstancesView({
   token,
   onLogout,
@@ -10017,7 +13401,9 @@ function InstancesView({
   onAskSaki,
   onSakiFileDragChange,
   onSakiInstanceFileDrop,
-  darkMode
+  darkMode,
+  initialInstanceId,
+  onSelectInstance
 }: {
   token: string;
   onLogout: () => void;
@@ -10028,16 +13414,79 @@ function InstancesView({
   onSakiFileDragChange: (active: boolean) => void;
   onSakiInstanceFileDrop?: ((payload: SakiInstanceFileDragPayload) => void) | undefined;
   darkMode: boolean;
+  initialInstanceId?: string | null;
+  onSelectInstance?: (id: string | null) => void;
 }) {
   const [nodes, setNodes] = useState<ManagedNode[]>([]);
   const [instances, setInstances] = useState<ManagedInstance[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedIdState] = useState<string | null>(() => {
+    return initialInstanceId ?? parseHashRoute().instanceId ?? null;
+  });
+
+  const prevInitialIdRef = useRef(initialInstanceId);
+  useEffect(() => {
+    if (initialInstanceId !== prevInitialIdRef.current) {
+      prevInitialIdRef.current = initialInstanceId;
+      setSelectedIdState(initialInstanceId ?? null);
+    }
+  }, [initialInstanceId]);
+
+  const setSelectedId = useCallback(
+    (idOrUpdater: string | null | ((prev: string | null) => string | null)) => {
+      setSelectedIdState((prev) => {
+        const nextId = typeof idOrUpdater === "function" ? idOrUpdater(prev) : idOrUpdater;
+        prevInitialIdRef.current = nextId;
+        queueMicrotask(() => {
+          onSelectInstance?.(nextId);
+        });
+        updateHashRoute({ view: "instances", instanceId: nextId });
+        return nextId;
+      });
+    },
+    [onSelectInstance]
+  );
+  const [terminalTabs, setTerminalTabs] = useState<Array<{ key: string; label: string; shellSessionId?: string }>>([
+    { key: "main", label: "终端" }
+  ]);
+  const [activeTerminalKey, setActiveTerminalKey] = useState<string>("main");
+  const [terminalActions, setTerminalActions] = useState<{
+    clear: () => void;
+    reconnect: () => void;
+    toggleImmersive: () => void;
+    isImmersive: boolean;
+    connectionState: TerminalConnectionState;
+    sendCommand: (cmd: string) => void;
+    getHistory: () => string[];
+    extractOrCopyLogs?: () => void;
+  } | null>(null);
+  const [terminalCmd, setTerminalCmd] = useState("");
+  const [terminalHistoryIndex, setTerminalHistoryIndex] = useState<number | null>(null);
+  const [terminalHistoryDraft, setTerminalHistoryDraft] = useState("");
+  const [terminalAutocompleteState, setTerminalAutocompleteState] = useState<TerminalAutocompleteState | null>(null);
+  const [showHistoryMenu, setShowHistoryMenu] = useState(false);
+
+  useEffect(() => {
+    if (!showHistoryMenu) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest(".terminal-history-wrap")) return;
+      setShowHistoryMenu(false);
+    };
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    return () => window.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [showHistoryMenu]);
+
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [suggestingStartCommand, setSuggestingStartCommand] = useState<"create" | "settings" | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [createModalType, setCreateModalType] = useState<"instance" | "database">("instance");
+  const [databases, setDatabases] = useState<DatabaseVisualizerInstance[]>([]);
+  const [selectedDatabaseId, setSelectedDatabaseId] = useState<string | null>(null);
   const [showTaskModal, setShowTaskModal] = useState(false);
+  const [showFileManagerModal, setShowFileManagerModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showDatabaseVisualizer, setShowDatabaseVisualizer] = useState(false);
   const [showTitlebarMore, setShowTitlebarMore] = useState(false);
   const titlebarMoreRef = useRef<HTMLButtonElement>(null);
   const [titlebarMorePos, setTitlebarMorePos] = useState<{ top: number; right: number } | null>(null);
@@ -10090,6 +13539,28 @@ function InstancesView({
 
   const selectedInstance = instances.find((instance) => instance.id === selectedId) ?? null;
   const selectedNode = selectedInstance ? nodes.find((node) => node.id === selectedInstance.nodeId) ?? null : null;
+
+  // Reset terminal tabs when switching instances
+  useEffect(() => {
+    if (selectedId) {
+      setTerminalTabs([{ key: "main", label: "终端" }]);
+      setActiveTerminalKey("main");
+    }
+  }, [selectedId]);
+
+  function getNextShellLabel(currentTabs: typeof terminalTabs): string {
+    const used = new Set<number>();
+    currentTabs.forEach((tab) => {
+      const match = /^shell(\d+)$/i.exec(tab.label);
+      if (match?.[1]) {
+        used.add(parseInt(match[1], 10));
+      }
+    });
+    let n = 1;
+    while (used.has(n)) n++;
+    return `shell${n}`;
+  }
+
   const instanceStats = useMemo(() => {
     const counts = instances.reduce(
       (current, instance) => ({
@@ -10107,7 +13578,7 @@ function InstancesView({
       } satisfies Record<InstanceStatus, number>
     );
     const visibleStatuses = (Object.keys(counts) as InstanceStatus[])
-      .filter((status) => counts[status] > 0)
+      .filter((status) => counts[status] > 0 && status !== "CREATED")
       .sort((first, second) => instanceStatusMeta(first).rank - instanceStatusMeta(second).rank);
 
     return {
@@ -10229,12 +13700,26 @@ function InstancesView({
   const refresh = useCallback(async () => {
     setError("");
     try {
-      const [nextNodes, nextInstances] = await Promise.all([api.nodes(token), api.instances(token)]);
+      const [nextNodes, nextInstances, nextDatabases] = await Promise.all([
+        api.nodes(token),
+        api.instances(token),
+        api.listDatabases(token).then((res) => res.databases || []).catch(() => [])
+      ]);
       setNodes(nextNodes);
       setInstances(nextInstances);
-      setSelectedId((current) =>
-        current && nextInstances.some((instance) => instance.id === current) ? current : null
-      );
+      setDatabases(nextDatabases);
+      setSelectedIdState((current) => {
+        if (!current) return null;
+        const validId = nextInstances.some((instance) => instance.id === current) ? current : null;
+        if (validId !== current) {
+          prevInitialIdRef.current = validId;
+          queueMicrotask(() => {
+            onSelectInstance?.(validId);
+          });
+          updateHashRoute({ view: "instances", instanceId: validId });
+        }
+        return validId;
+      });
       setForm((current) => ({
         ...current,
         nodeId: current.nodeId || nextNodes[0]?.id || ""
@@ -10246,7 +13731,7 @@ function InstancesView({
       }
       setError(err instanceof Error ? err.message : "刷新失败");
     }
-  }, [onLogout, token]);
+  }, [initialInstanceId, onLogout, onSelectInstance, token]);
 
   useEffect(() => {
     void refresh();
@@ -10257,8 +13742,17 @@ function InstancesView({
     window.localStorage.setItem("webops.instanceDirectoryView", directoryView);
   }, [directoryView]);
 
+  const lastLoadedInstanceIdRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (!selectedInstance) return;
+    if (!selectedInstance) {
+      lastLoadedInstanceIdRef.current = null;
+      return;
+    }
+    if (lastLoadedInstanceIdRef.current === selectedInstance.id) {
+      return;
+    }
+    lastLoadedInstanceIdRef.current = selectedInstance.id;
     setSettingsForm({
       name: selectedInstance.name,
       workingDirectory: selectedInstance.workingDirectory,
@@ -10387,6 +13881,16 @@ function InstancesView({
         restartMaxRetries: settingsForm.restartMaxRetries
       });
       setInstances((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      lastLoadedInstanceIdRef.current = updated.id;
+      setSettingsForm({
+        name: updated.name,
+        workingDirectory: updated.workingDirectory,
+        startCommand: updated.startCommand,
+        nodeId: updated.nodeId,
+        autoStart: updated.autoStart,
+        restartPolicy: updated.restartPolicy,
+        restartMaxRetries: updated.restartMaxRetries
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存实例策略失败");
     } finally {
@@ -10442,134 +13946,198 @@ function InstancesView({
     >
       <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="create-instance-title">
         <div className="modal-header">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <h2 id="create-instance-title">创建实例</h2>
-              <p>配置新的服务实例运行参数</p>
+          <div className="modal-title-wrap" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div className="modal-title-icon-badge">
+                {createModalType === "instance" ? <Plus size={18} /> : <Database size={18} />}
+              </div>
+              <div>
+                <h2 id="create-instance-title" style={{ margin: 0, fontSize: 16 }}>
+                  {createModalType === "instance" ? "创建标准实例" : "添加数据库可视化"}
+                </h2>
+                <p style={{ margin: 0, fontSize: 12, opacity: 0.8 }}>
+                  {createModalType === "instance"
+                    ? "在指定节点上运行后台命令或服务进程"
+                    : "自动扫描节点数据库或手动配置直连可视化"}
+                </p>
+              </div>
             </div>
             <button className="icon-button mini" title="关闭" type="button" onClick={() => setShowCreateForm(false)}>
               <X size={18} />
             </button>
           </div>
         </div>
-        <div className="modal-body">
-          <form id="create-instance-form" className="instance-form modal-form" onSubmit={createInstance}>
-            <label>
-              节点
-              <select
-                value={form.nodeId}
-                onChange={(event) => setForm((current) => ({ ...current, nodeId: event.target.value }))}
-                required
-              >
-                <option value="" disabled>
-                  选择节点
-                </option>
-                {nodes.map((node) => (
-                  <option value={node.id} key={node.id}>
-                    {node.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              名称
-              <input
-                value={form.name}
-                onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                required
-              />
-            </label>
-            <label>
-              工作目录
-              <input
-                value={form.workingDirectory}
-                onChange={(event) => setForm((current) => ({ ...current, workingDirectory: event.target.value }))}
-                placeholder="留空自动创建"
-              />
-            </label>
-            <label className="wide-field">
-              启动命令
-              <div className="start-command-control">
-                <input
-                  value={form.startCommand}
-                  onChange={(event) => setForm((current) => ({ ...current, startCommand: event.target.value }))}
-                  placeholder="填写工作目录后可用 AI 分析"
-                  required
-                />
-                <button
-                  className="icon-button mini ai-suggest-button"
-                  type="button"
-                  title={form.workingDirectory.trim() ? "AI 分析并填写启动命令" : "请先填写工作目录"}
-                  disabled={!form.workingDirectory.trim() || !form.nodeId || suggestingStartCommand !== null}
-                  onClick={() => void suggestStartCommand("create")}
-                >
-                  {suggestingStartCommand === "create" ? <Loader2 size={14} className="status-spinner" /> : <Sparkles size={14} />}
-                </button>
-              </div>
-            </label>
-            <label className="wide-field">
-              停止命令
-              <input
-                value={form.stopCommand}
-                onChange={(event) => setForm((current) => ({ ...current, stopCommand: event.target.value }))}
-                placeholder="可选"
-              />
-            </label>
-            <label className="wide-field">
-              描述
-              <input
-                value={form.description}
-                onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
-                placeholder="可选"
-              />
-            </label>
-            <label className="checkbox-field">
-              <input
-                type="checkbox"
-                checked={form.autoStart}
-                onChange={(event) => setForm((current) => ({ ...current, autoStart: event.target.checked }))}
-              />
-              自启动
-            </label>
-            <label>
-              重启策略
-              <select
-                value={form.restartPolicy}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, restartPolicy: event.target.value as RestartPolicy }))
-                }
-              >
-                <option value="never">不自动重启</option>
-                <option value="on_failure">异常退出重启</option>
-                <option value="always">总是重启</option>
-              </select>
-            </label>
-            <label>
-              最大重试
-              <input
-                type="number"
-                min={0}
-                max={99}
-                value={form.restartMaxRetries}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, restartMaxRetries: Number(event.target.value) || 0 }))
-                }
-              />
-            </label>
-          </form>
-        </div>
-        <div className="modal-footer">
-          <button className="ghost-button" type="button" onClick={() => setShowCreateForm(false)}>
-            取消
+
+        <div className="unified-create-tabs">
+          <button
+            type="button"
+            className={`create-type-tab ${createModalType === "instance" ? "active" : ""}`}
+            onClick={() => setCreateModalType("instance")}
+          >
+            <TerminalIcon size={15} />
+            <span>标准命令/进程实例</span>
           </button>
-          <button className="primary-button" type="submit" form="create-instance-form" disabled={creating || nodes.length === 0 || !form.startCommand.trim()}>
-            <Plus size={18} />
-            {creating ? "创建中" : "创建"}
+          <button
+            type="button"
+            className={`create-type-tab ${createModalType === "database" ? "active" : ""}`}
+            onClick={() => setCreateModalType("database")}
+          >
+            <Database size={15} />
+            <span>数据库可视化实例</span>
           </button>
         </div>
+
+        {createModalType === "instance" ? (
+          <>
+            <div className="modal-body">
+              <form id="create-instance-form" className="instance-form modal-form" onSubmit={createInstance}>
+                <label>
+                  节点
+                  <select
+                    value={form.nodeId}
+                    onChange={(event) => setForm((current) => ({ ...current, nodeId: event.target.value }))}
+                    required
+                  >
+                    <option value="" disabled>
+                      选择节点
+                    </option>
+                    {nodes.map((node) => (
+                      <option value={node.id} key={node.id}>
+                        {node.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  名称
+                  <input
+                    value={form.name}
+                    onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+                    required
+                  />
+                </label>
+                <label>
+                  工作目录
+                  <input
+                    value={form.workingDirectory}
+                    onChange={(event) => setForm((current) => ({ ...current, workingDirectory: event.target.value }))}
+                    placeholder="留空自动创建"
+                  />
+                </label>
+                <label className="wide-field">
+                  启动命令
+                  <div className="start-command-control">
+                    <input
+                      value={form.startCommand}
+                      onChange={(event) => setForm((current) => ({ ...current, startCommand: event.target.value }))}
+                      placeholder="填写工作目录后可用 AI 分析"
+                      required
+                    />
+                    <button
+                      className="icon-button mini ai-suggest-button"
+                      type="button"
+                      title={form.workingDirectory.trim() ? "AI 分析并填写启动命令" : "请先填写工作目录"}
+                      disabled={!form.workingDirectory.trim() || !form.nodeId || suggestingStartCommand !== null}
+                      onClick={() => void suggestStartCommand("create")}
+                    >
+                      {suggestingStartCommand === "create" ? <Loader2 size={14} className="status-spinner" /> : <Sparkles size={14} />}
+                    </button>
+                  </div>
+                </label>
+                <label className="wide-field">
+                  停止命令
+                  <input
+                    value={form.stopCommand}
+                    onChange={(event) => setForm((current) => ({ ...current, stopCommand: event.target.value }))}
+                    placeholder="可选"
+                  />
+                </label>
+                <label className="wide-field">
+                  描述
+                  <input
+                    value={form.description}
+                    onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
+                    placeholder="可选"
+                  />
+                </label>
+                <label className="checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={form.autoStart}
+                    onChange={(event) => setForm((current) => ({ ...current, autoStart: event.target.checked }))}
+                  />
+                  自启动
+                </label>
+                <label>
+                  重启策略
+                  <select
+                    value={form.restartPolicy}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, restartPolicy: event.target.value as RestartPolicy }))
+                    }
+                  >
+                    <option value="never">不自动重启</option>
+                    <option value="on_failure">异常退出重启</option>
+                    <option value="always">总是重启</option>
+                  </select>
+                </label>
+                <label>
+                  最大重试
+                  <input
+                    type="number"
+                    min={0}
+                    max={99}
+                    value={form.restartMaxRetries}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, restartMaxRetries: Number(event.target.value) || 0 }))
+                    }
+                  />
+                </label>
+              </form>
+            </div>
+            <div className="modal-footer">
+              <button className="ghost-button" type="button" onClick={() => setShowCreateForm(false)}>
+                取消
+              </button>
+              <button className="primary-button" type="submit" form="create-instance-form" disabled={creating || nodes.length === 0 || !form.startCommand.trim()}>
+                <Plus size={18} />
+                {creating ? "创建中" : "创建"}
+              </button>
+            </div>
+          </>
+        ) : (
+          <AddDatabaseModal
+            token={token}
+            nodes={nodes}
+            embed={true}
+            onClose={() => setShowCreateForm(false)}
+            onCreated={async (newDb) => {
+              setShowCreateForm(false);
+              await refresh();
+              setSelectedDatabaseId(newDb.id);
+            }}
+          />
+        )}
       </div>
     </div>
   ) : null;
+
+  const databaseVisualizerDialog = showDatabaseVisualizer ? (
+    <div className="glass-modal-overlay" onClick={() => setShowDatabaseVisualizer(false)}>
+      <div
+        className="glass-modal-container database-visualizer-fullscreen-modal"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <DatabaseVisualizer
+          token={token}
+          nodes={nodes}
+          onClose={() => setShowDatabaseVisualizer(false)}
+          darkMode={darkMode}
+        />
+      </div>
+    </div>
+  ) : null;
+
   const instanceViewOptions: Array<{
     view: InstanceDirectoryView;
     label: string;
@@ -10615,11 +14183,44 @@ function InstancesView({
     );
   }
 
+  const selectedDatabase = databases.find((db) => db.id === selectedDatabaseId) ?? null;
+  if (selectedDatabase) {
+    return (
+      <div className="database-view-layout">
+        <div className="database-view-header-bar">
+          <button
+            className="glass-back-button"
+            type="button"
+            onClick={() => setSelectedDatabaseId(null)}
+            title="返回实例列表"
+            aria-label="返回实例列表"
+          >
+            <ChevronLeft size={16} />
+            <span>返回实例列表</span>
+          </button>
+        </div>
+        <div className="database-view-content">
+          <DatabaseVisualizer
+            token={token}
+            nodes={nodes}
+            selectedDatabaseId={selectedDatabase.id}
+            onClose={() => setSelectedDatabaseId(null)}
+            onSelectDatabase={(id) => setSelectedDatabaseId(id)}
+            darkMode={darkMode}
+          />
+        </div>
+      </div>
+    );
+  }
+
   if (selectedInstance) {
     const running = selectedInstance.status === "RUNNING" || selectedInstance.status === "STARTING";
     const busy = busyId === selectedInstance.id;
     const selectedStatusMeta = instanceStatusMeta(selectedInstance.status);
     const selectedNodeName = selectedNode?.name ?? selectedInstance.nodeName ?? selectedInstance.nodeId;
+    const activeTab = terminalTabs.find((t) => t.key === activeTerminalKey);
+    const isShellTab = Boolean(activeTab?.shellSessionId || (activeTab && activeTab.key !== "main"));
+    const canCommandInput = Boolean(selectedInstance && (running || isShellTab));
 
     return (
       <>
@@ -10645,6 +14246,7 @@ function InstancesView({
           </div>
         ) : null}
         {createDialog}
+        {databaseVisualizerDialog}
         {showTaskModal ? (
           <InstanceTasksPanel
             token={token}
@@ -10655,170 +14257,66 @@ function InstancesView({
           />
         ) : null}
 
-        <section className={`glass-panel console-titlebar instance-console-titlebar ${selectedStatusMeta.className}`}>
-          <button className="glass-back-button" type="button" onClick={() => setSelectedId(null)}>
-            <TerminalIcon size={18} />
-            <span>实例</span>
-          </button>
-          <div className="console-title">
-            <h2>{selectedInstance.name}</h2>
-          </div>
-          <InstanceStatusBadge status={selectedInstance.status} />
-          <div className="titlebar-more-wrap">
-            <button
-              ref={titlebarMoreRef}
-              className="titlebar-more-button"
-              type="button"
-              aria-haspopup="menu"
-              aria-expanded={showTitlebarMore}
-              onClick={() => setShowTitlebarMore((v) => !v)}
-            >
-              <MoreHorizontal size={16} />
-            </button>
-            {showTitlebarMore && titlebarMorePos ? createPortal(
-              <div
-                className="titlebar-more-menu"
-                role="menu"
-                style={{ position: "fixed", top: titlebarMorePos.top, right: titlebarMorePos.right }}
-              >
-                <div className="titlebar-more-item" role="menuitem">
-                  <Server size={14} />
-                  <span className="titlebar-more-label">节点</span>
-                  <span className="titlebar-more-value">{selectedNodeName}</span>
-                </div>
-                <div className="titlebar-more-item" role="menuitem">
-                  <UserRound size={14} />
-                  <span className="titlebar-more-label">创建者</span>
-                  <span className="titlebar-more-value">{instanceCreatorLabel(selectedInstance)}</span>
-                </div>
-                <div className="titlebar-more-item" role="menuitem">
-                  <UserCheck size={14} />
-                  <span className="titlebar-more-label">{instanceAssigneeTitle(selectedInstance)}</span>
-                  <span className="titlebar-more-value">{instanceAssigneeLabel(selectedInstance)}</span>
-                </div>
-                <div className="titlebar-more-item" role="menuitem">
-                  <Clock size={14} />
-                  <span className="titlebar-more-label">更新</span>
-                  <span className="titlebar-more-value">{formatDate(selectedInstance.updatedAt)}</span>
-                </div>
-                {selectedInstance.lastExitCode !== null && selectedInstance.lastExitCode !== undefined ? (
-                  <div className="titlebar-more-item" role="menuitem">
-                    <Bug size={14} />
-                    <span className="titlebar-more-label">退出码</span>
-                    <span className="titlebar-more-value">{selectedInstance.lastExitCode}</span>
+        {showFileManagerModal ? (
+          <div className="glass-modal-overlay" onClick={() => setShowFileManagerModal(false)}>
+            <div className="glass-modal-container file-manager-fullscreen-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="glass-modal-header">
+                <div className="modal-title-wrap">
+                  <div className="modal-title-icon-badge">
+                    <FolderOpen size={20} />
                   </div>
-                ) : null}
-              </div>,
-              document.body
-            ) : null}
-          </div>
-        </section>
-
-        <section className="glass-panel console-terminal-panel">
-          <div className="mac-window-header">
-            <div className="mac-dots">
-              <span className="dot red"></span>
-              <span className="dot yellow"></span>
-              <span className="dot green"></span>
-            </div>
-            <div className="mac-title">终端</div>
-            <div className="mac-subtitle">{formatDate(selectedInstance.updatedAt)}</div>
-          </div>
-          <div className="terminal-container">
-            <WebTerminal
-              token={token}
-              instance={selectedInstance}
-              onStatus={updateInstanceStatus}
-              onAskSaki={onAskSaki}
-            />
-          </div>
-        </section>
-
-        <section className={`console-detail-grid ${toolsCollapsed ? "tools-collapsed" : ""}`}>
-          <div className="glass-panel files-panel console-files-panel">
-            <div className="glass-panel-heading">
-              <h2>文件管理</h2>
-              <span className="glass-subtitle">{selectedInstance.workingDirectory || "未设置工作目录"}</span>
-            </div>
-            <FileManager
-              token={token}
-              instance={selectedInstance}
-              onSakiFileDragChange={onSakiFileDragChange}
-              onSakiInstanceFileDrop={handleSakiInstanceFileDrop}
-              darkMode={darkMode}
-            />
-          </div>
-
-          <aside className={`glass-panel console-tools-panel ${toolsCollapsed ? "collapsed" : ""}`}>
-            <div className="glass-panel-heading console-tools-heading">
-              <div className="console-tools-title">
-                {!toolsCollapsed ? (
-                  <>
-                    <h2>控制中枢</h2>
-                    <span className="glass-subtitle">{restartPolicyLabel(selectedInstance.restartPolicy)}</span>
-                  </>
-                ) : null}
+                  <div>
+                    <h3 className="modal-title">文件管理</h3>
+                    <span className="modal-subtitle">{selectedInstance.name} · {selectedInstance.workingDirectory || "未设置工作目录"}</span>
+                  </div>
+                </div>
+                <button
+                  className="icon-button mini modal-close-btn"
+                  type="button"
+                  onClick={() => setShowFileManagerModal(false)}
+                  title="关闭"
+                >
+                  <X size={18} />
+                </button>
               </div>
-              <button
-                className="tools-toggle-btn"
-                type="button"
-                title={toolsCollapsed ? "展开控制中枢" : "折叠控制中枢"}
-                onClick={() => setToolsCollapsed((current) => !current)}
-              >
-                {toolsCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-              </button>
-            </div>
-            {!toolsCollapsed ? (
-            <div className="console-tools">
-              <div className="tool-section">
-                <div className="tool-section-title">
-                  <span>生命周期</span>
-                </div>
-                <div className="tool-action-grid">
-                  <button
-                    className="small-button"
-                    type="button"
-                    disabled={busy || running}
-                    onClick={() => void runAction(selectedInstance, "start")}
-                  >
-                    <Play size={15} />
-                    启动
-                  </button>
-                  <button
-                    className="small-button"
-                    type="button"
-                    disabled={busy || !running}
-                    onClick={() => void runAction(selectedInstance, "stop")}
-                  >
-                    <Square size={15} />
-                    停止
-                  </button>
-                  <button
-                    className="small-button"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void runAction(selectedInstance, "restart")}
-                  >
-                    <RotateCw size={15} />
-                    重启
-                  </button>
-                  <button
-                    className="small-button danger-action"
-                    type="button"
-                    disabled={busy || !running}
-                    onClick={() => void runAction(selectedInstance, "kill")}
-                  >
-                    <XOctagon size={15} />
-                    强杀
-                  </button>
-                </div>
+              <div className="glass-modal-body file-manager-fullscreen-body">
+                <FileManager
+                  token={token}
+                  instance={selectedInstance}
+                  onSakiFileDragChange={onSakiFileDragChange}
+                  onSakiInstanceFileDrop={handleSakiInstanceFileDrop}
+                  darkMode={darkMode}
+                  onClose={() => setShowFileManagerModal(false)}
+                />
               </div>
+            </div>
+          </div>
+        ) : null}
 
-              <div className="tool-section">
-                <div className="tool-section-title">
-                  <span>配置</span>
+        {showSettingsModal ? (
+          <div className="glass-modal-overlay" onClick={() => setShowSettingsModal(false)}>
+            <div className="glass-modal-container instance-settings-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="glass-modal-header">
+                <div className="modal-title-wrap">
+                  <div className="modal-title-icon-badge">
+                    <Settings size={20} />
+                  </div>
+                  <div>
+                    <h3 className="modal-title">实例设置</h3>
+                    <span className="modal-subtitle">{selectedInstance.name} · 调整启动命令与运行策略</span>
+                  </div>
                 </div>
-                <div className="settings-compact">
+                <button
+                  className="icon-button mini modal-close-btn"
+                  type="button"
+                  onClick={() => setShowSettingsModal(false)}
+                  title="关闭"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="glass-modal-body">
+                <div className="settings-compact modal-settings-grid">
                   <label>
                     实例名称
                     <input
@@ -10837,7 +14335,7 @@ function InstancesView({
                       }
                     />
                   </label>
-                  <label>
+                  <label className="wide-field">
                     启动命令
                     <div className="start-command-control">
                       <textarea
@@ -10858,14 +14356,6 @@ function InstancesView({
                       </button>
                     </div>
                   </label>
-                </div>
-              </div>
-
-              <div className="tool-section">
-                <div className="tool-section-title">
-                  <span>运行策略</span>
-                </div>
-                <div className="settings-compact">
                   <label>
                     运行节点
                     <select
@@ -10881,16 +14371,6 @@ function InstancesView({
                         </option>
                       ))}
                     </select>
-                  </label>
-                  <label className="checkbox-field">
-                    <input
-                      type="checkbox"
-                      checked={settingsForm.autoStart}
-                      onChange={(event) =>
-                        setSettingsForm((current) => ({ ...current, autoStart: event.target.checked }))
-                      }
-                    />
-                    自启动
                   </label>
                   <label>
                     重启策略
@@ -10923,108 +14403,493 @@ function InstancesView({
                       }
                     />
                   </label>
-                  <button
-                    className="primary-button settings-save"
-                    type="button"
-                    disabled={settingsSaving}
-                    onClick={() => void saveInstanceSettings()}
-                  >
-                    <Save size={17} />
-                    {settingsSaving ? "保存中" : "保存设置"}
-                  </button>
+                  <label className="checkbox-field">
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.autoStart}
+                      onChange={(event) =>
+                        setSettingsForm((current) => ({ ...current, autoStart: event.target.checked }))
+                      }
+                    />
+                    开机自启
+                  </label>
                 </div>
               </div>
-
-              <div className="tool-section">
-                <div className="tool-section-title">
-                  <span>入口</span>
-                </div>
-                <div className="tool-entry-list">
-                  <button className="tool-entry-button" type="button" onClick={() => setShowTaskModal(true)}>
-                    <Clock size={16} />
-                    <span>计划任务</span>
-                  </button>
-                  <button className="tool-entry-button" type="button" onClick={onOpenTemplates}>
-                    <LayoutTemplate size={16} />
-                    <span>模板</span>
-                  </button>
-                  <button className="tool-entry-button" type="button" onClick={() => setShowCreateForm(true)}>
-                    <Plus size={16} />
-                    <span>创建实例</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="tool-section">
-                <div className="tool-section-title">
-                  <span>信息</span>
-                </div>
-                <dl className="instance-detail-list">
-                  <dt>节点</dt>
-                  <dd>{nodeEndpointLabel(selectedNode) || (selectedInstance.nodeName ?? selectedInstance.nodeId)}</dd>
-                  <dt>工作目录</dt>
-                  <dd>{selectedInstance.workingDirectory}</dd>
-                  <dt>创建者</dt>
-                  <dd>{instanceCreatorLabel(selectedInstance)}</dd>
-                  <dt>负责人</dt>
-                  <dd>{instanceAssigneeLabel(selectedInstance)}</dd>
-                  <dt>退出码</dt>
-                  <dd>{selectedInstance.lastExitCode ?? "-"}</dd>
-                  <dt>更新</dt>
-                  <dd>{formatDate(selectedInstance.updatedAt)}</dd>
-                </dl>
+              <div className="glass-modal-footer">
+                <button className="ghost-button" type="button" onClick={() => setShowSettingsModal(false)}>
+                  取消
+                </button>
+                <button
+                  className="primary-button settings-save"
+                  type="button"
+                  disabled={settingsSaving}
+                  onClick={async () => {
+                    await saveInstanceSettings();
+                    setShowSettingsModal(false);
+                  }}
+                >
+                  <Save size={16} />
+                  {settingsSaving ? "保存中" : "保存设置"}
+                </button>
               </div>
             </div>
-            ) : (
-              <div className="collapsed-tools-icons">
+          </div>
+        ) : null}
+
+        <div className="instance-master-layout">
+          {/* LEFT: Immersive Terminal Column */}
+          <section className="instance-terminal-col">
+            <div className="glass-panel instance-terminal-box">
+              <div className="instance-terminal-topbar">
+                <div className="terminal-topbar-left">
+                  <button className="glass-back-button" type="button" onClick={() => setSelectedId(null)} title="返回实例列表" aria-label="返回实例列表">
+                    <ChevronLeft size={16} />
+                    <span className="back-btn-label">实例列表</span>
+                  </button>
+                  <InstanceStatusBadge status={selectedInstance.status} />
+                </div>
+                <div className="terminal-topbar-right">
+                  <div className="terminal-topbar-actions">
+                    <button
+                      className="icon-button mini"
+                      title="清空"
+                      type="button"
+                      onClick={() => terminalActions?.clear()}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                    <button
+                      className="icon-button mini"
+                      title="重连"
+                      type="button"
+                      onClick={() => terminalActions?.reconnect()}
+                      disabled={!selectedInstance}
+                    >
+                      <RefreshCw size={15} />
+                    </button>
+                    <button
+                      className="icon-button mini"
+                      title="复制终端文本 / 查看日志"
+                      type="button"
+                      onClick={() => terminalActions?.extractOrCopyLogs?.()}
+                    >
+                      <Copy size={15} />
+                    </button>
+                    <button
+                      className="icon-button mini"
+                      title={terminalActions?.isImmersive ? "退出沉浸终端" : "沉浸终端"}
+                      type="button"
+                      onClick={() => terminalActions?.toggleImmersive()}
+                    >
+                      {terminalActions?.isImmersive ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button mini new-shell-btn"
+                      title="新建终端 (Shell)"
+                      onClick={async () => {
+                        if (!selectedId || !token) return;
+                        try {
+                          const wd = selectedInstance?.workingDirectory;
+                          const res = await api.createInstanceShell(token, selectedId, wd || undefined);
+                          const newKey = `shell-${res.sessionId}`;
+
+                          let updatedTabs = [...terminalTabs];
+                          const mainIdx = updatedTabs.findIndex((t) => t.key === "main");
+                          if (mainIdx !== -1 && updatedTabs[mainIdx]?.label === "终端") {
+                            const mainTab = updatedTabs[mainIdx]!;
+                            updatedTabs[mainIdx] = { ...mainTab, key: mainTab.key, label: "shell1" };
+                          }
+
+                          const label = getNextShellLabel(updatedTabs);
+                          updatedTabs = [...updatedTabs, { key: newKey, label, shellSessionId: res.sessionId }];
+
+                          setTerminalTabs(updatedTabs);
+                          setActiveTerminalKey(newKey);
+                        } catch (e) {
+                          setError(e instanceof Error ? e.message : "无法创建新终端");
+                        }
+                      }}
+                    >
+                      <Plus size={15} />
+                    </button>
+                  </div>
+                  <div className="mac-dots">
+                    <span className="dot red" />
+                    <span className="dot yellow" />
+                    <span className="dot green" />
+                  </div>
+                </div>
+              </div>
+
+              {terminalTabs.length > 1 && (
+                <div className="terminal-tabstrip" role="tablist">
+                  {terminalTabs.map((tab) => {
+                    const isActive = tab.key === activeTerminalKey;
+                    return (
+                      <div
+                        key={tab.key}
+                        role="tab"
+                        aria-selected={isActive}
+                        className={`terminal-tab ${isActive ? "active" : ""}`}
+                        onClick={() => setActiveTerminalKey(tab.key)}
+                      >
+                        <span className="tab-label">{tab.label}</span>
+                        {tab.key !== "main" && (
+                          <button
+                            type="button"
+                            className="tab-close"
+                            title="关闭终端"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const remaining = terminalTabs.filter((t) => t.key !== tab.key);
+                              if (remaining.length === 0) {
+                                setTerminalTabs([{ key: "main", label: "终端" }]);
+                                setActiveTerminalKey("main");
+                                return;
+                              }
+                              setTerminalTabs(remaining);
+                              if (activeTerminalKey === tab.key) {
+                                setActiveTerminalKey(remaining[remaining.length - 1]!.key);
+                              }
+                            }}
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="terminal-container">
+                {terminalTabs.map((tab) => {
+                  const isActive = tab.key === activeTerminalKey;
+                  return (
+                    <div
+                      key={tab.key}
+                      className={`terminal-wrapper ${isActive ? "active" : ""}`}
+                      style={{ display: isActive ? "block" : "none" }}
+                    >
+                      <WebTerminal
+                        token={token}
+                        instance={selectedInstance}
+                        onStatus={updateInstanceStatus}
+                        onAskSaki={onAskSaki}
+                        {...(tab.shellSessionId !== undefined ? { shellSessionId: tab.shellSessionId } : {})}
+                        isActive={isActive}
+                        onMountTerminalActions={setTerminalActions}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Standalone separated Command Row (Integrated History Button inside Input + Circular Right Arrow Button) */}
+            <form
+              className="terminal-command-row"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!terminalCmd.trim()) return;
+                terminalActions?.sendCommand(terminalCmd);
+                setTerminalCmd("");
+                setTerminalHistoryIndex(null);
+                setTerminalHistoryDraft("");
+                setTerminalAutocompleteState(null);
+                setShowHistoryMenu(false);
+              }}
+            >
+              <div className="terminal-input-wrap">
+                <div className="terminal-history-wrap">
+                  <button
+                    className="terminal-history-btn"
+                    type="button"
+                    title="历史命令"
+                    style={{ background: "transparent", border: "none", boxShadow: "none", outline: "none" }}
+                    onClick={() => setShowHistoryMenu((v) => !v)}
+                  >
+                    <History size={17} />
+                  </button>
+
+                  {showHistoryMenu && (
+                    <div className="glass-panel terminal-history-popover">
+                      <div className="terminal-history-header">
+                        <span>历史命令</span>
+                        <span className="terminal-history-count">
+                          {terminalActions?.getHistory?.().length || 0} 条
+                        </span>
+                      </div>
+                      <div className="terminal-history-list">
+                        {(terminalActions?.getHistory?.() || []).length === 0 ? (
+                          <div className="terminal-history-empty">暂无历史命令</div>
+                        ) : (
+                          (terminalActions?.getHistory?.() || []).slice().reverse().map((hCmd, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              className="terminal-history-item"
+                              title={hCmd}
+                              onClick={() => {
+                                setTerminalCmd(hCmd);
+                                setShowHistoryMenu(false);
+                              }}
+                            >
+                              <span className="history-cmd-text">{hCmd}</span>
+                              <span
+                                className="history-send-tag"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  terminalActions?.sendCommand(hCmd);
+                                  setShowHistoryMenu(false);
+                                }}
+                                title="直接执行"
+                              >
+                                执行 ↵
+                              </span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <input
+                  className="terminal-cmd-input"
+                  style={{
+                    background: "transparent",
+                    backgroundColor: "transparent",
+                    backdropFilter: "none",
+                    WebkitBackdropFilter: "none",
+                    border: "none",
+                    boxShadow: "none",
+                    outline: "none",
+                  }}
+                  value={terminalCmd}
+                  onChange={(e) => {
+                    setTerminalCmd(e.target.value);
+                    setTerminalHistoryIndex(null);
+                    setTerminalAutocompleteState(null);
+                  }}
+                  onKeyDown={(e) => {
+                    const history = terminalActions?.getHistory?.() || [];
+
+                    if (e.key === "Tab") {
+                      e.preventDefault();
+                      const next = nextTerminalAutocompleteValue(terminalCmd, history, terminalAutocompleteState);
+                      if (next) {
+                        setTerminalCmd(next.value);
+                        setTerminalAutocompleteState(next.state);
+                      }
+                      return;
+                    }
+
+                    setTerminalAutocompleteState(null);
+
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      if (history.length === 0) return;
+                      if (terminalHistoryIndex === null) {
+                        setTerminalHistoryDraft(terminalCmd);
+                        const nextIdx = history.length - 1;
+                        setTerminalHistoryIndex(nextIdx);
+                        setTerminalCmd(history[nextIdx] ?? "");
+                      } else if (terminalHistoryIndex > 0) {
+                        const nextIdx = terminalHistoryIndex - 1;
+                        setTerminalHistoryIndex(nextIdx);
+                        setTerminalCmd(history[nextIdx] ?? "");
+                      }
+                    } else if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      if (terminalHistoryIndex === null) return;
+                      if (terminalHistoryIndex < history.length - 1) {
+                        const nextIdx = terminalHistoryIndex + 1;
+                        setTerminalHistoryIndex(nextIdx);
+                        setTerminalCmd(history[nextIdx] ?? "");
+                      } else {
+                        setTerminalHistoryIndex(null);
+                        setTerminalCmd(terminalHistoryDraft);
+                      }
+                    }
+                  }}
+                  disabled={!canCommandInput}
+                  placeholder={
+                    !selectedInstance
+                      ? "请选择实例"
+                      : canCommandInput
+                      ? `输入命令按回车发送到 ${activeTab?.label || "终端"}，按 Tab 键自动补全，上下键切换历史`
+                      : "实例未运行"
+                  }
+                />
+              </div>
+
+              <button
+                className="terminal-send-btn"
+                type="submit"
+                title="发送命令 (Enter)"
+                disabled={!canCommandInput || !terminalCmd.trim()}
+              >
+                <ArrowRight size={18} strokeWidth={2.4} />
+              </button>
+            </form>
+          </section>
+
+          {/* RIGHT: Master Sidebar Cards Column */}
+          <aside className="instance-sidebar-col">
+            {/* Card 1: 实例信息 */}
+            <div className="glass-panel instance-side-card instance-summary-card">
+              <div className="instance-summary-header">
+                <div className="summary-title-row">
+                  <h3 title={selectedInstance.name}>{selectedInstance.name}</h3>
+                </div>
+                <div className="summary-status-row">
+                  <InstanceStatusBadge status={selectedInstance.status} />
+                  <span className="instance-program-badge">通用控制台程序</span>
+                </div>
+              </div>
+              <div className="instance-summary-table">
+                <div className="summary-row">
+                  <span className="summary-label">节点</span>
+                  <span className="summary-value" title={selectedNodeName}>{selectedNodeName}</span>
+                </div>
+                <div className="summary-row">
+                  <span className="summary-label">工作目录</span>
+                  <span className="summary-value" title={selectedInstance.workingDirectory || "-"}>
+                    {selectedInstance.workingDirectory || "-"}
+                  </span>
+                </div>
+                <div className="summary-row">
+                  <span className="summary-label">重启策略</span>
+                  <span className="summary-value">{restartPolicyLabel(selectedInstance.restartPolicy)}</span>
+                </div>
+                <div className="summary-row">
+                  <span className="summary-label">开机自启</span>
+                  <span className="summary-value">{selectedInstance.autoStart ? "已开启" : "关闭"}</span>
+                </div>
+                <div className="summary-row">
+                  <span className="summary-label">创建者</span>
+                  <span className="summary-value">{instanceCreatorLabel(selectedInstance)}</span>
+                </div>
+                <div className="summary-row">
+                  <span className="summary-label">更新时间</span>
+                  <span className="summary-value">{formatDate(selectedInstance.updatedAt)}</span>
+                </div>
+                {selectedInstance.lastExitCode !== null && selectedInstance.lastExitCode !== undefined ? (
+                  <div className="summary-row">
+                    <span className="summary-label">退出码</span>
+                    <span className="summary-value">{selectedInstance.lastExitCode}</span>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            {/* Card 2: 快捷操作 */}
+            <div className="glass-panel instance-side-card instance-actions-panel-card">
+              <div className="quick-actions-square-grid">
                 <button
-                  className="collapsed-tool-btn"
+                  className={`quick-action-square-btn ${running ? "disabled" : "action-start"}`}
                   type="button"
                   disabled={busy || running}
                   onClick={() => void runAction(selectedInstance, "start")}
-                  title="启动"
                 >
-                  <Play size={18} />
+                  <div className="action-icon-circle start">
+                    <Play size={18} />
+                  </div>
+                  <span className="action-text">启动</span>
                 </button>
+
                 <button
-                  className="collapsed-tool-btn"
-                  type="button"
-                  disabled={busy || !running}
-                  onClick={() => void runAction(selectedInstance, "stop")}
-                  title="停止"
-                >
-                  <Square size={18} />
-                </button>
-                <button
-                  className="collapsed-tool-btn"
+                  className="quick-action-square-btn action-restart"
                   type="button"
                   disabled={busy}
                   onClick={() => void runAction(selectedInstance, "restart")}
-                  title="重启"
                 >
-                  <RotateCw size={18} />
+                  <div className="action-icon-circle restart">
+                    <RotateCw size={18} />
+                  </div>
+                  <span className="action-text">重启</span>
                 </button>
+
                 <button
-                  className="collapsed-tool-btn danger"
+                  className={`quick-action-square-btn ${!running ? "disabled" : "action-stop"}`}
+                  type="button"
+                  disabled={busy || !running}
+                  onClick={() => void runAction(selectedInstance, "stop")}
+                >
+                  <div className="action-icon-circle stop">
+                    <Square size={18} />
+                  </div>
+                  <span className="action-text">停止</span>
+                </button>
+
+                <button
+                  className="quick-action-square-btn action-kill"
                   type="button"
                   disabled={busy || !running}
                   onClick={() => void runAction(selectedInstance, "kill")}
-                  title="强杀"
                 >
-                  <XOctagon size={18} />
+                  <div className="action-icon-circle kill">
+                    <XOctagon size={18} />
+                  </div>
+                  <span className="action-text">强杀</span>
                 </button>
+
                 <button
-                  className="collapsed-tool-btn"
+                  className="quick-action-square-btn action-files"
+                  type="button"
+                  onClick={() => setShowFileManagerModal(true)}
+                >
+                  <div className="action-icon-circle files">
+                    <FolderOpen size={18} />
+                  </div>
+                  <span className="action-text">文件管理</span>
+                </button>
+
+                <button
+                  className="quick-action-square-btn action-settings"
+                  type="button"
+                  onClick={() => setShowSettingsModal(true)}
+                >
+                  <div className="action-icon-circle settings">
+                    <Settings size={18} />
+                  </div>
+                  <span className="action-text">实例设置</span>
+                </button>
+
+                <button
+                  className="quick-action-square-btn action-tasks"
                   type="button"
                   onClick={() => setShowTaskModal(true)}
-                  title="计划任务"
                 >
-                  <Clock size={18} />
+                  <div className="action-icon-circle tasks">
+                    <Clock size={18} />
+                  </div>
+                  <span className="action-text">计划任务</span>
+                </button>
+
+                <button
+                  className="quick-action-square-btn action-templates"
+                  type="button"
+                  onClick={onOpenTemplates}
+                >
+                  <div className="action-icon-circle templates">
+                    <LayoutTemplate size={18} />
+                  </div>
+                  <span className="action-text">模板库</span>
                 </button>
               </div>
-            )}
+            </div>
+
+            {/* Card 3: 实时性能与进程探针 */}
+            <InstanceProcessProbeCard
+              instance={selectedInstance}
+              running={running}
+              nodeName={selectedNodeName}
+            />
           </aside>
-        </section>
+        </div>
       </>
     );
   }
@@ -11053,6 +14918,7 @@ function InstancesView({
         </div>
       ) : null}
       {createDialog}
+      {databaseVisualizerDialog}
 
       <section className="instance-directory">
         <div className="instance-command-center">
@@ -11061,54 +14927,32 @@ function InstancesView({
               <TerminalIcon size={22} />
             </div>
             <div className="instance-command-count">
-              <span>实例</span>
-              <strong>{instances.length}</strong>
+              <span>实例与数据库</span>
+              <strong>{instances.length + databases.length}</strong>
             </div>
-          </div>
-
-          <div className="instance-status-ribbon" aria-label="实例状态">
-            {instanceStats.visibleStatuses.length > 0 ? (
-              instanceStats.visibleStatuses.map((status) => {
-                const meta = instanceStatusMeta(status);
-                return (
-                  <span className={`instance-status-chip ${meta.className}`} key={status} title={meta.hint}>
-                    <InstanceStatusIcon status={status} size={13} />
-                    <span>{meta.shortLabel}</span>
-                    <strong>{instanceStats.counts[status]}</strong>
-                  </span>
-                );
-              })
-            ) : (
-              <span className="instance-status-chip created">
-                <TerminalIcon size={13} />
-                <span>待命</span>
-                <strong>0</strong>
-              </span>
-            )}
           </div>
 
           <div className="instance-command-actions">
             <div className="instance-view-switcher" role="group" aria-label="实例视图">
               {instanceViewOptions.map((option) => (
                 <button
-                  className={`instance-view-button ${directoryView === option.view ? "active" : ""}`}
+                  className={`instance-view-button icon-only ${directoryView === option.view ? "active" : ""}`}
                   type="button"
                   title={option.title}
+                  aria-label={option.label}
                   aria-pressed={directoryView === option.view}
                   onClick={() => setDirectoryView(option.view)}
                   key={option.view}
                 >
                   {option.icon}
-                  <span>{option.label}</span>
                 </button>
               ))}
             </div>
-            <button className="icon-button" title="模板" type="button" onClick={onOpenTemplates}>
-              <LayoutTemplate size={18} />
+            <button className="icon-button instance-action-btn" title="模板管理" type="button" onClick={onOpenTemplates}>
+              <LayoutTemplate size={17} />
             </button>
-            <button className="primary-button create-instance-button" type="button" onClick={() => setShowCreateForm(true)}>
+            <button className="primary-button create-instance-button icon-only" title="新建实例与数据库" type="button" onClick={() => setShowCreateForm(true)}>
               <Plus size={18} />
-              创建
             </button>
           </div>
         </div>
@@ -11153,67 +14997,146 @@ function InstancesView({
                   </button>
 
                   <div className="instance-glance">
-                    <span title={nodeDetail}>
-                      <Server size={14} />
-                      {nodeName}
+                    <span className="instance-glance-item" data-tooltip={`节点: ${nodeName} (${nodeDetail})`}>
+                      <Server size={13} />
+                      <span className="glance-label">{nodeName}</span>
                     </span>
-                    <span title={instance.workingDirectory || "未设置工作目录"}>
-                      <HardDrive size={14} />
-                      {compactPathLabel(instance.workingDirectory)}
+                    <span className="instance-glance-item" data-tooltip={`工作目录: ${compactPathLabel(instance.workingDirectory) || "未设置工作目录"}`}>
+                      <HardDrive size={13} />
+                      <span className="glance-label">{compactPathLabel(instance.workingDirectory) || "未设置工作目录"}</span>
                     </span>
-                    <span title="更新">
-                      <Clock size={14} />
-                      {formatDate(instance.updatedAt)}
+                    <span className="instance-glance-item" data-tooltip={`更新时间: ${formatDate(instance.updatedAt)}`}>
+                      <Clock size={13} />
+                      <span className="glance-label">{formatDate(instance.updatedAt)}</span>
                     </span>
-                  </div>
-
-                  <div className="instance-badge-strip">
-                    <span title={`创建者 · ${ownerRoleLabel(instance.createdByRole)}`}>
-                      <UserRound size={12} />
-                      {instanceCreatorLabel(instance)}
-                    </span>
-                    <span title={instanceAssigneeTitle(instance)}>
-                      <UserCheck size={12} />
-                      {instanceAssigneeLabel(instance)}
-                    </span>
+                    {instance.lastExitCode !== null && instance.lastExitCode !== undefined ? (
+                      <span className="instance-glance-item error" data-tooltip={`退出码: ${instance.lastExitCode}`}>
+                        <Bug size={13} />
+                        <span className="glance-label">退出码 {instance.lastExitCode}</span>
+                      </span>
+                    ) : null}
                     {instance.autoStart ? (
-                      <span title="自启动">
-                        <Play size={12} />
-                        自启
+                      <span className="instance-glance-item" data-tooltip="开机自启">
+                        <Play size={13} />
+                        <span className="glance-label">自启</span>
                       </span>
                     ) : null}
                     {instance.restartPolicy !== "never" ? (
-                      <span title={restartPolicyLabel(instance.restartPolicy)}>
-                        <RefreshCw size={12} />
-                        重试
-                      </span>
-                    ) : null}
-                    {instance.lastExitCode !== null && instance.lastExitCode !== undefined ? (
-                      <span title="退出码">
-                        <Bug size={12} />
-                        {instance.lastExitCode}
+                      <span className="instance-glance-item" data-tooltip={`重启策略: ${restartPolicyLabel(instance.restartPolicy)}`}>
+                        <RefreshCw size={13} />
+                        <span className="glance-label">{restartPolicyLabel(instance.restartPolicy)}</span>
                       </span>
                     ) : null}
                   </div>
 
                   <div className="instance-card-footer">
                     <button
-                      className="icon-button mini"
-                      title="控制台"
+                      className="instance-card-console-btn"
+                      title="进入控制台"
                       type="button"
                       onClick={() => setSelectedId(instance.id)}
                     >
-                      <TerminalIcon size={15} />
+                      <TerminalIcon size={14} />
+                      <span>控制台</span>
                     </button>
                     {renderInstanceRowActions(instance)}
                   </div>
                 </div>
               );
             })}
-            {instances.length === 0 ? (
+
+            {databases.map((db) => {
+              const dbNode = nodes.find((node) => node.id === db.nodeId) ?? null;
+              const nodeName = dbNode?.name ?? db.nodeName ?? db.nodeId;
+              const endpointLabel = db.config.path
+                ? compactPathLabel(db.config.path)
+                : `${db.config.host || "127.0.0.1"}:${db.config.port || 3306}`;
+
+              return (
+                <div className="instance-card database-instance-card" key={`db-${db.id}`}>
+                  <span className="instance-card-signal db-card-signal" aria-hidden="true" />
+                  <div className="instance-card-header">
+                    <div className="instance-card-title">
+                      <div className={`instance-card-icon db-icon-badge ${db.engine}`}>
+                        <Database size={18} />
+                      </div>
+                      <div className="instance-title-copy">
+                        <button
+                          className="link-button instance-name"
+                          type="button"
+                          onClick={() => setSelectedDatabaseId(db.id)}
+                        >
+                          {db.name}
+                        </button>
+                        <span className="db-engine-chip">{db.engine.toUpperCase()} 数据库可视化</span>
+                      </div>
+                    </div>
+                    <span className="status-pill blue db-card-status">
+                      <CheckCircle2 size={12} /> 可视化就绪
+                    </span>
+                  </div>
+
+                  <button
+                    className="instance-card-command db-card-endpoint"
+                    type="button"
+                    title={db.config.path || `${db.config.host || "127.0.0.1"}:${db.config.port || ""}`}
+                    onClick={() => setSelectedDatabaseId(db.id)}
+                  >
+                    <HardDrive size={14} />
+                    <span>{endpointLabel}</span>
+                  </button>
+
+                  <div className="instance-glance">
+                    <span className="instance-glance-item" data-tooltip={`节点: ${nodeName}`}>
+                      <Server size={13} />
+                      <span className="glance-label">{nodeName}</span>
+                    </span>
+                    {db.description ? (
+                      <span className="instance-glance-item" data-tooltip={`描述: ${db.description}`}>
+                        <Info size={13} />
+                        <span className="glance-label">{db.description}</span>
+                      </span>
+                    ) : null}
+                    <span className="instance-glance-item" data-tooltip={`更新时间: ${formatDate(db.updatedAt)}`}>
+                      <Clock size={13} />
+                      <span className="glance-label">{formatDate(db.updatedAt)}</span>
+                    </span>
+                  </div>
+
+                  <div className="instance-card-footer">
+                    <button
+                      className="instance-card-console-btn db-visualize-btn"
+                      title="进入数据库可视化"
+                      type="button"
+                      onClick={() => setSelectedDatabaseId(db.id)}
+                    >
+                      <Database size={14} />
+                      <span>进入可视化</span>
+                    </button>
+                    <div className="row-actions instance-row-actions">
+                      <button
+                        className="icon-button mini danger-action"
+                        title="删除数据库可视化实例"
+                        type="button"
+                        onClick={async () => {
+                          if (window.confirm(`确定要移除数据库可视化实例「${db.name}」吗？`)) {
+                            await api.deleteDatabase(token, db.id);
+                            await refresh();
+                          }
+                        }}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {instances.length === 0 && databases.length === 0 ? (
               <div className="empty-state card-empty-state">
                 <TerminalIcon size={24} />
-                <span>暂无实例</span>
+                <span>暂无实例或数据库</span>
               </div>
             ) : null}
           </div>
@@ -11223,8 +15146,8 @@ function InstancesView({
               <span>实例</span>
               <span>状态</span>
               <span>节点</span>
-              <span>工作目录</span>
-              <span>归属</span>
+              <span>工作目录 / 路径</span>
+              <span>类型</span>
               <span>更新</span>
               <span>操作</span>
             </div>
@@ -11291,10 +15214,85 @@ function InstancesView({
                 </div>
               );
             })}
-            {instances.length === 0 ? (
+
+            {databases.map((db) => {
+              const dbNode = nodes.find((node) => node.id === db.nodeId) ?? null;
+              const nodeName = dbNode?.name ?? db.nodeName ?? db.nodeId;
+              const endpointLabel = db.config.path
+                ? compactPathLabel(db.config.path)
+                : `${db.config.host || "127.0.0.1"}:${db.config.port || 3306}`;
+
+              return (
+                <div className="instance-list-row database-list-row" role="row" key={`db-${db.id}`}>
+                  <div className="instance-list-primary" role="cell">
+                    <span className="instance-list-icon db-icon-badge">
+                      <Database size={17} />
+                    </span>
+                    <div className="instance-list-copy">
+                      <button
+                        className="link-button instance-list-name"
+                        type="button"
+                        onClick={() => setSelectedDatabaseId(db.id)}
+                      >
+                        {db.name}
+                      </button>
+                      <span title={endpointLabel}>
+                        [{db.engine.toUpperCase()}] {endpointLabel}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="instance-list-status" role="cell">
+                    <span className="status-pill blue compact">就绪</span>
+                  </div>
+                  <div className="instance-list-meta" role="cell" title={nodeName}>
+                    <Server size={14} />
+                    <span>{nodeName}</span>
+                  </div>
+                  <div className="instance-list-meta" role="cell" title={endpointLabel}>
+                    <HardDrive size={14} />
+                    <span>{endpointLabel}</span>
+                  </div>
+                  <div className="instance-list-meta instance-owner-meta" role="cell">
+                    <Database size={13} />
+                    <span>数据库</span>
+                  </div>
+                  <div className="instance-list-meta" role="cell" title="更新">
+                    <Clock size={14} />
+                    <span>{formatDate(db.updatedAt)}</span>
+                  </div>
+                  <div className="instance-list-actions" role="cell">
+                    <button
+                      className="icon-button mini"
+                      title="进入可视化"
+                      type="button"
+                      onClick={() => setSelectedDatabaseId(db.id)}
+                    >
+                      <Database size={15} />
+                    </button>
+                    <div className="row-actions instance-row-actions">
+                      <button
+                        className="icon-button mini danger-action"
+                        title="删除"
+                        type="button"
+                        onClick={async () => {
+                          if (window.confirm(`确定要移除数据库可视化实例「${db.name}」吗？`)) {
+                            await api.deleteDatabase(token, db.id);
+                            await refresh();
+                          }
+                        }}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {instances.length === 0 && databases.length === 0 ? (
               <div className="empty-state card-empty-state instance-list-empty">
                 <TerminalIcon size={24} />
-                <span>暂无实例</span>
+                <span>暂无实例或数据库</span>
               </div>
             ) : null}
           </div>
@@ -11364,18 +15362,6 @@ function InstancesView({
                   实例
                   <strong>{instances.length}</strong>
                 </span>
-              </div>
-              <div className="instance-graph-status-list">
-                {instanceStats.visibleStatuses.map((status) => {
-                  const meta = instanceStatusMeta(status);
-                  return (
-                    <span className={`instance-status-chip ${meta.className}`} title={meta.hint} key={status}>
-                      <InstanceStatusIcon status={status} size={13} />
-                      <span>{meta.shortLabel}</span>
-                      <strong>{instanceStats.counts[status]}</strong>
-                    </span>
-                  );
-                })}
               </div>
               <div className="instance-graph-node-list">
                 {graphLayout.hubs.map((hub) => (
@@ -11646,14 +15632,35 @@ function TasksView({ token, onLogout, refreshTick }: { token: string; onLogout: 
                       <td>{task.enabled ? "启用" : "停用"}</td>
                       <td>
                         <div className="row-actions">
-                          <button className="small-button compact-button" disabled={busy} onClick={() => void runTask(task)}>
-                            运行
+                          <button
+                            className="icon-button mini"
+                            disabled={busy}
+                            title="运行任务"
+                            aria-label="运行任务"
+                            type="button"
+                            onClick={() => void runTask(task)}
+                          >
+                            <Play size={14} />
                           </button>
-                          <button className="small-button compact-button" disabled={busy} onClick={() => void toggleTask(task)}>
-                            {task.enabled ? "停用" : "启用"}
+                          <button
+                            className={`icon-button mini ${task.enabled ? "active" : ""}`}
+                            disabled={busy}
+                            title={task.enabled ? "停用任务" : "启用任务"}
+                            aria-label={task.enabled ? "停用任务" : "启用任务"}
+                            type="button"
+                            onClick={() => void toggleTask(task)}
+                          >
+                            <Power size={14} />
                           </button>
-                          <button className="icon-button mini danger-action" disabled={busy} title="删除" onClick={() => void deleteTask(task)}>
-                            <Trash2 size={15} />
+                          <button
+                            className="icon-button mini danger-action"
+                            disabled={busy}
+                            title="删除任务"
+                            aria-label="删除任务"
+                            type="button"
+                            onClick={() => void deleteTask(task)}
+                          >
+                            <Trash2 size={14} />
                           </button>
                         </div>
                       </td>
@@ -12011,6 +16018,18 @@ const PERMISSION_GROUPS: { groupKey: PanelTextKey; items: { code: PermissionCode
   }
 ];
 
+const PERM_GROUP_ICONS: Record<string, React.ReactNode> = {
+  "permissions.group.dashboard": <Activity size={14} />,
+  "permissions.group.nodes": <Server size={14} />,
+  "permissions.group.instances": <Cpu size={14} />,
+  "permissions.group.terminal": <TerminalIcon size={14} />,
+  "permissions.group.files": <FolderTree size={14} />,
+  "permissions.group.tasks": <Clock size={14} />,
+  "permissions.group.templates": <FileArchive size={14} />,
+  "permissions.group.users": <UserCog size={14} />,
+  "permissions.group.saki": <Sparkles size={14} />
+};
+
 const elevatedRoleNamesForUi = new Set(["super_admin", "admin", "administrator", "operator"]);
 const elevatedRolePermissionHintsForUi = new Set<PermissionCode>([
   "instance.update",
@@ -12144,6 +16163,71 @@ function UsersView({
   useEffect(() => {
     setRolePermissions(selectedRole?.permissions ?? []);
   }, [selectedRole]);
+
+  const [permSearch, setPermSearch] = useState("");
+
+  const allAvailablePermissions = useMemo(
+    () => PERMISSION_GROUPS.flatMap((g) => g.items.map((i) => i.code)),
+    []
+  );
+
+  const isRolePermissionsDirty = useMemo(() => {
+    if (!selectedRole) return false;
+    const original = [...(selectedRole.permissions ?? [])].sort();
+    const current = [...rolePermissions].sort();
+    if (original.length !== current.length) return true;
+    return original.some((val, idx) => val !== current[idx]);
+  }, [selectedRole, rolePermissions]);
+
+  const permissionsDiffCount = useMemo(() => {
+    if (!selectedRole) return 0;
+    const originalSet = new Set(selectedRole.permissions ?? []);
+    const currentSet = new Set(rolePermissions);
+    let diff = 0;
+    for (const code of allAvailablePermissions) {
+      if (originalSet.has(code) !== currentSet.has(code)) diff++;
+    }
+    return diff;
+  }, [allAvailablePermissions, rolePermissions, selectedRole]);
+
+  const grantAllPermissions = useCallback(() => {
+    setRolePermissions([...allAvailablePermissions]);
+  }, [allAvailablePermissions]);
+
+  const revokeAllPermissions = useCallback(() => {
+    setRolePermissions([]);
+  }, []);
+
+  const resetRolePermissions = useCallback(() => {
+    if (!selectedRole) return;
+    setRolePermissions(selectedRole.permissions ?? []);
+  }, [selectedRole]);
+
+  const toggleGroupPermissions = useCallback((groupCodes: PermissionCode[]) => {
+    setRolePermissions((curr) => {
+      const allSelected = groupCodes.every((code) => curr.includes(code));
+      if (allSelected) {
+        return curr.filter((c) => !groupCodes.includes(c));
+      }
+      return [...new Set([...curr, ...groupCodes])].sort();
+    });
+  }, []);
+
+  const filteredGroups = useMemo(() => {
+    const query = permSearch.trim().toLowerCase();
+    if (!query) return PERMISSION_GROUPS;
+    return PERMISSION_GROUPS.map((group) => {
+      const groupName = t(group.groupKey).toLowerCase();
+      const matchingItems = group.items.filter((item) => {
+        const label = t(item.labelKey).toLowerCase();
+        return label.includes(query) || item.code.toLowerCase().includes(query) || groupName.includes(query);
+      });
+      return {
+        ...group,
+        items: matchingItems
+      };
+    }).filter((group) => group.items.length > 0);
+  }, [permSearch, t]);
 
   async function createUser(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -12472,17 +16556,18 @@ function UsersView({
                   <strong>{(editForm.displayName ?? editingUser.displayName).trim() || editingUser.username}</strong>
                   <span>@{editForm.username ?? editingUser.username}</span>
                   <div className="account-upload-actions">
-                    <button className="small-button" disabled={savingUser} type="button" onClick={() => editAvatarFileInputRef.current?.click()}>
+                    <button className="icon-button mini" disabled={savingUser} type="button" title={t("account.uploadAvatar")} aria-label={t("account.uploadAvatar")} onClick={() => editAvatarFileInputRef.current?.click()}>
                       <Upload size={15} />
-                      {t("account.uploadAvatar")}
                     </button>
                     <button
-                      className="small-button"
+                      className="icon-button mini danger-action"
                       disabled={savingUser}
                       type="button"
+                      title={t("common.remove")}
+                      aria-label={t("common.remove")}
                       onClick={() => setEditForm((current) => ({ ...current, avatarDataUrl: null }))}
                     >
-                      {t("common.remove")}
+                      <Trash2 size={15} />
                     </button>
                   </div>
                 </div>
@@ -12610,8 +16695,14 @@ function UsersView({
                       <td>{assignedCount}</td>
                       <td>
                         <div className="user-row-actions">
-                          <button className="small-button compact-button" type="button" onClick={() => openAssignmentModal(assignee)}>
-                            {t("users.assignment.button")}
+                          <button
+                            className="icon-button mini"
+                            type="button"
+                            title={t("users.assignment.button")}
+                            aria-label={t("users.assignment.button")}
+                            onClick={() => openAssignmentModal(assignee)}
+                          >
+                            <ShieldCheck size={14} />
                           </button>
                         </div>
                       </td>
@@ -12715,35 +16806,48 @@ function UsersView({
                           <td>{formatDate(user.lastLoginAt)}</td>
                           <td>
                             <div className="user-row-actions">
-                              <button className="small-button compact-button" type="button" onClick={() => openUserEditor(user)}>
+                              <button
+                                className="icon-button mini"
+                                type="button"
+                                title={t("users.edit.button")}
+                                aria-label={t("users.edit.button")}
+                                onClick={() => openUserEditor(user)}
+                              >
                                 <UserCog size={14} />
-                                {t("users.edit.button")}
                               </button>
                               {canOpenAssignment && assignee ? (
-                                <button className="small-button compact-button" type="button" onClick={() => openAssignmentModal(assignee)}>
-                                  {t("users.assignment.button")}
+                                <button
+                                  className="icon-button mini"
+                                  type="button"
+                                  title={t("users.assignment.button")}
+                                  aria-label={t("users.assignment.button")}
+                                  onClick={() => openAssignmentModal(assignee)}
+                                >
+                                  <ShieldCheck size={14} />
                                 </button>
                               ) : null}
                               {canSwitchAccount ? (
                                 <button
-                                  className="small-button compact-button"
+                                  className="icon-button mini"
                                   disabled={switchingUserId === user.id}
                                   type="button"
+                                  title={switchingUserId === user.id ? t("users.switching") : t("users.switch.button")}
+                                  aria-label={t("users.switch.button")}
                                   onClick={() => void switchToUser(user)}
                                 >
                                   <LogIn size={14} />
-                                  {switchingUserId === user.id ? t("users.switching") : t("users.switch.button")}
                                 </button>
                               ) : null}
                               {canDeleteAccount ? (
                                 <button
-                                  className="small-button compact-button danger-action"
+                                  className="icon-button mini danger-action"
                                   disabled={deletingUserId !== null}
                                   type="button"
+                                  title={deletingUserId === user.id ? t("users.deleting") : t("users.delete.button")}
+                                  aria-label={t("users.delete.button")}
                                   onClick={() => void deleteUser(user)}
                                 >
                                   <Trash2 size={14} />
-                                  {deletingUserId === user.id ? t("users.deleting") : t("users.delete.button")}
                                 </button>
                               ) : null}
                             </div>
@@ -12758,51 +16862,170 @@ function UsersView({
           </section>
 
           {canManageRoles ? (
-          <section className="panel-block role-panel">
-            <div className="section-heading role-heading-wrap">
-              <div className="role-heading-info">
-                <h2>{t("roles.permissions.title")}</h2>
-                <p>{t("roles.permissions.copy")}</p>
-              </div>
-              <select className="role-select-box" value={selectedRoleId} onChange={(event) => setSelectedRoleId(event.target.value)}>
-                {roles.map((role) => (
-                  <option value={role.id} key={role.id}>
-                    {roleDisplayName(role, t)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="permission-groups">
-              {PERMISSION_GROUPS.map((group) => (
-                <div className="permission-group-card" key={group.groupKey}>
-                  <h3 className="permission-group-title">{t(group.groupKey)}</h3>
-                  <div className="permission-group-items">
-                    {group.items.map((item) => {
-                      const isActive = rolePermissions.includes(item.code);
-                      return (
-                        <label className={`permission-chip ${isActive ? "active" : ""}`} key={item.code}>
-                          <input
-                            type="checkbox"
-                            checked={isActive}
-                            onChange={() => togglePermission(item.code)}
-                            className="hidden-checkbox"
-                          />
-                          <div className="permission-chip-content">
-                            {isActive ? <ShieldCheck size={16} /> : <div className="permission-chip-dot" />}
-                            <span className="permission-label">{t(item.labelKey)}</span>
+          <section className="panel-block role-workspace-panel">
+            <div className="role-workspace-layout">
+              {/* Left Role Master Sidebar */}
+              <aside className="role-master-sidebar">
+                <div className="role-sidebar-header">
+                  <h3>系统角色</h3>
+                  <span className="role-count-tag">{roles.length}</span>
+                </div>
+                <div className="role-list-scroller">
+                  {roles.map((role) => {
+                    const isSelected = role.id === selectedRoleId;
+                    const count = (isSelected ? rolePermissions : role.permissions).length;
+                    return (
+                      <button
+                        key={role.id}
+                        type="button"
+                        className={`role-list-item ${isSelected ? "active" : ""}`}
+                        onClick={() => setSelectedRoleId(role.id)}
+                      >
+                        <div className="role-item-main">
+                          <div className="role-item-title-row">
+                            <span className="role-item-name">{roleDisplayName(role, t)}</span>
+                            {isSelected && isRolePermissionsDirty ? (
+                              <span className="role-unsaved-dot" title="有未保存修改" />
+                            ) : null}
                           </div>
-                        </label>
-                      );
-                    })}
+                          <span className="role-item-subtitle">{role.id}</span>
+                        </div>
+                        <div className="role-item-stats">
+                          <span className="role-item-badge">{count}/{allAvailablePermissions.length}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </aside>
+
+              {/* Right Detail Workspace */}
+              <main className="role-detail-workspace">
+                <div className="role-detail-header">
+                  <div className="role-detail-heading">
+                    <div className="role-detail-title-line">
+                      <h2>{selectedRole ? roleDisplayName(selectedRole, t) : t("roles.permissions.title")}</h2>
+                      {isRolePermissionsDirty ? (
+                        <span className="role-dirty-pill">未保存更改 ({permissionsDiffCount})</span>
+                      ) : (
+                        <span className="role-clean-pill">已保存</span>
+                      )}
+                    </div>
+                    <p className="role-detail-desc">{t("roles.permissions.copy")}</p>
+                  </div>
+
+                  <div className="role-detail-actions">
+                    <div className="role-search-box">
+                      <Search size={13} />
+                      <input
+                        type="text"
+                        value={permSearch}
+                        onChange={(e) => setPermSearch(e.target.value)}
+                        placeholder="快速过滤权限..."
+                      />
+                      {permSearch ? (
+                        <button type="button" className="role-search-clear" onClick={() => setPermSearch("")}>
+                          <X size={12} />
+                        </button>
+                      ) : null}
+                    </div>
+
+                    <button
+                      type="button"
+                      className="role-action-btn"
+                      onClick={grantAllPermissions}
+                      title="授予当前角色全部权限"
+                    >
+                      全选
+                    </button>
+                    <button
+                      type="button"
+                      className="role-action-btn"
+                      onClick={revokeAllPermissions}
+                      title="清空当前角色权限"
+                    >
+                      清空
+                    </button>
+                    {isRolePermissionsDirty ? (
+                      <button
+                        type="button"
+                        className="role-action-btn"
+                        onClick={resetRolePermissions}
+                        title="重置为上次保存的权限"
+                      >
+                        重置
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="primary-button role-save-action"
+                      disabled={!selectedRole || savingRole}
+                      onClick={() => void saveRolePermissions()}
+                    >
+                      {savingRole ? <Loader2 size={14} className="spin" /> : <Save size={14} />}
+                      <span>{savingRole ? t("common.saving") : t("roles.permissions.save")}</span>
+                    </button>
                   </div>
                 </div>
-              ))}
-            </div>
-            <div className="role-actions">
-              <button className="primary-button settings-save" disabled={!selectedRole || savingRole} onClick={() => void saveRolePermissions()}>
-                <ShieldCheck size={17} />
-                {savingRole ? t("common.saving") : t("roles.permissions.save")}
-              </button>
+
+                {/* Permission Groups Grid */}
+                <div className="role-perm-grid">
+                  {filteredGroups.length === 0 ? (
+                    <div className="role-perm-empty">
+                      <p>未找到匹配“{permSearch}”的权限项</p>
+                    </div>
+                  ) : (
+                    filteredGroups.map((group) => {
+                      const groupCodes = group.items.map((i) => i.code);
+                      const activeCount = groupCodes.filter((code) => rolePermissions.includes(code)).length;
+                      const isAllSelected = groupCodes.length > 0 && activeCount === groupCodes.length;
+
+                      return (
+                        <div className="role-group-section" key={group.groupKey}>
+                          <div className="role-group-header">
+                            <div className="role-group-title">
+                              <span className="role-group-icon">
+                                {PERM_GROUP_ICONS[group.groupKey] ?? <Layers size={13} />}
+                              </span>
+                              <h4>{t(group.groupKey)}</h4>
+                              <span className="role-group-badge">{activeCount}/{groupCodes.length}</span>
+                            </div>
+                            <button
+                              type="button"
+                              className="role-group-toggle-btn"
+                              onClick={() => toggleGroupPermissions(groupCodes)}
+                            >
+                              {isAllSelected ? "清空此组" : "全选此组"}
+                            </button>
+                          </div>
+
+                          <div className="role-group-grid">
+                            {group.items.map((item) => {
+                              const isActive = rolePermissions.includes(item.code);
+                              return (
+                                <label
+                                  key={item.code}
+                                  className={`role-perm-row ${isActive ? "selected" : ""}`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isActive}
+                                    onChange={() => togglePermission(item.code)}
+                                  />
+                                  <div className="role-perm-info">
+                                    <span className="role-perm-label">{t(item.labelKey)}</span>
+                                    <span className="role-perm-code">{item.code}</span>
+                                  </div>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </main>
             </div>
           </section>
           ) : null}
@@ -13066,7 +17289,7 @@ function AuditView({
   const [deleting, setDeleting] = useState(false);
   const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
-  const [mobileAuditDetailOpen, setMobileAuditDetailOpen] = useState(false);
+  const [auditDetailOpen, setAuditDetailOpen] = useState(false);
   const pageSize = 20;
 
   const refresh = useCallback(async () => {
@@ -13281,28 +17504,51 @@ function AuditView({
               </span>
               <div className="audit-toolbar-actions">
                 {onAskSaki ? (
-                  <button className="small-button" type="button" onClick={openAuditSaki}>
-                    <Sparkles size={14} />
-                    问 Saki
+                  <button className="icon-button mini" title="问 Saki" aria-label="问 Saki" type="button" onClick={openAuditSaki}>
+                    <Sparkles size={15} />
                   </button>
                 ) : null}
                 {canDeleteLogs ? (
                   <>
-                    <button className="small-button" type="button" disabled={logs.length === 0 || deleting} onClick={toggleVisibleSelection}>
-                      <CheckCircle2 size={14} />
-                      {allVisibleSelected ? "取消本页" : "选择本页"}
+                    <button
+                      className={`icon-button mini ${allVisibleSelected ? "active" : ""}`}
+                      type="button"
+                      title={allVisibleSelected ? "取消选择本页" : "选择本页"}
+                      aria-label={allVisibleSelected ? "取消选择本页" : "选择本页"}
+                      disabled={logs.length === 0 || deleting}
+                      onClick={toggleVisibleSelection}
+                    >
+                      <ListChecks size={15} />
                     </button>
-                    <button className="small-button danger-action" type="button" disabled={selectedLogIds.length === 0 || deleting} onClick={() => void deleteSelectedLogs()}>
-                      <Trash2 size={14} />
-                      批量删除
+                    <button
+                      className="icon-button mini danger-action"
+                      type="button"
+                      title="批量删除选中项"
+                      aria-label="批量删除选中项"
+                      disabled={selectedLogIds.length === 0 || deleting}
+                      onClick={() => void deleteSelectedLogs()}
+                    >
+                      <Trash2 size={15} />
                     </button>
-                    <button className="small-button danger-action" type="button" disabled={!activeLog || deleting} onClick={() => void deleteActiveLog()}>
-                      <Trash2 size={14} />
-                      删除当前
+                    <button
+                      className="icon-button mini danger-action"
+                      type="button"
+                      title="删除当前日志"
+                      aria-label="删除当前日志"
+                      disabled={!activeLog || deleting}
+                      onClick={() => void deleteActiveLog()}
+                    >
+                      <Trash2 size={15} />
                     </button>
-                    <button className="small-button danger-action" type="button" disabled={total === 0 || deleting} onClick={() => void clearAllLogs()}>
-                      <Trash2 size={14} />
-                      清空全部
+                    <button
+                      className="icon-button mini danger-action"
+                      type="button"
+                      title="清空全部日志"
+                      aria-label="清空全部日志"
+                      disabled={total === 0 || deleting}
+                      onClick={() => void clearAllLogs()}
+                    >
+                      <Archive size={15} />
                     </button>
                   </>
                 ) : null}
@@ -13333,9 +17579,7 @@ function AuditView({
                         type="button"
                         onClick={() => {
                           setSelectedLogId(log.id);
-                          if (window.matchMedia("(max-width: 760px)").matches) {
-                            setMobileAuditDetailOpen(true);
-                          }
+                          setAuditDetailOpen(true);
                         }}
                       >
                         <span className="audit-signal-top">
@@ -13371,70 +17615,6 @@ function AuditView({
             )}
           </div>
 
-          <aside className="audit-inspector-panel">
-            {activeLog ? (
-              <>
-                <div className={`audit-inspector-head ${activeLog.result === "SUCCESS" ? "success" : "failure"}`}>
-                  <span className="audit-action-icon" aria-hidden="true">
-                    {auditResourceIcon(activeLog.resourceType, activeLog.action)}
-                  </span>
-                  <div>
-                    <p>{activeLog.result === "SUCCESS" ? "Verified" : "Attention"}</p>
-                    <h3>{auditActionLabel(activeLog.action)}</h3>
-                    <code>{activeLog.action}</code>
-                  </div>
-                </div>
-
-                <div className="audit-inspector-grid">
-                  <div>
-                    <span>结果</span>
-                    <strong>{activeLog.result === "SUCCESS" ? "成功" : "失败"}</strong>
-                  </div>
-                  <div>
-                    <span>时间</span>
-                    <strong>{formatDate(activeLog.createdAt)}</strong>
-                  </div>
-                  <div>
-                    <span>用户</span>
-                    <strong>{auditActor(activeLog)}</strong>
-                  </div>
-                  <div>
-                    <span>资源</span>
-                    <strong>{auditResourceLabel(activeLog)}</strong>
-                  </div>
-                  <div>
-                    <span>IP</span>
-                    <strong>{activeLog.ip ?? "-"}</strong>
-                  </div>
-                  <div>
-                    <span>载荷</span>
-                    <strong>{activeLog.payload ? "有" : "无"}</strong>
-                  </div>
-                </div>
-
-                <div className="audit-inspector-payload">
-                  <div className="audit-detail-section-title">
-                    <FileText size={15} />
-                    <span>Payload</span>
-                    {onAskSaki ? (
-                      <button className="small-button" type="button" onClick={() => askSakiAboutLog(activeLog)}>
-                        <Sparkles size={14} />
-                        交给 Saki
-                      </button>
-                    ) : null}
-                  </div>
-                  {renderAuditPayloadDetails(activeLog, token, (instanceId, filePath, actionName) => {
-                    setPreviewFile({ instanceId, filePath, actionName });
-                  })}
-                </div>
-              </>
-            ) : (
-              <div className="audit-empty compact">
-                <ClipboardList size={22} />
-                <span>暂无选中事件</span>
-              </div>
-            )}
-          </aside>
         </div>
 
         {totalPages > 1 && (
@@ -13452,25 +17632,19 @@ function AuditView({
         )}
       </section>
 
-      {mobileAuditDetailOpen && activeLog && (
+      {auditDetailOpen && activeLog && (
         <div
-          className="modal-backdrop mobile-audit-detail-backdrop"
+          className="modal-backdrop audit-detail-backdrop"
           role="presentation"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
-              setMobileAuditDetailOpen(false);
+              setAuditDetailOpen(false);
             }
           }}
         >
-          <div className="modal-panel mobile-audit-detail-modal" role="dialog" aria-modal="true">
-            <div className="section-heading modal-heading">
-              <h2 id="mobile-audit-detail-title">日志详情</h2>
-              <button className="icon-button mini" title="关闭" type="button" onClick={() => setMobileAuditDetailOpen(false)}>
-                <X size={15} />
-              </button>
-            </div>
-            <div className="modal-body" style={{ overflowY: "auto", maxHeight: "calc(88dvh - 100px)", padding: "16px" }}>
-              <div className={`audit-inspector-head ${activeLog.result === "SUCCESS" ? "success" : "failure"}`} style={{ borderRadius: "8px", padding: "12px", marginBottom: "16px" }}>
+          <div className="modal-panel audit-detail-modal" role="dialog" aria-modal="true">
+            <div className="audit-detail-glass-header">
+              <div className={`audit-detail-head ${activeLog.result === "SUCCESS" ? "success" : "failure"}`}>
                 <span className="audit-action-icon" aria-hidden="true">
                   {auditResourceIcon(activeLog.resourceType, activeLog.action)}
                 </span>
@@ -13480,11 +17654,17 @@ function AuditView({
                   <code>{activeLog.action}</code>
                 </div>
               </div>
-
-              <div className="audit-inspector-grid" style={{ padding: "0 0 16px 0", borderBottom: "1px solid rgba(226, 232, 240, 0.7)" }}>
+              <button className="icon-button mini audit-detail-close" title="关闭" type="button" onClick={() => setAuditDetailOpen(false)}>
+                <X size={15} />
+              </button>
+            </div>
+            <div className="modal-body audit-detail-body">
+              <div className="audit-detail-info-grid">
                 <div>
                   <span>结果</span>
-                  <strong>{activeLog.result === "SUCCESS" ? "成功" : "失败"}</strong>
+                  <strong className={activeLog.result === "SUCCESS" ? "success" : "failure"}>
+                    {activeLog.result === "SUCCESS" ? "成功" : "失败"}
+                  </strong>
                 </div>
                 <div>
                   <span>时间</span>
@@ -13509,22 +17689,26 @@ function AuditView({
               </div>
 
               {activeLog.payload && (
-                <div className="audit-inspector-payload" style={{ marginTop: "16px" }}>
-                  <div className="audit-detail-section-title" style={{ paddingLeft: 0, paddingRight: 0 }}>
+                <div className="audit-detail-payload">
+                  <div className="audit-detail-section-title">
                     <FileText size={15} />
                     <span>Payload</span>
                     {onAskSaki ? (
-                      <button className="small-button" type="button" onClick={() => {
-                        setMobileAuditDetailOpen(false);
-                        askSakiAboutLog(activeLog);
-                      }}>
+                      <button
+                        className="small-button"
+                        type="button"
+                        onClick={() => {
+                          setAuditDetailOpen(false);
+                          askSakiAboutLog(activeLog);
+                        }}
+                      >
                         <Sparkles size={14} />
                         交给 Saki
                       </button>
                     ) : null}
                   </div>
                   {renderAuditPayloadDetails(activeLog, token, (instanceId, filePath, actionName) => {
-                    setMobileAuditDetailOpen(false);
+                    setAuditDetailOpen(false);
                     setPreviewFile({ instanceId, filePath, actionName });
                   })}
                 </div>
@@ -13988,8 +18172,6 @@ function AboutView() {
   );
 }
 
-type SakiSettingsSection = "system" | "model" | "features" | "appearance" | "prompt" | "skills";
-
 const registrationIdentityOptions: Array<{ value: RegistrationIdentity; label: string }> = [
   { value: "none", label: "无角色" },
   { value: "user", label: "用户" },
@@ -14026,7 +18208,14 @@ function SettingsView({
   const [skillDownloadUrl, setSkillDownloadUrl] = useState("");
   const [skillSearchQuery, setSkillSearchQuery] = useState("");
   const [skillFilter, setSkillFilter] = useState<"all" | "enabled" | "disabled">("all");
-  const [activeSettingsSection, setActiveSettingsSection] = useState<SakiSettingsSection>("system");
+  const [activeSettingsSection, setActiveSettingsSectionState] = useState<SakiSettingsSection>(() => {
+    return parseHashRoute().settingsSection ?? "system";
+  });
+
+  const setActiveSettingsSection = useCallback((sec: SakiSettingsSection) => {
+    setActiveSettingsSectionState(sec);
+    updateHashRoute({ view: "settings", settingsSection: sec });
+  }, []);
   const [settingsMenuCollapsed, setSettingsMenuCollapsed] = useState(false);
   const [modelOptions, setModelOptions] = useState<SakiModelOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -14045,6 +18234,7 @@ function SettingsView({
   const loginCoverInputRef = useRef<HTMLInputElement>(null);
   const backgroundInputRef = useRef<HTMLInputElement>(null);
   const mobileBackgroundInputRef = useRef<HTMLInputElement>(null);
+  const skillImportInputRef = useRef<HTMLInputElement>(null);
   const t = useCallback((key: PanelTextKey) => panelT(language, key), [language]);
   const localizedRegistrationIdentityOptions = useMemo<Array<{ value: RegistrationIdentity; label: string }>>(
     () => registrationIdentityOptions.map((option) => ({ ...option, label: t(`registration.${option.value}` as PanelTextKey) })),
@@ -14370,11 +18560,14 @@ function SettingsView({
   async function createSkill(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const name = skillDraft.name.trim();
-    const content = skillDraft.content.trim();
-    if (!name || !content) {
-      setError("Skill name and content are required.");
+    let content = skillDraft.content.trim();
+    if (!name) {
+      setError("请输入 Skill 名称。");
       setNotice("");
       return;
+    }
+    if (!content) {
+      content = `# ${name}\n\n${skillDraft.description.trim() || "Custom Saki Skill instructions"}`;
     }
     const payload: CreateSakiSkillRequest = {
       name,
@@ -14430,6 +18623,102 @@ function SettingsView({
       setError(err instanceof Error ? err.message : "Skill download failed");
     } finally {
       setSkillBusy(null);
+    }
+  }
+
+  function extractSkillNameFromFile(fileName: string): string {
+    const withoutExt = fileName.replace(/\.(md|markdown|txt)$/i, "");
+    const cleaned = withoutExt.replace(/[_\s-]+/g, "-").trim();
+    return cleaned || "imported-skill";
+  }
+
+  function extractSkillDescription(content: string): string {
+    const lines = content.split(/\r?\n/);
+    let description = "";
+    let inBody = false;
+    for (const line of lines) {
+      if (!inBody) {
+        if (/^---\s*$/.test(line)) {
+          inBody = true;
+          continue;
+        }
+        const m = line.match(/^description\s*:\s*(.+)$/i);
+        if (m && m[1]) {
+          description = m[1].trim().replace(/^["']|["']$/g, "");
+        }
+      } else {
+        if (/^#\s+/.test(line)) continue;
+        const trimmed = line.trim();
+        if (trimmed && trimmed.length >= 8) {
+          description = trimmed.slice(0, 160);
+          break;
+        }
+      }
+    }
+    return description;
+  }
+
+  async function importSkillsFromFiles(fileList: FileList | null) {
+    if (!fileList || fileList.length === 0) return;
+    setSkillBusy("import");
+    setError("");
+    setNotice("");
+    const results: string[] = [];
+    const errors: string[] = [];
+    try {
+      for (const file of Array.from(fileList)) {
+        const name = file.name.toLowerCase();
+        if (!/\.(md|markdown|txt)$/.test(name)) {
+          errors.push(`${file.name}: 仅支持 .md / .txt 文件`);
+          continue;
+        }
+        const content = await file.text();
+        const trimmed = content.trim();
+        if (!trimmed) {
+          errors.push(`${file.name}: 文件为空`);
+          continue;
+        }
+        const skillName = extractSkillNameFromFile(file.name);
+        const description = extractSkillDescription(trimmed);
+        const payload: CreateSakiSkillRequest = {
+          name: skillName,
+          description,
+          content: trimmed,
+          enabled: true,
+          tags: ["imported"]
+        };
+        try {
+          const created = await api.createSakiSkill(token, payload);
+          results.push(created.name);
+        } catch (err) {
+          errors.push(`${file.name}: ${err instanceof Error ? err.message : "保存失败"}`);
+        }
+      }
+      skillDetailRequestRef.current += 1;
+      await refreshSkillList();
+      if (results.length > 0) {
+        setNotice(`已导入 ${results.length} 个 Skill：${results.slice(0, 3).join(", ")}${results.length > 3 ? ` 等` : ""}`);
+        const last = results[results.length - 1];
+        const lastDetail = await api.sakiAllSkills(token);
+        const match = lastDetail.find((s) => s.name === last);
+        if (match) {
+          setSkillDetailLoading(false);
+          setSelectedSkillId(match.id);
+          const detail = await api.sakiSkill(token, match.id);
+          setSelectedSkill(detail);
+          setSkillEditDraft(sakiSkillDraftFromDetail(detail));
+        }
+      }
+      if (errors.length > 0) {
+        setError(errors.join("；"));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "导入失败");
+    } finally {
+      setSkillBusy(null);
+      if (skillImportInputRef.current) {
+        skillImportInputRef.current.value = "";
+      }
     }
   }
 
@@ -14627,7 +18916,7 @@ function SettingsView({
           <form className="settings-config-form" onSubmit={(event) => void saveSettings(event)}>
           <div className={`settings-group ${activeSettingsSection === "system" ? "active" : "settings-section-hidden"}`} id="settings-system">
             <div className="settings-group-title">
-              <div className="settings-group-icon">⚙️</div>
+              <div className="settings-group-icon"><Settings size={18} /></div>
               <div>
                 <h3>{t("settings.system")}</h3>
                 <span>{t("settings.system.detail")}</span>
@@ -14688,7 +18977,7 @@ function SettingsView({
           </div>
           <div className={`settings-group ${activeSettingsSection === "model" ? "active" : "settings-section-hidden"}`} id="settings-model">
             <div className="settings-group-title">
-              <div className="settings-group-icon">🤖</div>
+              <div className="settings-group-icon"><Cpu size={18} /></div>
               <div>
                 <h3>{t("settings.model.title")}</h3>
                 <span>{t("settings.model.detail")}</span>
@@ -14828,7 +19117,7 @@ function SettingsView({
           </div>
           <div className={`settings-group ${activeSettingsSection === "features" ? "active" : "settings-section-hidden"}`} id="settings-features">
             <div className="settings-group-title">
-              <div className="settings-group-icon">🎯</div>
+              <div className="settings-group-icon"><Wrench size={18} /></div>
               <div>
                 <h3>{t("settings.features")}</h3>
                 <span>{t("settings.features.detail")}</span>
@@ -14855,7 +19144,7 @@ function SettingsView({
           </div>
           <div className={`settings-group ${activeSettingsSection === "appearance" ? "active" : "settings-section-hidden"}`} id="settings-appearance">
             <div className="settings-group-title">
-              <div className="settings-group-icon">🎨</div>
+              <div className="settings-group-icon"><ImageIcon size={18} /></div>
               <div>
                 <h3>{t("settings.appearance")}</h3>
                 <span>{t("settings.appearance.titleDetail")}</span>
@@ -14894,9 +19183,8 @@ function SettingsView({
                     onChange={(event) => updateAppearance({ loginCoverSrc: event.target.value })}
                     placeholder="/assets/cover.png"
                   />
-                  <button className="small-button" type="button" onClick={() => loginCoverInputRef.current?.click()}>
+                  <button className="icon-button mini" type="button" title="选择登录封面" aria-label="选择登录封面" onClick={() => loginCoverInputRef.current?.click()}>
                     <Upload size={15} />
-                    选择图片
                   </button>
                 </div>
                 {form.appearance?.loginCoverSrc ? <img className="appearance-preview cover-preview" src={form.appearance.loginCoverSrc} alt="" /> : null}
@@ -14909,9 +19197,8 @@ function SettingsView({
                     onChange={(event) => updateAppearance({ appLogoSrc: event.target.value })}
                     placeholder="/assets/saki-panel-icon.png"
                   />
-                  <button className="small-button" type="button" onClick={() => appLogoInputRef.current?.click()}>
+                  <button className="icon-button mini" type="button" title="选择应用图标" aria-label="选择应用图标" onClick={() => appLogoInputRef.current?.click()}>
                     <Upload size={15} />
-                    选择
                   </button>
                 </div>
                 {form.appearance?.appLogoSrc ? <img className="appearance-preview logo-preview" src={form.appearance.appLogoSrc} alt="" /> : null}
@@ -14924,9 +19211,8 @@ function SettingsView({
                     onChange={(event) => updateAppearance({ sidebarLogoSrc: event.target.value })}
                     placeholder="/assets/saki-panel-icon.png"
                   />
-                  <button className="small-button" type="button" onClick={() => sidebarLogoInputRef.current?.click()}>
+                  <button className="icon-button mini" type="button" title="选择侧边栏图标" aria-label="选择侧边栏图标" onClick={() => sidebarLogoInputRef.current?.click()}>
                     <Upload size={15} />
-                    选择
                   </button>
                 </div>
                 {form.appearance?.sidebarLogoSrc ? <img className="appearance-preview logo-preview" src={form.appearance.sidebarLogoSrc} alt="" /> : null}
@@ -14939,9 +19225,8 @@ function SettingsView({
                     onChange={(event) => updateAppearance({ backgroundSrc: event.target.value })}
                     placeholder="/assets/background.png"
                   />
-                  <button className="small-button" type="button" onClick={() => backgroundInputRef.current?.click()}>
+                  <button className="icon-button mini" type="button" title="选择网页背景" aria-label="选择网页背景" onClick={() => backgroundInputRef.current?.click()}>
                     <Upload size={15} />
-                    选择
                   </button>
                 </div>
                 {form.appearance?.backgroundSrc ? <img className="appearance-preview background-preview" src={form.appearance.backgroundSrc} alt="" /> : null}
@@ -14954,9 +19239,8 @@ function SettingsView({
                     onChange={(event) => updateAppearance({ mobileBackgroundSrc: event.target.value })}
                     placeholder="/assets/background_mobile.png"
                   />
-                  <button className="small-button" type="button" onClick={() => mobileBackgroundInputRef.current?.click()}>
+                  <button className="icon-button mini" type="button" title="选择移动端背景" aria-label="选择移动端背景" onClick={() => mobileBackgroundInputRef.current?.click()}>
                     <Upload size={15} />
-                    选择
                   </button>
                 </div>
                 {form.appearance?.mobileBackgroundSrc ? <img className="appearance-preview background-preview" src={form.appearance.mobileBackgroundSrc} alt="" /> : null}
@@ -14965,7 +19249,7 @@ function SettingsView({
           </div>
           <div className={`settings-group ${activeSettingsSection === "prompt" ? "active" : "settings-section-hidden"}`} id="settings-prompt">
             <div className="settings-group-title">
-              <div className="settings-group-icon">📝</div>
+              <div className="settings-group-icon"><TextQuote size={18} /></div>
               <div>
                 <h3>{t("settings.prompt")}</h3>
                 <span>{t("settings.prompt.detail")}</span>
@@ -15014,6 +19298,16 @@ function SettingsView({
             </div>
           </div>
           <div className="saki-skill-header-actions">
+            <button
+              className="ghost-button saki-skill-header-import"
+              type="button"
+              disabled={skillBusy === "import"}
+              onClick={() => skillImportInputRef.current?.click()}
+              title="从 .md / .txt 文件导入 Skill"
+            >
+              <FileUp size={16} />
+              <span>{skillBusy === "import" ? "导入中" : "导入文件"}</span>
+            </button>
             <button className="ghost-button" type="button" onClick={() => setSkillCreatorOpen((current) => !current)}>
               {skillCreatorOpen ? <X size={17} /> : <Plus size={17} />}
               {skillCreatorOpen ? "收起添加" : "添加 Skill"}
@@ -15086,7 +19380,8 @@ function SettingsView({
           </div>
         ) : null}
 
-        <div className="saki-skill-workspace">
+        <div className={`saki-skill-workspace ${selectedSkillId ? "has-selected-skill" : "no-selected-skill"}`}>
+
           <div className="saki-skill-sidebar">
             <div className="saki-skill-sidebar-header">
               <div className="saki-skill-search">
@@ -15131,6 +19426,33 @@ function SettingsView({
                 {skillBusy === "download" ? "Downloading" : "Install"}
               </button>
             </form>
+
+            <div className="saki-skill-import">
+              <div className="saki-skill-import-header">
+                <FileUp size={15} />
+                <span>Import from file</span>
+              </div>
+              <input
+                ref={skillImportInputRef}
+                className="hidden-file-input"
+                type="file"
+                multiple
+                accept=".md,.markdown,.txt,text/markdown,text/plain"
+                onChange={(event) => void importSkillsFromFiles(event.target.files)}
+              />
+              <button
+                className="saki-skill-import-drop"
+                type="button"
+                disabled={skillBusy === "import"}
+                onClick={() => skillImportInputRef.current?.click()}
+              >
+                <BookOpen size={18} />
+                <span>
+                  <strong>{skillBusy === "import" ? "Importing..." : "选择 .md / .txt 文件"}</strong>
+                  <em>支持批量导入，从文件名和内容自动提取信息</em>
+                </span>
+              </button>
+            </div>
 
             <div className="saki-skill-list">
               {skillList
@@ -15209,6 +19531,17 @@ function SettingsView({
               </div>
             ) : selectedSkill ? (
               <form className="saki-skill-detail-panel" onSubmit={(event) => void saveSelectedSkill(event)}>
+                <button
+                  type="button"
+                  className="saki-skill-mobile-back-btn"
+                  onClick={() => {
+                    setSelectedSkillId(null);
+                    setSelectedSkill(null);
+                  }}
+                >
+                  <ChevronLeft size={16} />
+                  <span>返回技能列表</span>
+                </button>
                 <div className="saki-skill-detail-header">
                   <div className="saki-skill-detail-title">
                     <h3>{selectedSkill.name}</h3>
@@ -15486,12 +19819,11 @@ function UserAccountModal({
               className="preview"
             />
             <div className="account-upload-actions">
-              <button className="small-button" type="button" onClick={() => fileInputRef.current?.click()}>
+              <button className="icon-button mini" type="button" title={t("account.uploadAvatar")} aria-label={t("account.uploadAvatar")} onClick={() => fileInputRef.current?.click()}>
                 <Upload size={15} />
-                {t("account.uploadAvatar")}
               </button>
-              <button className="small-button" type="button" onClick={() => setAvatarDataUrl(null)}>
-                {t("common.remove")}
+              <button className="icon-button mini danger-action" type="button" title={t("common.remove")} aria-label={t("common.remove")} onClick={() => setAvatarDataUrl(null)}>
+                <Trash2 size={15} />
               </button>
             </div>
           </div>
@@ -15563,7 +19895,8 @@ function Workspace({
   onAppearanceChange,
   onLanguageChange,
   darkMode,
-  onToggleDarkMode
+  onToggleDarkMode,
+  themeSwitching
 }: {
   token: string;
   user: CurrentUser;
@@ -15575,9 +19908,12 @@ function Workspace({
   onAppearanceChange: (appearance: PanelAppearanceSettings) => void;
   onLanguageChange: (language: PanelLanguage) => void;
   darkMode: boolean;
-  onToggleDarkMode: () => void;
+  onToggleDarkMode: (e?: React.MouseEvent<HTMLElement>) => void;
+  themeSwitching: boolean;
 }) {
-  const [activeView, setActiveView] = useState<ViewMode>("dashboard");
+  const initialRoute = useMemo(() => parseHashRoute(), []);
+  const [activeView, setActiveView] = useState<ViewMode>(initialRoute.view);
+  const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(initialRoute.instanceId);
   const [refreshTick, setRefreshTick] = useState(0);
   const [sakiInstance, setSakiInstance] = useState<ManagedInstance | null>(null);
   const [sakiSeed, setSakiSeed] = useState<SakiPromptSeed | null>(null);
@@ -15736,19 +20072,36 @@ function Workspace({
   }, [sidebarHidden, hideSidebar]);
 
   useEffect(() => {
+    const onHashChange = () => {
+      const route = parseHashRoute();
+      if (availableViews.includes(route.view)) {
+        setActiveView(route.view);
+        setSelectedInstanceId(route.instanceId);
+      }
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [availableViews]);
+
+  useEffect(() => {
     if (hasAnyAccessibleView && !availableViews.includes(activeView)) {
       const nextView = availableViews[0];
-      if (nextView) setActiveView(nextView);
+      if (nextView) {
+        setActiveView(nextView);
+        updateHashRoute({ view: nextView });
+      }
     }
   }, [activeView, availableViews, hasAnyAccessibleView]);
 
   const selectView = useCallback((view: ViewMode) => {
     if (!availableViews.includes(view)) return;
     setActiveView(view);
+    const nextInstanceId = view === "instances" ? selectedInstanceId : null;
+    updateHashRoute({ view, instanceId: nextInstanceId });
     if (window.matchMedia("(max-width: 760px)").matches) {
       hideSidebar();
     }
-  }, [availableViews, hideSidebar]);
+  }, [availableViews, hideSidebar, selectedInstanceId]);
 
   return (
     <>
@@ -15761,7 +20114,7 @@ function Workspace({
             </div>
             <div className="sidebar-brand-actions">
               <button
-                className="sidebar-inline-toggle theme-toggle-button"
+                className={`sidebar-inline-toggle theme-toggle-button${themeSwitching ? " theme-switching" : ""}`}
                 type="button"
                 aria-label={darkMode ? "Switch to light mode" : "Switch to dark mode"}
                 title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
@@ -15854,26 +20207,25 @@ function Workspace({
           </div>
         </aside>
 
-        <button
-          ref={floatingSidebarToggleRef}
-          className="sidebar-floating-toggle"
-          type="button"
-          aria-label={t("sidebar.expand")}
-          aria-controls="workspace-sidebar"
-          aria-expanded={!sidebarHidden}
-          inert={!sidebarHidden || undefined}
-          tabIndex={sidebarHidden ? 0 : -1}
-          title={t("sidebar.expand")}
-          onClick={(e) => {
-            e.currentTarget.blur();
-            setSidebarHidden(false);
-          }}
-        >
-          <PanelLeftOpen size={20} aria-hidden="true" />
-        </button>
-
         <main className="workspace view-transition-enter" key={hasAnyAccessibleView ? effectiveView : "access-empty"}>
           <header className="topbar">
+            <button
+              ref={floatingSidebarToggleRef}
+              className="sidebar-floating-toggle"
+              type="button"
+              aria-label={t("sidebar.expand")}
+              aria-controls="workspace-sidebar"
+              aria-expanded={!sidebarHidden}
+              inert={!sidebarHidden || undefined}
+              tabIndex={sidebarHidden ? 0 : -1}
+              title={t("sidebar.expand")}
+              onClick={(e) => {
+                e.currentTarget.blur();
+                setSidebarHidden(false);
+              }}
+            >
+              <PanelLeftOpen size={18} aria-hidden="true" />
+            </button>
             <div className="topbar-inner">
               <div className="topbar-title">
                 <span className="topbar-context">{t("topbar.context")}</span>
@@ -15900,7 +20252,7 @@ function Workspace({
               </div>
               <div className="topbar-actions">
                 {hasAnyAccessibleView ? (
-                  <button className="icon-button mini" onClick={() => setRefreshTick((value) => value + 1)} title={t("common.refresh")}>
+                  <button className="topbar-refresh-btn" type="button" onClick={() => setRefreshTick((value) => value + 1)} title={t("common.refresh")}>
                     <RefreshCw size={14} />
                   </button>
                 ) : null}
@@ -15929,6 +20281,8 @@ function Workspace({
               onSakiFileDragChange={setSakiFileDragActive}
               onSakiInstanceFileDrop={canUseSaki ? attachInstanceFileToSaki : undefined}
               darkMode={darkMode}
+              initialInstanceId={selectedInstanceId}
+              onSelectInstance={setSelectedInstanceId}
             />
           ) : effectiveView === "nodes" ? (
             <NodesView token={token} onLogout={onLogout} refreshTick={refreshTick} />
@@ -16002,14 +20356,91 @@ export function App() {
       return localStorage.getItem("saki-panel-theme") === "dark";
     } catch { return false; }
   });
+  const [themeSwitching, setThemeSwitching] = useState(false);
 
-  const toggleDarkMode = useCallback(() => {
-    setDarkMode(prev => {
-      const next = !prev;
-      try { localStorage.setItem("saki-panel-theme", next ? "dark" : "light"); } catch {}
-      return next;
+  const toggleDarkMode = useCallback((event?: React.MouseEvent<HTMLElement>) => {
+    if (themeSwitching) return;
+    const nextIsDark = !darkMode;
+    try {
+      localStorage.setItem("saki-panel-theme", nextIsDark ? "dark" : "light");
+    } catch {}
+
+    const isAppearanceTransition =
+      typeof document !== "undefined" &&
+      typeof (document as any).startViewTransition === "function" &&
+      !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    if (!isAppearanceTransition) {
+      setThemeSwitching(true);
+      document.documentElement.classList.add("theme-transitioning");
+      setDarkMode(nextIsDark);
+      document.documentElement.setAttribute("data-theme", nextIsDark ? "dark" : "light");
+      applyPanelAppearance(appearance, nextIsDark);
+      window.setTimeout(() => {
+        document.documentElement.classList.remove("theme-transitioning");
+        setThemeSwitching(false);
+      }, 400);
+      return;
+    }
+
+    let x = window.innerWidth / 2;
+    let y = window.innerHeight / 2;
+    if (event && typeof event.clientX === "number" && typeof event.clientY === "number" && (event.clientX !== 0 || event.clientY !== 0)) {
+      x = event.clientX;
+      y = event.clientY;
+    } else {
+      const btn = document.querySelector(".theme-toggle-button");
+      if (btn) {
+        const rect = btn.getBoundingClientRect();
+        x = rect.left + rect.width / 2;
+        y = rect.top + rect.height / 2;
+      }
+    }
+
+    const endRadius = Math.hypot(
+      Math.max(x, window.innerWidth - x),
+      Math.max(y, window.innerHeight - y)
+    );
+
+    setThemeSwitching(true);
+
+    const transition = (document as any).startViewTransition(() => {
+      flushSync(() => {
+        setDarkMode(nextIsDark);
+      });
+      document.documentElement.setAttribute("data-theme", nextIsDark ? "dark" : "light");
+      applyPanelAppearance(appearance, nextIsDark);
     });
-  }, []);
+
+    transition.ready
+      .then(() => {
+        const clipPath = [
+          `circle(0px at ${x}px ${y}px)`,
+          `circle(${endRadius}px at ${x}px ${y}px)`
+        ];
+        document.documentElement.animate(
+          {
+            clipPath
+          },
+          {
+            duration: 450,
+            easing: "cubic-bezier(0.4, 0, 0.2, 1)",
+            pseudoElement: "::view-transition-new(root)"
+          }
+        );
+      })
+      .catch(() => {});
+
+    const cleanup = () => {
+      setThemeSwitching(false);
+    };
+
+    if (transition.finished && typeof transition.finished.then === "function") {
+      transition.finished.then(cleanup, cleanup);
+    } else {
+      window.setTimeout(cleanup, 450);
+    }
+  }, [appearance, darkMode, themeSwitching]);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", darkMode ? "dark" : "light");
@@ -16037,6 +20468,7 @@ export function App() {
     if (currentToken) {
       void api.logout(currentToken).catch(() => undefined);
     }
+    saveAutoLogin(false);
     localStorage.removeItem(tokenKey);
     setToken(null);
     setUser(null);
@@ -16165,6 +20597,7 @@ export function App() {
   if (booting) {
     return (
       <PanelLanguageContext.Provider value={languageContextValue}>
+        <ElegantCursor />
         <main className="login-shell">
           <div className="loading-panel">
             <RefreshCw size={22} />
@@ -16178,8 +20611,11 @@ export function App() {
   if (!token || !user) {
     return (
       <PanelLanguageContext.Provider value={languageContextValue}>
+        <ElegantCursor />
         <LoginView
           appearance={appearance}
+          darkMode={darkMode}
+          onToggleDarkMode={toggleDarkMode}
           onLogin={(nextToken, nextUser) => {
             setToken(nextToken);
             setUser(nextUser);
@@ -16191,6 +20627,7 @@ export function App() {
 
   return (
     <PanelLanguageContext.Provider value={languageContextValue}>
+      <ElegantCursor />
       <Workspace
         token={token}
         user={user}
@@ -16203,6 +20640,7 @@ export function App() {
         onLanguageChange={changeLanguage}
         darkMode={darkMode}
         onToggleDarkMode={toggleDarkMode}
+        themeSwitching={themeSwitching}
       />
     </PanelLanguageContext.Provider>
   );

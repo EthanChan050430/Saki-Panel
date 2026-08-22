@@ -48,9 +48,13 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "uploadBase64", description: "Upload a base64 file.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, contentBase64: { type: "string" } }, ["path", "contentBase64"]) },
   { name: "archivePaths", description: "Compress one or more files or directories into a .zip archive in the instance workspace. Prefer this over shell zip commands.", parameters: objectSchema({ instanceId: instanceLookupSchema, paths: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 200, description: "Relative paths to compress." }, outputPath: { type: "string", description: "Optional output .zip path relative to the instance working directory." } }, ["paths"]), aliases: ["archive", "compressPaths", "zipPaths"] },
   { name: "extractArchive", description: "Extract a .zip, .rar, or .7z archive into the instance workspace. Prefer this over shell unzip commands. Use conflictPolicy=overwrite or skip when files already exist in the output directory.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, outputPath: { type: "string", description: "Optional output directory relative to the instance working directory." }, conflictPolicy: { type: "string", enum: ["overwrite", "skip"], description: "How to handle files that already exist at the destination." } }, ["path"]), aliases: ["extract", "unzipArchive", "decompressArchive"] },
-  { name: "runCommand", description: "Run a terminal command in an independent temporary shell, not in the running instance process stdin. Use this for normal shell commands, especially when the instance console cannot accept input. For programs that prompt for stdin, provide input with newline-separated answers. Medium and high risk commands require approval.", parameters: objectSchema({ instanceId: instanceLookupSchema, command: { type: "string" }, cwd: { type: "string", description: "Optional subdirectory relative to the selected instance working directory." }, workingDirectory: { type: "string", description: "Alias for cwd; must be relative to the selected instance working directory." }, timeoutMs: { type: "integer", minimum: 1000, maximum: 120000 }, input: { type: "string" }, stdin: { type: "string" } }, ["command"]), aliases: ["executeCommand", "terminal", "shell"] },
-  { name: "sendInput", description: "Type raw text into a running instance console/stdin. Use this for interactive prompts, menu choices, chat text, passwords, or any console content. Set pressEnter=false to type without submitting.", parameters: objectSchema({ instanceId: instanceLookupSchema, text: { type: "string" }, pressEnter: { type: "boolean", description: "Append Enter/newline after the text. Defaults to true." }, echo: { type: "boolean", description: "Whether to record the typed text in instance logs. Set false for secrets." } }, ["text"]), aliases: ["typeConsole", "consoleInput", "terminalInput", "sendStdin"] },
-  { name: "sendCommand", description: "Send one line to a running instance process stdin. This is not a shell command runner; use runCommand for normal terminal commands.", parameters: objectSchema({ instanceId: instanceLookupSchema, command: { type: "string" } }, ["command"]) },
+  { name: "runCommand", description: "Run a terminal command. DEFAULT: reuses the most recently created persistent independent shell (if any exist). Auto-creates a new one only if no shells are open. Equivalent to working in the latest terminal tab (like + button behavior but reuse-first). Isolates from main instance console. Use createShell + runInShell for explicit control. Medium/high risk commands require approval. Supports 'input' for interactive prompts.", parameters: objectSchema({ instanceId: instanceLookupSchema, command: { type: "string" }, cwd: { type: "string", description: "Optional subdirectory relative to the selected instance working directory." }, workingDirectory: { type: "string", description: "Alias for cwd; must be relative to the selected instance working directory." }, timeoutMs: { type: "integer", minimum: 1000, maximum: 120000 }, input: { type: "string" }, stdin: { type: "string" } }, ["command"]), aliases: ["executeCommand", "terminal", "shell"] },
+  { name: "sendInput", description: "Type raw text into the RUNNING instance process console/stdin (the main attached terminal). Use ONLY for live process interaction (prompts, passwords, etc from the started app). For regular shell commands (ls, npm, etc), ALWAYS use runCommand which will execute in a brand new independent shell (like + button).", parameters: objectSchema({ instanceId: instanceLookupSchema, text: { type: "string" }, pressEnter: { type: "boolean", description: "Append Enter/newline after the text. Defaults to true." }, echo: { type: "boolean", description: "Whether to record the typed text in instance logs. Set false for secrets." } }, ["text"]), aliases: ["typeConsole", "consoleInput", "terminalInput", "sendStdin"] },
+  { name: "sendCommand", description: "Send one line directly to the RUNNING instance process stdin (the main console, not a shell). ONLY for interacting with the live process (e.g. answering prompts from the started app). For normal shell/terminal commands, ALWAYS use runCommand (which creates a fresh new shell like the + button).", parameters: objectSchema({ instanceId: instanceLookupSchema, command: { type: "string" } }, ["command"]) },
+  { name: "listShells", description: "List active persistent shell sessions/tabs. Use to discover shellIds for runInShell or sendShellInput. These survive across agent turns unlike runCommand temps.", parameters: objectSchema({ instanceId: instanceLookupSchema }) },
+  { name: "createShell", description: "Open a new persistent shell (equivalent to + button). Returns shellId. Ideal for stateful sessions (cd, env vars, long-running servers). Output visible in UI tab.", parameters: objectSchema({ instanceId: instanceLookupSchema, workingDirectory: { type: "string", description: "Optional relative cwd for the new shell." } }) },
+  { name: "sendShellInput", description: "Raw keystrokes to a persistent shell (use \\n for enter). For full commands with observation, use runInShell.", parameters: objectSchema({ instanceId: instanceLookupSchema, shellId: { type: "string" }, text: { type: "string" }, pressEnter: { type: "boolean", description: "Append newline (default true)." } }, ["shellId", "text"]) },
+  { name: "runInShell", description: "Run command in a persistent shell by ID (from listShells/createShell). Much better than repeated runCommand for multi-command or stateful work. Output appears in the matching UI shell tab.", parameters: objectSchema({ instanceId: instanceLookupSchema, shellId: { type: "string" }, command: { type: "string" }, timeoutMs: { type: "integer", minimum: 1000, maximum: 120000 } }, ["shellId", "command"]) },
   { name: "instanceAction", description: "Start, stop, restart, or kill an instance. Stop, restart, and kill require approval.", parameters: objectSchema({ instanceId: instanceLookupSchema, action: { type: "string", enum: ["start", "stop", "restart", "kill"] } }, ["action"]) },
   { name: "updateInstanceSettings", description: "Modify instance settings after approval. Omit instanceId to update the active instance.", parameters: objectSchema({ instanceId: instanceLookupSchema, name: { type: "string" }, workingDirectory: { type: "string" }, startCommand: { type: "string" }, stopCommand: { type: ["string", "null"] }, description: { type: ["string", "null"] }, autoStart: { type: "boolean" }, restartPolicy: { type: "string", enum: ["never", "on_failure", "always", "fixed_interval"] }, restartMaxRetries: { type: "integer", minimum: 0, maximum: 99 } }), aliases: ["setInstanceSettings", "updateInstance"] },
   { name: "searchAudit", description: "Search audit logs.", parameters: objectSchema({ query: { type: "string" } }, ["query"]) },
@@ -62,6 +66,8 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "taskRuns", description: "List recent scheduled task runs.", parameters: objectSchema({ taskId: { type: "string" } }, ["taskId"]) },
   { name: "searchFiles", description: "Search file contents using a regex pattern. Returns matching lines with file paths, line numbers, and text. Supports include patterns like '*.ts' or '*.{js,ts}'. Skips binary files and common non-code directories (node_modules, .git, etc).", parameters: objectSchema({ instanceId: instanceLookupSchema, pattern: { type: "string", description: "Regular expression pattern to search for." }, path: { type: "string", description: "Optional relative subdirectory to search in." }, include: { type: "string", description: "Optional glob pattern for file names, e.g. '*.ts' or '*.{js,ts}'." }, maxResults: { type: "integer", minimum: 1, maximum: 500 } }, ["pattern"]), aliases: ["grep", "grepFiles", "searchCode", "codeSearch"] },
   { name: "findFiles", description: "Find files by name pattern using glob syntax. Supports **, *, ? and {a,b} patterns. Skips common non-code directories. Returns relative file paths.", parameters: objectSchema({ instanceId: instanceLookupSchema, pattern: { type: "string", description: "Glob pattern for file names, e.g. '**/*.ts', 'src/**/*.js', '*.json'." }, path: { type: "string", description: "Optional relative subdirectory to search in." }, maxResults: { type: "integer", minimum: 1, maximum: 1000 } }, ["pattern"]), aliases: ["glob", "globFiles", "findByName"] },
+  { name: "outlineFile", description: "Extract functions, classes, interfaces, types, and definitions from a code file with their exact line numbers. Extremely fast way to inspect file structure in <100 tokens without reading full code.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema }, ["path"]), aliases: ["fileOutline", "outline", "inspectStructure"] },
+  { name: "findSymbols", description: "Search for function, class, type, interface, or variable definitions across workspace files (Go-to-Definition). Returns matching files and exact definition line numbers.", parameters: objectSchema({ instanceId: instanceLookupSchema, query: { type: "string", description: "Symbol name to find definition for (e.g. functionName, ClassName, InterfaceName)." }, path: { type: "string", description: "Optional relative subdirectory to search in." } }, ["query"]), aliases: ["findDefinition", "findSymbol", "gotoDefinition", "symbolSearch"] },
   { name: "searchWeb", description: "Search the public web.", parameters: objectSchema({ query: { type: "string" }, maxResults: { type: "integer", minimum: 1, maximum: 8 } }, ["query"]), aliases: ["webSearch"] },
   { name: "browse", description: "Fetch one public web page.", parameters: objectSchema({ url: { type: "string" } }, ["url"]), aliases: ["browseUrl", "readUrl", "fetchPage"] },
   { name: "crawl", description: "Crawl same-site public pages.", parameters: objectSchema({ url: { type: "string" }, maxPages: { type: "integer", minimum: 1, maximum: 6 }, maxDepth: { type: "integer", minimum: 0, maximum: 2 } }, ["url"]), aliases: ["crawlWeb", "crawlSite"] },
@@ -72,7 +78,9 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "readMemory", description: "Read the project memory file (SAKI.md) which contains project conventions, user preferences, and important notes persisted across conversations. Use this at the start of a conversation to recall context.", parameters: objectSchema({ instanceId: instanceLookupSchema }), aliases: ["getMemory", "loadMemory"] },
   { name: "writeMemory", description: "Write or update the project memory file (SAKI.md). Use this to save project conventions, user preferences, or important notes that should persist across conversations. Content is appended or replaced entirely.", parameters: objectSchema({ instanceId: instanceLookupSchema, content: { type: "string", description: "Full content to write to the memory file. Write the complete file content, not just additions." } }, ["content"]), aliases: ["updateMemory", "saveMemory"] },
   { name: "reportProgress", description: "Show a short user-visible progress update in your own words. This is not hidden chain-of-thought; use it for concise status or rationale summaries before or between tool batches.", parameters: objectSchema({ text: { type: "string" } }, ["text"]), aliases: ["progress", "statusUpdate"] },
-  { name: "spawnTask", description: "Spawn a sub-agent to independently handle a specific sub-task. The sub-agent runs in its own loop with the same tools and workspace. Use this for parallelizable work or to isolate complex sub-tasks. Returns the sub-agent's final answer.", parameters: objectSchema({ instanceId: instanceLookupSchema, task: { type: "string", description: "Clear description of the sub-task for the sub-agent to complete." }, maxSteps: { type: "integer", description: "Maximum tool calls the sub-agent may make.", minimum: 1, maximum: 15 } }, ["task"]), aliases: ["subAgent", "delegate", "runSubTask"] },
+  { name: "diagnoseCode", description: "Run fast compiler or linter diagnostics on the workspace (e.g. tsc --noEmit or python syntax check). Returns error lines and messages so you can self-correct any issues.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, command: { type: "string", description: "Optional custom check command (defaults to auto-detected tsc or python check)." } }), aliases: ["diagnostics", "checkTypes", "typecheck", "lintCode"] },
+  { name: "manageTodos", description: "Manage the structured task/TODO checklist for multi-step goals. Keep track of what is completed, in progress, and pending.", parameters: objectSchema({ todos: { type: "string", description: "Markdown task list with [x] and [ ] checkboxes, e.g. '- [x] Step 1\\n- [ ] Step 2'." } }, ["todos"]), aliases: ["setTodos", "todos", "updateTodos"] },
+  { name: "spawnTask", description: "Spawn an isolated research sub-agent to independently inspect or explore a specific sub-task. The sub-agent runs in its own loop and returns a synthesized summary without cluttering your context.", parameters: objectSchema({ instanceId: instanceLookupSchema, task: { type: "string", description: "Clear description of the sub-task for the sub-agent to complete." }, maxSteps: { type: "integer", description: "Maximum tool calls the sub-agent may make.", minimum: 1, maximum: 15 } }, ["task"]), aliases: ["subAgent", "delegate", "runSubTask"] },
   { name: "plan", description: "Present a structured plan to the user before executing a complex task. Use this for multi-step tasks to get user confirmation before proceeding. The plan should list the steps you will take.", parameters: objectSchema({ steps: { type: "string", description: "A numbered list of steps you plan to take, one per line." }, summary: { type: "string", description: "Brief one-line summary of what you plan to accomplish." } }, ["steps", "summary"]) },
   { name: "respond", description: "Return the final user-facing answer.", parameters: objectSchema({ text: { type: "string" } }, ["text"]) }
 ];
@@ -360,66 +368,124 @@ export function repairTruncatedJson(text: string): string | null {
   return result;
 }
 
+function cleanXmlParamValue(raw: string): string {
+  let val = raw;
+  const cdataMatch = val.match(/^<!\[CDATA\[([\s\S]*?)\]\]>$/);
+  if (cdataMatch) return cdataMatch[1] ?? "";
+  if (val.includes("&")) {
+    val = val
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, "&");
+  }
+  return val.replace(/^\r?\n/, "").replace(/\r?\n$/, "");
+}
+
+function parseXmlParameters(inner: string): Record<string, unknown> {
+  const args: Record<string, unknown> = {};
+
+  const paramAttrRe = /<(?:parameter|arg|argument)\s+name=["']([^"']+)["']>([\s\S]*?)<\/(?:parameter|arg|argument)>/gi;
+  let hasParamAttr = false;
+  for (const match of inner.matchAll(paramAttrRe)) {
+    hasParamAttr = true;
+    const key = match[1]?.trim();
+    if (key) {
+      args[key] = cleanXmlParamValue(match[2] ?? "");
+    }
+  }
+  if (hasParamAttr) return args;
+
+  const tagRe = /<([a-zA-Z0-9_-]+)(?:\s+[^>]*)?>([\s\S]*?)<\/\1>/gi;
+  for (const match of inner.matchAll(tagRe)) {
+    const key = match[1]?.trim();
+    if (!key) continue;
+    const lowerKey = key.toLowerCase();
+    if (lowerKey === "name" || lowerKey === "tool" || lowerKey === "function" || lowerKey === "tool_call" || lowerKey === "invoke") {
+      continue;
+    }
+    args[key] = cleanXmlParamValue(match[2] ?? "");
+  }
+  return args;
+}
+
 export function parseXmlToolCalls(source: string): ParsedToolCall[] | null {
   const stripped = stripThinking(source).trim();
-  const OT = String.fromCharCode(60) + "tool_call" + String.fromCharCode(62);
-  const CT = String.fromCharCode(60) + "/tool_call" + String.fromCharCode(62);
-  const openRe = new RegExp(OT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
-  if (!openRe.test(stripped)) return null;
+  const toolTagRe = /<(tool_call|invoke)(?:\s+([^>]*))?>([\s\S]*?)<\/\1>/gi;
+  const matches = [...stripped.matchAll(toolTagRe)];
+  if (matches.length === 0) return null;
 
   const calls: ParsedToolCall[] = [];
-  const closeRe = new RegExp(CT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
-  const segments = stripped.split(closeRe);
 
-  for (const segment of segments) {
-    const match = segment.match(new RegExp(OT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "([\\s\\S]*)", "i"));
-    if (!match) continue;
-    const inner = match[1]?.trim() ?? "";
-    if (!inner) continue;
-    try {
-      const parsed = parseJsonTolerant(inner);
-      const item = objectValue(parsed);
-      if (item && ("name" in item || "tool" in item || "function" in item)) {
-        calls.push(normalizeStructuredToolCall(item));
+  for (const match of matches) {
+    const attrs = match[2] ?? "";
+    const inner = (match[3] ?? "").trim();
+    if (!inner && !attrs) continue;
+
+    let toolName = "";
+    const nameAttrMatch = attrs.match(/\b(?:name|tool|function)=["']([^"']+)["']/i);
+    if (nameAttrMatch) {
+      toolName = nameAttrMatch[1]?.trim() ?? "";
+    }
+    if (!toolName) {
+      const nameTagMatch = inner.match(/<(?:name|tool|function)>([\s\S]*?)<\/(?:name|tool|function)>/i);
+      if (nameTagMatch) {
+        toolName = nameTagMatch[1]?.trim() ?? "";
       }
-    } catch {
+    }
+
+    if (inner.startsWith("{")) {
       try {
-        const balanced = extractBalancedJsonObject(inner);
-        if (balanced) {
+        const parsed = parseJsonTolerant(inner);
+        const item = objectValue(parsed);
+        if (item && ("name" in item || "tool" in item || "function" in item)) {
+          calls.push(normalizeStructuredToolCall(item));
+          continue;
+        }
+      } catch {
+        // Fall back to XML parameter parsing
+      }
+    }
+
+    if (toolName) {
+      const xmlArgs = parseXmlParameters(inner);
+      try {
+        calls.push(normalizeStructuredToolCall({ name: toolName, arguments: xmlArgs }));
+        continue;
+      } catch {
+        // Fall back to JSON extraction inside inner
+      }
+    }
+
+    try {
+      const balanced = extractBalancedJsonObject(inner);
+      if (balanced) {
+        const parsed = parseJsonTolerant(balanced);
+        const item = objectValue(parsed);
+        if (item && ("name" in item || "tool" in item || "function" in item)) {
+          calls.push(normalizeStructuredToolCall(item));
+          continue;
+        }
+      }
+    } catch {}
+
+    try {
+      const balancedList = extractAllBalancedJsonObjects(inner);
+      for (const balanced of balancedList) {
+        try {
           const parsed = parseJsonTolerant(balanced);
           const item = objectValue(parsed);
           if (item && ("name" in item || "tool" in item || "function" in item)) {
             calls.push(normalizeStructuredToolCall(item));
-            continue;
+            break;
           }
+        } catch {
+          continue;
         }
-      } catch { /* next fallback */ }
-      try {
-        const balancedList = extractAllBalancedJsonObjects(inner);
-        for (const balanced of balancedList) {
-          try {
-            const parsed = parseJsonTolerant(balanced);
-            const item = objectValue(parsed);
-            if (item && ("name" in item || "tool" in item || "function" in item)) {
-              calls.push(normalizeStructuredToolCall(item));
-              break;
-            }
-          } catch { continue; }
-        }
-      } catch { /* next fallback */ }
-      try {
-        const repaired = repairTruncatedJson(inner);
-        if (repaired) {
-          const parsed = parseJsonTolerant(repaired);
-          const item = objectValue(parsed);
-          if (item && ("name" in item || "tool" in item || "function" in item)) {
-            calls.push(normalizeStructuredToolCall(item));
-          }
-        }
-      } catch {
-        // Skip malformed XML tool call blocks
       }
-    }
+    } catch {}
   }
 
   return calls.length > 0 ? calls : null;
@@ -515,6 +581,23 @@ export const sakiReadOnlyToolNames = new Set([
   "readfile",
   "findfiles",
   "searchfiles",
+  "outlinefile",
+  "fileoutline",
+  "outline",
+  "findsymbols",
+  "finddefinition",
+  "findsymbol",
+  "gotodefinition",
+  "symbolsearch",
+  "diagnosecode",
+  "diagnostics",
+  "checktypes",
+  "typecheck",
+  "lintcode",
+  "managetodos",
+  "settodos",
+  "todos",
+  "updatetodos",
   "searchaudit",
   "listtasks",
   "plan",

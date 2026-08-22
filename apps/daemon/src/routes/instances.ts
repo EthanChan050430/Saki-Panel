@@ -24,6 +24,7 @@ function parseSpec(body: unknown): DaemonInstanceSpec {
 export async function registerInstanceRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/instances/:id/start", { preHandler: authenticatePanelRequest }, async (request) => {
     const spec = parseSpec(request.body);
+    instanceManager.registerSpec(spec);
     return instanceManager.start(spec);
   });
 
@@ -35,6 +36,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
 
   app.post("/api/instances/:id/restart", { preHandler: authenticatePanelRequest }, async (request) => {
     const spec = parseSpec(request.body);
+    instanceManager.registerSpec(spec);
     return instanceManager.restart(spec);
   });
 
@@ -88,5 +90,38 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       status: state.status,
       exitCode: state.exitCode
     };
+  });
+
+  app.post("/api/instances/:id/shells", { preHandler: authenticatePanelRequest }, async (request) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { workingDirectory?: string } | undefined;
+    if (body?.workingDirectory) {
+      instanceManager.registerSpec({
+        id,
+        name: id,
+        type: "generic_command",
+        workingDirectory: body.workingDirectory,
+        startCommand: "echo",
+        stopCommand: null,
+        restartPolicy: "never",
+        restartMaxRetries: 0
+      });
+    }
+    return instanceManager.createShell(id);
+  });
+
+  app.get("/api/instances/:id/shells", { preHandler: authenticatePanelRequest }, async (request) => {
+    const { id } = request.params as { id: string };
+    return { instanceId: id, sessions: instanceManager.listShells(id) };
+  });
+
+  app.post("/api/instances/:id/shells/:sid/input", { preHandler: authenticatePanelRequest }, async (request) => {
+    const { id, sid } = request.params as { id: string; sid: string };
+    const body = request.body as { data?: string; echo?: boolean };
+    if (typeof body.data !== "string") {
+      throw new Error("data is required");
+    }
+    instanceManager.writeShellInput(id, sid, body.data);
+    return { ok: true };
   });
 }

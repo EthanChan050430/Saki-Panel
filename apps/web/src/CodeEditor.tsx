@@ -1,8 +1,8 @@
 import { useRef, useEffect, useImperativeHandle, forwardRef } from "react";
 import { EditorState, StateEffect, StateField, RangeSetBuilder } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightActiveLine, drawSelection, rectangularSelection, highlightSpecialChars, Decoration, type DecorationSet } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, foldGutter, indentOnInput, foldKeymap } from "@codemirror/language";
+import { defaultKeymap, history, historyKeymap, indentWithTab, insertTab, indentMore, indentLess } from "@codemirror/commands";
+import { indentUnit, syntaxHighlighting, defaultHighlightStyle, bracketMatching, foldGutter, indentOnInput, foldKeymap } from "@codemirror/language";
 import {
   autocompletion,
   closeBrackets,
@@ -35,6 +35,7 @@ interface CodeEditorProps {
   value: string;
   language?: string;
   onChange?: (value: string) => void;
+  onSave?: () => void;
   readOnly?: boolean;
   darkMode?: boolean;
   lineWrapping?: boolean;
@@ -432,17 +433,20 @@ function languageFromFileName(fileName?: string): string | undefined {
 }
 
 export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEditor(
-  { value, language, onChange, readOnly = false, darkMode = false, lineWrapping = false, className, findRanges },
+  { value, language, onChange, onSave, readOnly = false, darkMode = false, lineWrapping = false, className, findRanges },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const valueRef = useRef(value);
   const currentDocRef = useRef(value);
+  const lastEmittedValueRef = useRef<string>(value);
   const changeTimerRef = useRef<number | null>(null);
   const applyingExternalValueRef = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
   valueRef.current = value;
 
   const langExt = getLanguageExtension(language);
@@ -464,6 +468,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     if (!containerRef.current) return;
 
     currentDocRef.current = value;
+    lastEmittedValueRef.current = value;
     const completionSource = createLightweightCompletionSource(language);
 
     const publishChange = () => {
@@ -473,6 +478,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       }
       const nextValue = currentDocRef.current;
       if (nextValue !== valueRef.current) {
+        lastEmittedValueRef.current = nextValue;
         onChangeRef.current?.(nextValue);
       }
     };
@@ -497,6 +503,8 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
         history(),
         foldGutter(),
         drawSelection(),
+        indentUnit.of("    "),
+        EditorState.tabSize.of(4),
         indentOnInput(),
         bracketMatching(),
         closeBrackets(),
@@ -512,13 +520,29 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
         highlightSelectionMatches(),
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
         keymap.of([
+          {
+            key: "Mod-s",
+            run: () => {
+              onSaveRef.current?.();
+              return true;
+            }
+          },
           ...completionKeymap,
           ...closeBracketsKeymap,
           ...defaultKeymap,
           ...searchKeymap,
           ...historyKeymap,
           ...foldKeymap,
-          indentWithTab
+          {
+            key: "Tab",
+            run: (view) => {
+              if (view.state.selection.ranges.some((r) => !r.empty)) {
+                return indentMore(view);
+              }
+              return insertTab(view);
+            },
+            shift: indentLess
+          }
         ]),
         updateListener,
         findDecorationField,
@@ -554,14 +578,18 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
+    if (value === lastEmittedValueRef.current || value === currentDocRef.current) {
+      return;
+    }
     const currentDoc = view.state.doc.toString();
     if (currentDoc !== value) {
       applyingExternalValueRef.current = true;
+      lastEmittedValueRef.current = value;
+      currentDocRef.current = value;
       view.dispatch({
         changes: { from: 0, to: currentDoc.length, insert: value }
       });
       applyingExternalValueRef.current = false;
-      currentDocRef.current = value;
     }
   }, [value]);
 
