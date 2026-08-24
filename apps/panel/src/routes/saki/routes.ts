@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type {
   CreateSakiSkillRequest,
@@ -46,12 +47,26 @@ import {
 } from "./skills.js";
 import { createSakiAgentEvents, startSakiEventStream } from "./stream.js";
 import {
+  cancelActiveSakiTask,
+  createActiveSakiTask,
+  emitActiveSakiTaskEvent,
+  finishActiveSakiTask,
+  getActiveSakiTask,
+  getActiveSakiTaskById,
+  getSessionAgentMemory,
+  toSakiActiveTaskSummary
+} from "./state.js";
+import {
   effectiveSakiAgentPermissionMode,
+  isSakiContinuationMessage,
   normalizeProviderId,
   objectValue,
   RouteError,
   sakiUsePermissions,
-  trimString
+  trimString,
+  type SakiActiveTaskEvent,
+  type SakiAgentResumeState,
+  type SakiAgentRunEvents
 } from "./types.js";
 export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
   ensureSakiModulesReady();
@@ -267,7 +282,33 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     const prepared = await prepareSakiChatInvocation(request, request.body as Partial<SakiChatRequest>);
     const { modelInput, context, skills } = prepared;
     const stream = startSakiEventStream(request, reply);
-    const events = createSakiAgentEvents(stream);
+    const directEvents = createSakiAgentEvents(stream);
+    const taskId = randomUUID();
+    const isAgent = modelInput.mode === "agent";
+    const instanceKeyId = context.workspace?.instanceId ?? null;
+
+    if (isAgent) {
+      createActiveSakiTask(taskId, request.user.sub, instanceKeyId, modelInput);
+    }
+
+    const events: Required<SakiAgentRunEvents> = {
+      workflow: (update) => {
+        directEvents.workflow(update);
+        if (isAgent) emitActiveSakiTaskEvent(taskId, "workflow", update as unknown as Record<string, unknown>);
+      },
+      action: (action) => {
+        directEvents.action(action);
+        if (isAgent) emitActiveSakiTaskEvent(taskId, "action", { action: action as unknown as Record<string, unknown> });
+      },
+      delta: (text) => {
+        directEvents.delta(text);
+        if (isAgent) emitActiveSakiTaskEvent(taskId, "delta", { text });
+      },
+      thinking: (text) => {
+        directEvents.thinking(text);
+        if (isAgent) emitActiveSakiTaskEvent(taskId, "thinking", { text });
+      }
+    };
 
     try {
       stream.send("meta", {
@@ -275,12 +316,23 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
         mode: modelInput.mode,
         agentPermissionMode: effectiveSakiAgentPermissionMode(modelInput),
         workspace: context.workspace,
-        skills
+        skills,
+        taskId: isAgent ? taskId : undefined
       });
 
       let response: SakiChatResponse;
-      if (modelInput.mode === "agent") {
+      if (isAgent) {
         const config = await readEffectiveSakiConfig();
+        const isContinuation = isSakiContinuationMessage(modelInput.message);
+        let resumeState: SakiAgentResumeState | undefined;
+
+        if (isContinuation) {
+          const sessionMemory = getSessionAgentMemory(request.user.sub, instanceKeyId);
+          if (sessionMemory) {
+            resumeState = sessionMemory.resumeState;
+          }
+        }
+
         response = await runSakiAgent(
           {
             request,
@@ -292,9 +344,10 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
             config
           },
           events,
-          undefined,
+          resumeState,
           executeSakiAgentTool
         );
+        finishActiveSakiTask(taskId, "completed", response);
       } else {
         let streamedAnyText = false;
         let replyText = "";
@@ -328,11 +381,82 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Saki request failed";
       const fallback = directLocalFallback(modelInput, context, skills, reason);
+      if (isAgent) {
+        finishActiveSakiTask(taskId, "failed", fallback, reason);
+      }
       await auditSakiChatResponse(request, prepared, fallback, "FAILURE", reason);
       stream.send("done", { response: fallback });
     } finally {
       stream.end();
     }
+  });
+
+  app.get("/api/saki/active-task", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    const query = request.query as { instanceId?: string };
+    const task = getActiveSakiTask(request.user.sub, query.instanceId ?? null);
+    if (!task) {
+      return { hasActiveTask: false };
+    }
+    return {
+      hasActiveTask: true,
+      task: toSakiActiveTaskSummary(task)
+    };
+  });
+
+  app.get("/api/saki/tasks/:taskId/stream", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request, reply) => {
+    const { taskId } = request.params as { taskId: string };
+    const task = getActiveSakiTaskById(taskId);
+    if (!task || task.userId !== request.user.sub) {
+      throw new RouteError("Task not found.", 404);
+    }
+    const stream = startSakiEventStream(request, reply);
+    stream.send("meta", {
+      source: "direct-model",
+      mode: task.input.mode ?? "agent",
+      agentPermissionMode: effectiveSakiAgentPermissionMode(task.input),
+      taskId: task.id,
+      status: task.status
+    });
+
+    // Replay all buffered events that occurred while the client was disconnected:
+    for (const event of task.eventsBuffer) {
+      stream.send(event.type, event.payload);
+    }
+
+    if (task.status === "completed" && task.response) {
+      stream.send("done", { response: task.response });
+      stream.end();
+      return;
+    }
+
+    if (task.status === "failed" || task.status === "cancelled") {
+      stream.send("error", { message: task.error || "Task failed" });
+      stream.end();
+      return;
+    }
+
+    // Subscribe to live events
+    const subscriber = (event: SakiActiveTaskEvent) => {
+      stream.send(event.type, event.payload);
+      if (event.type === "done" || event.type === "error") {
+        stream.end();
+        task.subscribers.delete(subscriber);
+      }
+    };
+    task.subscribers.add(subscriber);
+    reply.raw.on("close", () => {
+      task.subscribers.delete(subscriber);
+    });
+  });
+
+  app.post("/api/saki/tasks/:taskId/cancel", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    const { taskId } = request.params as { taskId: string };
+    const task = getActiveSakiTaskById(taskId);
+    if (!task || task.userId !== request.user.sub) {
+      throw new RouteError("Task not found.", 404);
+    }
+    const cancelled = cancelActiveSakiTask(taskId);
+    return { ok: cancelled };
   });
 
   app.post("/api/saki/chat", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
@@ -342,6 +466,17 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     try {
       if (modelInput.mode === "agent") {
         const config = await readEffectiveSakiConfig();
+        const instanceKeyId = context.workspace?.instanceId ?? null;
+        const isContinuation = isSakiContinuationMessage(modelInput.message);
+        let resumeState: SakiAgentResumeState | undefined;
+
+        if (isContinuation) {
+          const sessionMemory = getSessionAgentMemory(request.user.sub, instanceKeyId);
+          if (sessionMemory) {
+            resumeState = sessionMemory.resumeState;
+          }
+        }
+
         const response = await runSakiAgent(
           {
             request,
@@ -353,7 +488,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
             config
           },
           undefined,
-          undefined,
+          resumeState,
           executeSakiAgentTool
         );
         await auditSakiChatResponse(request, prepared, response);

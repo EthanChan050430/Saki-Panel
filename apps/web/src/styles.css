@@ -10615,6 +10615,39 @@ body.saki-selection-capture-active .saki-launcher {
   flex-shrink: 0;
   margin-left: auto;
 }
+.saki-action-inline-rollback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: rgba(0, 0, 0, 0.04);
+  color: #6b7280;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  margin: 0 2px;
+}
+.saki-action-inline-rollback:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  transform: scale(1.08);
+}
+.saki-action-inline-rollback:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+[data-theme="dark"] .saki-action-inline-rollback {
+  background: rgba(255, 255, 255, 0.08);
+  color: #9ca3af;
+}
+[data-theme="dark"] .saki-action-inline-rollback:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.2);
+  color: #f87171;
+}
 .saki-action-expand {
   font-size: 10px;
   color: #9ca3af;

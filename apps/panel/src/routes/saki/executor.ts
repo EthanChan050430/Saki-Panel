@@ -66,15 +66,18 @@ import {
   normalizeCommandRelativeCwd,
   nullableStringArg,
   numericArg,
+  objectValue,
   optionalCommandInputArg,
   parseLineNumber,
   rawStringArg,
   redactSensitiveText,
   replaceLineRange,
+  replacementToLines,
   requireUserPermission,
   RouteError,
   safeRelativePath,
   sanitizeAgentTextContent,
+  splitEditableLines,
   stringArg,
   truncateDiff,
   truncateText,
@@ -713,12 +716,31 @@ export async function executeSakiAgentTool(
         const sanitized = sanitizeAgentTextContent(rawStringArg(args, "newText"));
         if (!relativePath || !oldText) throw new RouteError("replaceInFile requires path and oldText.", 400);
         const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath);
-        const count = file.content.split(oldText).length - 1;
-        if (count === 0) throw new RouteError("oldText was not found in the file.", 400);
-        if (count > 1) throw new RouteError(`oldText matched ${count} times. Use editLines with exact line numbers.`, 400);
+        let matchedOldText = oldText;
+        let count = file.content.split(matchedOldText).length - 1;
+        if (count === 0 && file.content.includes("\r\n") && !oldText.includes("\r\n")) {
+          const crlfCandidate = oldText.replace(/\n/g, "\r\n");
+          if (file.content.includes(crlfCandidate)) {
+            matchedOldText = crlfCandidate;
+            count = file.content.split(matchedOldText).length - 1;
+          }
+        } else if (count === 0 && !file.content.includes("\r\n") && oldText.includes("\r\n")) {
+          const lfCandidate = oldText.replace(/\r\n/g, "\n");
+          if (file.content.includes(lfCandidate)) {
+            matchedOldText = lfCandidate;
+            count = file.content.split(matchedOldText).length - 1;
+          }
+        }
+        if (count === 0) {
+          throw new RouteError(
+            `oldText was not found in ${relativePath}. Check for exact whitespace/indentation, inspect the file with readFile({ path: "${relativePath}", startLine: ... }), or use editLines({ path: "${relativePath}", startLine, endLine, replacement }) instead.`,
+            400
+          );
+        }
+        if (count > 1) throw new RouteError(`oldText matched ${count} times in ${relativePath}. Use editLines with exact line numbers for precise replacement.`, 400);
         checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath);
         fileEditPreview = `${instance.name}:${relativePath}`;
-        fileEditAfterContent = file.content.replace(oldText, () => sanitized.content);
+        fileEditAfterContent = file.content.replace(matchedOldText, () => sanitized.content);
         const updated = await writeDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, {
           path: relativePath,
           content: fileEditAfterContent
@@ -848,27 +870,20 @@ export async function executeSakiAgentTool(
         const commandRisk = classifyCommandRisk(command);
         if (commandRisk.risk === "critical") throw new RouteError(commandRisk.reason, 400);
         const timeoutMs = numericArg(args.timeoutMs, 30000, 1000, 120000);
-        const input = optionalCommandInputArg(args);
         const { daemonWorkingDirectory } = commandWorkingDirectoryForAgent(instance, args);
-
-        // Same logic as the main path: default reuse latest shell (or create if none)
-        let shellId: string;
-        let isNew = false;
-        const existing = await listDaemonInstanceShells(instance.node, instance.id);
-        if (existing.sessions && existing.sessions.length > 0) {
-          shellId = existing.sessions[existing.sessions.length - 1]!;
-        } else {
-          const shellCreate = await createDaemonInstanceShell(instance.node, instance.id, daemonWorkingDirectory);
-          shellId = shellCreate.sessionId;
-          isNew = true;
+        const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
+          command,
+          workingDirectory: daemonWorkingDirectory,
+          timeoutMs
+        });
+        const outputParts: string[] = [];
+        if (runResult.stdout) outputParts.push(`stdout:\n${truncateText(runResult.stdout.trim(), 6000)}`);
+        if (runResult.stderr) outputParts.push(`stderr:\n${truncateText(runResult.stderr.trim(), 4000)}`);
+        outputParts.push(`exit code: ${runResult.exitCode ?? 0} (${runResult.durationMs ?? 0}ms)`);
+        observation = outputParts.join("\n\n") || "(Command completed with no output)";
+        if ((runResult.exitCode ?? 0) !== 0) {
+          ok = false;
         }
-
-        const cdPrefix = daemonWorkingDirectory ? `cd ${JSON.stringify(daemonWorkingDirectory)} && ` : '';
-        const commandToRun = cdPrefix + command;
-        const fullCommand = input ? `${commandToRun}\n${input}\n` : `${commandToRun}\n`;
-        await sendDaemonShellInput(instance.node, instance.id, shellId, fullCommand);
-
-        observation = `Command sent to ${isNew ? 'newly created' : 'reused'} independent shell (shellId=${shellId})${isNew ? ' (like + button)' : ''}${daemonWorkingDirectory ? ` (cwd=${daemonWorkingDirectory})` : ''}:\n${command}${input ? `\n+ stdin: ${input}` : ''}\n\nFull live output streams to the corresponding UI shell tab.`;
       } else if (toolName === "sendinput") {
         requireUserPermission(runtime.permissions, "terminal.input");
         const instance = await resolveAgentInstance(runtime, args);
@@ -1181,6 +1196,7 @@ export async function executeSakiAgentTool(
           if (runResult.exitCode === 0) {
             observation = `Diagnostics clean: '${checkCommand}' passed with exit code 0. No syntax or type errors detected.`;
           } else {
+            ok = false;
             observation = [
               `Diagnostics found errors (command: '${checkCommand}', exit code ${runResult.exitCode}):`,
               "",
@@ -1190,6 +1206,7 @@ export async function executeSakiAgentTool(
             ].join("\n");
           }
         } catch (err) {
+          ok = false;
           observation = `Diagnostics command '${checkCommand}' could not complete: ${err instanceof Error ? err.message : String(err)}`;
         }
       } else if (toolName === "managetodos" || toolName === "settodos" || toolName === "todos" || toolName === "updatetodos") {
@@ -1231,6 +1248,119 @@ export async function executeSakiAgentTool(
           ok = false;
           observation = `Sub-agent failed: ${userFacingError(error)}`;
         }
+      } else if (toolName === "batchedit" || toolName === "applypatches" || toolName === "multifileedit" || toolName === "batch_patch") {
+        requireUserPermission(runtime.permissions, "file.write");
+        const instance = await resolveAgentInstance(runtime, args);
+        const editsRaw = Array.isArray(args.edits) ? args.edits : [];
+        if (editsRaw.length === 0) throw new RouteError("batchEdit requires an array of edits.", 400);
+
+        const results: string[] = [];
+        for (const edit of editsRaw) {
+          const editObj = objectValue(edit);
+          if (!editObj) continue;
+          const relativePath = safeRelativePath(editObj.path);
+          if (!relativePath) continue;
+
+          await createFileCheckpoint(currentActionId, instance, relativePath);
+          const current = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath);
+          let newContent = current.content;
+
+          if (editObj.startLine !== undefined && editObj.endLine !== undefined) {
+            const startLine = parseLineNumber(String(editObj.startLine), "startLine");
+            const endLine = parseLineNumber(String(editObj.endLine), "endLine", 0);
+            const sanitized = sanitizeAgentTextContent(rawStringArg(editObj, "replacement"));
+            const { lines, newline, hasFinalNewline } = splitEditableLines(current.content);
+            if (startLine > lines.length + 1) throw new RouteError(`${relativePath}: startLine ${startLine} is beyond total lines (${lines.length}).`, 400);
+            const actualEndLine = Math.min(endLine, lines.length);
+            const replacementLines = replacementToLines(sanitized.content);
+            const before = lines.slice(0, startLine - 1);
+            const after = actualEndLine === 0 ? lines.slice(startLine - 1) : lines.slice(actualEndLine);
+            const nextLines = [...before, ...replacementLines, ...after];
+            newContent = nextLines.join(newline) + (hasFinalNewline || (lines.length === 0 && sanitized.content.length > 0) ? newline : "");
+            results.push(`✓ ${relativePath}: replaced lines ${startLine}-${actualEndLine} with ${replacementLines.length} lines`);
+          } else if (editObj.oldText !== undefined && editObj.newText !== undefined) {
+            const oldText = rawStringArg(editObj, "oldText");
+            const sanitizedNew = sanitizeAgentTextContent(rawStringArg(editObj, "newText")).content;
+            if (!current.content.includes(oldText)) {
+              const normalizedCurrent = current.content.replace(/\r\n/g, "\n");
+              const normalizedOld = oldText.replace(/\r\n/g, "\n");
+              if (!normalizedCurrent.includes(normalizedOld)) {
+                throw new RouteError(`${relativePath}: oldText was not found in file.`, 400);
+              }
+              newContent = normalizedCurrent.replace(normalizedOld, sanitizedNew);
+            } else {
+              newContent = current.content.replace(oldText, sanitizedNew);
+            }
+            results.push(`✓ ${relativePath}: replaced text occurrence`);
+          }
+
+          await writeDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, { path: relativePath, content: newContent });
+          invalidateInstanceFileCache(instance.id, relativePath);
+          recordWorkingFileAccess(runtime.userId, instance.id, relativePath);
+        }
+        observation = `Success: batch edit applied across ${results.length} operation(s):\n${results.join("\n")}`;
+      } else if (toolName === "statfile" || toolName === "fileinfo" || toolName === "inspectpath" || toolName === "stat") {
+        requireUserPermission(runtime.permissions, "file.view");
+        const instance = await resolveAgentInstance(runtime, args);
+        const relativePath = safeRelativePath(args.path);
+        if (!relativePath) throw new RouteError("statFile requires a path.", 400);
+        try {
+          const stats = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath);
+          const lines = stats.content.split(/\r?\n/).length;
+          observation = `File: ${relativePath}\nExists: true\nSize: ${stats.size} bytes\nTotal Lines: ${lines}\nModified: ${stats.modifiedAt || "unknown"}\nisDirectory: false`;
+        } catch (err) {
+          try {
+            const dirList = await listDaemonInstanceFiles(instance.node, instance.id, instance.workingDirectory, relativePath, { limit: 10 });
+            observation = `Directory: ${relativePath}\nExists: true\nisDirectory: true\nEntries: ${dirList.entries.length} items`;
+          } catch {
+            observation = `Path: ${relativePath}\nExists: false\nError: ${err instanceof Error ? err.message : String(err)}`;
+          }
+        }
+      } else if (toolName === "gitstatus" || toolName === "git_status") {
+        requireUserPermission(runtime.permissions, "file.read");
+        const instance = await resolveAgentInstance(runtime, args);
+        const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
+          command: "git status -s -b",
+          workingDirectory: instance.workingDirectory,
+          timeoutMs: 15000
+        });
+        if (runResult.exitCode === 0) {
+          observation = `Git Status:\n${runResult.stdout?.trim() || "Working tree clean"}`;
+        } else {
+          observation = `Git status could not be retrieved (${runResult.stderr || runResult.stdout || "Not a git repository"}).`;
+        }
+      } else if (toolName === "gitdiff" || toolName === "git_diff" || toolName === "diff") {
+        requireUserPermission(runtime.permissions, "file.read");
+        const instance = await resolveAgentInstance(runtime, args);
+        const targetPath = safeRelativePath(args.path);
+        const staged = booleanArg(args, "staged", false) ? " --staged" : "";
+        const command = `git diff${staged}${targetPath ? ` -- "${targetPath}"` : ""}`;
+        const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
+          command,
+          workingDirectory: instance.workingDirectory,
+          timeoutMs: 20000
+        });
+        if (runResult.exitCode === 0) {
+          const diffText = runResult.stdout?.trim();
+          observation = diffText ? truncateText(diffText, 10000) : "No git diff (no changes detected).";
+        } else {
+          observation = `Git diff failed (${runResult.stderr || runResult.stdout || "error"}).`;
+        }
+      } else if (toolName === "getenvironmentinfo" || toolName === "envinfo" || toolName === "systeminfo") {
+        const instance = await resolveAgentInstance(runtime, args);
+        const probeCmd = process.platform === "win32"
+          ? 'echo OS=%OS% ARCH=%PROCESSOR_ARCHITECTURE% & node -v & npm -v & git --version'
+          : 'uname -srm; node -v; npm -v; git --version';
+        const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
+          command: probeCmd,
+          workingDirectory: instance.workingDirectory,
+          timeoutMs: 15000
+        });
+        observation = [
+          "Environment & Runtime Detection:",
+          `Host Platform: ${process.platform} (${process.arch})`,
+          `Detected Output:\n${(runResult.stdout || "").trim() || "(None)"}`
+        ].join("\n\n");
       } else if (toolName === "plan") {
         const steps = rawStringArg(args, "steps");
         const summary = rawStringArg(args, "summary");
@@ -1351,12 +1481,26 @@ export async function executeSakiAgentTool(
       const sanitized = sanitizeAgentTextContent(call.args[2] ?? "");
       if (!relativePath || !oldText) throw new RouteError("replaceInFile requires path and oldText.", 400);
       const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath);
-      const count = file.content.split(oldText).length - 1;
-      if (count === 0) throw new RouteError("oldText was not found in the file.", 400);
-      if (count > 1) throw new RouteError(`oldText matched ${count} times. Use writeFile with the full intended content or a more specific oldText.`, 400);
+      let matchedOldText = oldText;
+      let count = file.content.split(matchedOldText).length - 1;
+      if (count === 0 && file.content.includes("\r\n") && !oldText.includes("\r\n")) {
+        const crlfCandidate = oldText.replace(/\n/g, "\r\n");
+        if (file.content.includes(crlfCandidate)) {
+          matchedOldText = crlfCandidate;
+          count = file.content.split(matchedOldText).length - 1;
+        }
+      } else if (count === 0 && !file.content.includes("\r\n") && oldText.includes("\r\n")) {
+        const lfCandidate = oldText.replace(/\r\n/g, "\n");
+        if (file.content.includes(lfCandidate)) {
+          matchedOldText = lfCandidate;
+          count = file.content.split(matchedOldText).length - 1;
+        }
+      }
+      if (count === 0) throw new RouteError(`oldText was not found in ${relativePath}. Check indentation/newlines or use editLines.`, 400);
+      if (count > 1) throw new RouteError(`oldText matched ${count} times. Use editLines with exact line numbers for precise replacement.`, 400);
       checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath);
       fileEditPreview = `${instance.name}:${relativePath}`;
-      fileEditAfterContent = file.content.replace(oldText, () => sanitized.content);
+      fileEditAfterContent = file.content.replace(matchedOldText, () => sanitized.content);
       const updated = await writeDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, {
         path: relativePath,
         content: fileEditAfterContent
@@ -1451,31 +1595,23 @@ export async function executeSakiAgentTool(
       const blocked = findDangerousCommandReason(command);
       if (blocked) throw new RouteError(blocked, 400);
       const timeoutMs = numericArg(call.args[1], 30000, 1000, 120000);
-      const input = typeof call.args[2] === "string" ? call.args[2] : undefined;
       const { daemonWorkingDirectory } = commandWorkingDirectoryForAgent(instance, {
         ...(typeof call.args[3] === "string" ? { cwd: call.args[3] } : {})
       });
 
-      // Default: reuse the latest existing persistent shell (like having multiple tabs open).
-      // Only creates a new one if none exist. This matches "default reuse" behavior.
-      // (Agent can explicitly use createShell + runInShell for a brand new one if desired.)
-      let shellId: string;
-      let isNew = false;
-      const existing = await listDaemonInstanceShells(instance.node, instance.id);
-      if (existing.sessions && existing.sessions.length > 0) {
-        shellId = existing.sessions[existing.sessions.length - 1]!; // reuse the most recently created
-      } else {
-        const shellCreate = await createDaemonInstanceShell(instance.node, instance.id, daemonWorkingDirectory);
-        shellId = shellCreate.sessionId;
-        isNew = true;
+      const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
+        command,
+        workingDirectory: daemonWorkingDirectory,
+        timeoutMs
+      });
+      const outputParts: string[] = [];
+      if (runResult.stdout) outputParts.push(`stdout:\n${truncateText(runResult.stdout.trim(), 6000)}`);
+      if (runResult.stderr) outputParts.push(`stderr:\n${truncateText(runResult.stderr.trim(), 4000)}`);
+      outputParts.push(`exit code: ${runResult.exitCode ?? 0} (${runResult.durationMs ?? 0}ms)`);
+      observation = outputParts.join("\n\n") || "(Command completed with no output)";
+      if ((runResult.exitCode ?? 0) !== 0) {
+        ok = false;
       }
-
-      const cdPrefix = daemonWorkingDirectory ? `cd ${JSON.stringify(daemonWorkingDirectory)} && ` : '';
-      const commandToRun = cdPrefix + command;
-      const fullCommand = input ? `${commandToRun}\n${input}\n` : `${commandToRun}\n`;
-      await sendDaemonShellInput(instance.node, instance.id, shellId, fullCommand);
-
-      observation = `Command sent to ${isNew ? 'newly created' : 'reused'} independent shell (shellId=${shellId})${isNew ? ' (like + button)' : ''}${daemonWorkingDirectory ? ` (cwd=${daemonWorkingDirectory})` : ''}:\n${command}${input ? `\n+ stdin: ${input}` : ''}\n\nFull live output streams to the corresponding UI shell tab. Use listShells() to see all. These are persistent shells (not the main process console).`;
     } else if (toolName === "sendinput") {
       requireUserPermission(runtime.permissions, "terminal.input");
       const instance = activeInstance(runtime);

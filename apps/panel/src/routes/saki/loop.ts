@@ -33,9 +33,16 @@ import { isSakiReadOnlyAgentTool, normalizedAgentToolName, shouldRequestSakiAppr
 import { callConfiguredAgentTurn } from "./providers.js";
 import { buildAgentPrompt, buildAgentContinuationPrompt } from "./prompt.js";
 import { bootstrapAgentSkills } from "./skills.js";
-import { completedSakiActions, pendingSakiActions, sakiCheckpoints } from "./state.js";
+import {
+  completedSakiActions,
+  extractTodosFromScratchpad,
+  getRecentWorkingFiles,
+  pendingSakiActions,
+  sakiCheckpoints,
+  saveSessionAgentMemory
+} from "./state.js";
 
-export { completedSakiActions, pendingSakiActions, sakiCheckpoints } from "./state.js";
+export { completedSakiActions, pendingSakiActions, sakiCheckpoints, saveSessionAgentMemory } from "./state.js";
 
 export function emitSakiWorkflow(events: SakiAgentRunEvents | undefined, update: { id: string; stage: string; message: string; status: string; tool?: string; call?: string; actionId?: string; detail?: string }): void {
   events?.workflow?.(update as any);
@@ -524,7 +531,8 @@ export async function runSakiAgent(
   });
   const actions: SakiAgentAction[] = [...(resume?.actions ?? [])];
   const basePrompt = buildAgentPrompt(runtime);
-  const continuationPrompt = buildAgentContinuationPrompt(runtime);
+  const resumeGoal = resume?.input?.message;
+  const continuationPrompt = buildAgentContinuationPrompt(runtime, resumeGoal || runtime.input.message);
   const agentScratchpadEntries: string[] = [...(resume?.scratchpadEntries ?? [])];
   const readOnlyToolCache = new Map<string, SakiAgentAction>();
   let currentPrompt = basePrompt;
@@ -592,6 +600,23 @@ export async function runSakiAgent(
   let lastForwardedDeltaContent: string | undefined;
 
   const finishAgentResponse = async (reason: string, message: string): Promise<SakiChatResponse> => {
+    try {
+      const currentResumeState = createResumeState();
+      const workingFiles = getRecentWorkingFiles(runtime.userId, runtime.context.workspace?.instanceId ?? null);
+      const todos = extractTodosFromScratchpad(agentScratchpadEntries);
+      saveSessionAgentMemory({
+        userId: runtime.userId,
+        instanceId: runtime.context.workspace?.instanceId ?? null,
+        resumeState: currentResumeState,
+        workingFiles,
+        lastGoal: resumeGoal || runtime.input.message,
+        lastSummary: message,
+        todos,
+        updatedAt: Date.now()
+      });
+    } catch {
+      // ignore memory persistence errors
+    }
     await emitAgentFinalText(events, message, lastForwardedDeltaContent);
     return {
       source: "direct-model",
@@ -635,6 +660,9 @@ export async function runSakiAgent(
     return { call, toolStepId, action, durationMs: Date.now() - toolStartedAt };
   };
 
+  const recentToolSignatures: Array<{ name: string; argsStr: string; ok: boolean }> = [];
+  const failedAttemptsByTarget = new Map<string, number>();
+
   const handleToolResult = async (result: {
     call: ParsedToolCall;
     toolStepId: string;
@@ -674,9 +702,45 @@ export async function runSakiAgent(
       return finishAgentResponse("pending_approval", finalMessage);
     }
     appendAgentScratchpad(`\nAssistant: ${renderToolCall(call)}\nObservation:\n${observationForAgentPrompt(action)}\n`);
-    if (!action.ok) {
-      appendAgentScratchpad("If the error is caused by missing permission, blocked safety policy, or missing active instance, stop and respond with a concise explanation. Otherwise adjust your plan and continue.\n");
+
+    // Deadlock / repetition detection and error self-healing
+    const toolName = normalizedAgentToolName(call.name);
+    const args = toolArgs(call);
+    const argsStr = JSON.stringify(args);
+    const targetFile = String(args.path || args.filePath || "");
+
+    // Check for duplicate consecutive tool calls
+    const isDuplicate = recentToolSignatures.length > 0 &&
+      recentToolSignatures[recentToolSignatures.length - 1]?.name === toolName &&
+      recentToolSignatures[recentToolSignatures.length - 1]?.argsStr === argsStr;
+
+    recentToolSignatures.push({ name: toolName, argsStr, ok: action.ok });
+    if (recentToolSignatures.length > 10) recentToolSignatures.shift();
+
+    if (isDuplicate && isSakiReadOnlyAgentTool(toolName)) {
+      appendAgentScratchpad(`\n[Self-Correction & Loop Breaker]: You called '${call.name}' with identical parameters twice in a row. The observation is already above in your memory. DO NOT re-read or re-search the same query. Proceed to editing with editLines/replaceInFile, or formulate your final response.\n`);
     }
+
+    if (!action.ok) {
+      if (targetFile) {
+        const currentFailures = (failedAttemptsByTarget.get(targetFile) ?? 0) + 1;
+        failedAttemptsByTarget.set(targetFile, currentFailures);
+        if (currentFailures >= 2) {
+          appendAgentScratchpad(`\n[Self-Healing Alert]: Editing '${targetFile}' failed ${currentFailures} times consecutively. Do not repeat the same failing call. Inspect the surrounding lines with outlineFile({ path: "${targetFile}" }) or readFile({ path: "${targetFile}", startLine: ... }) to verify exact line numbers, then use editLines.\n`);
+        }
+      }
+      const obsLower = action.observation.toLowerCase();
+      if (obsLower.includes("oldtext was not found") || obsLower.includes("oldtext matched")) {
+        appendAgentScratchpad(`\n[Self-Healing Guidance]: The text was not matched in the file. Tip: Use editLines with exact line numbers from outlineFile/readFile to make the change deterministically.\n`);
+      } else if (obsLower.includes("enoent") || obsLower.includes("not found")) {
+        appendAgentScratchpad(`\n[Self-Healing Guidance]: File not found. Use findFiles to locate the exact path before attempting further operations.\n`);
+      } else if (obsLower.includes("permission") || obsLower.includes("safety") || obsLower.includes("instance not found")) {
+        appendAgentScratchpad("If the error is caused by missing permission, blocked safety policy, or missing active instance, stop and respond with a concise explanation. Otherwise adjust your plan and continue.\n");
+      }
+    } else if (targetFile && (toolName === "editlines" || toolName === "replaceinfile" || toolName === "writefile")) {
+      failedAttemptsByTarget.delete(targetFile);
+    }
+
     return null;
   };
 
@@ -809,6 +873,29 @@ IMPORTANT: For editing existing files, use editLines(<path>, <startLine>, <endLi
     }
   }
 
-  const finalMessage = "Saki \u5DF2\u8FBE\u5230\u672C\u8F6E\u667A\u80FD\u4F53\u6267\u884C\u6B65\u6570\u4E0A\u9650\u3002\u5DF2\u5B8C\u6210\u7684\u52A8\u4F5C\u89C1\u4E0B\u65B9\u8BB0\u5F55\uFF1B\u4F60\u53EF\u4EE5\u7EE7\u7EED\u53D1\u4E00\u53E5\u201C\u7EE7\u7EED\u201D\u8BA9 Saki \u63A5\u7740\u5904\u7406\u3002";
-  return finishAgentResponse("loop_limit", finalMessage);
+  // Autonomous Resolution Synthesis: Prompt the model to synthesize its work and deliver the final answer
+  try {
+    const finalWrapPrompt = `${currentPrompt}\n\n[TASK RESOLUTION]: You have completed the exploration and code operations. Provide your final comprehensive summary to the user now explaining what was discovered, what was modified, and the outcome. Output natural text directly without calling tools.`;
+    const finalTurn = await callConfiguredAgentTurn(runtime, finalWrapPrompt, events?.delta, events?.thinking);
+    const cleaned = stripThinking(finalTurn.content).trim();
+    if (cleaned && !looksLikeToolCallPayload(cleaned)) {
+      return finishAgentResponse("natural_wrapup", cleaned);
+    }
+  } catch {
+    // Ignore error during wrap-up
+  }
+
+  // Synthesize a structured engineering outcome if the model did not emit text:
+  const edits = actions.filter((a) => a.ok && (a.tool === "editlines" || a.tool === "replaceinfile" || a.tool === "writefile"));
+  const searches = actions.filter((a) => a.ok && (a.tool === "searchfiles" || a.tool === "outlinefile" || a.tool === "findsymbols" || a.tool === "readfile"));
+  let finalSummary = "";
+  if (edits.length > 0) {
+    finalSummary = `已完成代码定位与修改。\n\n**修改记录**：\n${edits.map((e) => `- \`${e.tool}\`: ${e.observation.slice(0, 120)}`).join("\n")}\n\n请检查上述修改是否满足预期。`;
+  } else if (searches.length > 0) {
+    finalSummary = `已完成工作区代码排查与分析。\n\n**排查结果**：\n${searches.slice(-5).map((s) => `- \`${s.tool}\`: ${s.observation.slice(0, 120)}`).join("\n")}`;
+  } else {
+    finalSummary = "已完成当前任务的操作与排查。";
+  }
+
+  return finishAgentResponse("completed_summary", finalSummary);
 }

@@ -189,12 +189,23 @@ function summarizeSakiStreamEvent(event: SakiChatStreamEvent): Record<string, un
       actionCount: event.response.actions?.length ?? 0
     };
   }
+  if (event.type === "meta") {
+    return {
+      type: event.type,
+      source: event.source,
+      mode: event.mode ?? null,
+      agentPermissionMode: event.agentPermissionMode ?? null,
+      skillCount: event.skills?.length ?? 0
+    };
+  }
+  if (event.type === "error") {
+    return {
+      type: event.type,
+      message: event.message
+    };
+  }
   return {
-    type: event.type,
-    source: event.source,
-    mode: event.mode ?? null,
-    agentPermissionMode: event.agentPermissionMode ?? null,
-    skillCount: event.skills?.length ?? 0
+    type: "unknown"
   };
 }
 
@@ -283,12 +294,29 @@ export type SakiChatStreamEvent =
       agentPermissionMode?: SakiChatRequest["agentPermissionMode"];
       workspace?: SakiChatResponse["workspace"];
       skills?: SakiSkillSummary[];
+      taskId?: string;
+      status?: string;
     }
   | { type: "heartbeat"; ts?: number }
   | ({ type: "workflow" } & SakiChatWorkflowUpdate)
   | { type: "delta"; text: string }
   | { type: "action"; action: SakiAgentAction }
-  | { type: "done"; response: SakiChatResponse };
+  | { type: "done"; response: SakiChatResponse }
+  | { type: "error"; message: string };
+
+export interface SakiActiveTaskSummary {
+  id: string;
+  userId: string;
+  instanceId: string | null;
+  status: "running" | "completed" | "failed" | "pending_approval" | "cancelled";
+  startedAt: string;
+  updatedAt: string;
+  message: string;
+  mode?: string;
+  actionCount: number;
+  response?: SakiChatResponse;
+  error?: string;
+}
 
 function parseSakiStreamFrame(frame: string): SakiChatStreamEvent | null {
   const data = frame
@@ -410,6 +438,72 @@ async function requestSakiChatStream(
     messageChars: completedResponse.message.length,
     actionCount: completedResponse.actions?.length ?? 0
   });
+  return completedResponse;
+}
+
+async function requestSakiTaskReconnectStream(
+  token: string,
+  taskId: string,
+  onEvent: (event: SakiChatStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<SakiChatResponse> {
+  const requestInit: RequestInit = {
+    method: "GET",
+    headers: {
+      authorization: `Bearer ${token}`
+    }
+  };
+  if (signal) {
+    requestInit.signal = signal;
+  }
+  const response = await fetch(new URL(`/api/saki/tasks/${encodeURIComponent(taskId)}/stream`, API_BASE), requestInit);
+  if (!response.ok) {
+    throw new ApiError(await responseErrorMessage(response), response.status);
+  }
+  if (!response.body) {
+    throw new ApiError("Saki task stream is not readable", 0);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalResponse: SakiChatResponse | null = null;
+
+  const dispatch = (frame: string) => {
+    const event = parseSakiStreamFrame(frame);
+    if (!event) return;
+    onEvent(event);
+    if (event.type === "done") {
+      finalResponse = event.response;
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      while (true) {
+        const boundary = buffer.indexOf("\n\n");
+        if (boundary < 0) break;
+        dispatch(buffer.slice(0, boundary));
+        buffer = buffer.slice(boundary + 2);
+      }
+    }
+    const tail = decoder.decode();
+    if (tail) buffer += tail.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    if (buffer.trim()) dispatch(buffer);
+  } catch (error) {
+    if (finalResponse) return finalResponse;
+    throw new ApiError(normalizeStreamError(error), 0);
+  } finally {
+    reader.releaseLock();
+  }
+
+  const completedResponse = finalResponse as SakiChatResponse | null;
+  if (!completedResponse) {
+    throw new ApiError("Saki task stream ended before completion", 0);
+  }
   return completedResponse;
 }
 
@@ -1053,6 +1147,24 @@ export const api = {
   },
   sakiChatStream(token: string, input: SakiChatRequest, onEvent: (event: SakiChatStreamEvent) => void, signal?: AbortSignal) {
     return requestSakiChatStream(token, input, onEvent, signal);
+  },
+  sakiGetActiveTask(token: string, instanceId?: string | null) {
+    const query = instanceId ? `?instanceId=${encodeURIComponent(instanceId)}` : "";
+    return requestJson<{ hasActiveTask: boolean; task?: SakiActiveTaskSummary }>(
+      `/api/saki/active-task${query}`,
+      {},
+      token
+    );
+  },
+  sakiStreamTaskReconnect(token: string, taskId: string, onEvent: (event: SakiChatStreamEvent) => void, signal?: AbortSignal) {
+    return requestSakiTaskReconnectStream(token, taskId, onEvent, signal);
+  },
+  sakiCancelTask(token: string, taskId: string) {
+    return requestJson<{ ok: boolean }>(
+      `/api/saki/tasks/${encodeURIComponent(taskId)}/cancel`,
+      { method: "POST" },
+      token
+    );
   },
   sakiAction(token: string, id: string, decision: "approve" | "reject" | "rollback") {
     return requestJson<SakiActionDecisionResponse>(

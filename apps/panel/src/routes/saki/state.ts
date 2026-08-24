@@ -1,12 +1,21 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { SakiAgentAction } from "@webops/shared";
+import type { SakiAgentAction, SakiChatRequest, SakiChatResponse } from "@webops/shared";
 import { panelPaths } from "../../config.js";
-import type { PendingSakiAction, SakiCheckpoint } from "./types.js";
+import type {
+  PendingSakiAction,
+  SakiActiveTask,
+  SakiActiveTaskEvent,
+  SakiActiveTaskSummary,
+  SakiCheckpoint,
+  SakiSessionAgentMemory
+} from "./types.js";
 
 export const pendingSakiActions = new Map<string, PendingSakiAction>();
 export const completedSakiActions = new Map<string, SakiAgentAction>();
 export const sakiCheckpoints = new Map<string, SakiCheckpoint>();
+export const sessionAgentMemories = new Map<string, SakiSessionAgentMemory>();
+const sessionMemoryTtlMs = 30 * 60 * 1000; // 30 minutes session memory
 
 const checkpointsDir = path.join(panelPaths.dataDir, "saki-checkpoints");
 const pendingActionsDir = path.join(panelPaths.dataDir, "saki-pending-actions");
@@ -178,6 +187,169 @@ export function getRecentWorkingFiles(userId: string, instanceId: string | null)
   const key = sessionWorkingFilesKey(userId, instanceId);
   const set = sessionWorkingFiles.get(key);
   return set ? [...set] : [];
+}
+
+export function saveSessionAgentMemory(memory: SakiSessionAgentMemory): void {
+  const key = sessionWorkingFilesKey(memory.userId, memory.instanceId);
+  sessionAgentMemories.set(key, {
+    ...memory,
+    updatedAt: Date.now()
+  });
+}
+
+export function getSessionAgentMemory(userId: string, instanceId: string | null): SakiSessionAgentMemory | null {
+  const key = sessionWorkingFilesKey(userId, instanceId);
+  const memory = sessionAgentMemories.get(key);
+  if (!memory) return null;
+  if (Date.now() - memory.updatedAt > sessionMemoryTtlMs) {
+    sessionAgentMemories.delete(key);
+    return null;
+  }
+  return memory;
+}
+
+export function clearSessionAgentMemory(userId: string, instanceId: string | null): void {
+  const key = sessionWorkingFilesKey(userId, instanceId);
+  sessionAgentMemories.delete(key);
+}
+
+export function extractTodosFromScratchpad(entries: string[]): string[] {
+  const todos: string[] = [];
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i] ?? "";
+    const todoMatch = entry.match(/<todos>([\s\S]*?)<\/todos>/i) || entry.match(/"todos"\s*:\s*"([^"]+)"/i);
+    if (todoMatch?.[1]) {
+      const lines = todoMatch[1]
+        .split(/\r?\n|\\n/)
+        .map((l) => l.trim())
+        .filter((l) => l.startsWith("- [ ]") || l.startsWith("- [x]"));
+      if (lines.length > 0) {
+        return lines;
+      }
+    }
+  }
+  return todos;
+}
+
+export const activeSakiTasks = new Map<string, SakiActiveTask>();
+export const activeSakiTasksByContext = new Map<string, string>(); // `${userId}:${instanceId}` -> taskId
+const activeTaskTtlMs = 60 * 60 * 1000; // Keep completed task record for 1 hour
+
+export function createActiveSakiTask(
+  taskId: string,
+  userId: string,
+  instanceId: string | null,
+  input: SakiChatRequest,
+  abortController?: AbortController
+): SakiActiveTask {
+  const task: SakiActiveTask = {
+    id: taskId,
+    userId,
+    instanceId,
+    input,
+    status: "running",
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    eventsBuffer: [],
+    ...(abortController ? { abortController } : {}),
+    subscribers: new Set()
+  };
+  activeSakiTasks.set(taskId, task);
+  activeSakiTasksByContext.set(sessionWorkingFilesKey(userId, instanceId), taskId);
+  return task;
+}
+
+export function getActiveSakiTask(userId: string, instanceId: string | null): SakiActiveTask | null {
+  const contextKey = sessionWorkingFilesKey(userId, instanceId);
+  const taskId = activeSakiTasksByContext.get(contextKey);
+  if (!taskId) return null;
+  const task = activeSakiTasks.get(taskId);
+  if (!task) {
+    activeSakiTasksByContext.delete(contextKey);
+    return null;
+  }
+  const startedAt = Date.parse(task.startedAt);
+  if (Number.isFinite(startedAt) && Date.now() - startedAt > activeTaskTtlMs) {
+    activeSakiTasks.delete(taskId);
+    activeSakiTasksByContext.delete(contextKey);
+    return null;
+  }
+  return task;
+}
+
+export function getActiveSakiTaskById(taskId: string): SakiActiveTask | null {
+  return activeSakiTasks.get(taskId) ?? null;
+}
+
+export function emitActiveSakiTaskEvent(
+  taskId: string,
+  type: SakiActiveTaskEvent["type"],
+  payload: Record<string, unknown>
+): void {
+  const task = activeSakiTasks.get(taskId);
+  if (!task) return;
+  const event: SakiActiveTaskEvent = {
+    type,
+    payload,
+    ts: Date.now()
+  };
+  task.updatedAt = new Date().toISOString();
+  task.eventsBuffer.push(event);
+  if (task.eventsBuffer.length > 500) {
+    task.eventsBuffer.shift();
+  }
+  for (const subscriber of task.subscribers) {
+    try {
+      subscriber(event);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+export function finishActiveSakiTask(
+  taskId: string,
+  status: SakiActiveTask["status"],
+  response?: SakiChatResponse,
+  error?: string
+): void {
+  const task = activeSakiTasks.get(taskId);
+  if (!task) return;
+  task.status = status;
+  task.updatedAt = new Date().toISOString();
+  if (response) task.response = response;
+  if (error) task.error = error;
+  emitActiveSakiTaskEvent(taskId, status === "completed" ? "done" : "error", {
+    ...(response ? { response } : {}),
+    ...(error ? { message: error } : {})
+  });
+}
+
+export function cancelActiveSakiTask(taskId: string): boolean {
+  const task = activeSakiTasks.get(taskId);
+  if (!task || task.status !== "running") return false;
+  task.status = "cancelled";
+  task.updatedAt = new Date().toISOString();
+  task.abortController?.abort();
+  emitActiveSakiTaskEvent(taskId, "error", { message: "Task was cancelled by user." });
+  return true;
+}
+
+export function toSakiActiveTaskSummary(task: SakiActiveTask): SakiActiveTaskSummary {
+  const actionCount = task.eventsBuffer.filter((e) => e.type === "action").length;
+  return {
+    id: task.id,
+    userId: task.userId,
+    instanceId: task.instanceId,
+    status: task.status,
+    startedAt: task.startedAt,
+    updatedAt: task.updatedAt,
+    message: task.input.message,
+    ...(task.input.mode ? { mode: task.input.mode } : {}),
+    actionCount,
+    ...(task.response ? { response: task.response } : {}),
+    ...(task.error ? { error: task.error } : {})
+  };
 }
 
 void loadCheckpointsFromDisk();

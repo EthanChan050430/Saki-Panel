@@ -167,7 +167,14 @@ import type {
   TerminalServerMessage
 } from "@webops/shared";
 import { noRolePermissionRoleName, permissions } from "@webops/shared";
-import { ApiError, api, type SakiChatStreamEvent, type SakiChatWorkflowStatus, type UploadProgressUpdate } from "./api.js";
+import {
+  ApiError,
+  api,
+  type SakiActiveTaskSummary,
+  type SakiChatStreamEvent,
+  type SakiChatWorkflowStatus,
+  type UploadProgressUpdate
+} from "./api.js";
 
 const tokenKey = "webops.token";
 const rememberedLoginKey = "webops.rememberedLogin";
@@ -5206,6 +5213,20 @@ function SakiToolActionCard({
           {meta ? <span className="saki-action-meta">{meta}</span> : null}
         </span>
         <span className="saki-action-status-dot" style={{ backgroundColor: statusColor }} />
+        {action.approval?.rollbackAvailable && !isPending ? (
+          <button
+            className="saki-action-inline-rollback"
+            type="button"
+            title="回滚此操作"
+            disabled={controlsDisabled}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDecision(action, "rollback");
+            }}
+          >
+            {busy ? <Loader2 size={12} className="status-spinner" /> : <CornerUpLeft size={12} />}
+          </button>
+        ) : null}
         <span className="saki-action-expand">{expanded ? "▾" : "▸"}</span>
       </div>
       {expanded ? (
@@ -5244,13 +5265,6 @@ function SakiToolActionCard({
           <button className="saki-approval-btn reject" type="button" disabled={controlsDisabled} onClick={() => onDecision(action, "reject")}>
             <X size={13} />
             拒绝
-          </button>
-        </div>
-      ) : action.approval?.rollbackAvailable ? (
-        <div className="saki-action-approval">
-          <button className="saki-approval-btn rollback" type="button" disabled={controlsDisabled} onClick={() => onDecision(action, "rollback")}>
-            {busy ? <Loader2 size={13} className="status-spinner" /> : <CornerUpLeft size={13} />}
-            {isSakiRollbackableFileEdit(action) ? "回滚" : "回滚"}
           </button>
         </div>
       ) : null}
@@ -5555,6 +5569,176 @@ function SakiFloatingChat({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [messages, open, messagesExpanded, fullscreen]);
+
+  useEffect(() => {
+    if (!token || loading) return;
+    let cancelled = false;
+    const checkActiveTask = async () => {
+      try {
+        const result = await api.sakiGetActiveTask(token, instance?.id);
+        if (cancelled || !result.hasActiveTask || !result.task) return;
+        const task = result.task;
+        if (task.status === "running") {
+          const lastMsg = messages.at(-1);
+          if (lastMsg && lastMsg.streaming) return;
+
+          const assistantId = newClientId();
+          const userMessage: LocalSakiMessage = {
+            id: newClientId(),
+            role: "user",
+            content: task.message,
+            createdAt: task.startedAt
+          };
+          const assistantMessage: LocalSakiMessage = {
+            id: assistantId,
+            role: "assistant",
+            content: "",
+            createdAt: task.startedAt,
+            source: "direct-model",
+            timeline: [],
+            workflowExpanded: false,
+            streaming: true
+          };
+
+          setMessages((current) => [...current, userMessage, assistantMessage]);
+          setSakiActivityMood("working");
+          setLoading(true);
+
+          const abortController = new AbortController();
+          sakiStreamAbortRef.current = abortController;
+
+          const applyStreamEvent = (streamEvent: SakiChatStreamEvent) => {
+            if (abortController.signal.aborted) return;
+            if (streamEvent.type === "meta") {
+              setReachable(streamEvent.source === "direct-model");
+              return;
+            }
+            if (streamEvent.type === "heartbeat") return;
+            if (streamEvent.type === "delta") {
+              setMessages((current) =>
+                current.map((message) =>
+                  message.id === assistantId
+                    ? {
+                        ...message,
+                        timeline: appendSakiTimelineDelta(message.timeline, streamEvent.text)
+                      }
+                    : message
+                )
+              );
+              return;
+            }
+            if (streamEvent.type === "workflow") {
+              const chatText = workflowEventChatText(streamEvent);
+              setMessages((current) =>
+                current.map((message) => {
+                  if (message.id !== assistantId) return message;
+                  const workflow = message.workflow ?? [];
+                  const existing = workflow.find((step) => step.id === streamEvent.id);
+                  const nextStep: LocalSakiWorkflowStep = {
+                    id: streamEvent.id,
+                    stage: streamEvent.stage,
+                    message: streamEvent.message,
+                    status: streamEvent.status,
+                    ...(streamEvent.tool ? { tool: streamEvent.tool } : {}),
+                    ...(streamEvent.call ? { call: streamEvent.call } : {}),
+                    ...(streamEvent.actionId ? { actionId: streamEvent.actionId } : {}),
+                    ...(streamEvent.detail ? { detail: streamEvent.detail } : {}),
+                    createdAt: existing?.createdAt ?? new Date().toISOString()
+                  };
+                  return {
+                    ...message,
+                    ...(chatText
+                      ? {
+                          timeline: upsertSakiTimelineText(message.timeline, {
+                            id: `workflow:${streamEvent.id}`,
+                            content: chatText,
+                            source: "workflow",
+                            createdAt: nextStep.createdAt
+                          })
+                        }
+                      : {}),
+                    workflow: existing
+                      ? workflow.map((step) => (step.id === streamEvent.id ? nextStep : step))
+                      : [...workflow, nextStep]
+                  };
+                })
+              );
+              return;
+            }
+            if (streamEvent.type === "action") {
+              setMessages((current) =>
+                current.map((message) => {
+                  if (message.id !== assistantId) return message;
+                  const actions = message.actions ?? [];
+                  const exists = actions.some((action) => action.id === streamEvent.action.id);
+                  return {
+                    ...message,
+                    actions: exists
+                      ? actions.map((action) => (action.id === streamEvent.action.id ? streamEvent.action : action))
+                      : [...actions, streamEvent.action],
+                    timeline: upsertSakiTimelineAction(sealSakiTimelineDelta(message.timeline), streamEvent.action)
+                  };
+                })
+              );
+              return;
+            }
+            if (streamEvent.type === "done") {
+              const response = streamEvent.response;
+              setMessages((current) =>
+                current.map((message) => {
+                  if (message.id !== assistantId) return message;
+                  const nextActions = response.actions?.length ? response.actions : message.actions;
+                  const sealedTimeline = sealSakiTimelineDelta(message.timeline);
+                  const finalTimeline = mergeSakiTimelineActions(mergeSakiFinalTimeline(sealedTimeline, response.message), nextActions);
+                  const nextMessage: LocalSakiMessage = {
+                    ...message,
+                    content: response.message,
+                    timeline: finalTimeline,
+                    source: response.source,
+                    streaming: false
+                  };
+                  if (nextActions?.length) return { ...nextMessage, actions: nextActions };
+                  return nextMessage;
+                })
+              );
+            }
+          };
+
+          try {
+            const finalResp = await api.sakiStreamTaskReconnect(token, task.id, applyStreamEvent, abortController.signal);
+            setMessages((current) =>
+              current.map((message) => {
+                if (message.id !== assistantId) return message;
+                const nextActions = finalResp.actions?.length ? finalResp.actions : message.actions;
+                const sealedTimeline = sealSakiTimelineDelta(message.timeline);
+                const finalTimeline = mergeSakiTimelineActions(mergeSakiFinalTimeline(sealedTimeline, finalResp.message), nextActions);
+                const nextMessage: LocalSakiMessage = {
+                  ...message,
+                  content: finalResp.message,
+                  timeline: finalTimeline,
+                  source: finalResp.source,
+                  streaming: false
+                };
+                if (nextActions?.length) return { ...nextMessage, actions: nextActions };
+                return nextMessage;
+              })
+            );
+          } catch {
+            // ignore
+          } finally {
+            setLoading(false);
+            setSakiActivityMood(null);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    };
+    void checkActiveTask();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, instance?.id, open]);
 
   async function selectModel(modelId: string) {
     onCurrentModelIdChange(modelId);
