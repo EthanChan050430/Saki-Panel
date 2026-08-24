@@ -1117,7 +1117,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       reply.header("Content-Type", "application/octet-stream");
       reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
       reply.header("Content-Length", String(stats.size));
-      return fsSync.createReadStream(resolved.target);
+      return reply.send(fsSync.createReadStream(resolved.target));
     }
 
     if (stats.size > maxTransferBytes) {
@@ -1232,7 +1232,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
         };
         stream.on("close", cleanup);
         stream.on("error", cleanup);
-        return stream;
+        return reply.send(stream);
       } catch (err) {
         await fs.rm(temporary.tempDirectory, { force: true, recursive: true });
         throw err;
