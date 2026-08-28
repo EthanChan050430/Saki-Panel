@@ -2063,4 +2063,92 @@
   .update-btn {
     width: 100%;
   }
+
+  /* Audit Detail Modal Mobile Fullscreen */
+  .audit-detail-backdrop {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100dvw !important;
+    height: 100dvh !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    justify-content: stretch !important;
+    overflow: hidden !important;
+    z-index: 2000 !important;
+    background: rgba(0, 0, 0, 0.75) !important;
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+  }
+
+  .audit-detail-modal,
+  .modal-backdrop > .audit-detail-modal,
+  .audit-detail-backdrop > .audit-detail-modal {
+    position: fixed !important;
+    inset: 0 !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100dvw !important;
+    max-width: 100dvw !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    min-height: 100dvh !important;
+    border-radius: 0 !important;
+    border: none !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    overscroll-behavior: contain !important;
+    background: #ffffff !important;
+    z-index: 2001 !important;
+    animation: mobileModalSheetIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+  }
+
+  [data-theme="dark"] .audit-detail-modal,
+  [data-theme="dark"] .modal-backdrop > .audit-detail-modal,
+  [data-theme="dark"] .audit-detail-backdrop > .audit-detail-modal {
+    background: #0f172a !important;
+  }
+
+  .audit-detail-glass-header {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 15 !important;
+    padding: max(14px, env(safe-area-inset-top)) 16px 12px !important;
+    background: rgba(255, 255, 255, 0.85) !important;
+    backdrop-filter: blur(24px) saturate(190%) !important;
+    -webkit-backdrop-filter: blur(24px) saturate(190%) !important;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 12px !important;
+    flex-wrap: nowrap !important;
+    box-sizing: border-box !important;
+    width: 100% !important;
+    flex-shrink: 0 !important;
+  }
+
+  [data-theme="dark"] .audit-detail-glass-header {
+    background: rgba(15, 23, 42, 0.9) !important;
+    border-bottom-color: rgba(255, 255, 255, 0.1) !important;
+  }
+
+  .audit-detail-body {
+    flex: 1 1 0% !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+    padding: 16px 16px max(24px, env(safe-area-inset-bottom)) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 16px !important;
+  }
 }

@@ -52,6 +52,7 @@ import {
   stopDaemonInstance,
   type DaemonInstanceSpec
 } from "../daemon-client.js";
+import { fetchClashSubscriptionProxies } from "../clash-subscription.js";
 
 function parseProxyConfig(raw: string | null | undefined): InstanceProxyConfig | null {
   if (!raw) return null;
@@ -1113,7 +1114,24 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
         reply.code(400).send({ message: "请输入机场订阅地址" });
         return;
       }
-      return fetchDaemonClashSubscription(existing.node, id, url);
+      try {
+        return { proxies: await fetchClashSubscriptionProxies(url) };
+      } catch (panelError) {
+        try {
+          return await fetchDaemonClashSubscription(existing.node, id, url);
+        } catch (daemonError) {
+          const panelMessage = panelError instanceof Error ? panelError.message : "拉取订阅失败";
+          const daemonMessage = daemonError instanceof Error ? daemonError.message : String(daemonError);
+          if (/401|Invalid daemon credentials|Missing daemon credentials/i.test(daemonMessage)) {
+            reply.code(502).send({ message: panelMessage });
+            return;
+          }
+          reply.code(502).send({
+            message: `${panelMessage}；节点侧拉取也失败：${daemonMessage}`
+          });
+          return;
+        }
+      }
     }
   );
 

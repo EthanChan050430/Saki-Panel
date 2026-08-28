@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   Archive,
@@ -609,102 +610,108 @@ export function AuditView({
         )}
       </section>
 
-      {auditDetailOpen && activeLog && (
-        <div
-          className="modal-backdrop audit-detail-backdrop"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setAuditDetailOpen(false);
-            }
-          }}
-        >
-          <div className="modal-panel audit-detail-modal" role="dialog" aria-modal="true">
-            <div className="audit-detail-glass-header">
-              <div className={`audit-detail-head ${activeLog.result === "SUCCESS" ? "success" : "failure"}`}>
-                <span className="audit-action-icon" aria-hidden="true">
-                  {auditResourceIcon(activeLog.resourceType, activeLog.action)}
-                </span>
-                <div>
-                  <p>{activeLog.result === "SUCCESS" ? "Verified" : "Attention"}</p>
-                  <h3>{auditActionLabel(activeLog.action)}</h3>
-                  <code>{activeLog.action}</code>
-                </div>
-              </div>
-              <button className="icon-button mini audit-detail-close" title="关闭" type="button" onClick={() => setAuditDetailOpen(false)}>
-                <X size={15} />
-              </button>
-            </div>
-            <div className="modal-body audit-detail-body">
-              <div className="audit-detail-info-grid">
-                <div>
-                  <span>结果</span>
-                  <strong className={activeLog.result === "SUCCESS" ? "success" : "failure"}>
-                    {activeLog.result === "SUCCESS" ? "成功" : "失败"}
-                  </strong>
-                </div>
-                <div>
-                  <span>时间</span>
-                  <strong>{formatDate(activeLog.createdAt)}</strong>
-                </div>
-                <div>
-                  <span>用户</span>
-                  <strong>{auditActor(activeLog)}</strong>
-                </div>
-                <div>
-                  <span>资源</span>
-                  <strong>{auditResourceLabel(activeLog)}</strong>
-                </div>
-                <div>
-                  <span>IP</span>
-                  <strong>{activeLog.ip ?? "-"}</strong>
-                </div>
-                <div>
-                  <span>载荷</span>
-                  <strong>{activeLog.payload ? "有" : "无"}</strong>
-                </div>
-              </div>
-
-              {activeLog.payload && (
-                <div className="audit-detail-payload">
-                  <div className="audit-detail-section-title">
-                    <FileText size={15} />
-                    <span>Payload</span>
-                    {onAskSaki ? (
-                      <button
-                        className="small-button"
-                        type="button"
-                        onClick={() => {
-                          setAuditDetailOpen(false);
-                          askSakiAboutLog(activeLog);
-                        }}
-                      >
-                        <Sparkles size={14} />
-                        交给 Saki
-                      </button>
-                    ) : null}
+      {auditDetailOpen && activeLog && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="modal-backdrop audit-detail-backdrop"
+              role="presentation"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  setAuditDetailOpen(false);
+                }
+              }}
+            >
+              <div className="modal-panel audit-detail-modal" role="dialog" aria-modal="true">
+                <div className="audit-detail-glass-header">
+                  <div className={`audit-detail-head ${activeLog.result === "SUCCESS" ? "success" : "failure"}`}>
+                    <span className="audit-action-icon" aria-hidden="true">
+                      {auditResourceIcon(activeLog.resourceType, activeLog.action)}
+                    </span>
+                    <div>
+                      <p>{activeLog.result === "SUCCESS" ? "Verified" : "Attention"}</p>
+                      <h3>{auditActionLabel(activeLog.action)}</h3>
+                      <code>{activeLog.action}</code>
+                    </div>
                   </div>
-                  {renderAuditPayloadDetails(activeLog, token, (instanceId, filePath, actionName) => {
-                    setAuditDetailOpen(false);
-                    setPreviewFile({ instanceId, filePath, actionName });
-                  })}
+                  <button className="icon-button mini audit-detail-close" title="关闭" type="button" onClick={() => setAuditDetailOpen(false)}>
+                    <X size={15} />
+                  </button>
                 </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+                <div className="modal-body audit-detail-body">
+                  <div className="audit-detail-info-grid">
+                    <div>
+                      <span>结果</span>
+                      <strong className={activeLog.result === "SUCCESS" ? "success" : "failure"}>
+                        {activeLog.result === "SUCCESS" ? "成功" : "失败"}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>时间</span>
+                      <strong>{formatDate(activeLog.createdAt)}</strong>
+                    </div>
+                    <div>
+                      <span>用户</span>
+                      <strong>{auditActor(activeLog)}</strong>
+                    </div>
+                    <div>
+                      <span>资源</span>
+                      <strong>{auditResourceLabel(activeLog)}</strong>
+                    </div>
+                    <div>
+                      <span>IP</span>
+                      <strong>{activeLog.ip ?? "-"}</strong>
+                    </div>
+                    <div>
+                      <span>载荷</span>
+                      <strong>{activeLog.payload ? "有" : "无"}</strong>
+                    </div>
+                  </div>
 
-      {previewFile && (
-        <FilePreviewModal
-          token={token}
-          instanceId={previewFile.instanceId}
-          filePath={previewFile.filePath}
-          actionName={previewFile.actionName}
-          onClose={() => setPreviewFile(null)}
-          darkMode={darkMode}
-        />
-      )}
+                  {activeLog.payload && (
+                    <div className="audit-detail-payload">
+                      <div className="audit-detail-section-title">
+                        <FileText size={15} />
+                        <span>Payload</span>
+                        {onAskSaki ? (
+                          <button
+                            className="small-button"
+                            type="button"
+                            onClick={() => {
+                              setAuditDetailOpen(false);
+                              askSakiAboutLog(activeLog);
+                            }}
+                          >
+                            <Sparkles size={14} />
+                            交给 Saki
+                          </button>
+                        ) : null}
+                      </div>
+                      {renderAuditPayloadDetails(activeLog, token, (instanceId, filePath, actionName) => {
+                        setAuditDetailOpen(false);
+                        setPreviewFile({ instanceId, filePath, actionName });
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+
+      {previewFile && typeof document !== "undefined"
+        ? createPortal(
+            <FilePreviewModal
+              token={token}
+              instanceId={previewFile.instanceId}
+              filePath={previewFile.filePath}
+              actionName={previewFile.actionName}
+              onClose={() => setPreviewFile(null)}
+              darkMode={darkMode}
+            />,
+            document.body
+          )
+        : null}
     </>
   );
 }
