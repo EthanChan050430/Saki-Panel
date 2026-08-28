@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
+import { PANEL_VERSION } from "@webops/shared";
 import { loadSslConfig } from "./ssl.js";
 
 function numberFromEnv(value: string | undefined, fallback: number): number {
@@ -54,7 +55,7 @@ export const daemonConfig = {
   maxTransferBytes: numberFromEnv(process.env.MAX_TRANSFER_LIMIT_MB || process.env.MAX_TRANSFER_MB, 2048) * 1024 * 1024,
   maxExtractedBytes: numberFromEnv(process.env.MAX_EXTRACTED_LIMIT_MB || process.env.MAX_EXTRACT_MB, 51200) * 1024 * 1024,
   maxArchiveEntries: numberFromEnv(process.env.MAX_ARCHIVE_ENTRIES, 200000),
-  version: process.env.DAEMON_VERSION ?? "0.1.0",
+  version: process.env.DAEMON_VERSION ?? PANEL_VERSION,
   osName: `${os.type()} ${os.release()}`,
   arch: os.arch()
 };

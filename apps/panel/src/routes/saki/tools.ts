@@ -531,7 +531,6 @@ export function parseShorthandToolCalls(root: Record<string, unknown>): ParsedTo
   return calls;
 }
 
-
 export function extractAllBalancedJsonObjects(text: string): string[] {
   const results: string[] = [];
   for (let start = 0; start < text.length; start += 1) {

@@ -1,4 +1,4 @@
-export const PANEL_VERSION = "0.1.0";
+export const PANEL_VERSION = "0.3.0";
 
 export const noRolePermissionRoleName = "__no_role__";
 
@@ -1072,6 +1072,140 @@ export interface SakiInputAttachment {
   capturedAt?: string;
 }
 
+export function isSakiImageAttachment(attachment: Pick<SakiInputAttachment, "kind">): boolean {
+  return attachment.kind === "image" || attachment.kind === "screenshot";
+}
+
+export function sakiAttachmentMentionToken(attachment: Pick<SakiInputAttachment, "id" | "name">): string {
+  const name = (attachment.name || "").trim() || attachment.id || "image";
+  if (/[\s@"'\\]/.test(name)) {
+    return `@"${name.replace(/"/g, "")}"`;
+  }
+  return `@${name}`;
+}
+
+export function parseSakiAttachmentMentionQueries(message: string): string[] {
+  const queries: string[] = [];
+  const pattern = /@(?:"([^"]+)"|([^\s@]+))/g;
+  for (const match of message.matchAll(pattern)) {
+    const token = (match[1] || match[2] || "").trim();
+    if (token) queries.push(token);
+  }
+  return queries;
+}
+
+function sakiAttachmentMentionKeys(attachment: Pick<SakiInputAttachment, "id" | "name">): string[] {
+  return [attachment.name?.trim(), attachment.id].filter((value): value is string => Boolean(value));
+}
+
+export function resolveSakiMentionedAttachments(
+  message: string,
+  attachments: SakiInputAttachment[]
+): SakiInputAttachment[] {
+  const queries = parseSakiAttachmentMentionQueries(message).map((query) => query.toLowerCase());
+  if (queries.length === 0) return [];
+  const resolved: SakiInputAttachment[] = [];
+  const seen = new Set<string>();
+  for (const query of queries) {
+    const found = attachments.find((attachment) => {
+      const keys = sakiAttachmentMentionKeys(attachment).map((key) => key.toLowerCase());
+      const token = sakiAttachmentMentionToken(attachment).replace(/^@/, "").replace(/^"|"$/g, "").toLowerCase();
+      return keys.includes(query) || token === query;
+    });
+    if (!found) continue;
+    const key = found.id ?? found.name;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    resolved.push(found);
+  }
+  return resolved;
+}
+
+export function sakiImageAttachmentsForMessage(
+  message: string,
+  attachments: SakiInputAttachment[]
+): SakiInputAttachment[] {
+  const images = attachments.filter(isSakiImageAttachment);
+  const mentioned = resolveSakiMentionedAttachments(message, images);
+  return mentioned.length > 0 ? mentioned : images;
+}
+
+export function sakiAttachmentsForMessage(
+  message: string,
+  attachments: SakiInputAttachment[]
+): SakiInputAttachment[] {
+  const mentionedImages = resolveSakiMentionedAttachments(message, attachments).filter(isSakiImageAttachment);
+  if (mentionedImages.length === 0) return attachments;
+  const mentionedKeys = new Set(mentionedImages.map((attachment) => attachment.id ?? attachment.name));
+  return attachments.filter((attachment) => !isSakiImageAttachment(attachment) || mentionedKeys.has(attachment.id ?? attachment.name));
+}
+
+export function sakiModelSupportsVision(modelId: string, provider?: string): boolean {
+  const haystack = `${provider ?? ""} ${modelId}`.toLowerCase();
+  if (!modelId.trim()) return false;
+  if (/(gpt-3\.5|o1-mini|o1-preview|text-embedding|whisper|\btts\b|[-_/]voice\b)/i.test(haystack)) return false;
+  if (/(deepseek-(chat|reasoner|coder|v3)|deepseek-r1)/i.test(haystack) && !/(vl|vision|janus)/i.test(haystack)) {
+    return false;
+  }
+  if (/(^|[^a-z0-9])(vl|vqa|vision|multimodal)([^a-z0-9]|$)/i.test(haystack)) return true;
+  if (/(pixtral|llava|moondream|minicpm-v|internvl|cogvlm|visualglm|qvq)/i.test(haystack)) return true;
+  if (
+    /(gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-4-vision|gpt-4\.5|gpt-5|chatgpt-|claude-3|claude-4|claude-sonnet|claude-opus|claude-haiku|gemini|gemma-3|grok-4|grok-2-vision|llama-?4)/i.test(
+      haystack
+    )
+  ) {
+    return true;
+  }
+  // GLM-4V / GLM-4.5V / GLM-5V / glm4v / qwen2.5-vl-style "4v"/"5v" suffixes
+  if (/(^|[^a-z0-9])(?:glm[-_.]?)?\d+(?:\.\d+)*[-_]?v(\b|[^a-z0-9])/i.test(haystack)) return true;
+  return false;
+}
+
+export function sakiListedModelSupportsVision(model: {
+  id: string;
+  provider?: string;
+  name?: string;
+  label?: string;
+  supportsVision?: boolean;
+}): boolean {
+  if (model.supportsVision === true) return true;
+  return [model.id, model.name, model.label].some(
+    (value) => Boolean(value && typeof value === "string" && value.length > 0 && sakiModelSupportsVision(value, model.provider))
+  );
+}
+
+export function activeSakiMentionQuery(text: string, caret: number): { start: number; query: string } | null {
+  if (caret < 0 || caret > text.length) return null;
+  const before = text.slice(0, caret);
+  const match = before.match(/@([^\s@]*)$/);
+  if (!match) return null;
+  const start = before.length - match[0].length;
+  if (start > 0 && /[\w.]/.test(before.charAt(start - 1))) return null;
+  return { start, query: match[1] ?? "" };
+}
+
+export function insertSakiMention(
+  text: string,
+  caret: number,
+  attachment: Pick<SakiInputAttachment, "id" | "name">
+): { text: string; caret: number } {
+  const active = activeSakiMentionQuery(text, caret);
+  const token = `${sakiAttachmentMentionToken(attachment)} `;
+  const start = active?.start ?? caret;
+  const next = `${text.slice(0, start)}${token}${text.slice(caret)}`;
+  return { text: next, caret: start + token.length };
+}
+
+export function filterSakiMentionCandidates(
+  attachments: SakiInputAttachment[],
+  query: string
+): SakiInputAttachment[] {
+  const images = attachments.filter(isSakiImageAttachment);
+  const needle = query.trim().toLowerCase();
+  if (!needle) return images;
+  return images.filter((attachment) => `${attachment.name} ${attachment.id ?? ""}`.toLowerCase().includes(needle));
+}
+
 export type SakiAgentActionStatus = "completed" | "failed" | "pending_approval" | "rejected" | "rolled_back";
 export type SakiAgentRiskLevel = "low" | "medium" | "high" | "critical";
 
@@ -1188,6 +1322,7 @@ export interface SakiModelOption {
   name: string;
   label: string;
   vendor?: string;
+  supportsVision?: boolean;
 }
 
 export interface SakiModelListResponse {
@@ -1397,5 +1532,53 @@ export interface DatabaseImportResponse {
   success: boolean;
   importedRows: number;
   message?: string | undefined;
+}
+
+export interface SystemVersionCheckResult {
+  currentVersion: string;
+  latestVersion: string;
+  hasUpdate: boolean;
+  releaseUrl: string;
+  releaseNotes?: string | undefined;
+  publishedAt?: string | undefined;
+  checkedAt: string;
+}
+
+export function parseSemver(version: string): { major: number; minor: number; patch: number; pre?: string | undefined } | null {
+  if (!version) return null;
+  const cleaned = version.trim().replace(/^[vV]/, "");
+  const match = cleaned.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?/);
+  if (!match) return null;
+  return {
+    major: parseInt(match[1] || "0", 10),
+    minor: parseInt(match[2] || "0", 10),
+    patch: parseInt(match[3] || "0", 10),
+    pre: match[4] || undefined
+  };
+}
+
+export function compareSemver(v1: string, v2: string): number {
+  const p1 = parseSemver(v1);
+  const p2 = parseSemver(v2);
+  if (!p1 || !p2) {
+    return v1.localeCompare(v2, undefined, { numeric: true, sensitivity: "base" });
+  }
+  if (p1.major !== p2.major) return p1.major > p2.major ? 1 : -1;
+  if (p1.minor !== p2.minor) return p1.minor > p2.minor ? 1 : -1;
+  if (p1.patch !== p2.patch) return p1.patch > p2.patch ? 1 : -1;
+  if (!p1.pre && p2.pre) return 1;
+  if (p1.pre && !p2.pre) return -1;
+  if (p1.pre && p2.pre) return p1.pre.localeCompare(p2.pre);
+  return 0;
+}
+
+export function isNewerVersion(latest: string, current: string): boolean {
+  return compareSemver(latest, current) > 0;
+}
+
+export function extractVersionString(raw: string): string {
+  if (!raw) return "";
+  const match = raw.match(/v?\d+(?:\.\d+)+(?:-[0-9A-Za-z.-]+)?/i);
+  return match ? match[0] : raw.trim();
 }
 

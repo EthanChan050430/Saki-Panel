@@ -310,10 +310,7 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       return { ok: false, error: error instanceof Error ? error.message : "Unknown error" };
     }
   });
-
-  // ==========================================
   // Enrollment Tokens (Join Tokens)
-  // ==========================================
   app.get("/api/nodes/enrollment-tokens", { preHandler: requirePermission("node.view") }, async (): Promise<NodeEnrollmentTokenInfo[]> => {
     const tokens = await prisma.nodeEnrollmentToken.findMany({
       orderBy: { createdAt: "desc" }
@@ -391,10 +388,7 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
     });
     return { ok: true };
   });
-
-  // ==========================================
   // Node Secret Rotation & Join Commands
-  // ==========================================
   app.post("/api/nodes/:id/token/rotate", { preHandler: requirePermission("node.update") }, async (request, reply): Promise<RotateNodeTokenResponse | void> => {
     const { id } = request.params as { id: string };
     const node = await prisma.node.findUnique({ where: { id } });
@@ -464,10 +458,7 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       dockerCommand
     };
   });
-
-  // ==========================================
   // Connect Node By Key (Daemon Pairing Key)
-  // ==========================================
   app.post("/api/nodes/connect-key", { preHandler: requirePermission("node.create") }, async (request, reply): Promise<ConnectNodeByKeyResponse | void> => {
     const body = request.body as ConnectNodeByKeyRequest;
     if (!body?.key?.trim()) {

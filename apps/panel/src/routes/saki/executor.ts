@@ -716,6 +716,51 @@ export async function auditAgentTool(runtime: SakiAgentRuntime, action: SakiAgen
   });
 }
 
+function normalizeToolArgs(toolName: string, call: ParsedToolCall): Record<string, unknown> {
+  if (!Array.isArray(call.args)) {
+    return toolArgs(call);
+  }
+  const callArgs = call.args;
+  switch (toolName) {
+    case "listinstances": return {};
+    case "describeinstance": return { lookup: callArgs[0] };
+    case "instancelogs": return { lookup: callArgs[0], lines: callArgs[1] };
+    case "listfiles": return { lookup: callArgs[0], path: callArgs[1] };
+    case "readfile": return { lookup: callArgs[0], path: callArgs[1] };
+    case "writefile": return { lookup: callArgs[0], path: callArgs[1], content: callArgs[2] };
+    case "replaceinfile": return { lookup: callArgs[0], path: callArgs[1], old_str: callArgs[2], new_str: callArgs[3] };
+    case "editlines": return { lookup: callArgs[0], path: callArgs[1], edits: callArgs[2] };
+    case "mkdir": return { lookup: callArgs[0], path: callArgs[1] };
+    case "deletepath": return { lookup: callArgs[0], path: callArgs[1] };
+    case "renamepath": return { lookup: callArgs[0], from: callArgs[1], to: callArgs[2] };
+    case "uploadbase64": return { lookup: callArgs[0], path: callArgs[1], base64: callArgs[2] };
+    case "runcommand": return { lookup: callArgs[0], command: callArgs[1], cwd: callArgs[2], timeout: callArgs[3] };
+    case "sendinput": return { lookup: callArgs[0], input: callArgs[1] };
+    case "sendcommand": return { lookup: callArgs[0], command: callArgs[1] };
+    case "listshells": return { lookup: callArgs[0] };
+    case "createshell": return { lookup: callArgs[0], workingDirectory: callArgs[1] };
+    case "sendshellinput": return { lookup: callArgs[0], shellId: callArgs[1], data: callArgs[2] };
+    case "runinshell": return { lookup: callArgs[0], command: callArgs[1] };
+    case "instanceaction": return { lookup: callArgs[0], action: callArgs[1] };
+    case "searchaudit": return { query: callArgs[0] };
+    case "listtasks": return { instanceLookup: callArgs[0] };
+    case "runtask": return { id: callArgs[0] };
+    case "taskruns": return { id: callArgs[0] };
+    case "searchweb": return { query: callArgs[0] };
+    case "browse": return { url: callArgs[0] };
+    case "crawl": return { url: callArgs[0] };
+    case "researchweb": return { query: callArgs[0] };
+    case "listskills": return { query: callArgs[0] };
+    case "searchskills": return { query: callArgs[0] };
+    case "readskill": return { skill: callArgs[0] };
+    case "readmemory": return { key: callArgs[0] };
+    case "writememory": return { key: callArgs[0], value: callArgs[1] };
+    case "reportprogress": return { message: callArgs[0] };
+    case "respond": return { message: callArgs[0] };
+    default: return {};
+  }
+}
+
 export async function executeSakiAgentTool(
   runtime: SakiAgentRuntime,
   call: ParsedToolCall,
@@ -727,8 +772,8 @@ export async function executeSakiAgentTool(
   let ok = true;
   let observation = "";
 
-  if (!Array.isArray(call.args)) {
-    const args = toolArgs(call);
+  const args = normalizeToolArgs(toolName, call);
+  {
     const currentActionId = options.actionId || call.id || actionId();
     let checkpoint: SakiCheckpoint | null = null;
     let relatedCheckpointIds: string[] | undefined;
@@ -1657,398 +1702,4 @@ export async function executeSakiAgentTool(
     await auditAgentTool(runtime, action);
     return action;
   }
-
-  const currentActionId = options.actionId || call.id || actionId();
-  let checkpoint: SakiCheckpoint | null = null;
-  let fileEditAfterContent: string | null = null;
-  let fileEditBeforeContent: string | null = null;
-  let fileEditPreview: string | undefined;
-
-  try {
-    if (toolName === "listinstances") {
-      requireUserPermission(runtime.permissions, "instance.view");
-      const instances = await listVisibleInstances(runtime.userId, 30);
-      observation = instances.map(formatInstanceSummary).join("\n\n") || "No instances found.";
-    } else if (toolName === "describeinstance") {
-      requireUserPermission(runtime.permissions, "instance.view");
-      const lookup = trimString(call.args[0]);
-      const instance =
-        lookup
-          ? await findInstanceByLookup(runtime.userId, lookup)
-          : runtime.context.instance;
-      if (!instance) throw new RouteError("Instance not found.", 404);
-      observation = formatInstanceSummary(instance);
-    } else if (toolName === "instancelogs") {
-      requireUserPermission(runtime.permissions, "instance.logs");
-      const instance = activeInstance(runtime);
-      const lines = numericArg(call.args[0], 120, 1, 500);
-      const logs = await readDaemonInstanceLogs(instance.node, instance.id, lines);
-      await updateInstanceFromDaemonState(instance, logs);
-      observation = logs.lines.map((line) => `[${line.stream}] ${line.text}`).join("\n") || "No logs available.";
-    } else if (toolName === "listfiles") {
-      requireUserPermission(runtime.permissions, "file.view");
-      const instance = activeInstance(runtime);
-      const relativePath = safeRelativePath(call.args[0]);
-      const limit = numericArg(call.args[1], 200, 1, 1000);
-      const files = await listDaemonInstanceFiles(instance.node, instance.id, instance.workingDirectory, relativePath, { limit });
-      observation = [
-        files.entries.map((entry) => `${entry.type === "directory" ? "[DIR]" : "[FILE]"} ${entry.path || entry.name} ${entry.size ? `(${entry.size} bytes)` : ""}`).join("\n") || "Directory is empty.",
-        files.truncated
-          ? `\nShowing ${files.entries.length} of ${files.totalEntries ?? "many"} entries. Narrow path or call listFiles with a higher limit if needed.`
-          : null
-      ].filter(Boolean).join("\n");
-    } else if (toolName === "readfile") {
-      requireUserPermission(runtime.permissions, "file.read");
-      const instance = activeInstance(runtime);
-      const relativePath = safeRelativePath(call.args[0]);
-      if (!relativePath) throw new RouteError("readFile requires a file path.", 400);
-      const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath);
-      const numbered = formatLineNumberedContent(file.content, call.args[1], agentReadFileLineCountInput(call.args[2]));
-      observation = [
-        `File: ${file.path}`,
-        `Size: ${file.size} bytes`,
-        `Modified: ${file.modifiedAt}`,
-        `Total lines: ${numbered.totalLines}`,
-        numbered.totalLines > 0 ? `Showing lines: ${numbered.startLine}-${numbered.endLine}` : "Showing lines: none",
-        numbered.endLine < numbered.totalLines ? `More lines available. Call readFile with startLine=${numbered.endLine + 1} and lineCount=${defaultAgentReadFileLineCount} if needed.` : null,
-        "",
-        truncateText(numbered.text, 7000)
-      ].filter(Boolean).join("\n");
-    } else if (toolName === "writefile") {
-      requireUserPermission(runtime.permissions, "file.write");
-      const instance = activeInstance(runtime);
-      const relativePath = safeRelativePath(call.args[0]);
-      const sanitized = sanitizeAgentTextContent(call.args[1] ?? "");
-      if (!relativePath) throw new RouteError("writeFile requires a file path.", 400);
-      try {
-        const existing = await statDaemonInstancePath(instance.node, instance.id, instance.workingDirectory, relativePath);
-        if (existing.isDirectory) {
-          throw new RouteError(`writeFile cannot overwrite directory '${relativePath}'.`, 400);
-        }
-        throw new RouteError(
-          `writeFile is for NEW files only. '${relativePath}' already exists. Use editLines, replaceInFile, or batchEdit.`,
-          400
-        );
-      } catch (error) {
-        if (error instanceof RouteError) throw error;
-      }
-      checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath, runtime);
-      fileEditPreview = `${instance.name}:${relativePath}`;
-      fileEditAfterContent = sanitized.content;
-      const file = await writeDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, {
-        path: relativePath,
-        content: sanitized.content
-      });
-      observation = `Success: wrote ${file.path} (${file.size} bytes).${formatSanitizedWriteNote(sanitized.removed)}`;
-    } else if (toolName === "replaceinfile") {
-      requireUserPermission(runtime.permissions, "file.write");
-      requireUserPermission(runtime.permissions, "file.read");
-      const instance = activeInstance(runtime);
-      const relativePath = safeRelativePath(call.args[0]);
-      const oldText = call.args[1] ?? "";
-      const sanitized = sanitizeAgentTextContent(call.args[2] ?? "");
-      if (!relativePath || !oldText) throw new RouteError("replaceInFile requires path and oldText.", 400);
-      const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath);
-      let matchedOldText = oldText;
-      let count = file.content.split(matchedOldText).length - 1;
-      if (count === 0 && file.content.includes("\r\n") && !oldText.includes("\r\n")) {
-        const crlfCandidate = oldText.replace(/\n/g, "\r\n");
-        if (file.content.includes(crlfCandidate)) {
-          matchedOldText = crlfCandidate;
-          count = file.content.split(matchedOldText).length - 1;
-        }
-      } else if (count === 0 && !file.content.includes("\r\n") && oldText.includes("\r\n")) {
-        const lfCandidate = oldText.replace(/\r\n/g, "\n");
-        if (file.content.includes(lfCandidate)) {
-          matchedOldText = lfCandidate;
-          count = file.content.split(matchedOldText).length - 1;
-        }
-      }
-      if (count === 0) throw new RouteError(`oldText was not found in ${relativePath}. Check indentation/newlines or use editLines.`, 400);
-      if (count > 1) throw new RouteError(`oldText matched ${count} times. Use editLines with exact line numbers for precise replacement.`, 400);
-      checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath, runtime);
-      fileEditPreview = `${instance.name}:${relativePath}`;
-      fileEditAfterContent = file.content.replace(matchedOldText, () => sanitized.content);
-      const updated = await writeDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, {
-        path: relativePath,
-        content: fileEditAfterContent
-      });
-      observation = `Success: replaced text in ${updated.path} (${updated.size} bytes).${formatSanitizedWriteNote(sanitized.removed)}`;
-    } else if (toolName === "editlines" || toolName === "editfilelines" || toolName === "replacelines") {
-      requireUserPermission(runtime.permissions, "file.write");
-      requireUserPermission(runtime.permissions, "file.read");
-      const instance = activeInstance(runtime);
-      const relativePath = safeRelativePath(call.args[0]);
-      const startLine = parseLineNumber(call.args[1], "startLine");
-      const endLine = parseLineNumber(call.args[2], "endLine", 0);
-      const sanitized = sanitizeAgentTextContent(call.args[3] ?? "");
-      if (!relativePath) throw new RouteError("editLines requires a file path.", 400);
-      const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath);
-      const edit = replaceLineRange(file.content, startLine, endLine, sanitized.content);
-      checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath, runtime);
-      fileEditPreview = `${instance.name}:${relativePath}`;
-      fileEditAfterContent = edit.content;
-      const updated = await writeDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, {
-        path: relativePath,
-        content: edit.content
-      });
-      const previewStart = Math.max(1, startLine - 3);
-      const previewCount = Math.max(8, edit.insertedLineCount + 6);
-      const preview = formatLineNumberedContent(edit.content, String(previewStart), String(previewCount));
-      observation = [
-        `Success: edited ${updated.path} (${updated.size} bytes).${formatSanitizedWriteNote(sanitized.removed)}`,
-        `Removed lines: ${edit.removedLineCount}`,
-        `Inserted lines: ${edit.insertedLineCount}`,
-        `Preview lines ${preview.startLine}-${preview.endLine}:`,
-        preview.text
-      ].join("\n");
-    } else if (toolName === "mkdir") {
-      requireUserPermission(runtime.permissions, "file.write");
-      const instance = activeInstance(runtime);
-      const relativePath = safeRelativePath(call.args[0]);
-      if (!relativePath) throw new RouteError("mkdir requires a path.", 400);
-      const entry = await makeDaemonInstanceDirectory(instance.node, instance.id, instance.workingDirectory, { path: relativePath });
-      observation = `Success: directory ready at ${entry.path}.`;
-    } else if (toolName === "deletepath") {
-      requireUserPermission(runtime.permissions, "file.delete");
-      const instance = activeInstance(runtime);
-      const relativePath = safeRelativePath(call.args[0]);
-      if (!relativePath) throw new RouteError("Refusing to delete the instance working directory root.", 400);
-      const beforeDelete = await readFileForCheckpoint(instance, relativePath);
-      const trashSegment = checkpointPathSegment(currentActionId);
-      const backupPath = `.webops-saki-trash/${trashSegment}/${path.basename(relativePath)}`;
-      await makeDaemonInstanceDirectory(instance.node, instance.id, instance.workingDirectory, { path: `.webops-saki-trash/${trashSegment}` });
-      await renameDaemonInstancePath(instance.node, instance.id, instance.workingDirectory, { fromPath: relativePath, toPath: backupPath });
-      checkpoint = { id: checkpointId(), type: "softDelete", instanceId: instance.id, path: relativePath, backupPath, actionId: currentActionId, createdAt: new Date().toISOString() };
-      await persistCheckpoint(runtime, checkpoint);
-      if (beforeDelete.existed) {
-        fileEditPreview = `${instance.name}:${relativePath}`;
-        fileEditBeforeContent = beforeDelete.content;
-        fileEditAfterContent = "";
-      }
-      observation = `Success: moved ${relativePath} to a rollback checkpoint.`;
-    } else if (toolName === "renamepath") {
-      requireUserPermission(runtime.permissions, "file.write");
-      const instance = activeInstance(runtime);
-      const fromPath = safeRelativePath(call.args[0]);
-      const toPath = safeRelativePath(call.args[1]);
-      if (!fromPath || !toPath) throw new RouteError("renamePath requires fromPath and toPath.", 400);
-      const entry = await renameDaemonInstancePath(instance.node, instance.id, instance.workingDirectory, { fromPath, toPath });
-      observation = `Success: renamed to ${entry.path}.`;
-    } else if (toolName === "uploadbase64") {
-      requireUserPermission(runtime.permissions, "file.write");
-      const instance = activeInstance(runtime);
-      const relativePath = safeRelativePath(call.args[0]);
-      const contentBase64 = trimString(call.args[1]);
-      if (!relativePath || !contentBase64) throw new RouteError("uploadBase64 requires path and base64 content.", 400);
-      checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath, runtime);
-      fileEditPreview = `${instance.name}:${relativePath}`;
-      const entry = await uploadDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, {
-        path: relativePath,
-        contentBase64,
-        overwrite: true
-      });
-      try {
-        const uploaded = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath);
-        fileEditAfterContent = uploaded.content;
-      } catch {
-        fileEditAfterContent = "(binary upload)";
-      }
-      observation = `Success: uploaded ${entry.path} (${entry.size} bytes).`;
-    } else if (toolName === "runcommand" || toolName === "executecommand" || toolName === "terminal" || toolName === "shell") {
-      requireUserPermission(runtime.permissions, "terminal.input");
-      const instance = activeInstance(runtime);
-      const command = trimString(call.args[0]);
-      if (!command) throw new RouteError("runCommand requires a command.", 400);
-      const blocked = findDangerousCommandReason(command);
-      if (blocked) throw new RouteError(blocked, 400);
-      const timeoutMs = numericArg(call.args[1], 30000, 1000, 120000);
-      const { daemonWorkingDirectory } = commandWorkingDirectoryForAgent(instance, {
-        ...(typeof call.args[3] === "string" ? { cwd: call.args[3] } : {})
-      });
-
-      const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
-        command,
-        workingDirectory: daemonWorkingDirectory,
-        timeoutMs
-      });
-      const outputParts: string[] = [];
-      if (runResult.stdout) outputParts.push(`stdout:\n${truncateText(runResult.stdout.trim(), 6000)}`);
-      if (runResult.stderr) outputParts.push(`stderr:\n${truncateText(runResult.stderr.trim(), 4000)}`);
-      outputParts.push(`exit code: ${runResult.exitCode ?? 0} (${runResult.durationMs ?? 0}ms)`);
-      observation = outputParts.join("\n\n") || "(Command completed with no output)";
-      if ((runResult.exitCode ?? 0) !== 0) {
-        ok = false;
-      }
-    } else if (toolName === "sendinput") {
-      requireUserPermission(runtime.permissions, "terminal.input");
-      const instance = activeInstance(runtime);
-      const input = consoleInputFromArgs({
-        text: call.args[0] ?? "",
-        pressEnter: call.args[1] === undefined ? true : trimString(call.args[1]) !== "false",
-        echo: call.args[2] === undefined ? true : trimString(call.args[2]) !== "false"
-      });
-      const state = await sendDaemonInstanceInput(instance.node, instance.id, input.data, { echo: input.echo });
-      await updateInstanceFromDaemonState(instance, state);
-      observation = formatConsoleInputObservation("Console input", input, state);
-    } else if (toolName === "sendcommand") {
-      requireUserPermission(runtime.permissions, "terminal.input");
-      const instance = activeInstance(runtime);
-      const input = commandLineInputFromArgs({ command: call.args[0] ?? "" });
-      const state = await sendDaemonInstanceInput(instance.node, instance.id, input.data, { echo: input.echo });
-      await updateInstanceFromDaemonState(instance, state);
-      observation = `${formatConsoleInputObservation("Command line", input, state)} Note: For normal terminal commands, use runCommand (it will run in a fresh new shell like + button).`;
-    } else if (toolName === "listshells") {
-      requireUserPermission(runtime.permissions, "terminal.view");
-      const instance = activeInstance(runtime);
-      const shells = await listDaemonInstanceShells(instance.node, instance.id);
-      observation = shells.sessions.length ? `Open shells: ${shells.sessions.join(", ")}` : "No persistent shells open. Use createShell to open one.";
-    } else if (toolName === "createshell") {
-      requireUserPermission(runtime.permissions, "terminal.input");
-      const instance = activeInstance(runtime);
-      const { daemonWorkingDirectory } = commandWorkingDirectoryForAgent(instance, { ...(typeof call.args[0] === "string" ? { cwd: call.args[0] } : {}) });
-      // Note: create uses working dir from spec or body
-      const result = await createDaemonInstanceShell(instance.node, instance.id, daemonWorkingDirectory);
-      observation = `Created persistent shell ${result.sessionId}. Use runInShell or sendShellInput with this shellId.`;
-    } else if (toolName === "sendshellinput") {
-      requireUserPermission(runtime.permissions, "terminal.input");
-      const instance = activeInstance(runtime);
-      const shellId = trimString(call.args[0]);
-      const text = trimString(call.args[1]);
-      if (!shellId || !text) throw new RouteError("sendShellInput requires shellId and text.", 400);
-      const pressEnter = call.args[2] === undefined ? true : trimString(call.args[2]) !== "false";
-      const data = pressEnter ? (text.endsWith("\n") ? text : text + "\n") : text;
-      await sendDaemonShellInput(instance.node, instance.id, shellId, data);
-      observation = `Sent to shell ${shellId}: ${text.substring(0, 100)}${text.length > 100 ? "..." : ""}`;
-    } else if (toolName === "runinshell") {
-      requireUserPermission(runtime.permissions, "terminal.input");
-      const instance = activeInstance(runtime);
-      const shellId = trimString(call.args[0]);
-      const command = trimString(call.args[1]);
-      if (!shellId || !command) throw new RouteError("runInShell requires shellId and command.", 400);
-      const timeoutMs = numericArg(call.args[2], 30000, 1000, 120000);
-      const data = command.endsWith("\n") ? command : command + "\n";
-      await sendDaemonShellInput(instance.node, instance.id, shellId, data);
-      observation = `Executed in persistent shell ${shellId} (cwd may differ): ${command}\n\nNote: Full output streams to the corresponding UI shell tab (shell${shellId} or similar). Use listShells to see tabs. runCommand now also uses these shells by default (reuse latest).`;
-    } else if (toolName === "instanceaction") {
-      const instance = activeInstance(runtime);
-      const action = trimString(call.args[0]).toLowerCase();
-      if (action !== "start" && action !== "stop" && action !== "restart" && action !== "kill") {
-        throw new RouteError("instanceAction supports start, stop, restart, or kill.", 400);
-      }
-      requireUserPermission(runtime.permissions, `instance.${action}` as PermissionCode);
-      const state =
-        action === "start"
-          ? await startDaemonInstance(instance.node, daemonSpecFromInstance(instance))
-          : action === "stop"
-            ? await stopDaemonInstance(instance.node, { id: instance.id, stopCommand: instance.stopCommand })
-            : action === "restart"
-              ? await restartDaemonInstance(instance.node, daemonSpecFromInstance(instance))
-              : await killDaemonInstance(instance.node, instance.id);
-      await updateInstanceFromDaemonState(instance, state);
-      observation = `Success: ${action} requested for ${instance.name}. Status=${state.status}, exitCode=${state.exitCode ?? "none"}.`;
-    } else if (toolName === "searchaudit") {
-      requireUserPermission(runtime.permissions, "audit.view");
-      observation = await requireExecutorHost().buildAuditSearchContext(call.args[0] ?? runtime.input.message, true);
-    } else if (toolName === "listtasks") {
-      requireUserPermission(runtime.permissions, "task.view");
-      const tasks = await listScheduledTasks();
-      observation = tasks.map((task) => `${task.id} | ${task.name} | ${task.type} | cron=${task.cron} | enabled=${task.enabled} | instance=${task.instanceName ?? task.instanceId ?? "-"}`).join("\n") || "No scheduled tasks found.";
-    } else if (toolName === "runtask") {
-      requireUserPermission(runtime.permissions, "task.run");
-      const taskId = trimString(call.args[0]);
-      if (!taskId) throw new RouteError("runTask requires a task id.", 400);
-      const run = await executeScheduledTask(taskId, { trigger: "manual", ...(runtime.request ? { request: runtime.request } : {}), userId: runtime.userId });
-      observation = `Task run ${run.id}: ${run.status}\nOutput: ${run.output ?? "-"}\nError: ${run.error ?? "-"}`;
-    } else if (toolName === "taskruns") {
-      requireUserPermission(runtime.permissions, "task.view");
-      const taskId = trimString(call.args[0]);
-      if (!taskId) throw new RouteError("taskRuns requires a task id.", 400);
-      const runs = await listTaskRuns(taskId);
-      observation = runs.map((run) => `${run.id} | ${run.status} | ${run.startedAt} | ${run.output ?? run.error ?? "-"}`).join("\n") || "No task runs found.";
-    } else if (toolName === "searchweb" || toolName === "websearch") {
-      if (!runtime.config.searchEnabled) throw new RouteError("Web search is disabled in Saki settings.", 403);
-      observation = await requireExecutorHost().simpleWebSearch(call.args[0] ?? runtime.input.message, call.args[1]);
-    } else if (toolName === "browse" || toolName === "browseurl" || toolName === "readurl" || toolName === "fetchpage") {
-      if (!runtime.config.searchEnabled) throw new RouteError("Web browsing is disabled in Saki settings.", 403);
-      observation = await requireExecutorHost().browsePublicUrl(call.args[0] ?? "");
-    } else if (toolName === "crawl" || toolName === "crawlweb" || toolName === "crawlsite") {
-      if (!runtime.config.searchEnabled) throw new RouteError("Web crawling is disabled in Saki settings.", 403);
-      observation = await requireExecutorHost().crawlPublicSite(call.args[0] ?? "", call.args[1], call.args[2]);
-  } else if (toolName === "researchweb" || toolName === "webresearch") {
-    if (!runtime.config.searchEnabled) throw new RouteError("Web research is disabled in Saki settings.", 403);
-    observation = await requireExecutorHost().researchWeb(call.args[0] ?? runtime.input.message, call.args[1]);
-  } else if (toolName === "listskills") {
-    observation =
-      runtime.skills
-        .map((skill) => `${skill.id}: ${skill.name}${skill.description ? ` — ${skill.description}` : ""}`)
-        .join("\n") || "No skills available.";
-    if (observation !== "No skills available.") {
-      observation += "\n\nThese are summaries only. Call searchSkills(query) for task-specific matches, then readSkill(skillId) before applying a skill.";
-    }
-  } else if (toolName === "searchskills" || toolName === "findskills" || toolName === "matchskills") {
-    const { rankSkillsForQuery, formatSkillSearchLine, toSkillSummary } = await import("./skills.js");
-    const query = call.args[0] ?? runtime.input.message;
-    const ranked = await rankSkillsForQuery(query, { limit: 12 });
-    observation =
-      ranked.map((item) => formatSkillSearchLine(toSkillSummary(item.skill), item.score)).join("\n") ||
-      "No matching skills found.";
-    if (observation !== "No matching skills found.") {
-      observation += "\n\nCall readSkill(skillId) for any high/medium relevance skill before making changes.";
-    }
-  } else if (toolName === "readskill" || toolName === "loadskill" || toolName === "useskill" || toolName === "getskill" || toolName === "applyskill") {
-    observation = requireExecutorHost().formatSkillForAgent(await requireExecutorHost().readSakiSkill(call.args[0] ?? "", false));
-  } else if (toolName === "readmemory" || toolName === "getmemory" || toolName === "loadmemory") {
-    requireUserPermission(runtime.permissions, "file.read");
-    const instance = activeInstance(runtime);
-    try {
-      const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, "SAKI.md");
-      observation = `Project memory (SAKI.md):\n\n${file.content}`;
-    } catch {
-      observation = "No project memory file (SAKI.md) found. You can create one with writeMemory to save project conventions and preferences.";
-    }
-  } else if (toolName === "writememory" || toolName === "updatememory" || toolName === "savememory") {
-    requireUserPermission(runtime.permissions, "file.write");
-    const instance = activeInstance(runtime);
-    const content = trimString(call.args[0]);
-    if (!content) throw new RouteError("writeMemory requires content.", 400);
-    const sanitized = sanitizeAgentTextContent(content);
-    const file = await writeDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, { path: "SAKI.md", content: sanitized.content });
-    observation = `Success: wrote project memory to SAKI.md (${file.size} bytes).${formatSanitizedWriteNote(sanitized.removed)}`;
-  } else if (toolName === "reportprogress" || toolName === "progress" || toolName === "statusupdate") {
-    observation = call.args[0] ?? "";
-  } else if (toolName === "respond") {
-    observation = call.args[0] ?? "";
-  } else {
-    throw new RouteError(`Unknown tool '${tool}'.`, 400);
-  }
-  } catch (error) {
-    ok = false;
-    observation = userFacingError(error);
-  }
-
-  const approval = checkpoint
-    ? fileEditAfterContent !== null && (checkpoint.type === "file" || fileEditBeforeContent !== null)
-      ? buildCompletedFileEditApproval(
-          checkpoint.type === "file"
-            ? checkpoint
-            : fileDiffSnapshotFromCheckpoint(checkpoint, fileEditBeforeContent ?? ""),
-          fileEditAfterContent,
-          fileEditPreview
-        )
-      : buildCheckpointApproval(checkpoint, fileEditPreview)
-    : undefined;
-  const action: SakiAgentAction = {
-    id: currentActionId,
-    tool,
-    args: Array.isArray(call.args) ? { legacyArgs: call.args } : call.args,
-    observation: truncateText(redactSensitiveText(observation)),
-    ok,
-    status: ok ? "completed" : "failed",
-    ...(approval ? { approval } : {}),
-    createdAt: startedAt
-  };
-  completedSakiActions.set(action.id, action);
-  await auditAgentTool(runtime, action);
-  return action;
 }

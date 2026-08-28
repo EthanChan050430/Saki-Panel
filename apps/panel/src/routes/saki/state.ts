@@ -26,18 +26,14 @@ export async function savePendingSakiAction(pending: PendingSakiAction): Promise
   try {
     await fs.mkdir(pendingActionsDir, { recursive: true });
     await fs.writeFile(path.join(pendingActionsDir, `${pending.id}.json`), JSON.stringify(pending, null, 2), "utf8");
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 export async function removePendingSakiAction(id: string): Promise<void> {
   pendingSakiActions.delete(id);
   try {
     await fs.rm(path.join(pendingActionsDir, `${id}.json`), { force: true });
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 async function loadPendingSakiActionsFromDisk(): Promise<void> {
@@ -65,9 +61,7 @@ async function loadPendingSakiActionsFromDisk(): Promise<void> {
         await fs.rm(filePath, { force: true }).catch(() => undefined);
       }
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 export async function saveCheckpoint(checkpoint: SakiCheckpoint): Promise<void> {
@@ -75,18 +69,14 @@ export async function saveCheckpoint(checkpoint: SakiCheckpoint): Promise<void> 
   try {
     await fs.mkdir(checkpointsDir, { recursive: true });
     await fs.writeFile(path.join(checkpointsDir, `${checkpoint.id}.json`), JSON.stringify(checkpoint, null, 2), "utf8");
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 export async function removeCheckpoint(id: string): Promise<void> {
   sakiCheckpoints.delete(id);
   try {
     await fs.rm(path.join(checkpointsDir, `${id}.json`), { force: true });
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 async function loadCheckpointsFromDisk(): Promise<void> {
@@ -100,13 +90,9 @@ async function loadCheckpointsFromDisk(): Promise<void> {
         const content = await fs.readFile(filePath, "utf8");
         const checkpoint = JSON.parse(content) as SakiCheckpoint;
         sakiCheckpoints.set(checkpoint.id, checkpoint);
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 export interface CachedFileEntry {
@@ -324,9 +310,7 @@ export function emitActiveSakiTaskEvent(
   for (const subscriber of task.subscribers) {
     try {
       subscriber(event);
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 }
 

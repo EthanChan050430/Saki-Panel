@@ -340,7 +340,7 @@ function parseSubscriptionBody(raw: string): ClashProxyRecord[] {
     if (Array.isArray(json)) return json.filter((item) => item?.name && item?.type);
     if (Array.isArray(json.proxies)) return json.proxies.filter((item) => item?.name && item?.type);
   } catch {
-    /* not json */
+    
   }
 
   if (/^(vmess|ss|trojan|vless|hysteria2|hy2):\/\//m.test(trimmed)) {
@@ -358,9 +358,7 @@ function parseSubscriptionBody(raw: string): ClashProxyRecord[] {
     if (decoded && decoded !== trimmed && /[\x20-\x7e\n\r]/.test(decoded)) {
       return parseSubscriptionBody(decoded);
     }
-  } catch {
-    /* ignore */
-  }
+  } catch {}
   return [];
 }
 
@@ -429,7 +427,7 @@ async function ensureMihomoBinary(): Promise<string> {
     await fs.access(dest);
     return dest;
   } catch {
-    /* need download */
+    
   }
 
   await fs.mkdir(binDir(), { recursive: true });
@@ -527,16 +525,12 @@ async function stopRuntime(instanceId: string): Promise<void> {
   runtimes.delete(instanceId);
   try {
     runtime.process.kill("SIGTERM");
-  } catch {
-    /* ignore */
-  }
+  } catch {}
   await new Promise((resolve) => setTimeout(resolve, 250));
   if (runtime.process.exitCode === null && runtime.process.killed === false) {
     try {
       runtime.process.kill("SIGKILL");
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   }
 }
 

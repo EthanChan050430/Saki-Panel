@@ -21,9 +21,6 @@ export interface MySQLConnectionConfig {
   password: string;
   database: string;
 }
-
-// ── Connection pool management ────────────────────────────────────────
-
 type PoolInstance = ReturnType<typeof mysql.createPool>;
 
 const pools = new Map<string, PoolInstance>();
@@ -57,9 +54,6 @@ export async function closeAllPools(): Promise<void> {
   await Promise.all(Array.from(pools.values()).map((p) => p.end()));
   pools.clear();
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────
-
 function escapeTable(name: string): string {
   return `\`${name.replace(/`/g, "``")}\``;
 }
@@ -75,9 +69,6 @@ function toMySQLValue(val: unknown): unknown {
   if (typeof val === "number" || typeof val === "boolean") return val;
   return String(val);
 }
-
-// ── 1. List tables ────────────────────────────────────────────────────
-
 export async function listTables(cfg: MySQLConnectionConfig): Promise<DatabaseTableSummary[]> {
   const pool = getPool(cfg);
 
@@ -126,13 +117,8 @@ export async function listTables(cfg: MySQLConnectionConfig): Promise<DatabaseTa
 
   return result;
 }
-
-// ── 2. Get table schema ───────────────────────────────────────────────
-
 export async function getTableSchema(cfg: MySQLConnectionConfig, tableName: string): Promise<DatabaseTableSchema> {
   const pool = getPool(cfg);
-
-  // Columns
   const [cols] = await pool.query<RowDataPacket[]>(
     `SELECT
        COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT,
@@ -153,8 +139,6 @@ export async function getTableSchema(cfg: MySQLConnectionConfig, tableName: stri
   }));
 
   const primaryKeys = columns.filter((c) => c.primaryKey).map((c) => c.name);
-
-  // Indexes
   const [indexes] = await pool.query<RowDataPacket[]>(
     `SELECT INDEX_NAME, NON_UNIQUE, COLUMN_NAME, SEQ_IN_INDEX
      FROM INFORMATION_SCHEMA.STATISTICS
@@ -176,8 +160,6 @@ export async function getTableSchema(cfg: MySQLConnectionConfig, tableName: stri
     }
     indexMap.get(idxName)!.columns.push(idx.COLUMN_NAME as string);
   }
-
-  // Foreign keys
   const [fkRows] = await pool.query<RowDataPacket[]>(
     `SELECT
        kcu.COLUMN_NAME, kcu.REFERENCED_TABLE_NAME, kcu.REFERENCED_COLUMN_NAME
@@ -214,9 +196,6 @@ export async function getTableSchema(cfg: MySQLConnectionConfig, tableName: stri
     ddl: ddl ?? null
   };
 }
-
-// ── 3. Query rows ──────────────────────────────────────────────────────
-
 export async function queryRows(
   cfg: MySQLConnectionConfig,
   req: DatabaseRowsRequest
@@ -303,9 +282,6 @@ export async function queryRows(
     totalPages: Math.ceil(total / pageSize) || 1
   };
 }
-
-// ── 4. Insert row ─────────────────────────────────────────────────────
-
 export async function insertRow(
   cfg: MySQLConnectionConfig,
   req: DatabaseInsertRowRequest
@@ -336,9 +312,6 @@ export async function insertRow(
   }
   return ret;
 }
-
-// ── 5. Update row ─────────────────────────────────────────────────────
-
 export async function updateRow(
   cfg: MySQLConnectionConfig,
   req: DatabaseUpdateRowRequest
@@ -369,9 +342,6 @@ export async function updateRow(
 
   return { affectedRows: result.affectedRows };
 }
-
-// ── 6. Delete row ──────────────────────────────────────────────────────
-
 export async function deleteRow(
   cfg: MySQLConnectionConfig,
   req: DatabaseDeleteRowRequest
@@ -395,9 +365,6 @@ export async function deleteRow(
 
   return { affectedRows: result.affectedRows };
 }
-
-// ── 7. Create table ────────────────────────────────────────────────────
-
 export async function createTable(
   cfg: MySQLConnectionConfig,
   req: DatabaseCreateTableRequest
@@ -434,16 +401,10 @@ export async function createTable(
   await pool.query(ddl);
   return { ddl };
 }
-
-// ── 8. Drop table ──────────────────────────────────────────────────────
-
 export async function dropTable(cfg: MySQLConnectionConfig, tableName: string): Promise<void> {
   const pool = getPool(cfg);
   await pool.query(`DROP TABLE IF EXISTS ${escapeTable(tableName)}`);
 }
-
-// ── 9. Truncate table ─────────────────────────────────────────────────
-
 export async function truncateTable(cfg: MySQLConnectionConfig, tableName: string): Promise<{ affectedRows: number }> {
   const pool = getPool(cfg);
   // TRUNCATE is DDL in MySQL and doesn't return affected rows, so we count first
@@ -454,9 +415,6 @@ export async function truncateTable(cfg: MySQLConnectionConfig, tableName: strin
   await pool.query(`TRUNCATE TABLE ${escapeTable(tableName)}`);
   return { affectedRows: count };
 }
-
-// ── 10. Execute raw query ─────────────────────────────────────────────
-
 export async function executeQuery(
   cfg: MySQLConnectionConfig,
   sql: string,
@@ -508,9 +466,6 @@ export async function executeQuery(
     };
   }
 }
-
-// ── 11. Export table data ──────────────────────────────────────────────
-
 export async function exportTable(
   cfg: MySQLConnectionConfig,
   tableName?: string,
@@ -594,8 +549,6 @@ export async function exportTable(
       totalRows: count
     };
   }
-
-  // Default CSV
   if (rows.length === 0) {
     const [colRows] = await pool.query<RowDataPacket[]>(
       `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
@@ -634,9 +587,6 @@ export async function exportTable(
     totalRows: count
   };
 }
-
-// ── 12. Import table data ──────────────────────────────────────────────
-
 export async function importTable(
   cfg: MySQLConnectionConfig,
   tableName: string,
@@ -664,7 +614,6 @@ export async function importTable(
     const parsed = JSON.parse(content);
     records = Array.isArray(parsed) ? parsed : [parsed];
   } else {
-    // Parse CSV
     const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
     if (lines.length <= 1) {
       return { importedRows: 0, message: "CSV 文件无有效数据行" };
@@ -721,9 +670,6 @@ export async function importTable(
 
   return { importedRows: count, message: `成功导入 ${count} 条记录` };
 }
-
-// ── 13. Test connection ────────────────────────────────────────────────
-
 export async function testConnection(cfg: MySQLConnectionConfig): Promise<{ ok: boolean; message?: string }> {
   try {
     const pool = getPool(cfg);

@@ -6,8 +6,10 @@ import type {
   SakiModelListResponse,
   SakiModelOption,
   SakiSkillSummary,
+  SakiWorkspaceContext,
   UpdateSakiConfigRequest
 } from "@webops/shared";
+import { sakiListedModelSupportsVision } from "@webops/shared";
 import { writeAuditLog } from "../../audit.js";
 import { readDaemonInstanceFile, readDaemonInstanceLogs } from "../../daemon-client.js";
 import { loadVisibleInstance } from "../../instance-access.js";
@@ -43,7 +45,7 @@ import {
   type PreparedSakiChatInvocation,
   type ResolvedSakiContext
 } from "./types.js";
-import type { SakiWorkspaceContext } from "@webops/shared";
+import { hydrateSakiAttachmentsForModel } from "./ocr.js";
 
 export function toWorkspaceContext(instance: InstanceWithNode | null): SakiWorkspaceContext | null {
   if (!instance) return null;
@@ -94,7 +96,6 @@ export async function resolveSakiContext(
     };
   }
 }
-
 
 function estimateChatTokens(input: SakiChatRequest, prompt: string, reply: string, config: SakiConfigResponse): number {
   const system = buildDirectSystemPrompt(config);
@@ -177,7 +178,14 @@ function mapSakiModel(raw: unknown): SakiModelOption | null {
     id,
     name: trimString(item.name) || id,
     label: trimString(item.label) || id,
-    vendor: trimString(item.vendor)
+    vendor: trimString(item.vendor),
+    supportsVision: sakiListedModelSupportsVision({
+      id,
+      provider,
+      name: trimString(item.name) || id,
+      label: trimString(item.label) || id,
+      supportsVision: item.supportsVision === true
+    })
   };
 }
 
@@ -226,6 +234,13 @@ export async function prepareSakiChatInvocation(
     throw new Error("message is required");
   }
 
+  const config = await readEffectiveSakiConfig();
+  const attachments = await hydrateSakiAttachmentsForModel(
+    sanitizeSakiInputAttachments(body.attachments),
+    message,
+    config
+  );
+
   const input: SakiChatRequest = {
     message,
     history: Array.isArray(body.history) ? body.history : [],
@@ -237,7 +252,7 @@ export async function prepareSakiChatInvocation(
     mode: body.mode === "agent" ? "agent" : "chat",
     agentPermissionMode: normalizeSakiAgentPermissionMode(body.agentPermissionMode),
     selectedSkillIds: Array.isArray(body.selectedSkillIds) ? body.selectedSkillIds.map(trimString).filter(Boolean) : [],
-    attachments: sanitizeSakiInputAttachments(body.attachments)
+    attachments
   };
   requireSakiModePermission(request.user.permissions, input.mode ?? "chat");
   const auditSearchContext = input.auditSearch

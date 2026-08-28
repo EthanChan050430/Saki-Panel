@@ -191,7 +191,6 @@ async function findSqliteFilesInDir(
               tableCount = rows[0]?.count ?? 0;
               db.close();
             } catch {
-              // ignore table count error
             }
 
             const relativeToRoot = path.relative(process.cwd(), fullPath);
@@ -209,19 +208,16 @@ async function findSqliteFilesInDir(
               isSystem: entry.name === "dev.db"
             });
           } catch {
-            // ignore unreadable file
           }
         }
       }
     }
   } catch {
-    // ignore directory read error
   }
   return results;
 }
 
-export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void> {
-  // 1. Auto-discover all databases on the node
+export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/databases/discover", { preHandler: authenticatePanelRequest }, async () => {
     const discovered: DiscoveredDatabase[] = [];
 
@@ -275,9 +271,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       ok: true,
       databases: [...finalSqlite, ...serviceResults]
     };
-  });
-
-  // 2. List tables in a database
+  });
   app.post("/api/databases/tables", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string };
 
@@ -298,8 +292,6 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       const tables = await mysql.listTables(cfg);
       return { ok: true, tables };
     }
-
-    // SQLite path
     const rawPath = body.path?.trim();
     if (!rawPath) {
       throw new Error("Database path is required for SQLite");
@@ -326,7 +318,6 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
           const colRows = db.prepare(`PRAGMA table_info(${safeName})`).all();
           columnCount = colRows.length;
         } catch {
-          // ignore error for locked/corrupted tables
         }
 
         tables.push({
@@ -341,9 +332,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
-
-  // 3. Get table schema & columns
+  });
   app.post("/api/databases/tables/schema", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; tableName: string; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string };
     const tableName = body.tableName?.trim();
@@ -396,8 +385,6 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       }));
 
       const primaryKeys = colRows.filter((col) => col.pk > 0).map((col) => col.name);
-
-      // Indexes
       const indexRows = db.prepare(`PRAGMA index_list(${safeName})`).all() as Array<{
         name: string;
         unique: number;
@@ -432,9 +419,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
-
-  // 4. Query paginated rows with filter, search, sort
+  });
   app.post("/api/databases/tables/rows", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string } & DatabaseRowsRequest;
 
@@ -543,9 +528,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
-
-  // 5. Insert new row
+  });
   app.post("/api/databases/tables/insert", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string } & DatabaseInsertRowRequest;
 
@@ -593,9 +576,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
-
-  // 6. Update row
+  });
   app.post("/api/databases/tables/update", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string } & DatabaseUpdateRowRequest;
 
@@ -648,9 +629,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
-
-  // 7. Delete row
+  });
   app.post("/api/databases/tables/delete", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string } & DatabaseDeleteRowRequest;
 
@@ -697,9 +676,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
-
-  // 8. Create table (DDL)
+  });
   app.post("/api/databases/tables/create", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string } & DatabaseCreateTableRequest;
 
@@ -751,9 +728,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
-
-  // 9. Drop table
+  });
   app.post("/api/databases/tables/drop", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; tableName: string; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string };
     const tableName = body.tableName?.trim();
@@ -791,9 +766,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
-
-  // 10. Truncate table
+  });
   app.post("/api/databases/tables/truncate", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; tableName: string; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string };
     const tableName = body.tableName?.trim();
@@ -828,9 +801,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
-
-  // 11. Execute raw SQL or Redis command (Terminal / SQL Console)
+  });
   app.post("/api/databases/query", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; sql: string; maxRows?: number; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string };
     const sql = body.sql?.trim();
@@ -915,9 +886,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
-
-  // 12. Export table data (CSV, JSON, SQL)
+  });
   app.post("/api/databases/export", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; tableName?: string; format: "csv" | "json" | "sql"; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string };
     const tableName = body.tableName?.trim();
@@ -1049,9 +1018,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
-
-  // 13. Import table data (CSV, JSON, SQL)
+  });
   app.post("/api/databases/import", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; tableName?: string; format: "csv" | "json" | "sql"; content: string; mode?: "append" | "replace"; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string };
     const tableName = body.tableName?.trim();
@@ -1106,7 +1073,6 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
         const parsed = JSON.parse(content);
         records = Array.isArray(parsed) ? parsed : [parsed];
       } else {
-        // Parse CSV
         const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
         if (lines.length <= 1) {
           return { ok: true, importedRows: 0, message: "CSV 文件无有效数据行" };
@@ -1175,9 +1141,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
-
-  // 14. Test connection
+  });
   app.post("/api/databases/test-connection", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { host?: string; port?: number; user?: string; password?: string; database?: string; engine?: DatabaseEngine; path?: string };
 
@@ -1198,16 +1162,12 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       const result = await mysql.testConnection(cfg);
       return { ok: result.ok, message: result.message };
     }
-
-    // SQLite
     const p = body.path ? resolveDbPath(body.path) : "";
     if (p && fsSync.existsSync(p)) {
       return { ok: true, message: `SQLite 文件已就绪 (${path.basename(p)})` };
     }
     return { ok: false, message: `未找到指定路径的数据库文件: ${body.path || "未填路径"}` };
-  });
-
-  // 15. Real-time stats probe
+  });
   app.post("/api/databases/stats", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { host?: string; port?: number; user?: string; password?: string; database?: string; engine?: DatabaseEngine; path?: string };
     const start = performance.now();
@@ -1278,8 +1238,6 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
         return { ok: false, message: err instanceof Error ? err.message : "MySQL 状态获取失败" };
       }
     }
-
-    // SQLite
     const rawPath = body.path?.trim();
     if (rawPath) {
       const dbPath = resolveDbPath(rawPath);

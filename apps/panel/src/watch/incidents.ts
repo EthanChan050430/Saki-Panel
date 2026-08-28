@@ -294,4 +294,3 @@ export async function publishOpenCounts(): Promise<void> {
   publishIncidentCounts(await countOpenIncidents());
 }
 
-

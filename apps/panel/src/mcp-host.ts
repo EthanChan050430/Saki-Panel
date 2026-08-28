@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import type { FastifyInstance } from "fastify";
+import { PANEL_VERSION } from "@webops/shared";
 
 export interface McpServerConfig {
   id: string;
@@ -120,7 +121,7 @@ async function initializeMcpServer(server: McpServerProcess): Promise<void> {
   const result = await sendMcpRequest(server, "initialize", {
     protocolVersion: "2024-11-05",
     capabilities: {},
-    clientInfo: { name: "saki-panel", version: "0.1.0" }
+    clientInfo: { name: "saki-panel", version: PANEL_VERSION }
   }) as { capabilities?: Record<string, unknown> };
   await sendMcpRequest(server, "notifications/initialized");
   server.initialized = true;
@@ -201,7 +202,7 @@ export async function stopMcpServer(serverId: string): Promise<void> {
         setTimeout(resolve, 5000);
       });
     }
-  } catch { /* ignore */ }
+  } catch {}
   for (const [, pending] of server.pendingRequests) {
     clearTimeout(pending.timeout);
     pending.reject(new Error("Server stopped"));

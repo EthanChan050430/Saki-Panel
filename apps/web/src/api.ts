@@ -95,6 +95,7 @@ import type {
   DatabaseVisualizerConfig,
   DatabaseVisualizerInstance,
   DiscoveredDatabase,
+  SystemVersionCheckResult,
   UpdateDatabaseVisualizerRequest
 } from "@webops/shared";
 
@@ -675,6 +676,13 @@ export const api = {
     return requestJson<PanelSessionSettings>(
       "/api/system/session-settings",
       { method: "PUT", body: JSON.stringify(input) },
+      token
+    );
+  },
+  checkSystemUpdate(force = false, token?: string) {
+    return requestJson<SystemVersionCheckResult>(
+      `/api/system/check-update${force ? "?force=true" : ""}`,
+      {},
       token
     );
   },

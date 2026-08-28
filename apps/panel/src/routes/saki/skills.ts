@@ -77,7 +77,6 @@ ToolDelta 官方文档明确类式插件应在 \`插件文件/ToolDelta类式插
 from tooldelta import plugin_entry, Plugin, ToolDelta, Player, Chat, FrameExit
 from tooldelta.constants import PacketIDS
 
-
 class ExamplePlugin(Plugin):
     name = "示例插件"
     author = "作者名"
@@ -118,7 +117,6 @@ class ExamplePlugin(Plugin):
     def on_pkt_text(self, packet: dict):
         # ListenPacket 回调应返回 bool；True 表示拦截，False 表示不拦截。
         return False
-
 
 entry = plugin_entry(ExamplePlugin)
 \`\`\`
@@ -184,12 +182,10 @@ ToolDelta 1.2.4+ 可用配置模板类：
 \`\`\`python
 from tooldelta.utils.cfg_meta import JsonSchema, field, get_plugin_config_and_version
 
-
 class ConfigSchema(JsonSchema):
     enabled: bool = field("启用", True)
     cooldown: int = field("冷却秒数", 5)
     admins: list[str] = field("管理员", ["Steve"])
-
 
 config, version = get_plugin_config_and_version(
     ExamplePlugin.name,

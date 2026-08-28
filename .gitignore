@@ -83,4 +83,7 @@ ehthumbs.db
 docker-compose.override.yml
 temp_verify.ps1
 _new_db_styles.css
+*.traineddata
+scratch/
+
 

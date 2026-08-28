@@ -45,24 +45,15 @@ export async function getUserPointsSummary(userId: string): Promise<UserPointsSu
 
   if (!user) {
     throw new Error("用户不存在");
-  }
-
-  // 14 天前的时间点
-  const fourteenDaysAgo = new Date();
+  }  const fourteenDaysAgo = new Date();
   fourteenDaysAgo.setHours(0, 0, 0, 0);
-  fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 13);
-
-  // 查询近 14 天内的所有消费记录
-  const records = await prisma.pointRecord.findMany({
+  fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 13);  const records = await prisma.pointRecord.findMany({
     where: {
       userId,
       createdAt: { gte: fourteenDaysAgo }
     },
     orderBy: { createdAt: "asc" }
-  });
-
-  // 按天聚合统计
-  const dayMap = new Map<string, { tokens: number; points: number }>();
+  });  const dayMap = new Map<string, { tokens: number; points: number }>();
   for (let i = 0; i < 14; i++) {
     const d = new Date(fourteenDaysAgo);
     d.setDate(d.getDate() + i);
@@ -93,10 +84,7 @@ export async function getUserPointsSummary(userId: string): Promise<UserPointsSu
     date,
     tokens: data.tokens,
     points: data.points
-  }));
-
-  // 最近 30 条变动流水
-  const recentRaw = await prisma.pointRecord.findMany({
+  }));  const recentRaw = await prisma.pointRecord.findMany({
     where: { userId },
     orderBy: { createdAt: "desc" },
     take: 30

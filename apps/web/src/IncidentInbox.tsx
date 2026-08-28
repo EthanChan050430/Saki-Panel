@@ -335,9 +335,7 @@ export function IncidentBanner({
       if (action === "ignore") await api.ignoreIncident(token, incident!.id, { minutes: 60 });
       if (action === "rollback") await api.rollbackIncident(token, incident!.id);
       await refresh();
-    } catch {
-      // ignore
-    } finally {
+    } catch {} finally {
       setBusy(false);
     }
   }

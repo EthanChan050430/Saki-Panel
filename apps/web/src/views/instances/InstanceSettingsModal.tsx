@@ -1,0 +1,310 @@
+import React, { useEffect, useState } from "react";
+import {
+  AlertTriangle,
+  FolderOpen,
+  Loader2,
+  Save,
+  Settings,
+  Sparkles,
+  Terminal,
+  X
+} from "lucide-react";
+import type { ManagedInstance, ManagedNode, RestartPolicy, WatchPolicyMode } from "@webops/shared";
+import { api } from "../../api.js";
+
+export interface InstanceSettingsModalProps {
+  open: boolean;
+  instance: ManagedInstance | null;
+  nodes: ManagedNode[];
+  token: string;
+  onClose: () => void;
+  onUpdated: (instance: ManagedInstance) => void;
+  suggestingStartCommand: string | null;
+  onSuggestStartCommand: (workingDirectory: string, nodeId: string, onApply: (cmd: string) => void) => Promise<void>;
+}
+
+export function InstanceSettingsModal({
+  open,
+  instance,
+  nodes,
+  token,
+  onClose,
+  onUpdated,
+  suggestingStartCommand,
+  onSuggestStartCommand
+}: InstanceSettingsModalProps) {
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [settingsForm, setSettingsForm] = useState({
+    name: "",
+    workingDirectory: "",
+    startCommand: "",
+    stopCommand: "",
+    description: "",
+    nodeId: "",
+    autoStart: false,
+    restartPolicy: "never" as RestartPolicy,
+    restartMaxRetries: 3,
+    watchMode: "diagnose_and_patch" as WatchPolicyMode | "off"
+  });
+
+  useEffect(() => {
+    if (instance) {
+      setSettingsForm({
+        name: instance.name,
+        workingDirectory: instance.workingDirectory,
+        startCommand: instance.startCommand,
+        stopCommand: instance.stopCommand || "",
+        description: instance.description || "",
+        nodeId: instance.nodeId,
+        autoStart: instance.autoStart,
+        restartPolicy: instance.restartPolicy,
+        restartMaxRetries: instance.restartMaxRetries,
+        watchMode: "diagnose_and_patch"
+      });
+      setSettingsError(null);
+
+      void api
+        .watchPolicy(token, instance.id)
+        .then((policy) => {
+          setSettingsForm((current) => ({
+            ...current,
+            watchMode: policy.enabled ? policy.mode : "off"
+          }));
+        })
+        .catch(() => undefined);
+    }
+  }, [instance, token, open]);
+
+  if (!open || !instance) return null;
+
+  async function handleSave() {
+    if (!instance) return;
+    const name = settingsForm.name.trim();
+    const workingDirectory = settingsForm.workingDirectory.trim();
+    const startCommand = settingsForm.startCommand.trim();
+    if (!name || !workingDirectory || !startCommand) {
+      setSettingsError("请填写完整必填项（名称、工作目录、启动命令）");
+      return;
+    }
+    setSettingsSaving(true);
+    setSettingsError(null);
+    try {
+      const stopCommand = settingsForm.stopCommand.trim();
+      const description = settingsForm.description.trim();
+      const updated = await api.updateInstance(token, instance.id, {
+        name,
+        workingDirectory,
+        startCommand,
+        stopCommand: stopCommand || null,
+        description: description || null,
+        nodeId: settingsForm.nodeId || instance.nodeId,
+        autoStart: settingsForm.autoStart,
+        restartPolicy: settingsForm.restartPolicy,
+        restartMaxRetries: settingsForm.restartMaxRetries
+      });
+
+      const watchMode = settingsForm.watchMode;
+      await api.updateWatchPolicy(token, updated.id, {
+        enabled: watchMode !== "off",
+        mode: watchMode === "off" ? "diagnose_and_patch" : watchMode
+      });
+
+      onUpdated(updated);
+      onClose();
+    } catch (err) {
+      setSettingsError(err instanceof Error ? err.message : "保存设置失败");
+    } finally {
+      setSettingsSaving(false);
+    }
+  }
+
+  return (
+    <div className="glass-modal-overlay" onClick={onClose}>
+      <div className="glass-modal-container instance-settings-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="glass-modal-header">
+          <div className="modal-title-wrap">
+            <div className="modal-title-icon-badge settings">
+              <Settings size={20} />
+            </div>
+            <div>
+              <h3 className="modal-title">实例设置</h3>
+              <span className="modal-subtitle">{instance.name} · 调整启动命令与运行策略</span>
+            </div>
+          </div>
+          <button className="icon-button mini modal-close-btn" type="button" onClick={onClose} title="关闭">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="glass-modal-body">
+          {settingsError ? (
+            <div className="proxy-sub-error-badge" style={{ marginBottom: "1rem" }}>
+              <AlertTriangle size={14} />
+              <span>{settingsError}</span>
+            </div>
+          ) : null}
+
+          <div className="modal-settings-grid">
+            <label className="wide-field">
+              <span>实例名称</span>
+              <input
+                value={settingsForm.name}
+                onChange={(e) => setSettingsForm((prev) => ({ ...prev, name: e.target.value }))}
+                placeholder="例如：主世界服务器"
+              />
+            </label>
+
+            <label className="wide-field">
+              <span>
+                <FolderOpen size={14} /> 工作目录 (绝对路径)
+              </span>
+              <input
+                value={settingsForm.workingDirectory}
+                onChange={(e) => setSettingsForm((prev) => ({ ...prev, workingDirectory: e.target.value }))}
+                placeholder="例如：/opt/minecraft/server 或 D:\\Servers\\mc"
+              />
+            </label>
+
+            <label className="wide-field">
+              <span>
+                <Terminal size={14} /> 启动命令
+              </span>
+              <div className="start-command-control">
+                <textarea
+                  rows={2}
+                  value={settingsForm.startCommand}
+                  onChange={(e) => setSettingsForm((prev) => ({ ...prev, startCommand: e.target.value }))}
+                  placeholder="例如：java -Xmx4G -jar server.jar nogui"
+                />
+                <button
+                  type="button"
+                  className="ai-suggest-button"
+                  title={settingsForm.workingDirectory.trim() ? "AI 分析并填写启动命令" : "请先填写工作目录"}
+                  disabled={!settingsForm.workingDirectory.trim() || !settingsForm.nodeId || suggestingStartCommand !== null}
+                  onClick={() =>
+                    void onSuggestStartCommand(
+                      settingsForm.workingDirectory.trim(),
+                      settingsForm.nodeId,
+                      (cmd) => setSettingsForm((prev) => ({ ...prev, startCommand: cmd }))
+                    )
+                  }
+                >
+                  {suggestingStartCommand === "settings" ? (
+                    <Loader2 size={14} className="spinner" />
+                  ) : (
+                    <Sparkles size={14} />
+                  )}
+                </button>
+              </div>
+            </label>
+
+            <label className="wide-field">
+              <span>停止命令 (可选)</span>
+              <input
+                value={settingsForm.stopCommand}
+                onChange={(e) => setSettingsForm((prev) => ({ ...prev, stopCommand: e.target.value }))}
+                placeholder="例如：stop (向控制台发送或执行)"
+              />
+            </label>
+
+            <label className="wide-field">
+              <span>实例描述 (可选)</span>
+              <textarea
+                rows={2}
+                value={settingsForm.description}
+                onChange={(e) => setSettingsForm((prev) => ({ ...prev, description: e.target.value }))}
+                placeholder="备注此实例的用途、版本等信息"
+              />
+            </label>
+
+            <label>
+              <span>运行节点</span>
+              <select
+                value={settingsForm.nodeId}
+                onChange={(e) => setSettingsForm((prev) => ({ ...prev, nodeId: e.target.value }))}
+              >
+                {nodes.map((node) => (
+                  <option key={node.id} value={node.id}>
+                    {node.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              <span>崩溃重启策略</span>
+              <select
+                value={settingsForm.restartPolicy}
+                onChange={(e) => setSettingsForm((prev) => ({ ...prev, restartPolicy: e.target.value as RestartPolicy }))}
+              >
+                <option value="never">不自动重启</option>
+                <option value="on_failure">异常退出重启</option>
+                <option value="always">总是重启</option>
+              </select>
+            </label>
+
+            <label>
+              <span>Saki 自愈监控策略</span>
+              <select
+                value={settingsForm.watchMode}
+                onChange={(e) =>
+                  setSettingsForm((prev) => ({
+                    ...prev,
+                    watchMode: e.target.value as WatchPolicyMode | "off"
+                  }))
+                }
+              >
+                <option value="diagnose_and_patch">崩溃后诊断并给出补丁</option>
+                <option value="diagnose_only">只诊断，不改文件</option>
+                <option value="off">关闭该实例的值班监控</option>
+              </select>
+            </label>
+
+            {settingsForm.restartPolicy !== "never" ? (
+              <label>
+                <span>最大重试次数</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={settingsForm.restartMaxRetries}
+                  onChange={(e) =>
+                    setSettingsForm((prev) => ({
+                      ...prev,
+                      restartMaxRetries: Math.max(1, Math.min(20, parseInt(e.target.value) || 3))
+                    }))
+                  }
+                />
+              </label>
+            ) : null}
+
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={settingsForm.autoStart}
+                onChange={(e) => setSettingsForm((prev) => ({ ...prev, autoStart: e.target.checked }))}
+              />
+              <span>系统启动时自启此实例 (Auto-start on Boot)</span>
+            </label>
+          </div>
+        </div>
+
+        <div className="glass-modal-footer">
+          <button className="ghost-button" type="button" onClick={onClose}>
+            取消
+          </button>
+          <button
+            className="primary-button settings-save"
+            type="button"
+            disabled={settingsSaving}
+            onClick={() => void handleSave()}
+          >
+            {settingsSaving ? <Loader2 size={16} className="spinner" /> : <Save size={16} />}
+            <span>{settingsSaving ? "保存中..." : "保存设置"}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

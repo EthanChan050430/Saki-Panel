@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="apps/web/public/assets/saki-panel-icon.png" width="120" height="120" alt="Saki Panel Logo" />
+<img src="apps/web/public/assets/saki-panel-icon.png" width="100" height="100" alt="Saki Panel Logo" />
 
-# 🌸 Saki Panel
+# Saki Panel
 
-**The First AI-Powered Server Management Panel · Manage Servers with Natural Language**
+**An AI-native server management panel that understands your infrastructure and automates operations through natural language.**
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6.svg)](https://www.typescriptlang.org/)
@@ -12,66 +12,50 @@
 [![Fastify](https://img.shields.io/badge/Fastify-5-000000.svg)](https://fastify.dev/)
 [![Node](https://img.shields.io/badge/Node-%3E%3D18-339933.svg)](https://nodejs.org/)
 
-> "Hey, restart that Node service for me."<br>
-> "The disk is almost full again, check which logs can be deleted."<br>
-> "Update the MC server to the latest version, and don't you dare break it."
+> "Restart the Node service on node-02 and tail the last 50 lines of logs."<br>
+> "The disk is filling up on /var. Check what's taking space and ask before deleting anything."<br>
+> "Update the Minecraft server to the latest build, but back up the world first."
 
-**—— Just tell it what you want, Saki gets it done.**
-
-[🤖 Saki Agent](#-saki-agent--not-a-chatbot-real-automation) · [🚀 Quick Start](#-quick-start-up-and-running-in-3-minutes) · [🏗️ Architecture](#️-architecture) · [✨ Features](#-features-ridiculously-powerful) · [🐳 Deploy](#-deployment) · [⚖️ License](#️-license)
+[Saki Agent](#saki-agent) · [Quick Start](#quick-start) · [Architecture](#architecture) · [Features](#features) · [Deployment](#deployment) · [中文说明](#中文说明)
 
 </div>
 
 ---
 
-## Yet Another Ops Panel? Why?
+## Why Saki Panel?
 
-Look, there are plenty of panels out there: **BaoTa**, **1Panel**, **Pterodactyl**, **MCSManager**. Sure, they work. They do the job. They're solid.
+Most server management panels (like Baota, 1Panel, Pterodactyl, or MCSManager) are essentially web wrappers around system commands. They give you buttons to start processes and forms to edit configs, but when something breaks at midnight, you are still on your own: opening SSH, digging through log files, copying stack traces, and manually applying fixes.
 
-But here's the problem:
+Adding a generic chat window to an existing panel doesn't solve this. If the AI cannot inspect process states, parse live logs, read configuration files, or safely execute commands, it's just another tab you have to copy-paste into.
 
-> **You tell it what to do → it does it → you babysit the whole thing → boom, done. You're basically the operator and it's just a glorified button-pusher. That's the game. That's always been the game. Cringe, bro.**
+**Saki Panel takes a different approach:**
 
-Saki Panel? Completely different beast.
-
-This isn't just another "bolt a chatbox onto a traditional panel and call it AI" (gross). Instead, **AI is woven into the actual DNA of the architecture**—it's not an afterthought, it's the foundation:
-
-- **True Context Awareness**: It automatically grabs instance state, real-time logs, file trees, CPU/memory/disk metrics. You don't have to manually copy-paste walls of text anymore—Saki sees it all.
-- **Real Execution**: Actually starts/stops/restarts services, reads/writes files, runs commands. It's not just chatting at you—it *does the work*.
-- **Approval Safeguards**: When it comes to dangerous stuff (think `rm -rf` territory), it asks for your sign-off before proceeding. High-risk ops get human approval, critical stuff is straight-up blocked. No surprise data loss.
-- **Skill System**: Bundle your common ops workflows into reusable Skills, share them with your team, deploy with one click. Collective ops knowledge, packaged and shared.
-- **MCP Protocol Support**: Hook up external tools whenever you need them. Theoretically unlimited capability expansion—the door's wide open.
-
-**This isn't just software. This is your ops teammate working 24/7.**
-
-No more waking up to "server is down" alerts at 3 AM. The era of intelligent automation is already here. 🗿
+- **Context-first operations**: Saki sees the live state of your instances, recent stdout/stderr output, file trees, and system resource metrics. You talk about what is happening; Saki already has the context.
+- **Action with safety gates**: Saki does not just give advice—it can edit files, restart processes, and run terminal commands. Crucially, every potentially disruptive action requires your explicit confirmation, and destructive commands are blocked at the daemon layer.
+- **Saki Watch (Automated crash triage)**: When an instance crashes unexpectedly, Saki Watch captures the incident, groups it by error fingerprint, diagnoses the root cause, and can propose a minimal patch. Once you approve, it verifies the service state and rolls back automatically if the crash persists.
+- **Skill system & MCP support**: Package recurring operational workflows into reusable Skills, or hook into external tools via the Model Context Protocol (MCP).
+- **Run anywhere, pay nothing**: Works out of the box with local models via Ollama or LM Studio with zero API costs. Also supports OpenAI, Anthropic, DeepSeek, Qwen, Gemini, MiniMax, and GitHub Copilot.
 
 ---
 
-## 🤖 Saki Agent — Not a Chatbot. Real Automation.
+## Saki Agent
 
-Here's the difference:
+Saki is built directly into the control panel's core rather than bolted on as a third-party plugin.
 
-```text
-Traditional Panel AI:  You ask → it talks at you → you manually execute → it watches → ???  → 🤡
-Saki Agent:           You speak → it thinks → it executes → asks for sign-off on risky stuff → done → 😎
-```
+| Capability | Description |
+|:---|:---|
+| Context Awareness | Reads instance status, real-time log buffers, file trees, and CPU/memory/disk metrics without manual copy-pasting. |
+| Real Execution | Starts, stops, and restarts instances, reads and edits files, and executes terminal commands within strict workspace boundaries. |
+| Approval Flow | Four-tier risk system (low, medium, high, critical). High-risk operations require explicit human approval; critical commands are blocked automatically. |
+| Crash Watch & Recovery | Instances that exit with non-zero status trigger an incident. Saki diagnoses the logs, proposes targeted fixes, and automatically rolls back if the service fails post-patch. |
+| Tool Harness | Dynamic tool advertising keeps model context lean. File stats are metadata-only, code diagnostics run without side-effects, and environment probes are cached. |
+| Multimodal Input | Accepts error screenshots, log files, and text attachments directly in chat. |
+| Loop Protection | Built-in detection for repeated outputs, stuck tool calls, and runaway turns. Supports XML, Qwen, Hermes, and native JSON tool call formats. |
+| Interactive UI | Integrated Live2D character, mini-games, and voice synthesis support for a friendly management experience. |
 
-| Core Capability | Description |
-|:---------|:-----|
-| 🧠 **Context Awareness** | Sees the full picture: instance state, real-time logs, file structure, CPU/memory/disk metrics. No manual data gathering. It just *knows*. |
-| 🎬 **Real Execution** | Starts/stops/restarts instances, reads/writes files, runs terminal commands. It doesn't just talk—it actually *does*. |
-| 🛡️ **Risk Approval** | 4-tier risk levels (low / medium / high / critical). High-risk ops need your thumbs-up. Critical stuff? Auto-blocked. You're protected. |
-| 🎯 **Skill System** | Bundle your ops patterns into reusable Skills, share across teams, deploy instantly. Collective knowledge, distributed. |
-| 📎 **Multimodal Input** | Paste error screenshots, dump log files, ramble about what's wrong. Saki parses it all. |
-| 🔌 **MCP Support** | Model Context Protocol = plug in external tools as needed. Limitless expansion, your rules. |
-| 🎭 **Live2D Interaction** | Mix drinks, dance, greet—productivity meets personality. Ops work doesn't have to be boring. |
-| 🚨 **Watch / On-call** | Crashes open an incident automatically. Saki reads logs, proposes a minimal patch, asks before writing, then verifies and rolls back if the service still dies. |
-| ⚡ **Fast tool harness** | Each model turn only advertises core coding tools. Instance/shell/schedule/crawl tools unlock when the task needs them. `statFile` is metadata-only, `diagnoseCode` never runs `npm test`, and environment probes are cached. |
-| 🧯 **Stuck-loop guards** | Stops repeated identical output, duplicate tool calls, and no-progress turns. Parses XML, Qwen, Hermes, and JSON tool calls. Small local models get a compact prompt and fewer tools. |
+### Quick Configuration (Local & Free)
 
-
-### Ultra-Simple Configuration (Totally Free Locally)
+To run Saki completely offline at zero cost, point it to a local [Ollama](https://ollama.com/) instance:
 
 ```env
 SAKI_PROVIDER=ollama
@@ -79,328 +63,229 @@ SAKI_MODEL=llama3.2
 SAKI_OLLAMA_URL=http://localhost:11434
 ```
 
-That's literally it. Spin up [Ollama](https://ollama.com/) on your machine—**completely free**. Also works with OpenAI, DeepSeek, Alibaba Qwen, Gemini, or any compatible LLM interface. **Zero lock-in**, pick whatever model you want. Weak hardware? No sweat, just throw an API key at it.
+You can also switch to any cloud provider (DeepSeek, OpenAI, Anthropic, Qwen, Gemini) or use your GitHub Copilot subscription directly from the settings page.
 
-### Saki Watch (crash → diagnose → patch → verify)
+### Saki Watch Workflow
 
-When an instance process exits non-zero, the daemon pushes an `instance.status` event to the panel. Saki Watch then:
+When a monitored instance exits unexpectedly:
 
-1. Opens an **Incident** (deduped by log fingerprint). **No model call yet** — agent quota is not spent automatically.
-2. You confirm **确认诊断** (bell, instance banner, or API). That is the first spend of model quota.
-3. A **restricted agent** runs (no shell, no deletes, no start-command edits).
-4. File writes still need a second approval. Approve from the banner, the bell, or the Saki action card.
-5. After an approved patch, Watch restarts and **verifies**. If it crashes the same way, file checkpoints roll back automatically.
-
-Per-instance policy lives in instance settings: **diagnose and patch** (default), **diagnose only**, or **off**. Hourly diagnosis budget still applies after you confirm.
+1. **Incident Created**: The daemon detects the exit code and logs an incident grouped by error fingerprint. No LLM tokens are spent automatically.
+2. **User Confirmation**: Click "Confirm Diagnosis" in the incident banner or notification bell to initiate analysis.
+3. **Restricted Agent Run**: A scoped agent analyzes the failure without shell access, delete permissions, or permission to modify startup commands.
+4. **Patch Review**: If a fix is proposed, file diffs are shown for your review before writing.
+5. **Verification & Rollback**: After applying an approved fix, Watch restarts the service and verifies its health. If it crashes in the same manner, all file changes are reverted to the pre-patch checkpoint.
 
 ---
 
-## ✨ Features (Ridiculously Powerful)
+## Features
 
-<table>
-<tr>
-<td width="50%">
-
-### 🤖 Saki Agent
-Context-aware · Real execution · Approval gates · Skills · MCP extensions · Multimodal · Live2D
-
-</td>
-<td width="50%">
-
-### 📊 Dashboard
-Node status · Real-time CPU/memory/disk graphs · Recent actions & logins
-
-</td>
-</tr>
-<tr>
-<td width="50%">
-
-### ⚙️ Instance Management
-9 instance types · Start/stop/restart/kill · Real-time logs · Auto-restart on crash · **Agent-controlled**
-
-</td>
-<td width="50%">
-
-### 💻 Web Terminal
-xterm.js + WebSocket · Auto-reconnect · **Agent can execute commands**
-
-</td>
-</tr>
-<tr>
-<td width="50%">
-
-### 📁 File Manager
-Browse directories · CodeMirror editor · Upload/download · Smart decompression (zip/rar/7z) · **Agent can read/write**
-
-</td>
-<td width="50%">
-
-### ⏰ Scheduled Tasks
-Cron scheduling · Manual triggers · Run history · Auto-start + crash recovery policies
-
-</td>
-</tr>
-<tr>
-<td width="50%">
-
-### 🚨 Saki Watch
-Crash → incident → you confirm (quota) → diagnose → approval → verify / rollback. Never auto-spends tokens.
-
-</td>
-<td width="50%">
-
-### 🖥️ Node Management
-Auto daemon registration · Heartbeat keep-alive · Connectivity testing · System metrics collection
-
-</td>
-</tr>
-<tr>
-<td width="50%">
-
-### 🔒 Security & Access Control
-RBAC (41 permission codes) · Audit logs · Login rate limits · Dangerous command blocks · Watch agents cannot use a shell
-
-</td>
-<td width="50%">
-
-### 🗄️ Database Visualizer
-Inspect MySQL schemas · Edit rows · Run SQL without leaving the instance page
-
-</td>
-</tr>
-</table>
+- **Dashboard**: Real-time cluster overview, aggregated CPU/memory/disk usage, active node status, and audit summaries.
+- **Instance Management**: Supports 9 instance types (Node.js, Python, Java JAR, Shell, Docker, Docker Compose, Minecraft, Steam game servers, and generic commands) with automatic restart policies.
+- **Web Terminal**: Built-in xterm.js terminal with WebSocket streaming, automatic reconnection, and Minecraft formatting color code rendering.
+- **File Manager**: Directory navigation, CodeMirror 6 code editor with syntax highlighting, file uploads/downloads, and background archive extraction (zip, tar, rar, 7z).
+- **Database Visualizer**: Connect to MySQL/MariaDB instances, inspect database schemas, browse and edit table rows, and execute SQL queries without third-party desktop clients.
+- **Node Clustering**: Multi-server architecture. Install a lightweight daemon on each server; the central panel manages all instances over secure token authentication.
+- **Scheduled Tasks**: Cron-based scheduling for command execution, instance restarts, and maintenance jobs with full run history.
+- **Security & Access Control**: Role-Based Access Control (RBAC) with 41 granular permission codes, session timeout controls, login brute-force rate limiting, and comprehensive audit logs.
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
-┌──────────────┐       HTTP/WS        ┌──────────────┐       HTTP/WS        ┌──────────────┐
-│              │  ◄─────────────────► │              │ ◄─────────────────►  │              │
-│   🌐 Web     │       JWT           │   📋 Panel   │     Node Token       │   🔧 Daemon  │
-│   React SPA  │                      │   Fastify    │                      │   Fastify    │
-│   + Saki UI  │                      │   + Saki AI  │                      │              │
-│   :5478      │                      │   + SQLite   │                      │   :5480      │
-│              │                      │   :5479      │                      │              │
-└──────────────┘                      └──────────────┘                      └──────┬───────┘
-                                                                                   │ spawn
-                                                                                   ▼
-                                                                            ┌──────────────────────────┐
-                                                                            │   📦 Instance Processes  │
-                                                                            └──────────────────────────┘
+┌────────────────┐        HTTP / WS         ┌────────────────┐        HTTP / WS         ┌────────────────┐
+│                │  ◄─────────────────────► │                │  ◄─────────────────────► │                │
+│    Web (SPA)   │           JWT            │  Panel Server  │       Node Token         │     Daemon     │
+│   React 19     │                          │   Fastify 5    │                          │   Fastify 5    │
+│   Vite 6       │                          │   Saki Agent   │                          │   Node Agent   │
+│   Port: 5478   │                          │   Port: 5479   │                          │   Port: 5480   │
+└────────────────┘                          └────────────────┘                          └───────┬────────┘
+                                                                                                │ spawn
+                                                                                                ▼
+                                                                                        ┌────────────────┐
+                                                                                        │   Instances    │
+                                                                                        └────────────────┘
 ```
 
-| Component | Responsibility | Tech Stack |
-|:-----|:-----|:-------|
-| **Web** | Frontend admin panel + Saki interaction UI | React 19 · Vite 6 · CodeMirror 6 · xterm.js 6 · Recharts |
-| **Panel** | Central control hub + Saki Agent engine | Fastify 5 · Prisma 6 · SQLite · JWT · LLM APIs |
-| **Daemon** | Node proxy, executes real operations | Fastify 5 · systeminformation · 7zip-bin |
-| **Shared** | Shared types for frontend and backend | Pure TypeScript, zero dependencies |
-
-> 💡 **In one sentence:** Panel is the brain (Saki lives here), Daemon is the hands, Web is the face, Shared is the common language.
+| Component | Role | Tech Stack |
+|:---|:---|:---|
+| **Web** | Frontend management interface and Saki chat UI | React 19, Vite 6, CodeMirror 6, xterm.js 6, Recharts |
+| **Panel** | Central control server, authentication, database, and Saki Agent core | Fastify 5, Prisma 6, SQLite, JWT |
+| **Daemon** | Node agent installed on target servers, executes process and file operations | Fastify 5, systeminformation, 7zip-bin |
+| **Shared** | Shared TypeScript interfaces, types, and schema contracts | Pure TypeScript |
 
 ---
 
-## 🗂️ Project Structure
+## Project Structure
 
-Clean monorepo setup. Everything you need, nothing you don't:
+A clean, modular npm workspace:
 
-```
+```text
 Saki Panel/
 ├── apps/
-│   ├── web/                  # Frontend SPA (React 19 + Vite 6)
-│   ├── panel/                # Backend control panel + Saki Agent engine
-│   └── daemon/               # Node daemon process
+│   ├── web/                  # React 19 frontend SPA
+│   │   ├── src/
+│   │   │   ├── components/   # Modular components (saki, terminal, file-manager, common)
+│   │   │   ├── views/        # Main views (instances, dashboard, nodes, users, etc.)
+│   │   │   ├── database/     # Database visualizer components & modals
+│   │   │   ├── utils/        # Path, auth, route, and appearance helpers
+│   │   │   └── i18n/         # Multi-language dictionary and DOM translator
+│   ├── panel/                # Backend API service & Saki AI engine
+│   │   └── src/routes/saki/  # Saki provider dispatchers (openai, anthropic, ollama, copilot)
+│   └── daemon/               # Lightweight node agent process
 ├── packages/
-│   └── shared/               # Shared type definitions
+│   └── shared/               # Shared types between panel, daemon, and web
 ├── prisma/
-│   └── schema.prisma         # Database models (9 tables)
-├── scripts/
-│   ├── windows/              # Windows one-click startup (PowerShell)
-│   ├── linux/                # Linux startup + systemd services
-│   └── macos/                # macOS one-click startup (double-click to run)
+│   └── schema.prisma         # Database schema
+├── scripts/                  # Development and systemd service scripts
 ├── docker-compose.yml
 └── .env.example
 ```
 
 ---
 
-## 🚀 Quick Start (3 Minutes)
+## Quick Start
 
 ### Prerequisites
 
 - Node.js >= 18
 - npm >= 9
-- (Strongly Recommended) [Ollama](https://ollama.com/) for local Saki Agent execution
 
-### Local Development
+### Local Setup
 
 ```bash
-# 1. Clone repository + install dependencies
-git clone https://github.com/EthanChan050430/Saki-Panel.git && cd Saki-Panel
+# 1. Clone the repository
+git clone https://github.com/EthanChan050430/Saki-Panel.git
+cd Saki-Panel
+
+# 2. Install dependencies
 npm install
 
-# 2. Initialize database
+# 3. Initialize the database
 npx prisma db push --skip-generate
 
-# 3. Start development mode (one command)
+# 4. Start development mode (launches web, panel, and daemon concurrently)
 npm run dev
 ```
 
-### One-Click Startup Scripts (Auto Port Management)
+### Platform Launch Scripts
 
-| Platform | Command | Details |
-|:-----|:-----|:-----|
-| 🪟 Windows | Double-click `scripts/windows/start-dev.ps1` | PowerShell automatically manages port conflicts |
-| 🐧 Linux | `bash scripts/linux/start-dev.sh` | Same intelligent port management |
-| 🍎 macOS | Double-click `scripts/macos/start-dev.command` | Double-click to run |
+Platform-specific startup scripts are provided in `scripts/` with automatic port conflict handling:
 
-### Default Access
+| Platform | Script |
+|:---|:---|
+| Windows | Run `scripts/windows/start-dev.ps1` in PowerShell |
+| Linux | Run `bash scripts/linux/start-dev.sh` |
+| macOS | Double-click `scripts/macos/start-dev.command` |
 
-| Service | URL |
-|:-----|:-----|
+### Default Access Points
+
+| Service | Address |
+|:---|:---|
 | Web Interface | http://localhost:5478 |
 | Panel API | http://localhost:5479 |
-| Daemon | http://localhost:5480 |
+| Daemon API | http://localhost:5480 |
 
-### Default Administrator
+### Default Administrator Credentials
 
 | Field | Value |
-|:-----|:---|
+|:---|:---|
 | Username | `admin` |
 | Password | `admin123456` |
 
-> ⚠️ **Production Requirements:** Always change `JWT_SECRET`, `ADMIN_PASSWORD`, and `DAEMON_REGISTRATION_TOKEN`. Security comes first.
+*Note: For any production or public network deployment, immediately update `JWT_SECRET`, `ADMIN_PASSWORD`, and `DAEMON_REGISTRATION_TOKEN` in your environment configuration.*
 
 ---
 
-## 🎯 Supported Instance Types
+## Supported Instance Types
 
-| Type | Description |
-|:-----|:-----|
-| `generic_command` | Generic command-line |
-| `nodejs` | Node.js applications |
-| `python` | Python scripts |
-| `java_jar` | Java JAR packages |
-| `shell_script` | Shell scripts |
-| `docker_container` | Docker containers |
-| `docker_compose` | Docker Compose orchestration |
-| `minecraft` | Minecraft servers |
-| `steam_game_server` | Steam game servers |
+- `generic_command`: Arbitrary command-line programs
+- `nodejs`: Node.js applications with package scripts
+- `python`: Python scripts and virtual environments
+- `java_jar`: Java applications and Minecraft server jars
+- `shell_script`: Bash and Shell scripts
+- `docker_container`: Standalone Docker containers
+- `docker_compose`: Docker Compose multi-service stacks
+- `minecraft`: Minecraft dedicated servers with console parsing
+- `steam_game_server`: Dedicated Steam game server processes
 
 ---
 
-## 🔐 Security
-
-| Mechanism | Details |
-|:-----|:-----|
-| Authentication | JWT Token + bcrypt password hashing |
-| Authorization | RBAC with 41 permission codes, 5 built-in roles + custom role targets |
-| Rate Limiting | Account lockout after 5 failed login attempts in 10 minutes |
-| Command Interception | 4-tier risk levels (low → critical), critical operations blocked automatically |
-| Agent Approval | High-risk operations require manual approval, with reject and rollback support |
-| Saki Watch | Crash opens an incident only. Starting diagnosis requires your confirmation (model quota). File writes need a second approval. Watch agents cannot use a shell. |
-| Audit | Comprehensive operation logs (user/IP/action/result) |
-| Path Isolation | File operations restricted to workspace, preventing path traversal |
-| Extraction Protection | Max 5,000 items, max extraction size 512MB |
-
----
-
-## 🖥️ Tech Stack
-
-| Layer | Technology |
-|:---|:-----|
-| Language | TypeScript (full-stack, no JavaScript anywhere) |
-| Monorepo | npm workspaces |
-| Frontend | React 19 · Vite 6 · CodeMirror 6 · xterm.js 6 · Recharts · Lucide |
-| Backend | Fastify 5 · Prisma 6 · SQLite |
-| AI Agent | LLM APIs (Ollama / OpenAI-compatible) · MCP · Skill System · Approval Flow |
-| Terminal | xterm.js + WebSocket proxy |
-| Deployment | Docker Compose · systemd |
-
----
-
-## 📋 Development Commands
-
-```bash
-npm run dev          # Start all services (panel + daemon + web)
-npm run dev:panel    # Start Panel only
-npm run dev:daemon   # Start Daemon only
-npm run dev:web      # Start Web only
-npm run build        # Build all
-npm run check        # Type check all
-npm run db:push      # Sync database schema
-```
-
----
-
-## 🐳 Deployment
+## Deployment
 
 ### Docker Compose (Recommended for Production)
 
 ```bash
-# Build and start
+# Build and run with default settings
 docker compose build
 docker compose up -d
 ```
 
-For production, set environment variables:
+Configure production environment variables in your `.env` file or export them before running:
 
 ```bash
-export JWT_SECRET="your-secret-here"
-export ADMIN_PASSWORD="your-password-here"
-export DAEMON_REGISTRATION_TOKEN="your-token-here"
+export JWT_SECRET="your-secure-random-secret"
+export ADMIN_PASSWORD="your-strong-admin-password"
+export DAEMON_REGISTRATION_TOKEN="your-daemon-token"
 
 docker compose up -d
 ```
 
-If frontend and API are accessed via different public IPs/ports/domains, configure the browser-visible addresses and rebuild the Web image:
+If your web frontend and API are hosted on different public domains or IP addresses:
 
 ```bash
-export PANEL_PUBLIC_URL="http://XX.XX.XX.XX:5479"
-export WEB_ORIGIN="http://XX.XX.XX.XX:5478"
+export PANEL_PUBLIC_URL="http://your-server-ip:5479"
+export WEB_ORIGIN="http://your-server-ip:5478"
 export PANEL_CORS_ORIGINS="*"
-export VITE_API_BASE_URL="http://XX.XX.XX.XX:5479"
+export VITE_API_BASE_URL="http://your-server-ip:5479"
 
 docker compose build --no-cache panel web
 docker compose up -d
 ```
 
-If the browser console still shows requests to `http://localhost:5479`, remove or update `VITE_API_BASE_URL` in `.env` to your public API address, then rebuild:
-
-```bash
-docker compose build --no-cache web && docker compose up -d
-```
-
-For temporary troubleshooting, set `DISABLE_AUTH=1` to disable panel authentication. This should only be used for short-term debugging on public networks; revert to `DISABLE_AUTH=0` when done.
-
-### systemd (Linux)
+### Linux systemd Service
 
 ```bash
 sudo cp scripts/linux/saki-panel.service /etc/systemd/system/
 sudo cp scripts/linux/saki-panel-daemon.service /etc/systemd/system/
+sudo systemctl daemon-reload
 sudo systemctl enable --now saki-panel
 sudo systemctl enable --now saki-panel-daemon
 ```
 
 ---
 
-## 🔍 Why Saki Panel is the Move?
+## 中文说明
 
-**AI Server Management Panel** · **AI Agent Operations** · **Intelligent DevOps** · **Ollama-Powered Ops** · **LLM Server Management**<br>
-**MCP for Automation** · **Natural Language DevOps** · **Smart Server Control** · **No More Manual Ops** · **Autonomous Workflows**
+Saki Panel 是一个原生深度融合 AI Agent 的现代化轻量服务器与实例运维面板。
+
+不同于传统面板仅仅提供网页按钮或在网页边角堆砌聊天框，Saki Panel 让 AI 真正接入了系统上下文（实时日志、指标流、文件系统与进程生命周期），具备安全审批护栏（四级风险拦截与确认）与自动故障诊断回滚机制（Saki Watch）。
+
+### 核心亮点
+
+- **懂上下文的 Saki Agent**：无需手动复制粘贴错误日志，Saki 可直接感知当前实例运行状态、系统负载与错误堆栈。
+- **带安全护栏的执行能力**：可读写配置文件、重启实例、执行运维脚本，高危操作强制需要人工二次确认，从守护进程底层拦截毁灭性命令。
+- **Saki Watch 故障自愈**：进程异常退出时自动记录事故指纹，在用户确认后进行精准诊断，支持补丁预览应用与异常自动回滚，不额外浪费模型额度。
+- **零成本本地大模型支持**：原生适配 Ollama / LM Studio 本地离线模型，同时也支持各大主流云端模型与 GitHub Copilot。
+- **轻量集群与全栈工具箱**：内置多节点管理、Web 终端（支持 ANSI 与 MC 格式码）、CodeMirror 6 代码编辑、文件压缩解压、可视化数据库管理（MySQL/MariaDB）以及多角色权限管理（RBAC）。
 
 ---
 
-Say goodbye to manual ops with traditional panels. The **Smart Ops**​ era is here! Zero API cost with local Ollama deployment. Dangerous command blocking prevents data disasters. Skill system + MCP for limitless expansion. Multimodal input understands your screenshots and files.
+## Development Commands
 
-Whether you're searching for a **BT Panel alternative, 1Panel alternative, Pterodactyl alternative, MCSManager alternative**, or searching for an **AI Ops Panel, AI Agent Server Management, Ollama Panel**, Saki Panel is your best choice.
-
-The thing is built different, bro. What more could you ask for from a traditional panel? Hop on the Saki Panel train and start ops-ing with your AI Agent! 🚀
+```bash
+npm run dev          # Start all workspaces concurrently
+npm run dev:panel    # Start backend panel only
+npm run dev:daemon   # Start daemon agent only
+npm run dev:web      # Start frontend web app only
+npm run build        # Build all packages and applications
+npm run check        # Run type checking across all workspaces
+npm run db:push      # Push Prisma schema updates to SQLite
+```
 
 ---
 
-## ⚖️ License
+## License
 
 ```
 Copyright 2024-2026 DreamStarryRobot Contributors
@@ -422,6 +307,6 @@ limitations under the License.
 
 <div align="center">
 
-Damn, this thing cost me 12 straight hours of intense vibe coding. A star would heal my soul, bros! 🙏
+Built with care for engineers who want automated, reliable infrastructure without the hassle. If you find Saki Panel helpful, stars and contributions are always welcome.
 
 </div>

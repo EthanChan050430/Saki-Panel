@@ -133,8 +133,7 @@ async function resolveNodeCredentials(nodeId: string): Promise<DaemonNodeCredent
   };
 }
 
-export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void> {
-  // 1. List all database visualizer instances
+export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/databases", { preHandler: requirePermission("instance.view") }, async () => {
     const items = await readVisualizers();
     const nodes = await prisma.node.findMany({ select: { id: true, name: true } });
@@ -146,9 +145,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     }));
 
     return { ok: true, databases: enriched };
-  });
-
-  // 2. Discover databases across nodes
+  });
   app.get("/api/databases/discover", { preHandler: requirePermission("instance.view") }, async (request) => {
     const query = request.query as { nodeId?: string };
     const allDiscovered: Array<DiscoveredDatabase & { nodeId: string; nodeName: string }> = [];
@@ -204,9 +201,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     }
 
     return { ok: true, databases: allDiscovered };
-  });
-
-  // 3. Create a new database visualizer instance
+  });
   app.post("/api/databases", { preHandler: requirePermission("instance.create") }, async (request, reply) => {
     const body = request.body as CreateDatabaseVisualizerRequest;
     if (!body.name?.trim() || !body.nodeId) {
@@ -244,9 +239,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     });
 
     return { ok: true, database: newInstance };
-  });
-
-  // 4. Update database visualizer instance
+  });
   app.put("/api/databases/:id", { preHandler: requirePermission("instance.update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as UpdateDatabaseVisualizerRequest;
@@ -289,9 +282,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     });
 
     return { ok: true, database: updated };
-  });
-
-  // 5. Delete database visualizer instance
+  });
   app.delete("/api/databases/:id", { preHandler: requirePermission("instance.delete") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const current = await readVisualizers();
@@ -336,16 +327,12 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       database: inst.config.database,
       engine: inst.engine
     };
-  }
-
-  // 6. List tables
+  }
   app.post("/api/databases/:id/tables", { preHandler: requirePermission("instance.view") }, async (request) => {
     const { id } = request.params as { id: string };
     const { inst, creds } = await loadInstanceAndNode(id);
     return listDaemonDatabaseTables(creds, buildConnectionPayload(inst));
-  });
-
-  // 7. Get table schema
+  });
   app.post("/api/databases/:id/tables/schema", { preHandler: requirePermission("instance.view") }, async (request) => {
     const { id } = request.params as { id: string };
     const body = request.body as { tableName: string };
@@ -354,9 +341,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       ...buildConnectionPayload(inst),
       tableName: body.tableName
     });
-  });
-
-  // 8. Query table rows
+  });
   app.post("/api/databases/:id/tables/rows", { preHandler: requirePermission("instance.view") }, async (request) => {
     const { id } = request.params as { id: string };
     const body = request.body as DatabaseRowsRequest;
@@ -365,9 +350,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       ...buildConnectionPayload(inst),
       ...body
     });
-  });
-
-  // 9. Insert row
+  });
   app.post("/api/databases/:id/tables/insert", { preHandler: requirePermission("instance.view") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as DatabaseInsertRowRequest;
@@ -390,9 +373,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       result: "SUCCESS"
     });
     return result;
-  });
-
-  // 10. Update row
+  });
   app.post("/api/databases/:id/tables/update", { preHandler: requirePermission("instance.view") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as DatabaseUpdateRowRequest;
@@ -415,9 +396,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       result: "SUCCESS"
     });
     return result;
-  });
-
-  // 11. Delete row
+  });
   app.post("/api/databases/:id/tables/delete", { preHandler: requirePermission("instance.view") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as DatabaseDeleteRowRequest;
@@ -440,9 +419,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       result: "SUCCESS"
     });
     return result;
-  });
-
-  // 12. Create table (DDL)
+  });
   app.post("/api/databases/:id/tables/create", { preHandler: requirePermission("instance.view") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as DatabaseCreateTableRequest;
@@ -465,9 +442,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       result: "SUCCESS"
     });
     return result;
-  });
-
-  // 13. Drop table
+  });
   app.post("/api/databases/:id/tables/drop", { preHandler: requirePermission("instance.view") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as { tableName: string };
@@ -489,9 +464,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       result: "SUCCESS"
     });
     return result;
-  });
-
-  // 14. Truncate table
+  });
   app.post("/api/databases/:id/tables/truncate", { preHandler: requirePermission("instance.view") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as DatabaseTruncateTableRequest;
@@ -513,9 +486,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       result: "SUCCESS"
     });
     return result;
-  });
-
-  // 15. Execute query (SQL Console / Terminal)
+  });
   app.post("/api/databases/:id/query", { preHandler: requirePermission("instance.view") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as { sql: string; maxRows?: number };
@@ -539,9 +510,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       result: "SUCCESS"
     });
     return result;
-  });
-
-  // 16. Export data
+  });
   app.post("/api/databases/:id/export", { preHandler: requirePermission("instance.view") }, async (request) => {
     const { id } = request.params as { id: string };
     const body = request.body as DatabaseExportRequest;
@@ -550,9 +519,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       ...buildConnectionPayload(inst),
       ...body
     });
-  });
-
-  // 17. Import data
+  });
   app.post("/api/databases/:id/import", { preHandler: requirePermission("instance.view") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as DatabaseImportRequest;
@@ -565,9 +532,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       ...buildConnectionPayload(inst),
       ...body
     });
-  });
-
-  // 18. Test connection (Multi-engine)
+  });
   app.post("/api/databases/test-connection", { preHandler: requirePermission("instance.view") }, async (request) => {
     const body = request.body as { host?: string; port?: number; user?: string; password?: string; database?: string; engine?: DatabaseEngine; path?: string; nodeId?: string };
     const targetNodeId = body.nodeId || "local";
@@ -578,9 +543,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       "/api/databases/test-connection",
       { method: "POST", body: JSON.stringify(body) }
     );
-  });
-
-  // 19. Get database real-time stats (probe)
+  });
   app.get("/api/databases/:id/stats", { preHandler: requirePermission("instance.view") }, async (request) => {
     const { id } = request.params as { id: string };
     const { inst, creds } = await loadInstanceAndNode(id);

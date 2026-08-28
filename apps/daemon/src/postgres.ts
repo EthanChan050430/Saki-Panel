@@ -22,9 +22,6 @@ export interface PostgreSQLConnectionConfig {
   password?: string;
   database: string;
 }
-
-// ── Connection pool management ────────────────────────────────────────
-
 const pools = new Map<string, pg.Pool>();
 
 function poolKey(cfg: PostgreSQLConnectionConfig): string {
@@ -60,15 +57,9 @@ export async function closeAllPools(): Promise<void> {
   await Promise.all(Array.from(pools.values()).map((p) => p.end()));
   pools.clear();
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────
-
 function escapeIdentifier(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
-
-// ── 1. Test connection ────────────────────────────────────────────────
-
 export async function testConnection(cfg: PostgreSQLConnectionConfig): Promise<{ ok: boolean; message: string }> {
   try {
     const pool = getPool(cfg);
@@ -84,9 +75,6 @@ export async function testConnection(cfg: PostgreSQLConnectionConfig): Promise<{
     return { ok: false, message: err instanceof Error ? err.message : "连接失败" };
   }
 }
-
-// ── 2. List tables ────────────────────────────────────────────────────
-
 export async function listTables(cfg: PostgreSQLConnectionConfig): Promise<DatabaseTableSummary[]> {
   const pool = getPool(cfg);
   const client = await pool.connect();
@@ -121,7 +109,6 @@ export async function listTables(cfg: PostgreSQLConnectionConfig): Promise<Datab
           rowCount = parseInt(countRes.rows[0]?.count ?? "0", 10);
         }
       } catch {
-        // ignore count errors
       }
 
       summaries.push({
@@ -137,14 +124,10 @@ export async function listTables(cfg: PostgreSQLConnectionConfig): Promise<Datab
     client.release();
   }
 }
-
-// ── 3. Table schema & columns ─────────────────────────────────────────
-
 export async function getTableSchema(cfg: PostgreSQLConnectionConfig, tableName: string): Promise<DatabaseTableSchema> {
   const pool = getPool(cfg);
   const client = await pool.connect();
-  try {
-    // 1. Column info
+  try {
     const colSql = `
       SELECT 
         column_name, 
@@ -156,9 +139,7 @@ export async function getTableSchema(cfg: PostgreSQLConnectionConfig, tableName:
       WHERE table_schema = 'public' AND table_name = $1
       ORDER BY ordinal_position ASC
     `;
-    const colRes = await client.query(colSql, [tableName]);
-
-    // 2. Primary keys
+    const colRes = await client.query(colSql, [tableName]);
     const pkSql = `
       SELECT kcu.column_name
       FROM information_schema.table_constraints tc
@@ -185,9 +166,7 @@ export async function getTableSchema(cfg: PostgreSQLConnectionConfig, tableName:
         primaryKey: isPk,
         autoIncrement: isAuto
       };
-    });
-
-    // 3. Indexes
+    });
     const idxSql = `
       SELECT indexname, indexdef 
       FROM pg_indexes 
@@ -217,9 +196,6 @@ export async function getTableSchema(cfg: PostgreSQLConnectionConfig, tableName:
     client.release();
   }
 }
-
-// ── 4. Query paginated rows ───────────────────────────────────────────
-
 export async function queryRows(cfg: PostgreSQLConnectionConfig, req: DatabaseRowsRequest): Promise<DatabaseRowsResponse> {
   const pool = getPool(cfg);
   const client = await pool.connect();
@@ -257,13 +233,9 @@ export async function queryRows(cfg: PostgreSQLConnectionConfig, req: DatabaseRo
     }
 
     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
-
-    // Count
     const countSql = `SELECT count(*) as total FROM ${safeTable} ${whereSql}`;
     const countRes = await client.query(countSql, params);
     const total = parseInt(countRes.rows[0]?.total ?? "0", 10);
-
-    // Order
     let orderSql = "";
     if (sortBy) {
       const dir = sortOrder.toLowerCase() === "desc" ? "DESC" : "ASC";
@@ -271,8 +243,6 @@ export async function queryRows(cfg: PostgreSQLConnectionConfig, req: DatabaseRo
     } else if (schema.primaryKeys.length > 0) {
       orderSql = `ORDER BY ${schema.primaryKeys.map((pk) => `${escapeIdentifier(pk)} ASC`).join(", ")}`;
     }
-
-    // Rows
     const rowsSql = `SELECT * FROM ${safeTable} ${whereSql} ${orderSql} LIMIT $${pIndex} OFFSET $${pIndex + 1}`;
     const rowsRes = await client.query(rowsSql, [...params, limit, offset]);
 
@@ -289,9 +259,6 @@ export async function queryRows(cfg: PostgreSQLConnectionConfig, req: DatabaseRo
     client.release();
   }
 }
-
-// ── 5. Insert row ─────────────────────────────────────────────────────
-
 export async function insertRow(cfg: PostgreSQLConnectionConfig, req: DatabaseInsertRowRequest): Promise<{ ok: boolean; lastInsertRowId?: string; affectedRows?: number }> {
   const pool = getPool(cfg);
   const client = await pool.connect();
@@ -322,9 +289,6 @@ export async function insertRow(cfg: PostgreSQLConnectionConfig, req: DatabaseIn
     client.release();
   }
 }
-
-// ── 6. Update row ─────────────────────────────────────────────────────
-
 export async function updateRow(cfg: PostgreSQLConnectionConfig, req: DatabaseUpdateRowRequest): Promise<{ ok: boolean; affectedRows?: number }> {
   const pool = getPool(cfg);
   const client = await pool.connect();
@@ -364,9 +328,6 @@ export async function updateRow(cfg: PostgreSQLConnectionConfig, req: DatabaseUp
     client.release();
   }
 }
-
-// ── 7. Delete row ─────────────────────────────────────────────────────
-
 export async function deleteRow(cfg: PostgreSQLConnectionConfig, req: DatabaseDeleteRowRequest): Promise<{ ok: boolean; affectedRows?: number }> {
   const pool = getPool(cfg);
   const client = await pool.connect();
@@ -396,9 +357,6 @@ export async function deleteRow(cfg: PostgreSQLConnectionConfig, req: DatabaseDe
     client.release();
   }
 }
-
-// ── 8. Create table ───────────────────────────────────────────────────
-
 export async function createTable(cfg: PostgreSQLConnectionConfig, req: DatabaseCreateTableRequest): Promise<{ ok: boolean; ddl?: string }> {
   const pool = getPool(cfg);
   const client = await pool.connect();
@@ -428,9 +386,6 @@ export async function createTable(cfg: PostgreSQLConnectionConfig, req: Database
     client.release();
   }
 }
-
-// ── 9. Drop table ─────────────────────────────────────────────────────
-
 export async function dropTable(cfg: PostgreSQLConnectionConfig, tableName: string): Promise<{ ok: boolean }> {
   const pool = getPool(cfg);
   const client = await pool.connect();
@@ -441,9 +396,6 @@ export async function dropTable(cfg: PostgreSQLConnectionConfig, tableName: stri
     client.release();
   }
 }
-
-// ── 10. Truncate table ────────────────────────────────────────────────
-
 export async function truncateTable(cfg: PostgreSQLConnectionConfig, tableName: string): Promise<{ ok: boolean; affectedRows?: number }> {
   const pool = getPool(cfg);
   const client = await pool.connect();
@@ -454,9 +406,6 @@ export async function truncateTable(cfg: PostgreSQLConnectionConfig, tableName: 
     client.release();
   }
 }
-
-// ── 11. Execute raw SQL query (Console) ────────────────────────────────
-
 export async function executeQuery(cfg: PostgreSQLConnectionConfig, sql: string, maxRows = 500): Promise<DatabaseQueryResult> {
   const pool = getPool(cfg);
   const client = await pool.connect();
@@ -502,9 +451,6 @@ export async function executeQuery(cfg: PostgreSQLConnectionConfig, sql: string,
     client.release();
   }
 }
-
-// ── 12. Export table ──────────────────────────────────────────────────
-
 export async function exportTable(
   cfg: PostgreSQLConnectionConfig,
   tableName: string | undefined,
@@ -583,8 +529,6 @@ export async function exportTable(
         totalRows: count
       };
     }
-
-    // Default CSV
     if (rows.length === 0) {
       const colRes = await client.query(
         "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1",
@@ -624,9 +568,6 @@ export async function exportTable(
     client.release();
   }
 }
-
-// ── 13. Import table ──────────────────────────────────────────────────
-
 export async function importTable(
   cfg: PostgreSQLConnectionConfig,
   tableName: string,
@@ -655,7 +596,6 @@ export async function importTable(
         const parsed = JSON.parse(content);
         records = Array.isArray(parsed) ? parsed : [parsed];
       } else {
-        // Parse CSV
         const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
         if (lines.length <= 1) {
           await client.query("ROLLBACK");

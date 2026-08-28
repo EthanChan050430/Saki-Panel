@@ -673,9 +673,7 @@ export async function runSakiAgent(
         todos,
         updatedAt: Date.now()
       });
-    } catch {
-      // ignore memory persistence errors
-    }
+    } catch {}
 
     let usageResult: { tokensUsed: number; pointsUsed: number; isUnlimited: boolean; remainingPoints: number } | undefined;
     try {
@@ -686,9 +684,7 @@ export async function runSakiAgent(
           `Agent: ${String(runtime.input.message || "任务执行").slice(0, 50)}`
         );
       }
-    } catch {
-      // ignore points record failure
-    }
+    } catch {}
 
     await emitAgentFinalText(events, message, lastForwardedDeltaContent);
     return {
@@ -1062,9 +1058,7 @@ IMPORTANT: editLines or replaceInFile for existing files; writeFile only for NEW
       if (cleaned && !looksLikeToolCallPayload(cleaned)) {
         return finishAgentResponse("natural_wrapup", cleaned);
       }
-    } catch {
-      // Ignore error during wrap-up
-    }
+    } catch {}
   }
 
   // Synthesize a structured engineering outcome if the model did not emit text:

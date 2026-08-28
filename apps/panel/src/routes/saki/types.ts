@@ -17,6 +17,7 @@ import type {
   SakiWorkspaceContext,
   UpdateScheduledTaskRequest
 } from "@webops/shared";
+import { sakiAttachmentMentionToken, sakiListedModelSupportsVision } from "@webops/shared";
 export type { SakiSkillSummary } from "@webops/shared";
 import type { SakiSkillSummary } from "@webops/shared";
 import type { FastifyRequest } from "fastify";
@@ -923,10 +924,10 @@ export const maxSakiAttachmentTextChars = 18000;
 export const maxSakiAttachmentDataUrlChars = 4_000_000;
 export const maxAgentConsoleInputChars = 16000;
 export const sakiSkillFileName = "SKILL.md";
-export const maxSakiSkillContentChars = 60000;
-export const maxAgentSkillContentChars = 14000;
-export const maxAutoAppliedSakiSkills = 3;
-export const maxAutoAppliedSkillContextChars = 24000;
+export const maxSakiSkillContentChars = 10_000_000;
+export const maxAgentSkillContentChars = 500_000;
+export const maxAutoAppliedSakiSkills = 5;
+export const maxAutoAppliedSkillContextChars = 500_000;
 export const maxAgentSkillSearchResults = 20;
 export const autoApplySkillScoreThreshold = 5;
 export const suggestSkillScoreThreshold = 3;
@@ -1253,10 +1254,11 @@ export function renderSakiAttachmentContext(attachments: readonly SakiInputAttac
         attachment.width && attachment.height ? `dimensions=${attachment.width}x${attachment.height}` : "",
         attachment.capturedAt ? `capturedAt=${attachment.capturedAt}` : ""
       ].filter(Boolean);
+      const mention = sakiAttachmentMentionToken(attachment);
       const text = typeof attachment.text === "string"
-        ? `\nContent:\n\`\`\`text\n${attachment.text.trimEnd()}\n\`\`\``
+        ? `\nReferenced as ${mention}\nOCR / text content:\n\`\`\`text\n${attachment.text.trimEnd()}\n\`\`\``
         : attachment.dataUrl
-          ? "\nImage data is attached as a vision input when the configured model/provider supports images."
+          ? `\nReferenced as ${mention}\nImage data is attached as a vision input.`
           : "\nBinary or non-text content was attached, but no text preview is available.";
       return `${metadata.join("\n")}${text}`;
     })
@@ -1301,7 +1303,14 @@ export function modelOptionFromItem(provider: string, raw: unknown): SakiModelOp
     id,
     name: id,
     label: typeof raw === "string" ? id : trimString(item?.label) || trimString(item?.name) || id,
-    vendor: typeof raw === "string" ? "" : trimString(item?.owned_by) || trimString(item?.vendor)
+    vendor: typeof raw === "string" ? "" : trimString(item?.owned_by) || trimString(item?.vendor),
+    supportsVision: sakiListedModelSupportsVision({
+      id,
+      provider,
+      name: id,
+      label: typeof raw === "string" ? id : trimString(item?.label) || trimString(item?.name) || id,
+      supportsVision: item?.supportsVision === true
+    })
   };
 }
 

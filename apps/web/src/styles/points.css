@@ -1,0 +1,1079 @@
+/* ==========================================================================
+   Points System & Admin Ledger
+   ========================================================================== */
+
+
+/* ==========================================================================
+   Points System & Usage Analysis Styles
+   ========================================================================== */
+
+/* 助理回复下方纯文本用量展示（纯文字，无背景无边框） */
+.saki-token-usage-text {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #8e8e93;
+  margin-top: 6px;
+  padding: 0 2px;
+  user-select: text;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+  transition: opacity 0.2s ease, color 0.2s ease;
+}
+
+[data-theme="dark"] .saki-token-usage-text {
+  color: #98989f;
+}
+
+.saki-token-usage-text:hover {
+  opacity: 1;
+}
+
+/* 顶栏右上角积分徽章可点击交互 */
+.topbar-points-badge {
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.2s ease, border-color 0.2s ease;
+  user-select: none;
+}
+
+.topbar-points-badge:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 117, 172, 0.12);
+  border-color: rgba(255, 117, 172, 0.35);
+}
+
+.topbar-points-badge:active {
+  transform: scale(0.96);
+}
+
+/* 积分弹窗层级：需高于 .saki-panel (z-index: 121) */
+.points-modal-backdrop,
+.admin-points-backdrop {
+  z-index: 500;
+}
+
+/* 模态框通用排版 */
+.points-usage-modal,
+.admin-points-modal {
+  width: 100%;
+  max-width: 720px;
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.15), 0 8px 24px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 88vh;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="dark"] .points-usage-modal,
+[data-theme="dark"] .admin-points-modal {
+  background: #18181f;
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.points-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="dark"] .points-modal-header {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.points-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.points-title-icon {
+  color: #ff75ac;
+  flex-shrink: 0;
+}
+
+.points-modal-title h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: #1c1c1e;
+}
+
+[data-theme="dark"] .points-modal-title h3 {
+  color: #f5f5f7;
+}
+
+.points-modal-title p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #86868b;
+}
+
+.points-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.points-modal-body {
+  padding: 20px 24px 24px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* 概览统计卡片网格 */
+.points-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+@media (max-width: 640px) {
+  .points-stats-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.points-stat-card {
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+[data-theme="dark"] .points-stat-card {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.points-stat-icon-wrap {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.points-icon-amber {
+  background: rgba(245, 158, 11, 0.12);
+  color: #d97706;
+}
+
+.points-icon-blue {
+  background: rgba(59, 130, 246, 0.12);
+  color: #2563eb;
+}
+
+.points-icon-pink {
+  background: rgba(255, 117, 172, 0.14);
+  color: #ff5292;
+}
+
+.points-stat-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.points-stat-label {
+  font-size: 11.5px;
+  color: #86868b;
+  margin-bottom: 2px;
+}
+
+.points-stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1c1c1e;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-theme="dark"] .points-stat-value {
+  color: #f5f5f7;
+}
+
+.points-stat-value small {
+  font-size: 12px;
+  font-weight: 500;
+  color: #86868b;
+}
+
+.points-stat-unlimited {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #8b5cf6;
+}
+
+.points-stat-unlimited strong {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* 图表区域 */
+.points-chart-section {
+  background: rgba(0, 0, 0, 0.015);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+
+[data-theme="dark"] .points-chart-section {
+  background: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+.points-section-heading {
+  margin-bottom: 12px;
+}
+
+.points-section-heading h4 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #3a3a3c;
+}
+
+[data-theme="dark"] .points-section-heading h4 {
+  color: #e5e5ea;
+}
+
+.points-chart-container {
+  height: 220px;
+  width: 100%;
+  position: relative;
+}
+
+.points-chart-loading {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #86868b;
+  font-size: 12px;
+}
+
+.points-chart-tooltip {
+  background: rgba(28, 28, 30, 0.92);
+  backdrop-filter: blur(12px);
+  color: #ffffff;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tooltip-date {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: #e5e5ea;
+}
+
+.tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  line-height: 1.5;
+}
+
+.tooltip-row span {
+  color: #a1a1aa;
+}
+
+/* 消费明细表格 */
+.points-records-section {
+  background: rgba(0, 0, 0, 0.015);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+
+[data-theme="dark"] .points-records-section {
+  background: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+.points-records-table-wrap {
+  overflow-x: auto;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.points-records-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.points-records-table th {
+  text-align: left;
+  padding: 8px 10px;
+  font-weight: 600;
+  color: #86868b;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  position: sticky;
+  top: 0;
+  background: #fdfdfd;
+  z-index: 1;
+}
+
+[data-theme="dark"] .points-records-table th {
+  background: #1b1b22;
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.points-records-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  color: #1c1c1e;
+}
+
+[data-theme="dark"] .points-records-table td {
+  border-bottom-color: rgba(255, 255, 255, 0.04);
+  color: #e5e5ea;
+}
+
+.points-records-table .time-cell {
+  color: #86868b;
+  white-space: nowrap;
+  font-size: 11.5px;
+}
+
+.points-records-table .empty-cell {
+  text-align: center;
+  padding: 24px;
+  color: #86868b;
+}
+
+.point-delta {
+  font-weight: 600;
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11.5px;
+}
+
+.point-delta.negative {
+  color: #e11d48;
+  background: rgba(225, 29, 72, 0.08);
+}
+
+.point-delta.positive {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.point-delta.zero {
+  color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.08);
+}
+
+/* 用户列表中的积分徽章 */
+.user-points-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(245, 158, 11, 0.1);
+  color: #d97706;
+}
+
+[data-theme="dark"] .user-points-badge {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+}
+
+.user-points-badge.unlimited {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.15), rgba(236, 72, 153, 0.15));
+  color: #a855f7;
+  border: 1px solid rgba(168, 85, 247, 0.25);
+}
+
+[data-theme="dark"] .user-points-badge.unlimited {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.22), rgba(236, 72, 153, 0.22));
+  color: #c084fc;
+}
+
+/* 管理员积分模态框高级美化 */
+.admin-points-modal {
+  max-width: 580px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.18), 0 8px 24px rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+}
+
+[data-theme="dark"] .admin-points-modal {
+  background: rgba(22, 22, 30, 0.95);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 32px 90px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.points-title-icon-wrap {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(255, 117, 172, 0.16) 0%, rgba(244, 63, 94, 0.08) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 117, 172, 0.25);
+}
+
+.points-modal-subtitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  color: #64748b;
+}
+
+[data-theme="dark"] .points-modal-subtitle {
+  color: #94a3b8;
+}
+
+.user-curr-points-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: rgba(255, 117, 172, 0.12);
+  color: #ff5292;
+  border: 1px solid rgba(255, 117, 172, 0.25);
+}
+
+[data-theme="dark"] .user-curr-points-tag {
+  background: rgba(255, 117, 172, 0.18);
+  color: #ff85b8;
+}
+
+/* 胶囊分段 Tab 切换栏 */
+.admin-points-tabs-segmented {
+  margin: 14px 24px 0;
+  padding: 4px;
+  border-radius: 12px;
+  display: flex;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="dark"] .admin-points-tabs-segmented {
+  background: rgba(0, 0, 0, 0.35);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+.admin-points-tab-btn {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  flex: 1;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #64748b;
+  background: transparent;
+  border: none;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  user-select: none;
+}
+
+[data-theme="dark"] .admin-points-tab-btn {
+  color: #94a3b8;
+}
+
+.admin-points-tab-btn:hover:not(.active) {
+  color: #1e293b;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="dark"] .admin-points-tab-btn:hover:not(.active) {
+  color: #f1f5f9;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.admin-points-tab-btn.active {
+  background: #ffffff !important;
+  color: #ff5292 !important;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="dark"] .admin-points-tab-btn.active {
+  background: rgba(255, 117, 172, 0.16) !important;
+  color: #ff85b8 !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3), inset 0 0 0 1px rgba(255, 117, 172, 0.3);
+}
+
+.tab-record-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(255, 117, 172, 0.15);
+  color: #ff5292;
+}
+
+[data-theme="dark"] .tab-record-count {
+  background: rgba(255, 117, 172, 0.25);
+  color: #ff85b8;
+}
+
+.admin-form-alert {
+  margin: 12px 24px 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.admin-form-alert.error {
+  color: #e11d48;
+  background: rgba(225, 29, 72, 0.08);
+  border: 1px solid rgba(225, 29, 72, 0.2);
+}
+
+.admin-form-alert.success {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.admin-points-body {
+  padding: 22px 24px 26px;
+}
+
+.admin-points-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+}
+
+.admin-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.admin-form-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+[data-theme="dark"] .admin-form-label {
+  color: #f1f5f9;
+}
+
+.label-sub {
+  font-size: 12px;
+  font-weight: 400;
+  color: #64748b;
+}
+
+[data-theme="dark"] .label-sub {
+  color: #94a3b8;
+}
+
+/* 操作类型卡片切换 */
+.admin-action-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.admin-action-card {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  min-height: 64px;
+  border-radius: 12px;
+  border: 1.5px solid rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.02);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  outline: none;
+  line-height: 1.35;
+}
+
+[data-theme="dark"] .admin-action-card {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.admin-action-card:hover {
+  border-color: rgba(255, 117, 172, 0.4);
+  background: rgba(255, 117, 172, 0.04);
+  transform: translateY(-1px);
+}
+
+.admin-action-card .card-icon {
+  color: #64748b;
+  flex-shrink: 0;
+  transition: color 0.2s ease;
+}
+
+[data-theme="dark"] .admin-action-card .card-icon {
+  color: #94a3b8;
+}
+
+.admin-action-card .card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.admin-action-card .card-info strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+[data-theme="dark"] .admin-action-card .card-info strong {
+  color: #f1f5f9;
+}
+
+.admin-action-card .card-info small {
+  font-size: 11px;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+[data-theme="dark"] .admin-action-card .card-info small {
+  color: #94a3b8;
+}
+
+.admin-action-card.selected {
+  border-color: #ff75ac !important;
+  background: linear-gradient(135deg, rgba(255, 117, 172, 0.14) 0%, rgba(255, 82, 146, 0.08) 100%) !important;
+  box-shadow: 0 0 0 1px rgba(255, 117, 172, 0.35), 0 4px 14px rgba(255, 117, 172, 0.15) !important;
+  transform: translateY(-1px);
+}
+
+.admin-action-card.selected .card-icon {
+  color: #ff5292 !important;
+}
+
+.admin-action-card.selected .card-info strong {
+  color: #ff5292 !important;
+}
+
+/* 输入框与前后缀 */
+.admin-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.admin-points-input {
+  width: 100%;
+  height: 42px;
+  padding: 0 54px 0 14px;
+  border-radius: 12px;
+  border: 1.5px solid rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.7);
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e293b;
+  outline: none;
+  box-sizing: border-box;
+  transition: all 0.2s ease;
+}
+
+[data-theme="dark"] .admin-points-input {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(30, 30, 42, 0.7);
+  color: #f1f5f9;
+}
+
+.admin-points-input:focus {
+  border-color: #ff75ac;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 0 3px rgba(255, 117, 172, 0.2);
+}
+
+[data-theme="dark"] .admin-points-input:focus {
+  border-color: #ff75ac;
+  background: rgba(36, 36, 50, 0.95);
+  box-shadow: 0 0 0 3px rgba(255, 117, 172, 0.25);
+}
+
+.admin-points-input::placeholder {
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.admin-input-suffix {
+  position: absolute;
+  right: 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #64748b;
+  pointer-events: none;
+}
+
+[data-theme="dark"] .admin-input-suffix {
+  color: #94a3b8;
+}
+
+/* 变动计算实时预览卡片 */
+.points-calc-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.025);
+  border: 1px dashed rgba(0, 0, 0, 0.1);
+  margin-top: 4px;
+}
+
+[data-theme="dark"] .points-calc-preview {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.calc-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.calc-label {
+  font-size: 11px;
+  color: #64748b;
+}
+
+[data-theme="dark"] .calc-label {
+  color: #94a3b8;
+}
+
+.calc-val {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+[data-theme="dark"] .calc-val {
+  color: #f1f5f9;
+}
+
+.calc-val.delta.plus {
+  color: #10b981;
+}
+
+.calc-val.delta.minus {
+  color: #e11d48;
+}
+
+.calc-val.highlight {
+  color: #ff5292;
+  font-size: 14px;
+}
+
+.calc-arrow {
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+/* 无限积分大开关卡片 */
+.admin-switch-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1.5px solid rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.02);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+[data-theme="dark"] .admin-switch-card {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.admin-switch-card:hover {
+  border-color: rgba(168, 85, 247, 0.35);
+  background: rgba(168, 85, 247, 0.04);
+}
+
+.admin-switch-card.active {
+  border-color: #a855f7;
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.12) 0%, rgba(236, 72, 153, 0.06) 100%);
+  box-shadow: 0 4px 16px rgba(168, 85, 247, 0.15);
+}
+
+.switch-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.switch-icon-wrap {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(168, 85, 247, 0.12);
+  color: #a855f7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.switch-left strong {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #1e293b;
+  display: block;
+}
+
+[data-theme="dark"] .switch-left strong {
+  color: #f1f5f9;
+}
+
+.switch-left p {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: #64748b;
+}
+
+[data-theme="dark"] .switch-left p {
+  color: #94a3b8;
+}
+
+.custom-switch {
+  width: 44px;
+  height: 24px;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.15);
+  position: relative;
+  transition: background 0.25s ease;
+  flex-shrink: 0;
+}
+
+[data-theme="dark"] .custom-switch {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.custom-switch.checked {
+  background: #a855f7;
+}
+
+.switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.custom-switch.checked .switch-thumb {
+  transform: translateX(20px);
+}
+
+/* 底部操作栏 */
+.admin-points-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 18px;
+  margin-top: 4px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="dark"] .admin-points-footer {
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+.admin-points-footer .secondary-button {
+  height: 38px;
+  padding: 0 20px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.06);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  color: #374151;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+[data-theme="dark"] .admin-points-footer .secondary-button {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  color: #e2e8f0 !important;
+}
+
+.admin-points-footer .secondary-button:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="dark"] .admin-points-footer .secondary-button:hover {
+  background: rgba(255, 255, 255, 0.15) !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+}
+
+.admin-points-footer .primary-button {
+  height: 38px;
+  padding: 0 22px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #ff75ac 0%, #ff5292 100%) !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(255, 117, 172, 0.4);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.admin-points-footer .primary-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(255, 117, 172, 0.5);
+}
+
+/* ==========================================================================
+   Device performance: keep the look, drop expensive paint on weak/mobile
+   ========================================================================== */
+
+html.perf-lite {
+  --ease-spring: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 0.12s;
+  --duration-normal: 0.18s;
+  --duration-slow: 0.26s;
+  --duration-page: 0.28s;
+  --duration-theme: 0.28s;
+  scroll-behavior: auto;
+}
+
+html.perf-lite .elegant-cursor-canvas {
+  display: none !important;
+}
+
+html.perf-lite * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.perf-lite .topbar-inner,
+html.perf-lite .modal-panel,
+html.perf-lite .modal-backdrop,
+html.perf-lite .sidebar {
+  backdrop-filter: blur(12px) saturate(130%) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(130%) !important;
+}
+
+html.perf-lite .sidebar,
+html.perf-lite .topbar-inner,
+html.perf-lite .modal-panel {
+  contain: layout style;
+}
+
+@media (hover: none) {
+  .topbar-inner:hover,
+  .sidebar .nav-item:hover,
+  .icon-button:hover {
+    transform: none;
+  }
+}
+
+.sidebar,
+.modal-backdrop,
+.modal-panel {
+  transform: translateZ(0);
+}
+
+.workspace,
+.panel-block,
+.table-wrap {
+  contain: layout;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.08s !important;
+    scroll-behavior: auto !important;
+  }
+
+  .elegant-cursor-canvas {
+    display: none !important;
+  }
+}
+
+
+
+
+/* pointsModalAnimAdded */
+
+.points-modal-backdrop,
+.admin-points-backdrop {
+  animation: glassModalOverlayIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+}
+
+.points-usage-modal,
+.admin-points-modal {
+  animation: glassModalContainerIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+  will-change: transform, opacity, filter;
+  transform-origin: center center;
+}
+

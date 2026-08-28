@@ -22,9 +22,6 @@ export interface RedisConnectionConfig {
   database?: number | string | undefined;
   username?: string | undefined;
 }
-
-// ── Connection client cache ───────────────────────────────────────────
-
 const clients = new Map<string, RedisClient>();
 
 function clientKey(cfg: RedisConnectionConfig): string {
@@ -66,9 +63,6 @@ export async function closeAllClients(): Promise<void> {
   await Promise.all(Array.from(clients.values()).map((c) => c.quit().catch(() => {})));
   clients.clear();
 }
-
-// ── 1. Test connection ────────────────────────────────────────────────
-
 export async function testConnection(cfg: RedisConnectionConfig): Promise<{ ok: boolean; message: string }> {
   try {
     const client = getClient(cfg);
@@ -81,9 +75,6 @@ export async function testConnection(cfg: RedisConnectionConfig): Promise<{ ok: 
     return { ok: false, message: err instanceof Error ? err.message : "Redis 连接失败" };
   }
 }
-
-// ── 2. Redis server stats ─────────────────────────────────────────────
-
 export async function getRedisStats(cfg: RedisConnectionConfig): Promise<{
   version: string;
   usedMemoryHuman: string;
@@ -112,9 +103,6 @@ export async function getRedisStats(cfg: RedisConnectionConfig): Promise<{
     uptimeDays: uptimeMatch ? parseInt(uptimeMatch[1]!, 10) : 0
   };
 }
-
-// ── 3. List tables (Key spaces & Types) ────────────────────────────────
-
 export async function listTables(cfg: RedisConnectionConfig): Promise<DatabaseTableSummary[]> {
   const client = getClient(cfg);
   const totalKeys = await client.dbsize();
@@ -128,9 +116,6 @@ export async function listTables(cfg: RedisConnectionConfig): Promise<DatabaseTa
     { name: "有序集合 (ZSets)", type: "view", columnCount: 5 }
   ];
 }
-
-// ── 4. Table schema ───────────────────────────────────────────────────
-
 const REDIS_COLUMNS: DatabaseColumnInfo[] = [
   { name: "key", type: "STRING", notNull: true, primaryKey: true },
   { name: "type", type: "KEY_TYPE", notNull: true, primaryKey: false },
@@ -148,9 +133,6 @@ export async function getTableSchema(cfg: RedisConnectionConfig, tableName: stri
     ddl: undefined
   };
 }
-
-// ── 5. Query rows (Scan keys and values) ───────────────────────────────
-
 export async function queryRows(cfg: RedisConnectionConfig, req: DatabaseRowsRequest): Promise<DatabaseRowsResponse> {
   const client = getClient(cfg);
   const { page = 1, pageSize = 50, search, filterColumn, filterValue, tableName } = req;
@@ -255,9 +237,6 @@ export async function queryRows(cfg: RedisConnectionConfig, req: DatabaseRowsReq
     totalPages: Math.ceil(total / limit) || 1
   };
 }
-
-// ── 6. Insert row (Create / Set key) ───────────────────────────────────
-
 export async function insertRow(cfg: RedisConnectionConfig, req: DatabaseInsertRowRequest): Promise<{ ok: boolean; lastInsertRowId?: string; affectedRows?: number }> {
   const client = getClient(cfg);
   const { row } = req;
@@ -321,9 +300,6 @@ export async function insertRow(cfg: RedisConnectionConfig, req: DatabaseInsertR
 
   return { ok: true, lastInsertRowId: key, affectedRows: 1 };
 }
-
-// ── 7. Update row (Update value or TTL) ────────────────────────────────
-
 export async function updateRow(cfg: RedisConnectionConfig, req: DatabaseUpdateRowRequest): Promise<{ ok: boolean; affectedRows?: number }> {
   const client = getClient(cfg);
   const { primaryKeys, values } = req;
@@ -356,9 +332,6 @@ export async function updateRow(cfg: RedisConnectionConfig, req: DatabaseUpdateR
 
   return { ok: true, affectedRows: 1 };
 }
-
-// ── 8. Delete row (Delete key) ────────────────────────────────────────
-
 export async function deleteRow(cfg: RedisConnectionConfig, req: DatabaseDeleteRowRequest): Promise<{ ok: boolean; affectedRows?: number }> {
   const client = getClient(cfg);
   const key = String(req.primaryKeys.key || "").trim();
@@ -367,17 +340,11 @@ export async function deleteRow(cfg: RedisConnectionConfig, req: DatabaseDeleteR
   const count = await client.del(key);
   return { ok: true, affectedRows: count };
 }
-
-// ── 9. Truncate table (Flush current database) ─────────────────────────
-
 export async function truncateTable(cfg: RedisConnectionConfig, _tableName: string): Promise<{ ok: boolean; affectedRows?: number }> {
   const client = getClient(cfg);
   await client.flushdb();
   return { ok: true, affectedRows: 0 };
 }
-
-// ── 10. Execute command (Redis CLI) ───────────────────────────────────
-
 function parseCommandLine(cmd: string): string[] {
   const parts: string[] = [];
   let current = "";
@@ -460,9 +427,6 @@ export async function executeCommand(cfg: RedisConnectionConfig, commandLine: st
     };
   }
 }
-
-// ── 11. Export Redis keys ─────────────────────────────────────────────
-
 export async function exportTable(
   cfg: RedisConnectionConfig,
   _tableName: string | undefined,
@@ -494,8 +458,6 @@ export async function exportTable(
       totalRows: data.length
     };
   }
-
-  // CSV
   const headers = ["key", "type", "ttl", "value"];
   const lines = [headers.join(",")];
   for (const item of data) {
@@ -511,9 +473,6 @@ export async function exportTable(
     totalRows: data.length
   };
 }
-
-// ── 12. Import Redis keys ─────────────────────────────────────────────
-
 export async function importTable(
   cfg: RedisConnectionConfig,
   _tableName: string,
