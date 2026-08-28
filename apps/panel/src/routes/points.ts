@@ -4,6 +4,7 @@ import { loadCurrentUser, requirePermission } from "../auth.js";
 import { writeAuditLog } from "../audit.js";
 import {
   adminUpdateUserPoints,
+  consumeUserPoints,
   getTargetUserPointRecords,
   getUserPointsSummary
 } from "../points.js";
@@ -19,6 +20,31 @@ export async function registerPointsRoutes(app: FastifyInstance): Promise<void> 
     const summary = await getUserPointsSummary(user.id);
     return summary;
   });
+
+  // 当前用户消费积分（如投喂食物）
+  app.post<{ Body: { points: number; description?: string } }>(
+    "/api/points/consume",
+    { preHandler: [app.authenticate] },
+    async (request, reply) => {
+      const user = await loadCurrentUser(request.user.sub);
+      if (!user) {
+        reply.code(401).send({ message: "未授权" });
+        return;
+      }
+      const { points, description } = request.body || {};
+      if (typeof points !== "number" || points < 0) {
+        reply.code(400).send({ message: "消耗积分数值不合法" });
+        return;
+      }
+      try {
+        const result = await consumeUserPoints(user.id, points, description || "投喂 Saki");
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "扣减积分失败";
+        reply.code(400).send({ message });
+      }
+    }
+  );
 
   // 管理员调整目标用户的积分 / 设置无限积分
   app.post<{ Params: { id: string }; Body: UpdateUserPointsRequest }>(

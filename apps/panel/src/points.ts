@@ -259,3 +259,55 @@ export async function getTargetUserPointRecords(targetUserId: string, take = 50)
     createdAt: r.createdAt.toISOString()
   }));
 }
+
+/**
+ * 消费用户积分（如投喂食物、购买道具等）
+ */
+export async function consumeUserPoints(
+  userId: string,
+  pointsToDeduct: number,
+  description = "投喂 Saki"
+): Promise<{ points: number; unlimitedPoints: boolean }> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { points: true, unlimitedPoints: true }
+  });
+
+  if (!user) {
+    throw new Error("用户不存在");
+  }
+
+  const cost = Math.max(0, Math.round(pointsToDeduct));
+  const isUnlimited = Boolean(user.unlimitedPoints);
+
+  if (!isUnlimited && user.points < cost) {
+    throw new InsufficientPointsError("当前 Saki 积分不足");
+  }
+
+  return await prisma.$transaction(async (tx) => {
+    let nextBalance = user.points;
+    if (!isUnlimited && cost > 0) {
+      nextBalance = Math.max(0, user.points - cost);
+      await tx.user.update({
+        where: { id: userId },
+        data: { points: nextBalance }
+      });
+    }
+
+    await tx.pointRecord.create({
+      data: {
+        userId,
+        delta: isUnlimited ? 0 : -cost,
+        balanceAfter: isUnlimited ? null : nextBalance,
+        type: "saki_feed",
+        description: isUnlimited ? `${description} (无限积分)` : description
+      }
+    });
+
+    return {
+      points: nextBalance,
+      unlimitedPoints: isUnlimited
+    };
+  });
+}
+

@@ -51,6 +51,7 @@ model User {
   accessKeys          UserAccessKey[]
   points              Int                  @default(0)
   unlimitedPoints     Boolean              @default(false)
+  favorability        Int                  @default(0)
   pointRecords        PointRecord[]
 
   @@map("users")

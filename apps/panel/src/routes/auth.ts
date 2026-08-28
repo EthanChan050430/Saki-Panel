@@ -355,6 +355,37 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     return currentUser;
   });
 
+  app.post("/api/user/favorability", { preHandler: app.authenticate }, async (request, reply) => {
+    if (isAuthDisabled()) {
+      return { favorability: 0 };
+    }
+
+    const { delta, set } = (request.body as { delta?: number; set?: number }) || {};
+    const existing = await prisma.user.findUnique({
+      where: { id: request.user.sub },
+      select: { id: true, favorability: true, status: true }
+    });
+
+    if (!existing || existing.status !== "ACTIVE") {
+      reply.code(401).send({ message: "Unauthorized" });
+      return;
+    }
+
+    let nextFav = existing.favorability ?? 0;
+    if (typeof set === "number") {
+      nextFav = Math.max(0, Math.round(set));
+    } else if (typeof delta === "number") {
+      nextFav = Math.max(0, nextFav + Math.round(delta));
+    }
+
+    await prisma.user.update({
+      where: { id: existing.id },
+      data: { favorability: nextFav }
+    });
+
+    return { favorability: nextFav };
+  });
+
   app.post("/api/auth/logout", { preHandler: app.authenticate }, async (request) => {
     await writeAuditLog({
       request,

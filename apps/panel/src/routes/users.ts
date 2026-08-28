@@ -38,6 +38,7 @@ type UserWithRoles = {
   updatedAt: Date;
   points?: number;
   unlimitedPoints?: boolean;
+  favorability?: number;
   roles: Array<{
     role: {
       id: string;
@@ -112,7 +113,8 @@ function toManagedUser(user: UserWithRoles): ManagedUser {
     createdAt: user.createdAt.toISOString(),
     updatedAt: user.updatedAt.toISOString(),
     points: user.points ?? 0,
-    unlimitedPoints: Boolean(user.unlimitedPoints)
+    unlimitedPoints: Boolean(user.unlimitedPoints),
+    favorability: (user as { favorability?: number }).favorability ?? 0
   };
 }
 

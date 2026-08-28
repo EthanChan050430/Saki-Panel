@@ -3631,6 +3631,35 @@ body.saki-selection-capture-active .saki-launcher {
   100% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
 }
 
+.saki-video-bubble.streaming-reply {
+  width: auto;
+  max-width: min(88vw, 320px);
+  max-height: 160px;
+  overflow-y: auto;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  padding: 10px 14px;
+  pointer-events: auto;
+  user-select: text;
+}
+
+.saki-bubble-typing-cursor {
+  display: inline-block;
+  margin-left: 2px;
+  color: #ff75ac;
+  font-weight: bold;
+  animation: sakiCursorBlink 0.8s infinite;
+}
+
+@keyframes sakiCursorBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
 .saki-video-character-wrap {
   position: absolute;
   left: 50%;

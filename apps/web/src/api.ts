@@ -1154,6 +1154,20 @@ export const api = {
   myPoints(token: string) {
     return requestJson<UserPointsSummary>("/api/points/me", {}, token);
   },
+  consumePoints(token: string, points: number, description?: string) {
+    return requestJson<{ points: number; unlimitedPoints: boolean }>(
+      "/api/points/consume",
+      { method: "POST", body: JSON.stringify({ points, description }) },
+      token
+    );
+  },
+  addFavorability(token: string, delta: number) {
+    return requestJson<{ favorability: number }>(
+      "/api/user/favorability",
+      { method: "POST", body: JSON.stringify({ delta }) },
+      token
+    );
+  },
   updateUserPoints(token: string, userId: string, input: UpdateUserPointsRequest) {
     return requestJson<{ points: number; unlimitedPoints: boolean }>(
       `/api/users/${userId}/points`,

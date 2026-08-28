@@ -278,6 +278,8 @@ export function SakiFloatingChat({
   onLauncherDraggingChange,
   onPointsBalanceChange,
   pointsSummary,
+  currentUserFavorability = 0,
+  onFavorabilityChange,
   pullDragRequest = null,
   onPullDragConsumed
 }: {
@@ -303,6 +305,8 @@ export function SakiFloatingChat({
   onLauncherDraggingChange?: (dragging: boolean) => void;
   onPointsBalanceChange?: (balance: { points: number; unlimitedPoints: boolean }) => void;
   pointsSummary?: { points: number; unlimitedPoints: boolean };
+  currentUserFavorability?: number;
+  onFavorabilityChange?: (fav: number) => void;
   pullDragRequest?: SakiPullDragRequest | null;
   onPullDragConsumed?: () => void;
 }) {
@@ -373,6 +377,9 @@ export function SakiFloatingChat({
   });
   const roomBgInputRef = useRef<HTMLInputElement | null>(null);
   const [sakiFavorabilityExp, setSakiFavorabilityExp] = useState<number>(() => {
+    if (typeof currentUserFavorability === "number") {
+      return Math.max(0, currentUserFavorability);
+    }
     try {
       const saved = localStorage.getItem("saki_favorability");
       return saved !== null ? Math.max(0, parseInt(saved, 10)) : 120;
@@ -380,6 +387,12 @@ export function SakiFloatingChat({
       return 120;
     }
   });
+
+  useEffect(() => {
+    if (typeof currentUserFavorability === "number") {
+      setSakiFavorabilityExp(Math.max(0, currentUserFavorability));
+    }
+  }, [currentUserFavorability]);
   const [favorabilityPop, setFavorabilityPop] = useState<{ id: number; amount: number } | null>(null);
   const favorabilityPopTimerRef = useRef<number | null>(null);
 
@@ -456,10 +469,14 @@ export function SakiFloatingChat({
   }
 
   function addFavorabilityExp(amount: number) {
+    if (token) {
+      void api.addFavorability(token, amount).catch(() => {});
+    }
     setSakiFavorabilityExp((prev) => {
       const oldLevel = getFavorabilityLevelInfo(prev).level;
       const next = prev + amount;
       const newLevel = getFavorabilityLevelInfo(next).level;
+      onFavorabilityChange?.(next);
       try {
         localStorage.setItem("saki_favorability", String(next));
       } catch {}
@@ -530,6 +547,14 @@ export function SakiFloatingChat({
       const nextPts = Math.max(0, numericSakiPoints - food.cost);
       onPointsBalanceChange?.({ points: nextPts, unlimitedPoints: false });
       addUserPoints(-food.cost);
+      if (token) {
+        void api.consumePoints(token, food.cost, `投喂 Saki: ${food.name}`).then((res) => {
+          onPointsBalanceChange?.({ points: res.points, unlimitedPoints: res.unlimitedPoints });
+          setUserPoints(res.points);
+        }).catch((err) => {
+          console.error("Failed to deduct points on feed:", err);
+        });
+      }
     }
     addFavorabilityExp(food.favorability);
     setSakiPokeMood(food.mood);
@@ -2513,15 +2538,23 @@ export function SakiFloatingChat({
   const contextPreview = contextText ? compactContextText(contextText.replace(/\s+/g, " "), 180) : "";
   const hasStreamingAssistant = messages.some((message) => message.role === "assistant" && message.streaming);
   const isAgentBusy = Boolean(loading || hasStreamingAssistant);
-
   useEffect(() => {
     if (prevBusyRef.current && !isAgentBusy) {
       if (mobileActiveTab === "video") {
         setChatPulseAlert(true);
+        const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant" && m.content?.trim());
+        if (lastAssistant && lastAssistant.content) {
+          setSakiVideoBubble(lastAssistant.content.trim());
+          if (pokeTimerRef.current) window.clearTimeout(pokeTimerRef.current);
+          pokeTimerRef.current = window.setTimeout(() => {
+            setSakiVideoBubble(null);
+            pokeTimerRef.current = null;
+          }, 15000);
+        }
       }
     }
     prevBusyRef.current = isAgentBusy;
-  }, [isAgentBusy, mobileActiveTab]);
+  }, [isAgentBusy, mobileActiveTab, messages]);
 
   useEffect(() => {
     if (mobileActiveTab === "chat") {
@@ -2690,8 +2723,18 @@ export function SakiFloatingChat({
       ? "speaking"
       : null;
   const effectiveActivityMood = echoActivityMood ?? sakiPokeMood ?? sakiActivityMood;
+
+  const activeStreamingAssistant = [...messages].reverse().find((message) => message.role === "assistant" && message.streaming);
+  const activeStreamingContent = activeStreamingAssistant?.content?.trim();
+  const activeStreamingThinking = activeStreamingAssistant?.thinking?.trim();
+  const isStreamingReply = Boolean(activeStreamingAssistant && activeStreamingContent);
+
   const videoBubbleText = sakiVideoBubble
     ? sakiVideoBubble
+    : (activeStreamingAssistant && activeStreamingContent)
+    ? activeStreamingContent
+    : (activeStreamingAssistant && activeStreamingThinking)
+    ? (language === "en-US" ? "Thinking carefully... (•̀ᴗ•́)و" : language === "zh-TW" ? "正在認真思考中... (•̀ᴗ•́)و" : "正在认真思考中... (•̀ᴗ•́)و")
     : loading && !hasStreamingAssistant
     ? (language === "en-US" ? "Thinking carefully... (•̀ᴗ•́)و" : language === "zh-TW" ? "正在認真思考中... (•̀ᴗ•́)و" : "正在认真思考中... (•̀ᴗ•́)و")
     : hasStreamingAssistant
@@ -2918,8 +2961,14 @@ export function SakiFloatingChat({
                 ) : null}
 
                 {videoBubbleText ? (
-                  <div className="saki-video-bubble" aria-live="polite">
+                  <div
+                    className={`saki-video-bubble ${isStreamingReply || (videoBubbleText && videoBubbleText.length > 25) ? "streaming-reply" : ""}`}
+                    aria-live="polite"
+                  >
                     <span>{videoBubbleText}</span>
+                    {isStreamingReply ? (
+                      <span className="saki-bubble-typing-cursor">▌</span>
+                    ) : null}
                   </div>
                 ) : null}
                 <SakiCharacterArt mood={artMood} activityMood={effectiveActivityMood} />

@@ -9,6 +9,10 @@ import fs from "node:fs/promises";
 export async function ensureBootstrapData(): Promise<void> {
   await fs.mkdir(panelPaths.dataDir, { recursive: true });
 
+  try {
+    await prisma.$executeRawUnsafe(`ALTER TABLE users ADD COLUMN favorability INTEGER NOT NULL DEFAULT 0;`);
+  } catch {}
+
   for (const code of permissions) {
     await prisma.permission.upsert({
       where: { code },

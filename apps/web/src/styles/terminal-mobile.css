@@ -1234,3 +1234,67 @@
 [data-theme="dark"] .incident-banner.status-open {
   color: #ff8a80;
 }
+
+/* ==========================================================================
+   Mobile Terminal Immersive Mode (Icon-only & Anti-wrap Optimization)
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  .terminal-immersive-header {
+    height: 42px !important;
+    padding: 0 10px !important;
+    gap: 8px !important;
+    flex-wrap: nowrap !important;
+    overflow: hidden !important;
+    justify-content: space-between !important;
+  }
+
+  .immersive-header-left {
+    min-width: 0 !important;
+    flex: 1 1 auto !important;
+    overflow: hidden !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+  }
+
+  .immersive-title {
+    font-size: 12px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    max-width: 140px !important;
+  }
+
+  .immersive-hint {
+    display: none !important;
+  }
+
+  .immersive-header-right {
+    flex-shrink: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    flex-wrap: nowrap !important;
+  }
+
+  .immersive-action-btn {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    padding: 0 !important;
+    border-radius: 8px !important;
+  }
+
+  .immersive-action-btn span {
+    display: none !important;
+  }
+
+  .immersive-action-btn svg {
+    margin: 0 !important;
+    flex-shrink: 0 !important;
+  }
+}

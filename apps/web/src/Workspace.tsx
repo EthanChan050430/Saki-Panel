@@ -793,6 +793,10 @@ export function Workspace({
           onLauncherDraggingChange={setSakiLauncherDragging}
           onPointsBalanceChange={setUserPointsSummary}
           pointsSummary={userPointsSummary}
+          currentUserFavorability={user?.favorability ?? 0}
+          onFavorabilityChange={(fav) => {
+            if (user) onUserChange?.({ ...user, favorability: fav });
+          }}
           pullDragRequest={sakiPullDrag}
           onPullDragConsumed={() => setSakiPullDrag(null)}
         />

@@ -253,6 +253,7 @@ export async function loadCurrentUser(userId: string): Promise<CurrentUser | nul
     isAdmin: instanceRole === "admin" || instanceRole === "super_admin",
     isSuperAdmin: instanceRole === "super_admin",
     points: user.points ?? 0,
-    unlimitedPoints: Boolean(user.unlimitedPoints)
+    unlimitedPoints: Boolean(user.unlimitedPoints),
+    favorability: (user as { favorability?: number }).favorability ?? 0
   };
 }

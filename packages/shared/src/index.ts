@@ -79,6 +79,7 @@ export interface CurrentUser {
   isSuperAdmin: boolean;
   points?: number;
   unlimitedPoints?: boolean;
+  favorability?: number;
 }
 
 export interface ManagedRole {
@@ -103,6 +104,7 @@ export interface ManagedUser {
   updatedAt: string;
   points?: number;
   unlimitedPoints?: boolean;
+  favorability?: number;
 }
 
 export interface CreateUserRequest {
