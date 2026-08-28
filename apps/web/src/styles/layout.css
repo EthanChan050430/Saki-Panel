@@ -2742,6 +2742,7 @@ td strong {
   flex-direction: column;
   gap: 20px;
   min-width: 0;
+  width: 100%;
 }
 
 .settings-config-form {
@@ -2749,6 +2750,14 @@ td strong {
   flex-direction: column;
   gap: 20px;
   min-width: 0;
+  width: 100%;
+}
+
+.settings-wiki .settings-group,
+.settings-wiki .settings-group.active {
+  align-self: stretch;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .settings-group {
@@ -2811,12 +2820,15 @@ td strong {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  width: 100%;
 }
 
 .settings-form-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .settings-field {
@@ -3006,9 +3018,11 @@ td strong {
 /* Visual Asset Grid */
 .settings-asset-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 16px;
   margin-top: 8px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .settings-asset-card {
