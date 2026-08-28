@@ -692,18 +692,43 @@
   color: #636366 !important;
 }
 
-[data-theme="dark"] .topbar-inner {
-  background: rgba(24, 25, 34, 0.68) !important;
-  backdrop-filter: blur(40px) saturate(190%) !important;
-  -webkit-backdrop-filter: blur(40px) saturate(190%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.14) !important;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+@media (min-width: 769px) {
+  [data-theme="dark"] .topbar-inner {
+    background: rgba(24, 25, 34, 0.68) !important;
+    backdrop-filter: blur(40px) saturate(190%) !important;
+    -webkit-backdrop-filter: blur(40px) saturate(190%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.14) !important;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+  }
+
+  [data-theme="dark"] .topbar-inner:hover {
+    background: rgba(32, 33, 44, 0.78) !important;
+    border-color: rgba(255, 117, 172, 0.35) !important;
+    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.5), 0 0 24px rgba(255, 117, 172, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.28) !important;
+  }
 }
 
-[data-theme="dark"] .topbar-inner:hover {
-  background: rgba(32, 33, 44, 0.78) !important;
-  border-color: rgba(255, 117, 172, 0.35) !important;
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.5), 0 0 24px rgba(255, 117, 172, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.28) !important;
+@media (max-width: 768px) {
+  [data-theme="dark"] .topbar-inner,
+  [data-theme="dark"] .topbar-inner:hover,
+  [data-theme="dark"] .topbar-companion-panel,
+  [data-theme="dark"] .topbar-companion-panel:hover,
+  [data-theme="dark"] .topbar-companion-panel.is-empty,
+  [data-theme="dark"] .topbar-companion-panel.is-empty:hover,
+  .topbar-inner,
+  .topbar-inner:hover,
+  .topbar-companion-panel,
+  .topbar-companion-panel:hover,
+  .topbar-companion-panel.is-empty,
+  .topbar-companion-panel.is-empty:hover {
+    background: transparent !important;
+    background-color: transparent !important;
+    border: none !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
 }
 
 /* Saki Agent Dark Mode Contrast */

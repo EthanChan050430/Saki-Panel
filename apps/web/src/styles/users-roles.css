@@ -553,12 +553,17 @@
     background: rgba(255, 117, 172, 0.24) !important;
   }
 
-  /* 移动端左侧标题区：重置外框背景，纯净融入整栏 */
-  .topbar-inner:not(.topbar-companion-panel) {
+  /* 移动端左侧标题区：重置外框背景与边框，纯净融入整栏 */
+  .topbar-inner:not(.topbar-companion-panel),
+  [data-theme="dark"] .topbar-inner:not(.topbar-companion-panel),
+  .topbar-inner:not(.topbar-companion-panel):hover,
+  [data-theme="dark"] .topbar-inner:not(.topbar-companion-panel):hover {
     flex: 1 1 auto !important;
     min-width: 0 !important;
     background: transparent !important;
+    background-color: transparent !important;
     border: none !important;
+    border-color: transparent !important;
     box-shadow: none !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
@@ -657,10 +662,19 @@
     line-height: 12px !important;
   }
 
-  /* 移动端右侧伴侣区（积分 + Saki） */
-  .topbar-inner.topbar-companion-panel {
+  /* 移动端右侧伴侣区（积分 + Saki）：重置外框背景与边框 */
+  .topbar-inner.topbar-companion-panel,
+  [data-theme="dark"] .topbar-inner.topbar-companion-panel,
+  .topbar-inner.topbar-companion-panel:hover,
+  [data-theme="dark"] .topbar-inner.topbar-companion-panel:hover,
+  .topbar-companion-panel.is-empty,
+  [data-theme="dark"] .topbar-companion-panel.is-empty,
+  .topbar-companion-panel.is-empty:hover,
+  [data-theme="dark"] .topbar-companion-panel.is-empty:hover {
     background: transparent !important;
+    background-color: transparent !important;
     border: none !important;
+    border-color: transparent !important;
     box-shadow: none !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
