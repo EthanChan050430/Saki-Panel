@@ -34,20 +34,24 @@ enum InstanceStatus {
 }
 
 model User {
-  id            String         @id @default(cuid())
-  username      String         @unique
-  passwordHash  String
-  displayName   String
-  avatarDataUrl String?
-  status        UserStatus     @default(ACTIVE)
-  lastLoginAt   DateTime?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  roles         UserRole[]
-  logs          OperationLog[]
-  createdInstances  Instance[] @relation("InstanceCreator")
-  assignedInstances Instance[] @relation("InstanceAssignee")
+  id                  String               @id @default(cuid())
+  username            String               @unique
+  passwordHash        String
+  displayName         String
+  avatarDataUrl       String?
+  status              UserStatus           @default(ACTIVE)
+  lastLoginAt         DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  roles               UserRole[]
+  logs                OperationLog[]
+  createdInstances    Instance[]           @relation("InstanceCreator")
+  assignedInstances   Instance[]           @relation("InstanceAssignee")
   instanceAssignments InstanceAssignment[]
+  accessKeys          UserAccessKey[]
+  points              Int                  @default(0)
+  unlimitedPoints     Boolean              @default(false)
+  pointRecords        PointRecord[]
 
   @@map("users")
 }
@@ -139,6 +143,22 @@ model NodeMetric {
   @@map("node_metrics")
 }
 
+model NodeEnrollmentToken {
+  id          String   @id @default(cuid())
+  tokenHash   String   @unique
+  tokenLast4  String
+  namePrefix  String?
+  groupName   String?
+  tags        String?
+  maxUsage    Int      @default(1)
+  usedCount   Int      @default(0)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([tokenHash])
+  @@map("node_enrollment_tokens")
+}
+
 model OperationLog {
   id           String          @id @default(cuid())
   userId       String?
@@ -158,33 +178,36 @@ model OperationLog {
 }
 
 model Instance {
-  id                String          @id @default(cuid())
+  id                String               @id @default(cuid())
   nodeId            String
   name              String
-  type              String          @default("generic_command")
+  type              String               @default("generic_command")
   workingDirectory  String
   startCommand      String
   stopCommand       String?
-  status            InstanceStatus  @default(CREATED)
-  autoStart         Boolean         @default(false)
-  restartPolicy     String          @default("never")
-  restartMaxRetries Int             @default(0)
+  status            InstanceStatus       @default(CREATED)
+  autoStart         Boolean              @default(false)
+  restartPolicy     String               @default("never")
+  restartMaxRetries Int                  @default(0)
   runAsUser         String?
   memoryLimit       Int?
   cpuLimit          Float?
   description       String?
+  proxyConfig       String?
   createdById       String?
   assignedToId      String?
   lastStartedAt     DateTime?
   lastStoppedAt     DateTime?
   lastExitCode      Int?
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
-  node              Node            @relation(fields: [nodeId], references: [id], onDelete: Restrict)
-  createdBy         User?           @relation("InstanceCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  assignedTo        User?           @relation("InstanceAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  node              Node                 @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  createdBy         User?                @relation("InstanceCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  assignedTo        User?                @relation("InstanceAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
   assignedUsers     InstanceAssignment[]
   tasks             ScheduledTask[]
+  watchPolicy       WatchPolicy?
+  incidents         Incident[]
 
   @@index([nodeId])
   @@index([status])
@@ -203,6 +226,49 @@ model InstanceAssignment {
   @@id([instanceId, userId])
   @@index([userId])
   @@map("instance_assignments")
+}
+
+model WatchPolicy {
+  instanceId        String   @id
+  enabled           Boolean  @default(true)
+  mode              String   @default("diagnose_and_patch")
+  cooldownSeconds   Int      @default(900)
+  maxRunsPerHour    Int      @default(3)
+  verifyWaitSeconds Int      @default(20)
+  approverUserId    String?
+  updatedAt         DateTime @updatedAt
+  instance          Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@map("watch_policies")
+}
+
+model Incident {
+  id              String    @id @default(cuid())
+  instanceId      String
+  nodeId          String
+  fingerprint     String
+  trigger         String
+  status          String
+  exitCode        Int?
+  summary         String?
+  rootCause       String?
+  proposedPatch   String?
+  logTail         String    @default("")
+  rollbackSet     String?
+  taskId          String?
+  assigneeUserId  String?
+  occurrenceCount Int       @default(1)
+  lastOccurredAt  DateTime  @default(now())
+  resolvedAt      DateTime?
+  ignoredUntil    DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  instance        Instance  @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@index([instanceId, fingerprint])
+  @@index([status, updatedAt])
+  @@index([assigneeUserId, status])
+  @@map("incidents")
 }
 
 model ScheduledTask {
@@ -240,4 +306,34 @@ model TaskRun {
 
   @@index([taskId, startedAt])
   @@map("task_runs")
+}
+
+model UserAccessKey {
+  id         String    @id @default(cuid())
+  userId     String
+  name       String    @default("默认访问密钥")
+  keyHash    String    @unique
+  keyLast4   String
+  expiresAt  DateTime?
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_access_keys")
+}
+
+model PointRecord {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  delta        Int
+  balanceAfter Int?
+  type         String
+  tokensUsed   Int?
+  description  String?
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("point_records")
 }

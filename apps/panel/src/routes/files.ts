@@ -271,7 +271,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
         payload: { path: queryPath(request) }
       });
 
-      reply.send(daemonStream);
+      return reply.send(daemonStream);
     } catch (error) {
       await handleFailure(request, reply, "file.download", id, error, { path: queryPath(request) });
     }
@@ -539,7 +539,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
         payload: { paths: body.paths, fileName: body.fileName }
       });
 
-      reply.send(daemonStream);
+      return reply.send(daemonStream);
     } catch (error) {
       await handleFailure(request, reply, "file.archive.download", id, error, {
         paths: body.paths,

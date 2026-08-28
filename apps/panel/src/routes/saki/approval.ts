@@ -1,6 +1,7 @@
 import type { FastifyRequest } from "fastify";
 import type { SakiActionDecisionResponse, SakiAgentAction, SakiChatResponse } from "@webops/shared";
 import { writeAuditLog } from "../../audit.js";
+import { assertUserHasSpendablePoints } from "../../points.js";
 import { runSakiAgent, renderToolCall, observationForAgentPrompt } from "./loop.js";
 import { auditAgentTool, executeSakiAgentTool, rollbackCheckpoint } from "./executor.js";
 import { completedSakiActions, pendingSakiActions, removeCheckpoint, removePendingSakiAction, sakiCheckpoints } from "./state.js";
@@ -9,6 +10,8 @@ import type { PendingSakiAction, SakiAgentResumeState, SakiAgentRuntime } from "
 import { effectiveSakiAgentPermissionMode, RouteError } from "./types.js";
 import { readEffectiveSakiConfig } from "./config.js";
 import { resolveSakiContext } from "./chat.js";
+import { maybeFinishWatchIncident } from "../../watch/runner.js";
+import { updateIncident } from "../../watch/incidents.js";
 
 function assertPendingSakiActionOwner(request: FastifyRequest, pending: PendingSakiAction): void {
   if (pending.userId !== request.user.sub) {
@@ -31,7 +34,12 @@ async function runtimeForSakiActionDecision(request: FastifyRequest, pending: Pe
     skills: pending.resume?.skills ?? [],
     userId: request.user.sub,
     permissions: request.user.permissions,
-    config
+    config,
+    ...(pending.kind ? { kind: pending.kind } : {}),
+    ...(pending.incidentId ? { incidentId: pending.incidentId } : {}),
+    ...(pending.watchMode ? { watchMode: pending.watchMode } : {}),
+    ...(pending.maxLoops ? { maxLoops: pending.maxLoops } : {}),
+    ...(pending.systemPromptOverride ? { systemPromptOverride: pending.systemPromptOverride } : {})
   };
 }
 
@@ -59,6 +67,7 @@ async function continueSakiAgentAfterActionDecision(
   const resume = resumeAfterSakiActionDecision(pending, action);
   if (!resume) return undefined;
   try {
+    await assertUserHasSpendablePoints(runtime.userId);
     return await runSakiAgent(runtime, undefined, resume, executeSakiAgentTool);
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Saki request failed";
@@ -81,6 +90,9 @@ export async function approvePendingSakiAction(request: FastifyRequest, id: stri
   const action = await executeSakiAgentTool(runtime, pending.call, { approved: true, actionId: id });
   await removePendingSakiAction(id);
   const response = await continueSakiAgentAfterActionDecision(pending, action, runtime);
+  if (pending.incidentId) {
+    await maybeFinishWatchIncident(pending.incidentId);
+  }
   return {
     action,
     message: action.ok ? "Saki action approved and executed." : "Saki action was approved but failed.",
@@ -106,6 +118,12 @@ export async function rejectPendingSakiAction(request: FastifyRequest, id: strin
   };
   completedSakiActions.set(id, action);
   await auditAgentTool(runtime, action);
+  if (pending.incidentId) {
+    await updateIncident(pending.incidentId, {
+      status: "diagnosed",
+      summary: "用户拒绝了这次自动修复。诊断结果仍可查看。"
+    });
+  }
   return { action, message: "Saki action rejected." };
 }
 
@@ -114,10 +132,18 @@ export async function rollbackSakiAction(request: FastifyRequest, id: string): P
   if (!existing?.approval?.checkpointId) {
     throw new RouteError("No rollback checkpoint is available for this action.", 400);
   }
-  const checkpoint = sakiCheckpoints.get(existing.approval.checkpointId);
-  if (!checkpoint) throw new RouteError("Rollback checkpoint expired or was already removed.", 404);
-  const observation = await rollbackCheckpoint(request.user.sub, checkpoint);
-  await removeCheckpoint(checkpoint.id);
+  const checkpointIds = [existing.approval.checkpointId, ...(existing.approval.relatedCheckpointIds ?? [])].filter(
+    (id): id is string => Boolean(id)
+  );
+  const observations: string[] = [];
+  for (const checkpointId of [...checkpointIds].reverse()) {
+    const checkpoint = sakiCheckpoints.get(checkpointId);
+    if (!checkpoint) continue;
+    observations.push(await rollbackCheckpoint(request.user.sub, checkpoint));
+    await removeCheckpoint(checkpoint.id);
+  }
+  if (observations.length === 0) throw new RouteError("Rollback checkpoint expired or was already removed.", 404);
+  const observation = observations.join("\n");
   const action: SakiAgentAction = {
     ...existing,
     observation,
@@ -136,7 +162,7 @@ export async function rollbackSakiAction(request: FastifyRequest, id: string): P
     action: "saki.agent.rollback",
     resourceType: "saki",
     resourceId: id,
-    payload: { checkpointId: checkpoint.id, checkpointType: checkpoint.type }
+    payload: { checkpointId: existing.approval.checkpointId, checkpointIds, rolledBackCount: observations.length }
   });
   return { action, message: "Rollback completed." };
 }

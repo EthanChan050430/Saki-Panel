@@ -3,6 +3,7 @@ import type { PermissionCode, CurrentUser } from "@webops/shared";
 import { noRolePermissionRoleName, permissions as allPermissions } from "@webops/shared";
 import { panelConfig } from "./config.js";
 import { prisma } from "./db.js";
+import { hashToken } from "./security.js";
 import { classifyInstanceUser, roleNamesFromUser } from "./instance-access.js";
 
 export interface JwtUser {
@@ -25,6 +26,58 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
   if (panelConfig.disableAuth) {
     (request as FastifyRequest & { user: JwtUser }).user = await loadAuthDisabledJwtUser();
     return;
+  }
+
+  // Check for User Access Key (x-api-key or x-user-key)
+  const apiKey = request.headers["x-api-key"] || request.headers["x-user-key"];
+  if (typeof apiKey === "string" && apiKey.startsWith("saki_usr_")) {
+    const keyHash = hashToken(apiKey.trim());
+    const accessKey = await prisma.userAccessKey.findUnique({
+      where: { keyHash },
+      include: {
+        user: {
+          include: {
+            roles: {
+              include: {
+                role: {
+                  include: {
+                    permissions: {
+                      include: {
+                        permission: true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (accessKey && accessKey.user && accessKey.user.status === "ACTIVE") {
+      if (!accessKey.expiresAt || accessKey.expiresAt > new Date()) {
+        void prisma.userAccessKey.update({
+          where: { id: accessKey.id },
+          data: { lastUsedAt: new Date() }
+        }).catch(() => {});
+
+        const permissions = Array.from(
+          new Set(
+            accessKey.user.roles.flatMap((ur) =>
+              ur.role.permissions.map((p) => p.permission.code as PermissionCode)
+            )
+          )
+        );
+
+        (request as FastifyRequest & { user: JwtUser }).user = {
+          sub: accessKey.user.id,
+          username: accessKey.user.username,
+          permissions
+        };
+        return;
+      }
+    }
   }
 
   try {
@@ -198,6 +251,8 @@ export async function loadCurrentUser(userId: string): Promise<CurrentUser | nul
     permissions: [...permissions].sort(),
     roleNames,
     isAdmin: instanceRole === "admin" || instanceRole === "super_admin",
-    isSuperAdmin: instanceRole === "super_admin"
+    isSuperAdmin: instanceRole === "super_admin",
+    points: user.points ?? 0,
+    unlimitedPoints: Boolean(user.unlimitedPoints)
   };
 }

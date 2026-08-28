@@ -18,6 +18,11 @@ import { registerAuditRoutes } from "./routes/audit.js";
 import { registerUserRoutes } from "./routes/users.js";
 import { registerSakiRoutes } from "./routes/saki.js";
 import { registerSystemRoutes } from "./routes/system.js";
+import { registerDatabaseRoutes } from "./routes/databases.js";
+import { registerWatchRoutes } from "./watch/index.js";
+import { registerJoinScriptRoutes } from "./routes/join-scripts.js";
+import { registerUserKeyRoutes } from "./routes/user-keys.js";
+import { registerPointsRoutes } from "./routes/points.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -80,7 +85,12 @@ export async function createPanelServer() {
   await registerUserRoutes(app);
   await registerSystemRoutes(app);
   await registerSakiRoutes(app);
+  await registerWatchRoutes(app);
   await registerTerminalRoutes(app);
+  await registerDatabaseRoutes(app);
+  await registerJoinScriptRoutes(app);
+  await registerUserKeyRoutes(app);
+  await registerPointsRoutes(app);
 
   app.setErrorHandler((error: unknown, request, reply) => {
     request.log.error(error);

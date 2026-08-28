@@ -32,6 +32,8 @@ export {
   parseLineNumber,
   formatLineNumberedContent,
   agentReadFileLineCountInput,
+  largeFileLineThreshold,
+  maxAgentReadFileLineCount,
   replaceLineRange,
   userFacingError,
   formatRunCommandObservation,
@@ -72,24 +74,32 @@ export {
   sakiToolRegistry,
   canonicalToolSchema,
   openAiToolSchemas,
+  anthropicToolSchemas,
+  toolSchemasForRuntime,
+  withAdvertisedSakiToolSchemas,
   escapeBareControlCharsInJsonStrings,
   parseJsonTolerant,
   parseJsonMaybe,
   normalizeStructuredToolCall,
   shorthandPrimaryArgumentKey,
   parseStructuredToolCalls,
+  parseAnyToolCalls,
   sakiReadOnlyToolNames,
   sakiAutoAcceptedFileToolNames,
   sakiPlanBlockedToolNames,
   normalizedAgentToolName,
   isSakiReadOnlyAgentTool,
   assertSakiPermissionModeAllowsTool,
+  assertToolProfileAllowsTool,
   isApprovalTool,
   shouldRequestSakiApproval,
   instanceSettingsSnapshot,
   buildInstanceSettingsPatch,
   toolArgs
 } from "./tools.js";
+
+export { sakiModelProfile, xmlToolFormatReminder } from "./model-profile.js";
+export type { SakiModelFamily, SakiModelProfile } from "./model-profile.js";
 
 export {
   buildPrompt,

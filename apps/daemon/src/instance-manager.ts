@@ -6,9 +6,10 @@ import { TextDecoder } from "node:util";
 import { randomUUID } from "node:crypto";
 import * as nodePty from "@homebridge/node-pty-prebuilt-multiarch";
 import type { IDisposable, IPty } from "@homebridge/node-pty-prebuilt-multiarch";
-import type { InstanceCommandResponse, InstanceLogLine, InstanceStatus, InstanceType, RestartPolicy } from "@webops/shared";
+import type { InstanceCommandResponse, InstanceLogLine, InstanceProxyConfig, InstanceStatus, InstanceType, RestartPolicy } from "@webops/shared";
 import { daemonPaths } from "./config.js";
 import { loadRuntimeState, saveRuntimeState, type PersistedInstance } from "./state-persist.js";
+import { ensureInstanceClashProxy, stopInstanceClash } from "./clash-core.js";
 
 export interface DaemonInstanceSpec {
   id: string;
@@ -19,6 +20,7 @@ export interface DaemonInstanceSpec {
   stopCommand?: string | null;
   restartPolicy?: RestartPolicy;
   restartMaxRetries?: number;
+  proxy?: InstanceProxyConfig | null;
 }
 
 export interface DaemonInstanceState {
@@ -103,7 +105,7 @@ function decodeProcessOutput(chunk: Buffer): string {
   }
 }
 
-function commandEnvironment(): NodeJS.ProcessEnv {
+function commandEnvironment(spec?: DaemonInstanceSpec | null): NodeJS.ProcessEnv {
   const colorEnvironment =
     process.env.NO_COLOR === undefined
       ? {
@@ -113,7 +115,7 @@ function commandEnvironment(): NodeJS.ProcessEnv {
         }
       : {};
 
-  return {
+  const baseEnv: NodeJS.ProcessEnv = {
     ...process.env,
     TERM: process.env.TERM ?? "xterm-256color",
     COLORTERM: process.env.COLORTERM ?? "truecolor",
@@ -124,6 +126,27 @@ function commandEnvironment(): NodeJS.ProcessEnv {
     PYTHONIOENCODING: "utf-8",
     PYTHONUNBUFFERED: process.env.PYTHONUNBUFFERED ?? "1"
   };
+
+  if (spec?.proxy?.enabled && spec.proxy.server && spec.proxy.port) {
+    const { type, server, port, username, password, bypass } = spec.proxy;
+    let auth = "";
+    if (username) {
+      auth = password ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : `${encodeURIComponent(username)}@`;
+    }
+    const proxyUrl = `${type}://${auth}${server}:${port}`;
+    const noProxy = bypass?.trim() || "localhost,127.0.0.1,::1";
+
+    baseEnv.HTTP_PROXY = proxyUrl;
+    baseEnv.http_proxy = proxyUrl;
+    baseEnv.HTTPS_PROXY = proxyUrl;
+    baseEnv.https_proxy = proxyUrl;
+    baseEnv.ALL_PROXY = proxyUrl;
+    baseEnv.all_proxy = proxyUrl;
+    baseEnv.NO_PROXY = noProxy;
+    baseEnv.no_proxy = noProxy;
+  }
+
+  return baseEnv;
 }
 
 function getRuntime(instanceId: string): RuntimeState {
@@ -162,6 +185,62 @@ function appendLog(instanceId: string, runtime: RuntimeState, stream: InstanceLo
   if (runtime.logs.length > maxLogLines) {
     runtime.logs.splice(0, runtime.logs.length - maxLogLines);
   }
+}
+
+export interface InstanceStatusPush {
+  instanceId: string;
+  status: InstanceStatus;
+  exitCode: number | null;
+  logTail: InstanceLogLine[];
+  restartPolicy: RestartPolicy;
+  restartAttempts: number;
+  willRetryByPolicy: boolean;
+}
+
+type InstanceStatusPushHandler = (event: InstanceStatusPush) => Promise<{ suppressRestartUntil?: string | null } | void>;
+
+let instanceStatusPushHandler: InstanceStatusPushHandler | null = null;
+const restartLeases = new Map<string, number>();
+
+export function setInstanceStatusPushHandler(handler: InstanceStatusPushHandler | null): void {
+  instanceStatusPushHandler = handler;
+}
+
+export function applyRestartLease(instanceId: string, suppressUntilIso: string | null | undefined): void {
+  if (!instanceId) return;
+  if (!suppressUntilIso) {
+    restartLeases.delete(instanceId);
+    return;
+  }
+  const until = Date.parse(suppressUntilIso);
+  if (!Number.isFinite(until) || until <= Date.now()) {
+    restartLeases.delete(instanceId);
+    return;
+  }
+  restartLeases.set(instanceId, until);
+}
+
+export function applyRestartLeases(leases: Array<{ instanceId: string; suppressUntil: string }>): void {
+  const seen = new Set<string>();
+  for (const lease of leases) {
+    seen.add(lease.instanceId);
+    applyRestartLease(lease.instanceId, lease.suppressUntil);
+  }
+  for (const instanceId of restartLeases.keys()) {
+    if (!seen.has(instanceId) && (restartLeases.get(instanceId) ?? 0) <= Date.now()) {
+      restartLeases.delete(instanceId);
+    }
+  }
+}
+
+function isRestartSuppressed(instanceId: string): boolean {
+  const until = restartLeases.get(instanceId);
+  if (!until) return false;
+  if (until <= Date.now()) {
+    restartLeases.delete(instanceId);
+    return false;
+  }
+  return true;
 }
 
 function emitStatus(instanceId: string, runtime: RuntimeState): void {
@@ -258,7 +337,7 @@ function commandLauncher(command: string): { file: string; args: string[] } {
     if (psPath) {
       return {
         file: psPath,
-        args: ["-NoProfile", "-NonInteractive", "-Command", command]
+        args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]
       };
     }
     return {
@@ -292,10 +371,12 @@ function runtimeChildCanWrite(child: RuntimeChild): boolean {
 
 function writeRuntimeChild(child: RuntimeChild, data: string): void {
   if (child.type === "pty") {
-    child.pty.write(data);
+    const ptyData = data.replace(/\r\n/g, "\r");
+    child.pty.write(ptyData);
     return;
   }
-  child.process.stdin?.write(data);
+  const pipeData = data.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  child.process.stdin?.write(pipeData);
 }
 
 function onRuntimeChildExit(child: RuntimeChild, listener: RuntimeExitListener): () => void {
@@ -354,12 +435,13 @@ function createInteractiveShellPty(instanceId: string, cwd: string): ShellSessio
     shellArgs = ["-i", "-l"];
   }
 
+  const spec = instanceSpecs.get(instanceId);
   const pty = nodePty.spawn(shellCmd, shellArgs, {
     name: "xterm-256color",
     cols: 120,
     rows: 30,
     cwd,
-    env: commandEnvironment(),
+    env: commandEnvironment(spec),
     encoding: "utf8",
     useConpty: process.platform === "win32"
   });
@@ -409,7 +491,8 @@ function writeToShell(sessionId: string, data: string): void {
   if (!session || session.exited) {
     throw new Error("Shell session is not available");
   }
-  session.pty.write(data);
+  const ptyData = data.replace(/\r\n/g, "\r");
+  session.pty.write(ptyData);
 }
 
 function subscribeToShell(
@@ -461,6 +544,7 @@ function closeShellSession(sessionId: string): void {
 function startPtyRuntimeChild(
   launcher: { file: string; args: string[] },
   cwd: string,
+  spec: DaemonInstanceSpec,
   onData: (text: string) => void
 ): RuntimeChild {
   let managed: PtyRuntimeChild;
@@ -469,7 +553,7 @@ function startPtyRuntimeChild(
     cols: 160,
     rows: 40,
     cwd,
-    env: commandEnvironment(),
+    env: commandEnvironment(spec),
     encoding: "utf8",
     useConpty: process.platform === "win32"
   });
@@ -496,13 +580,14 @@ function startPtyRuntimeChild(
 function startProcessRuntimeChild(
   launcher: { file: string; args: string[] },
   cwd: string,
+  spec: DaemonInstanceSpec,
   onStdout: (chunk: Buffer) => void,
   onStderr: (chunk: Buffer) => void,
   onError: (error: Error) => void
 ): RuntimeChild {
   const child = spawn(launcher.file, launcher.args, {
     cwd,
-    env: commandEnvironment(),
+    env: commandEnvironment(spec),
     detached: process.platform !== "win32",
     windowsHide: true
   });
@@ -530,9 +615,6 @@ function validateCommandInput(input: string): void {
 function validateTerminalInput(input: string): void {
   if (input.length > maxCommandInputChars) {
     throw new Error("Terminal input is too long");
-  }
-  if (/\u0000/.test(input)) {
-    throw new Error("Terminal input contains unsupported control characters");
   }
 }
 
@@ -679,6 +761,7 @@ export class InstanceManager {
         runtime.restartAttempts = entry.restartAttempts;
         appendLog(entry.instanceId, runtime, "system", "Daemon restarted; previously running instance marked as CRASHED.");
         emitStatus(entry.instanceId, runtime);
+        this.notifyCrash(entry.instanceId, runtime, false);
       } else if (entry.status === "STOPPING") {
         const runtime = getRuntime(entry.instanceId);
         runtime.status = "STOPPED";
@@ -711,14 +794,64 @@ export class InstanceManager {
     }
   }
 
-  private shouldRestart(runtime: RuntimeState, exitCode: number | null): boolean {
+  private wouldRestartByPolicy(runtime: RuntimeState, instanceId: string, exitCode: number | null): boolean {
     const spec = runtime.restartSpec;
     const policy = spec?.restartPolicy ?? "never";
     if (!spec || runtime.stopping || policy === "never") return false;
     if (policy === "on_failure" && exitCode === 0) return false;
 
     const maxRetries = Math.max(0, spec.restartMaxRetries ?? 0);
-    return maxRetries === 0 ? false : runtime.restartAttempts < maxRetries;
+    if (maxRetries === 0) return false;
+    return runtime.restartAttempts < maxRetries;
+  }
+
+  private shouldRestart(runtime: RuntimeState, instanceId: string, exitCode: number | null): boolean {
+    if (isRestartSuppressed(instanceId)) return false;
+    return this.wouldRestartByPolicy(runtime, instanceId, exitCode);
+  }
+
+  listSnapshots(): Array<{ instanceId: string; status: InstanceStatus; exitCode: number | null }> {
+    const snapshots: Array<{ instanceId: string; status: InstanceStatus; exitCode: number | null }> = [];
+    for (const [instanceId, runtime] of runtimes) {
+      snapshots.push({
+        instanceId,
+        status: runtime.status,
+        exitCode: runtime.exitCode ?? null
+      });
+    }
+    return snapshots;
+  }
+
+  recentLogs(instanceId: string, limit = 40): InstanceLogLine[] {
+    const runtime = runtimes.get(instanceId);
+    if (!runtime) return [];
+    return runtime.logs.slice(-Math.max(1, Math.min(limit, 200)));
+  }
+
+  private notifyCrash(instanceId: string, runtime: RuntimeState, willRetryByPolicy: boolean): void {
+    if (!instanceStatusPushHandler || runtime.status !== "CRASHED") return;
+    void instanceStatusPushHandler({
+      instanceId,
+      status: runtime.status,
+      exitCode: runtime.exitCode ?? null,
+      logTail: runtime.logs.slice(-40),
+      restartPolicy: runtime.restartSpec?.restartPolicy ?? "never",
+      restartAttempts: runtime.restartAttempts,
+      willRetryByPolicy
+    })
+      .then((response) => {
+        if (response?.suppressRestartUntil) {
+          applyRestartLease(instanceId, response.suppressRestartUntil);
+        }
+      })
+      .catch((error) => {
+        appendLog(
+          instanceId,
+          runtime,
+          "system",
+          `Failed to notify panel of crash: ${error instanceof Error ? error.message : "unknown error"}`
+        );
+      });
   }
 
   private async startInternal(spec: DaemonInstanceSpec, resetRestartAttempts: boolean): Promise<DaemonInstanceState> {
@@ -738,13 +871,42 @@ export class InstanceManager {
     await fs.mkdir(cwd, { recursive: true });
     assertCommandAllowed(spec.startCommand);
 
+    let runtimeSpec = spec;
+    if (spec.proxy?.enabled && spec.proxy.mode === "subscription") {
+      const clash = await ensureInstanceClashProxy(spec.proxy, spec.id);
+      runtimeSpec = {
+        ...spec,
+        proxy: {
+          ...spec.proxy,
+          type: "http",
+          server: "127.0.0.1",
+          port: clash.port
+        }
+      };
+      instanceSpecs.set(spec.id, runtimeSpec);
+    } else {
+      await stopInstanceClash(spec.id);
+    }
+
     runtime.status = "STARTING";
     runtime.exitCode = null;
     runtime.cwd = cwd;
     runtime.stopping = false;
-    runtime.restartSpec = spec;
+    runtime.restartSpec = runtimeSpec;
     emitStatus(spec.id, runtime);
     appendLog(spec.id, runtime, "system", `Starting: ${spec.startCommand}`);
+    if (runtimeSpec.proxy?.enabled && runtimeSpec.proxy.server && runtimeSpec.proxy.port) {
+      const nodeLabel =
+        runtimeSpec.proxy.mode === "subscription" && runtimeSpec.proxy.selectedProxy
+          ? `Clash 节点 ${runtimeSpec.proxy.selectedProxy} → `
+          : "";
+      appendLog(
+        spec.id,
+        runtime,
+        "system",
+        `[Network Proxy] 代理已生效: ${nodeLabel}${runtimeSpec.proxy.type}://${runtimeSpec.proxy.server}:${runtimeSpec.proxy.port}`
+      );
+    }
 
     const launcher = commandLauncher(spec.startCommand);
     const handleProcessError = (error: Error) => {
@@ -752,11 +914,15 @@ export class InstanceManager {
       runtime.exitCode = null;
       emitStatus(spec.id, runtime);
       appendLog(spec.id, runtime, `system`, `Process error: ${error.message}`);
+      this.notifyCrash(spec.id, runtime, this.wouldRestartByPolicy(runtime, spec.id, null));
     };
 
     let child: RuntimeChild;
     try {
-      child = startPtyRuntimeChild(launcher, cwd, (text) => appendLog(spec.id, runtime, "stdout", text));
+      child = startPtyRuntimeChild(launcher, cwd, runtimeSpec, (text) => {
+        runtimeEvents.emit(`data:${spec.id}`, text);
+        appendLog(spec.id, runtime, "stdout", text);
+      });
     } catch (error) {
       appendLog(
         spec.id,
@@ -767,8 +933,17 @@ export class InstanceManager {
       child = startProcessRuntimeChild(
         launcher,
         cwd,
-        (chunk) => appendLog(spec.id, runtime, "stdout", decodeProcessOutput(chunk)),
-        (chunk) => appendLog(spec.id, runtime, "stderr", decodeProcessOutput(chunk)),
+        runtimeSpec,
+        (chunk) => {
+          const text = decodeProcessOutput(chunk);
+          runtimeEvents.emit(`data:${spec.id}`, text);
+          appendLog(spec.id, runtime, "stdout", text);
+        },
+        (chunk) => {
+          const text = decodeProcessOutput(chunk);
+          runtimeEvents.emit(`data:${spec.id}`, text);
+          appendLog(spec.id, runtime, "stderr", text);
+        },
         handleProcessError
       );
     }
@@ -791,7 +966,10 @@ export class InstanceManager {
         "system",
         `Process exited with code ${code ?? "null"}${signal ? ` and signal ${signal}` : ""}.`
       );
-      if (this.shouldRestart(runtime, code)) {
+      const crashed = runtime.status === "CRASHED";
+      const willRetryByPolicy = this.wouldRestartByPolicy(runtime, spec.id, code);
+      const scheduleRestartIfAllowed = () => {
+        if (!this.shouldRestart(runtime, spec.id, code)) return;
         runtime.restartAttempts += 1;
         const attempt = runtime.restartAttempts;
         appendLog(
@@ -807,6 +985,35 @@ export class InstanceManager {
             appendLog(spec.id, runtime, "system", `Automatic restart failed: ${error.message}`);
           });
         }, 2000);
+      };
+      if (crashed && instanceStatusPushHandler) {
+        void instanceStatusPushHandler({
+          instanceId: spec.id,
+          status: runtime.status,
+          exitCode: code,
+          logTail: runtime.logs.slice(-40),
+          restartPolicy: runtime.restartSpec?.restartPolicy ?? "never",
+          restartAttempts: runtime.restartAttempts,
+          willRetryByPolicy
+        })
+          .then((response) => {
+            if (response?.suppressRestartUntil) {
+              applyRestartLease(spec.id, response.suppressRestartUntil);
+              appendLog(spec.id, runtime, "system", "Panel watch is inspecting this crash; automatic restart is paused.");
+            }
+            scheduleRestartIfAllowed();
+          })
+          .catch((error) => {
+            appendLog(
+              spec.id,
+              runtime,
+              "system",
+              `Failed to notify panel of crash: ${error instanceof Error ? error.message : "unknown error"}`
+            );
+            scheduleRestartIfAllowed();
+          });
+      } else {
+        scheduleRestartIfAllowed();
       }
       runtime.stopping = false;
     });
@@ -946,9 +1153,6 @@ export class InstanceManager {
     data: string,
     options: { logInput?: boolean } = {}
   ): Promise<DaemonInstanceState> {
-    if (data === "\u0003") {
-      return this.interrupt(instanceId);
-    }
     validateTerminalInput(data);
 
     const runtime = getRuntime(instanceId);
@@ -959,10 +1163,32 @@ export class InstanceManager {
 
     writeRuntimeChild(runtime.child, data);
     const visibleInput = data.replace(/\r/g, "").replace(/\n$/, "");
-    if (options.logInput !== false && visibleInput.length > 0) {
+    if (options.logInput !== false && visibleInput.length > 0 && !data.startsWith("\x1b")) {
       appendLog(instanceId, runtime, "stdin", visibleInput);
     }
     return this.state(instanceId);
+  }
+
+  resize(instanceId: string, cols: number, rows: number): void {
+    const runtime = getRuntime(instanceId);
+    if (runtime.child && runtime.child.type === "pty") {
+      try {
+        const safeCols = Math.max(10, Math.min(cols, 500));
+        const safeRows = Math.max(5, Math.min(rows, 200));
+        runtime.child.pty.resize?.(safeCols, safeRows);
+      } catch {}
+    }
+  }
+
+  resizeShell(instanceId: string, sessionId: string, cols: number, rows: number): void {
+    const session = shellSessions.get(sessionId);
+    if (session && !session.exited) {
+      try {
+        const safeCols = Math.max(10, Math.min(cols, 500));
+        const safeRows = Math.max(5, Math.min(rows, 200));
+        session.pty.resize?.(safeCols, safeRows);
+      } catch {}
+    }
   }
 
   registerSpec(spec: DaemonInstanceSpec): void {
@@ -1031,10 +1257,11 @@ export class InstanceManager {
       let timedOut = false;
       let settled = false;
 
+      const spec = instanceSpecs.get(instanceId);
       const launcher = commandLauncher(command);
       const child = spawn(launcher.file, launcher.args, {
         cwd,
-        env: commandEnvironment(),
+        env: commandEnvironment(spec),
         windowsHide: true
       });
       child.stdin?.on("error", (error) => {
@@ -1091,17 +1318,21 @@ export class InstanceManager {
   subscribe(
     instanceId: string,
     handlers: {
-      onLog: (line: InstanceLogLine) => void;
-      onStatus: (state: Omit<DaemonInstanceState, "logs">) => void;
+      onLog?: (line: InstanceLogLine) => void;
+      onData?: (text: string) => void;
+      onStatus?: (state: Omit<DaemonInstanceState, "logs">) => void;
     }
   ): () => void {
     const logEvent = `log:${instanceId}`;
+    const dataEvent = `data:${instanceId}`;
     const statusEvent = `status:${instanceId}`;
-    runtimeEvents.on(logEvent, handlers.onLog);
-    runtimeEvents.on(statusEvent, handlers.onStatus);
+    if (handlers.onLog) runtimeEvents.on(logEvent, handlers.onLog);
+    if (handlers.onData) runtimeEvents.on(dataEvent, handlers.onData);
+    if (handlers.onStatus) runtimeEvents.on(statusEvent, handlers.onStatus);
     return () => {
-      runtimeEvents.off(logEvent, handlers.onLog);
-      runtimeEvents.off(statusEvent, handlers.onStatus);
+      if (handlers.onLog) runtimeEvents.off(logEvent, handlers.onLog);
+      if (handlers.onData) runtimeEvents.off(dataEvent, handlers.onData);
+      if (handlers.onStatus) runtimeEvents.off(statusEvent, handlers.onStatus);
     };
   }
 }

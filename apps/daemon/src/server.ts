@@ -6,6 +6,7 @@ import { daemonConfig } from "./config.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerInstanceRoutes } from "./routes/instances.js";
 import { registerTerminalRoutes } from "./routes/terminal.js";
+import { registerDatabaseRoutes } from "./routes/databases.js";
 
 export async function createDaemonServer() {
   const app = Fastify({
@@ -43,6 +44,7 @@ export async function createDaemonServer() {
   await registerInstanceRoutes(app);
   await registerFileRoutes(app);
   await registerTerminalRoutes(app);
+  await registerDatabaseRoutes(app);
 
   return app;
 }

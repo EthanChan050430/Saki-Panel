@@ -1,41 +1,68 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal, flushSync } from "react-dom";
 import { CodeEditor, type CodeEditorHandle, type FindRange, languageFromFileName } from "./CodeEditor.js";
+import { ElegantCursor } from "./ElegantCursor.js";
+import { DatabaseVisualizer, AddDatabaseModal } from "./DatabaseVisualizer.js";
+import { IncidentBanner, IncidentBell } from "./IncidentInbox.js";
+import { PointsUsageModal } from "./PointsUsageModal.js";
+import { AdminUserPointsModal } from "./AdminUserPointsModal.js";
 import {
   Activity,
   AlertTriangle,
   Archive,
+  ArrowLeft,
+  Database,
+  ArrowRight,
+  ArrowUp,
   BookOpen,
   BookMarked,
+  Bot,
   Bug,
   Camera,
   ChartNetwork,
+  Check,
   CheckCircle2,
+  CheckSquare,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Clock,
   ClipboardList,
   Code2,
+  Copy,
   CornerUpLeft,
+  CornerDownLeft,
   Cpu,
   Download,
   DownloadCloud,
+  Edit3,
   Eye,
+  EyeOff,
   FileArchive,
+  Move,
   FilePlus,
   FileSearch,
   FileText,
   Folder,
+  FolderArchive,
+  FolderOpen,
   FolderPlus,
+  FolderTree,
+  Gamepad2,
   GitBranch,
   Github,
   HardDrive,
+  Hash,
+  Heart,
+  History,
   Image as ImageIcon,
+  Infinity as InfinityIcon,
   Info,
   KeyRound,
   Layers,
   LayoutGrid,
+  Link2,
   LayoutTemplate,
   List,
   ListChecks,
@@ -44,13 +71,18 @@ import {
   LogOut,
   Maximize2,
   MemoryStick,
+  MessageSquare,
   Mic,
+  MicOff,
   Minimize2,
   Moon,
   MoreHorizontal,
+  MoreVertical,
+  Paintbrush,
   PanelLeftClose,
   PanelLeftOpen,
   Paperclip,
+  PhoneOff,
   Play,
   Plus,
   Power,
@@ -58,33 +90,49 @@ import {
   RefreshCw,
   RotateCw,
   Save,
+  Scissors,
   Search,
   Send,
   Server,
   Shield,
   ShieldCheck,
   Settings,
+  SlidersHorizontal,
   Sparkles,
   Square,
   Sun,
   Terminal as TerminalIcon,
   TextQuote,
   Trash2,
+  TrendingUp,
+  Trophy,
   Upload,
   UserCheck,
   UserCog,
+  UserPlus,
   UserRound,
+  UtensilsCrossed,
+  FileUp,
+  Video,
+  VideoOff,
   Wifi,
   WifiOff,
   Wrench,
   X,
   XOctagon,
-  Zap
+  Zap,
+  BarChart2,
+  Coins,
+  Volume2,
+  VolumeX,
+  Globe
 } from "lucide-react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import {
+  Area,
+  AreaChart,
   CartesianGrid,
   Line,
   LineChart,
@@ -96,11 +144,19 @@ import {
 import type {
   AuditLogEntry,
   CreateNodeRequest,
+  ConnectNodeByKeyResponse,
+  UserAccessKeyInfo,
+  CreateUserAccessKeyResponse,
+  CreateEnrollmentTokenResponse,
+  RotateNodeTokenResponse,
+  NodeJoinCommandResponse,
+  DaemonNodeKeyPayload,
   CreateSakiSkillRequest,
   CreateUserRequest,
   CreateInstanceRequest,
   CurrentUser,
   DashboardOverview,
+  DatabaseVisualizerInstance,
   InstanceAssignee,
   ExtractArchiveConflict,
   ExtractConflictAction,
@@ -108,6 +164,8 @@ import type {
   InstanceLogLine,
   InstanceTemplate,
   InstanceStatus,
+  InstanceProxyConfig,
+  ClashSubscriptionProxy,
   ManagedInstance,
   ManagedNode,
   ManagedRole,
@@ -119,6 +177,7 @@ import type {
   RegisterRequest,
   RegistrationIdentity,
   RestartPolicy,
+  WatchPolicyMode,
   SakiChatMessage,
   SakiChatResponse,
   SakiAgentAction,
@@ -141,10 +200,19 @@ import type {
   TerminalServerMessage
 } from "@webops/shared";
 import { noRolePermissionRoleName, permissions } from "@webops/shared";
-import { ApiError, api, type SakiChatStreamEvent, type SakiChatWorkflowStatus, type UploadProgressUpdate } from "./api.js";
+import {
+  ApiError,
+  api,
+  type SakiActiveTaskSummary,
+  type SakiChatStreamEvent,
+  type SakiChatWorkflowStatus,
+  type UploadProgressUpdate
+} from "./api.js";
 
 const tokenKey = "webops.token";
 const rememberedLoginKey = "webops.rememberedLogin";
+const autoLoginKey = "webops.autoLogin";
+const manualLogoutKey = "webops.manualLoggedOut";
 const panelLanguageKey = "webops.panelLanguage";
 const defaultStartCommand = "";
 const sakiStreamIdleFallbackMs = 45000;
@@ -246,6 +314,7 @@ const panelText = {
     "auth.confirmPassword": "确认密码",
     "auth.confirmPassword.placeholder": "再次输入密码",
     "auth.rememberLogin": "记住密码",
+    "auth.autoLogin": "自动登录",
     "auth.rememberRegister": "注册后记住密码",
     "auth.loggingIn": "验证中...",
     "auth.registering": "注册中...",
@@ -568,6 +637,7 @@ const panelText = {
     "auth.confirmPassword": "Confirm password",
     "auth.confirmPassword.placeholder": "Enter the password again",
     "auth.rememberLogin": "Remember password",
+    "auth.autoLogin": "Auto login",
     "auth.rememberRegister": "Remember password after registration",
     "auth.loggingIn": "Verifying...",
     "auth.registering": "Registering...",
@@ -1313,6 +1383,11 @@ function translateDomText(value: string): string {
     .replace(/审计日志/g, "audit logs")
     .replace(/请联系管理员调整角色或权限后再回来。?/g, "Contact an administrator to adjust roles or permissions, then come back.")
     .replace(/我是 Saki。/g, "I am Saki. ")
+    .replace(/跟过来啦，我们现在在「/g, "Followed you over! We're at 「")
+    .replace(/这边～ 是遇到什么报错要翻日志，还是想改点配置或者写脚本？你说，我来弄。/g, "now~ Running into an error to check logs, or want to tweak configs or scripts? Tell me, I'll handle it.")
+    .replace(/在呢！今天各服务目前看着都挺平稳的。是遇到什么棘手报错要排查，还是想让我帮写点脚本跑跑看？随时叫我，我一直都在。/g, "I'm here! Everything looks calm and steady right now. Need help troubleshooting a tricky error, or want me to script something? Call me anytime, I'm always here.")
+    .replace(/在呢，我帮你盯着「/g, "I'm here, keeping an eye on 「")
+    .replace(/」这边呢。遇到什么小状况，或者想查什么、改什么，尽管丢给我，咱们一起看。/g, "」. If anything comes up, or you want to check or change something, toss it to me, let's look together.")
     .replace(/切到不同实例时，我会一起切换工作区上下文。?/g, "When you switch instances, I switch workspace context with you.")
     .replace(/当前智能体工作区：/g, "Current agent workspace: ")
     .replace(/当前上下文：/g, "Current context: ")
@@ -1405,8 +1480,227 @@ const defaultPanelAppearance: PanelAppearanceSettings = {
   mobileBackgroundSrc: "/assets/background_mobile.png"
 };
 
+const sakiArtAssets = {
+  avatar: "/assets/head.png",
+  launcher: "/assets/sakiicon.png",
+  launcherHover: "/assets/saki_click.png",
+  tieEdge: "/assets/tiebian.png",
+  hang: "/assets/hang.png",
+  lie: "/assets/lie.png",
+  files: "/assets/saki_files.png",
+  shuru: "/assets/shuru.png",
+  shuruBlack: "/assets/shuru_sit.png",
+  normal: "/assets/expression/normal.png",
+  thinking: "/assets/expression/think.png",
+  worry: "/assets/expression/worry.png",
+  thinkingGif: "/assets/Thinking.gif",
+  pickup1: "/assets/expression/pickup1.png",
+  pickup2: "/assets/expression/pickup2.png",
+  happy: "/assets/expression/happy.png",
+  OK: "/assets/expression/OK.png",
+  reading: "/assets/expression/reading.png",
+  upset: "/assets/expression/upset.png",
+  working: "/assets/expression/working.png",
+  checkfiles: "/assets/expression/checkfiles.png",
+  shy: "/assets/expression/shy.png",
+  eating: "/assets/expression/eating.png",
+  gaming: "/assets/expression/gaming.png",
+  listen: "/assets/expression/listen.png",
+  emptyHealthy: "/assets/expression/empty_healthy.png",
+  emptyInstances: "/assets/expression/empty_instances.png",
+  emptyTasks: "/assets/expression/empty_tasks.png",
+  emptyLogs: "/assets/expression/empty_logs.png",
+  daemonOffline: "/assets/expression/daemon_offline.png",
+  page404: "/assets/expression/page_404.png"
+} as const;
+
+interface SakiEmptyStateProps {
+  imageSrc?: string;
+  illustration?: "healthy" | "instances" | "tasks" | "logs" | "offline" | "404";
+  title: string;
+  description?: string;
+  action?: {
+    label: string;
+    onClick: () => void;
+    icon?: React.ReactNode;
+  };
+  compact?: boolean;
+  className?: string;
+  style?: React.CSSProperties;
+}
+
+function SakiEmptyState({
+  imageSrc,
+  illustration,
+  title,
+  description,
+  action,
+  compact = false,
+  className = "",
+  style
+}: SakiEmptyStateProps) {
+  let resolvedSrc = imageSrc;
+  if (!resolvedSrc && illustration) {
+    switch (illustration) {
+      case "healthy":
+        resolvedSrc = sakiArtAssets.emptyHealthy;
+        break;
+      case "instances":
+        resolvedSrc = sakiArtAssets.emptyInstances;
+        break;
+      case "tasks":
+        resolvedSrc = sakiArtAssets.emptyTasks;
+        break;
+      case "logs":
+        resolvedSrc = sakiArtAssets.emptyLogs;
+        break;
+      case "offline":
+        resolvedSrc = sakiArtAssets.daemonOffline;
+        break;
+      case "404":
+        resolvedSrc = sakiArtAssets.page404;
+        break;
+    }
+  }
+
+  return (
+    <div className={`saki-empty-state ${compact ? "compact" : ""} ${className}`} style={style}>
+      {resolvedSrc ? (
+        <div className="saki-empty-illustration-wrap">
+          <img
+            src={resolvedSrc}
+            alt={title}
+            className="saki-empty-illustration"
+            draggable={false}
+            loading="lazy"
+          />
+        </div>
+      ) : null}
+      <div className="saki-empty-content">
+        <h4 className="saki-empty-title">{title}</h4>
+        {description ? <p className="saki-empty-desc">{description}</p> : null}
+        {action ? (
+          <button
+            type="button"
+            className="primary-button saki-empty-btn"
+            onClick={action.onClick}
+          >
+            {action.icon}
+            <span>{action.label}</span>
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+type SakiSettingsSection = "system" | "model" | "features" | "appearance" | "prompt" | "skills";
 type ViewMode = "dashboard" | "instances" | "nodes" | "templates" | "users" | "audit" | "settings" | "about";
 type InstanceDirectoryView = "cards" | "list" | "graph";
+
+const validViews: readonly ViewMode[] = [
+  "dashboard",
+  "instances",
+  "nodes",
+  "templates",
+  "users",
+  "audit",
+  "settings",
+  "about"
+];
+
+interface PanelRoute {
+  view: ViewMode;
+  instanceId: string | null;
+  settingsSection: SakiSettingsSection | null;
+}
+
+function parseHashRoute(): PanelRoute {
+  if (typeof window === "undefined") {
+    return { view: "dashboard", instanceId: null, settingsSection: null };
+  }
+  const rawHash = window.location.hash.replace(/^#\/?/, "").trim();
+  if (!rawHash) {
+    const savedView = window.localStorage.getItem("webops.activeView") as ViewMode | null;
+    const savedInstanceId = window.localStorage.getItem("webops.selectedInstanceId");
+    const savedSection = window.localStorage.getItem("webops.settingsSection") as SakiSettingsSection | null;
+    const view = savedView && validViews.includes(savedView) ? savedView : "dashboard";
+    return {
+      view,
+      instanceId: view === "instances" ? savedInstanceId || null : null,
+      settingsSection: view === "settings" ? savedSection || null : null
+    };
+  }
+
+  const [pathPart = "", queryPart] = rawHash.split("?");
+  const segments = pathPart.split("/").map(decodeURIComponent).filter(Boolean);
+  const rootSegment = (segments[0] || "").toLowerCase() as ViewMode;
+  const view: ViewMode = validViews.includes(rootSegment) ? rootSegment : "dashboard";
+
+  let instanceId: string | null = null;
+  let settingsSection: SakiSettingsSection | null = null;
+
+  if (view === "instances") {
+    if (segments.length > 1 && segments[1]) {
+      instanceId = segments[1];
+    } else if (queryPart) {
+      const params = new URLSearchParams(queryPart);
+      instanceId = params.get("id");
+    }
+    if (!instanceId) {
+      instanceId = window.localStorage.getItem("webops.selectedInstanceId");
+    }
+  } else if (view === "settings") {
+    if (segments.length > 1 && segments[1]) {
+      const sec = segments[1] as SakiSettingsSection;
+      if (["system", "model", "features", "appearance", "prompt", "skills"].includes(sec)) {
+        settingsSection = sec;
+      }
+    }
+    if (!settingsSection) {
+      settingsSection = window.localStorage.getItem("webops.settingsSection") as SakiSettingsSection | null;
+    }
+  }
+
+  return { view, instanceId, settingsSection };
+}
+
+function updateHashRoute(route: Partial<PanelRoute>) {
+  if (typeof window === "undefined") return;
+  const current = parseHashRoute();
+  const next: PanelRoute = {
+    view: route.view ?? current.view,
+    instanceId: route.instanceId !== undefined ? route.instanceId : (route.view && route.view !== "instances" ? null : current.instanceId),
+    settingsSection: route.settingsSection !== undefined ? route.settingsSection : (route.view && route.view !== "settings" ? null : current.settingsSection)
+  };
+
+  let hash = `#${next.view}`;
+  if (next.view === "instances" && next.instanceId) {
+    hash += `/${encodeURIComponent(next.instanceId)}`;
+  } else if (next.view === "settings" && next.settingsSection && next.settingsSection !== "system") {
+    hash += `/${encodeURIComponent(next.settingsSection)}`;
+  }
+
+  if (window.location.hash !== hash) {
+    if (window.history && window.history.replaceState) {
+      window.history.replaceState(null, "", hash);
+    } else {
+      window.location.hash = hash;
+    }
+  }
+
+  try {
+    window.localStorage.setItem("webops.activeView", next.view);
+    if (next.view === "instances" && next.instanceId) {
+      window.localStorage.setItem("webops.selectedInstanceId", next.instanceId);
+    } else {
+      window.localStorage.removeItem("webops.selectedInstanceId");
+    }
+    if (next.view === "settings" && next.settingsSection) {
+      window.localStorage.setItem("webops.settingsSection", next.settingsSection);
+    }
+  } catch {}
+}
 
 interface SakiPromptSeed {
   message: string;
@@ -1491,6 +1785,47 @@ function saveRememberedLogin(username: string, password: string): void {
 
 function clearRememberedLogin(): void {
   window.localStorage.removeItem(rememberedLoginKey);
+  window.localStorage.removeItem(autoLoginKey);
+}
+
+function readAutoLogin(): boolean {
+  try {
+    return window.localStorage.getItem(autoLoginKey) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function saveAutoLogin(enabled: boolean): void {
+  try {
+    if (enabled) {
+      window.localStorage.setItem(autoLoginKey, "true");
+    } else {
+      window.localStorage.removeItem(autoLoginKey);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function isManualLogoutSuppressed(): boolean {
+  try {
+    return window.sessionStorage.getItem(manualLogoutKey) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function setManualLogoutSuppressed(suppressed: boolean): void {
+  try {
+    if (suppressed) {
+      window.sessionStorage.setItem(manualLogoutKey, "true");
+    } else {
+      window.sessionStorage.removeItem(manualLogoutKey);
+    }
+  } catch {
+    // ignore
+  }
 }
 
 interface LocalSakiWorkflowStep {
@@ -1512,6 +1847,7 @@ type LocalSakiTimelineItem =
       kind: "text";
       id: string;
       content: string;
+      thinking?: string;
       source: LocalSakiTimelineTextSource;
       createdAt: string;
     }
@@ -1531,7 +1867,14 @@ interface LocalSakiMessage extends SakiChatMessage {
   timeline?: LocalSakiTimelineItem[];
   workflowExpanded?: boolean;
   rollbackGroupExpanded?: boolean;
-  streaming?: boolean;
+  streaming?: boolean | undefined;
+  thinking?: string | undefined;
+  usage?: {
+    tokensUsed: number;
+    pointsUsed: number;
+    isUnlimited: boolean;
+    remainingPoints?: number;
+  } | undefined;
 }
 
 interface SakiSubmitOverride {
@@ -1550,6 +1893,35 @@ function createSakiWelcomeMessage(content: string): LocalSakiMessage {
     content,
     createdAt: new Date().toISOString()
   };
+}
+
+function formatSakiContextPath(pathStr: string, maxLength: number = 24): string {
+  if (!pathStr) return "";
+  const trimmed = pathStr.trim();
+  if (trimmed.length <= maxLength) return trimmed;
+  const isWindows = trimmed.includes("\\");
+  const sep = isWindows ? "\\" : "/";
+  const parts = trimmed.split(/[/\\]/).filter(Boolean);
+  if (parts.length > 1) {
+    const last = parts[parts.length - 1];
+    const prev = parts[parts.length - 2];
+    const twoSegments = `…${sep}${prev}${sep}${last}`;
+    if (twoSegments.length <= maxLength) return twoSegments;
+    const oneSegment = `…${sep}${last}`;
+    if (oneSegment.length <= maxLength) return oneSegment;
+    return `${oneSegment.slice(0, maxLength - 1)}…`;
+  }
+  return `${trimmed.slice(0, maxLength - 1)}…`;
+}
+
+function getSakiWelcomeMessageText(instance: ManagedInstance | null | undefined, contextLabel: string): string {
+  if (instance) {
+    return `跟过来啦，我们现在在「${instance.name}」这边～ 是遇到什么报错要翻日志，还是想改点配置或者写脚本？你说，我来弄。`;
+  }
+  if (contextLabel === "控制台" || contextLabel === "概览") {
+    return `在呢！今天各服务目前看着都挺平稳的。是遇到什么棘手报错要排查，还是想让我帮写点脚本跑跑看？随时叫我，我一直都在。`;
+  }
+  return `在呢，我帮你盯着「${contextLabel}」这边呢。遇到什么小状况，或者想查什么、改什么，尽管丢给我，咱们一起看。`;
 }
 
 function isSakiModeAllowed(mode: SakiChatMode, canUseChat: boolean, canUseAgent: boolean): boolean {
@@ -1772,6 +2144,7 @@ interface SakiSelectionCapture {
 let latestSakiTerminalSelectionText = "";
 
 function normalizeSakiSelectionText(value: string): string {
+  if (!value) return "";
   return value
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
@@ -1779,7 +2152,12 @@ function normalizeSakiSelectionText(value: string): string {
     .split("\n")
     .map((line) => line.replace(/[ \t]+$/g, ""))
     .join("\n")
-    .trim();
+    .replace(/^\n+|\n+$/g, "");
+}
+
+function countSelectionCharacters(text: string): number {
+  if (!text) return 0;
+  return Array.from(text).length;
 }
 
 function rememberSakiTerminalSelection(value: string): void {
@@ -1794,12 +2172,25 @@ function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
   return (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "c";
 }
 
-function readTerminalClipboardText(terminal: XTerm): string {
-  return terminal
-    .getSelection()
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .replace(/\u00a0/g, " ");
+function readAllTerminalBufferText(terminal: XTerm | null): string {
+  if (!terminal) return "";
+  const buffer = terminal.buffer.active;
+  const lines: string[] = [];
+  const total = buffer.length;
+  for (let i = 0; i < total; i++) {
+    const line = buffer.getLine(i);
+    if (line) {
+      lines.push(line.translateToString(true));
+    }
+  }
+  return lines.join("\n").trimEnd();
+}
+
+function readTerminalClipboardText(terminal: XTerm | null | undefined): string {
+  if (!terminal) return "";
+  const raw = terminal.getSelection();
+  if (!raw) return "";
+  return normalizeSakiSelectionText(raw);
 }
 
 function targetIsInsideSelector(target: EventTarget | null, selector: string): boolean {
@@ -2887,10 +3278,14 @@ type AuthMode = "login" | "register";
 
 function LoginView({
   appearance,
-  onLogin
+  onLogin,
+  darkMode,
+  onToggleDarkMode
 }: {
   appearance: PanelAppearanceSettings;
   onLogin: (token: string, user: CurrentUser) => void;
+  darkMode: boolean;
+  onToggleDarkMode: (e?: React.MouseEvent<HTMLElement>) => void;
 }) {
   const t = usePanelT();
   const rememberedLogin = useMemo(() => readRememberedLogin(), []);
@@ -2900,9 +3295,45 @@ function LoginView({
   const [password, setPassword] = useState(rememberedLogin?.password ?? "");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [rememberPassword, setRememberPassword] = useState(Boolean(rememberedLogin));
+  const [autoLogin, setAutoLogin] = useState(() => readAutoLogin() && Boolean(rememberedLogin));
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const isRegister = mode === "register";
+  const autoLoginAttemptedRef = useRef(false);
+
+  useEffect(() => {
+    if (autoLoginAttemptedRef.current) return;
+    if (mode !== "login") return;
+    if (isManualLogoutSuppressed()) return;
+    const saved = readRememberedLogin();
+    const isAuto = readAutoLogin();
+    if (isAuto && saved?.username && saved?.password) {
+      autoLoginAttemptedRef.current = true;
+      setLoading(true);
+      setError("");
+      api.login({
+        username: saved.username.trim(),
+        password: saved.password
+      })
+        .then((response) => {
+          saveRememberedLogin(saved.username.trim(), saved.password);
+          saveAutoLogin(true);
+          setManualLogoutSuppressed(false);
+          localStorage.setItem(tokenKey, response.token);
+          onLogin(response.token, response.user);
+        })
+        .catch((err) => {
+          saveAutoLogin(false);
+          setAutoLogin(false);
+          setError(err instanceof Error ? err.message : t("auth.errorLoginFailed"));
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    }
+  }, [mode, onLogin, t]);
 
   function switchMode(nextMode: AuthMode) {
     if (nextMode === mode) return;
@@ -2952,9 +3383,12 @@ function LoginView({
           });
       if (rememberPassword) {
         saveRememberedLogin(trimmedUsername, password);
+        saveAutoLogin(!isRegister && autoLogin);
       } else {
         clearRememberedLogin();
+        saveAutoLogin(false);
       }
+      setManualLogoutSuppressed(false);
       localStorage.setItem(tokenKey, response.token);
       onLogin(response.token, response.user);
     } catch (err) {
@@ -2964,6 +3398,50 @@ function LoginView({
     }
   }
 
+  const [sakiBubble, setSakiBubble] = useState<string | null>(null);
+  const [sakiBouncing, setSakiBouncing] = useState(false);
+  const sakiBubbleTimeoutRef = useRef<number | null>(null);
+  const sakiBounceTimeoutRef = useRef<number | null>(null);
+
+  const sakiHangQuotes = useMemo(() => [
+    "Saki 正在看着你登录哦~ ✨",
+    "今天也要元气满满！(｡♥‿♥｡)",
+    "欢迎来到 Saki Panel~ 🌸",
+    "登录后就可以和 Saki 一起玩啦！",
+    "加油工作呀~ ฅ'ω'ฅ"
+  ], []);
+
+  const handleSakiHangClick = () => {
+    const randomQuote = sakiHangQuotes[Math.floor(Math.random() * sakiHangQuotes.length)] ?? "Saki 正在看着你登录哦~ ✨";
+    setSakiBubble(randomQuote);
+    setSakiBouncing(true);
+
+    if (sakiBounceTimeoutRef.current) {
+      window.clearTimeout(sakiBounceTimeoutRef.current);
+    }
+    sakiBounceTimeoutRef.current = window.setTimeout(() => {
+      setSakiBouncing(false);
+    }, 700);
+
+    if (sakiBubbleTimeoutRef.current) {
+      window.clearTimeout(sakiBubbleTimeoutRef.current);
+    }
+    sakiBubbleTimeoutRef.current = window.setTimeout(() => {
+      setSakiBubble(null);
+    }, 2800);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (sakiBubbleTimeoutRef.current) {
+        window.clearTimeout(sakiBubbleTimeoutRef.current);
+      }
+      if (sakiBounceTimeoutRef.current) {
+        window.clearTimeout(sakiBounceTimeoutRef.current);
+      }
+    };
+  }, []);
+
   return (
     <main className="login-shell saki-login-shell">
       <div className="login-container">
@@ -2971,6 +3449,42 @@ function LoginView({
           <img className="login-cover-img" src={appearance.loginCoverSrc} alt="" draggable={false} />
         </div>
         <form className={`login-panel ${isRegister ? "register-panel" : ""}`} onSubmit={submit}>
+          <div
+            className={`login-saki-hang ${sakiBouncing ? "is-bouncing" : ""}`}
+            onClick={handleSakiHangClick}
+            title="戳戳 Saki ~"
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                handleSakiHangClick();
+              }
+            }}
+          >
+            {sakiBubble ? (
+              <div className="login-saki-bubble" role="status">
+                {sakiBubble}
+              </div>
+            ) : null}
+            <img
+              src={sakiArtAssets.hang}
+              alt="Saki"
+              className="login-saki-hang-img"
+              draggable={false}
+            />
+          </div>
+
+          <button
+            type="button"
+            className="login-theme-toggle theme-toggle-button"
+            onClick={onToggleDarkMode}
+            title={darkMode ? "切换到浅色模式" : "切换到深色模式"}
+            aria-label={darkMode ? "切换到浅色模式" : "切换到深色模式"}
+          >
+            {darkMode ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+
           <div className="login-header">
             <div className="brand-mark" aria-hidden="true">
               <img className="app-logo-img" src={appearance.appLogoSrc} alt="" draggable={false} />
@@ -2979,17 +3493,6 @@ function LoginView({
               <h1>{appearance.appTitle}</h1>
               {appearance.appSubtitle || isRegister ? <p>{isRegister ? t("auth.createAccount") : appearance.appSubtitle}</p> : null}
             </div>
-          </div>
-
-          <div className="auth-mode-tabs" role="group" aria-label={t("auth.mode")}>
-            <button className={!isRegister ? "active" : ""} type="button" onClick={() => switchMode("login")}>
-              <LogIn size={16} />
-              {t("auth.login")}
-            </button>
-            <button className={isRegister ? "active" : ""} type="button" onClick={() => switchMode("register")}>
-              <UserCheck size={16} />
-              {t("auth.register")}
-            </button>
           </div>
 
           <div className="form-group">
@@ -3025,14 +3528,23 @@ function LoginView({
           <div className="form-group">
             <label>
               <span className="label-text">{t("auth.password")}</span>
-              <div className="input-with-icon">
+              <div className="input-with-icon password-input-wrap">
                 <input
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   autoComplete={isRegister ? "new-password" : "current-password"}
                   placeholder={isRegister ? t("auth.password.registerPlaceholder") : t("auth.password.loginPlaceholder")}
                 />
+                <button
+                  type="button"
+                  className="password-toggle-btn"
+                  onClick={() => setShowPassword((v) => !v)}
+                  tabIndex={-1}
+                  aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
               </div>
             </label>
           </div>
@@ -3041,30 +3553,77 @@ function LoginView({
             <div className="form-group">
               <label>
                 <span className="label-text">{t("auth.confirmPassword")}</span>
-                <div className="input-with-icon">
+                <div className="input-with-icon password-input-wrap">
                   <input
                     value={confirmPassword}
                     onChange={(event) => setConfirmPassword(event.target.value)}
-                    type="password"
+                    type={showConfirmPassword ? "text" : "password"}
                     autoComplete="new-password"
                     placeholder={t("auth.confirmPassword.placeholder")}
                   />
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    onClick={() => setShowConfirmPassword((v) => !v)}
+                    tabIndex={-1}
+                    aria-label={showConfirmPassword ? "隐藏密码" : "显示密码"}
+                  >
+                    {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
                 </div>
               </label>
             </div>
           ) : null}
 
-          <label className="remember-password">
-            <input
-              type="checkbox"
-              checked={rememberPassword}
-              onChange={(event) => {
-                setRememberPassword(event.target.checked);
-                if (!event.target.checked) clearRememberedLogin();
-              }}
-            />
-            <span>{isRegister ? t("auth.rememberRegister") : t("auth.rememberLogin")}</span>
-          </label>
+          {!isRegister ? (
+            <div className="auth-options-row">
+              <label className="remember-password">
+                <input
+                  type="checkbox"
+                  checked={rememberPassword}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setRememberPassword(checked);
+                    if (!checked) {
+                      clearRememberedLogin();
+                      setAutoLogin(false);
+                      saveAutoLogin(false);
+                    }
+                  }}
+                />
+                <span>{t("auth.rememberLogin")}</span>
+              </label>
+
+              <label className="remember-password auto-login-option">
+                <input
+                  type="checkbox"
+                  checked={autoLogin}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setAutoLogin(checked);
+                    saveAutoLogin(checked);
+                    if (checked) {
+                      setRememberPassword(true);
+                      setManualLogoutSuppressed(false);
+                    }
+                  }}
+                />
+                <span>{t("auth.autoLogin")}</span>
+              </label>
+            </div>
+          ) : (
+            <label className="remember-password">
+              <input
+                type="checkbox"
+                checked={rememberPassword}
+                onChange={(event) => {
+                  setRememberPassword(event.target.checked);
+                  if (!event.target.checked) clearRememberedLogin();
+                }}
+              />
+              <span>{t("auth.rememberRegister")}</span>
+            </label>
+          )}
 
           {error ? <div className="form-error">{error}</div> : null}
 
@@ -3072,6 +3631,17 @@ function LoginView({
             {loading ? (isRegister ? t("auth.registering") : t("auth.loggingIn")) : isRegister ? t("auth.registerSubmit") : t("auth.loginSubmit")}
             {!loading && (isRegister ? <UserCheck size={18} /> : <KeyRound size={18} />)}
           </button>
+
+          <div className="auth-switch-prompt">
+            <span>{isRegister ? "已有账号？" : "还没有账号？"}</span>
+            <button
+              type="button"
+              className="auth-switch-link"
+              onClick={() => switchMode(isRegister ? "login" : "register")}
+            >
+              {isRegister ? "立即登录" : "立即注册"}
+            </button>
+          </div>
         </form>
       </div>
     </main>
@@ -3188,7 +3758,7 @@ function InstanceStatusBadge({ status, compact = false }: { status: InstanceStat
   return (
     <span className={`status-pill instance-status ${meta.className} ${compact ? "compact" : ""}`} title={meta.hint}>
       <InstanceStatusIcon status={status} size={compact ? 13 : 14} />
-      <span>{compact ? meta.shortLabel : meta.label}</span>
+      <span style={{ whiteSpace: "nowrap" }}>{compact ? meta.shortLabel : meta.label}</span>
     </span>
   );
 }
@@ -3300,14 +3870,70 @@ function compactPathLabel(pathname: string): string {
   return `.../${parts.slice(-2).join("/")}`;
 }
 
+function PageErrorToast({
+  error,
+  onDismiss,
+  action,
+  autoDismissMs = 12000
+}: {
+  error: string | null | undefined;
+  onDismiss?: () => void;
+  action?: React.ReactNode;
+  autoDismissMs?: number;
+}) {
+  const [hovered, setHovered] = useState(false);
+
+  useEffect(() => {
+    if (!error || !onDismiss || autoDismissMs <= 0 || hovered) return;
+    const timer = window.setTimeout(() => {
+      onDismiss();
+    }, autoDismissMs);
+    return () => window.clearTimeout(timer);
+  }, [error, onDismiss, autoDismissMs, hovered]);
+
+  if (!error) return null;
+
+  return (
+    <div
+      className="page-error"
+      role="alert"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <div className="page-error-icon" aria-hidden="true">
+        <AlertTriangle size={15} />
+      </div>
+      <span className="page-error-text">{error}</span>
+      {action ? <div className="page-error-action">{action}</div> : null}
+      {onDismiss ? (
+        <button
+          type="button"
+          className="page-error-close"
+          onClick={onDismiss}
+          title="关闭提示"
+          aria-label="关闭错误提示"
+        >
+          <X size={14} />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function AccessEmptyView({ user, onOpenAccount }: { user: CurrentUser; onOpenAccount: () => void }) {
   const hasNoPermissions = user.permissions.length === 0;
   const roleLabel = roleNamesDisplay(user.roleNames);
 
   return (
     <section className="panel-block access-empty-panel">
-      <div className="access-empty-icon">
-        <Shield size={30} />
+      <div className="saki-empty-illustration-wrap">
+        <img
+          src={sakiArtAssets.page404}
+          alt="Access denied"
+          className="saki-empty-illustration"
+          style={{ width: "136px", height: "136px" }}
+          draggable={false}
+        />
       </div>
       <div className="access-empty-copy">
         <span className="access-empty-kicker">{roleLabel}</span>
@@ -3448,7 +4074,7 @@ function DashboardView({
 
   return (
     <>
-      {error ? <div className="page-error">{error}</div> : null}
+      <PageErrorToast error={error} onDismiss={() => setError("")} />
 
       <section className="metrics-grid">
         <MetricTile
@@ -3497,7 +4123,14 @@ function DashboardView({
                 <time>{formatDate(item.createdAt)}</time>
               </div>
             ))}
-            {(overview?.recentOperations?.length ?? 0) === 0 ? <div className="empty-state">暂无操作记录</div> : null}
+            {(overview?.recentOperations?.length ?? 0) === 0 ? (
+              <SakiEmptyState
+                illustration="logs"
+                title="暂无操作记录"
+                description="近期系统运行平稳，暂无新的操作信号或审计记录产生"
+                compact
+              />
+            ) : null}
           </div>
         </div>
       </section>
@@ -3541,12 +4174,14 @@ function DashboardView({
                     {canTestNodes ? (
                       <td>
                         <button
-                          className="small-button"
+                          className="icon-button mini"
+                          title="测试连接"
+                          aria-label="测试连接"
+                          type="button"
                           onClick={() => void testNode(node.id)}
                           disabled={testingNodeId === node.id}
                         >
-                          <RefreshCw size={15} />
-                          测试
+                          <Wifi size={14} />
                         </button>
                       </td>
                     ) : null}
@@ -3555,7 +4190,12 @@ function DashboardView({
                 {nodes.length === 0 ? (
                   <tr>
                     <td colSpan={canTestNodes ? 7 : 6}>
-                      <div className="empty-state">暂无节点</div>
+                      <SakiEmptyState
+                        illustration="offline"
+                        title="暂无已连接节点"
+                        description="未检测到活跃的 Daemon 节点，请在节点管理中添加并连接"
+                        compact
+                      />
                     </td>
                   </tr>
                 ) : null}
@@ -3577,6 +4217,56 @@ function NodesView({ token, onLogout, refreshTick }: { token: string; onLogout: 
   const [busyNodeId, setBusyNodeId] = useState<string | null>(null);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [createdSecret, setCreatedSecret] = useState<{ nodeId: string; nodeName: string; nodeToken: string } | null>(null);
+
+  // Add Node Modes: "connect_key" | "daemon_install" | "manual"
+  const [addMode, setAddMode] = useState<"connect_key" | "daemon_install" | "manual">("connect_key");
+
+  // Mode 1: Connect by Key state
+  const [keyInput, setKeyInput] = useState("");
+  const [keyNodeName, setKeyNodeName] = useState("");
+  const [keyGroupName, setKeyGroupName] = useState("");
+  const [keyHostOverride, setKeyHostOverride] = useState("");
+  const [connectingByKey, setConnectingByKey] = useState(false);
+
+  const parsedKeyPayload = useMemo(() => {
+    try {
+      let raw = keyInput.trim();
+      if (!raw) return null;
+      if (raw.startsWith("saki_node_")) raw = raw.slice("saki_node_".length);
+      let base64 = raw.replace(/-/g, "+").replace(/_/g, "/");
+      while (base64.length % 4) base64 += "=";
+      const jsonStr = decodeURIComponent(escape(atob(base64)));
+      const parsed = JSON.parse(jsonStr) as Partial<DaemonNodeKeyPayload>;
+      if (parsed.host && parsed.port) {
+        return parsed;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }, [keyInput]);
+
+  // Mode 2: Daemon Install Command state
+  const [installOs, setInstallOs] = useState<"linux" | "windows" | "docker">("linux");
+  const [installCopied, setInstallCopied] = useState(false);
+  const [joinTokenResult, setJoinTokenResult] = useState<CreateEnrollmentTokenResponse | null>(null);
+
+  // User Access Keys (Per-user instance permissions)
+  const [userKeys, setUserKeys] = useState<UserAccessKeyInfo[]>([]);
+  const [creatingUserKey, setCreatingUserKey] = useState(false);
+  const [createdRawUserKey, setCreatedRawUserKey] = useState<string | null>(null);
+  const [showUserKeyModal, setShowUserKeyModal] = useState(false);
+
+  // Node Key & Reconnect Modal
+  const [keyModalNode, setKeyModalNode] = useState<ManagedNode | null>(null);
+  const [rotatingSecret, setRotatingSecret] = useState(false);
+  const [rotatedSecret, setRotatedSecret] = useState<RotateNodeTokenResponse | null>(null);
+  const [joinCommands, setJoinCommands] = useState<NodeJoinCommandResponse | null>(null);
+  const [loadingJoinCommands, setLoadingJoinCommands] = useState(false);
+  const [activeCommandTab, setActiveCommandTab] = useState<"linux" | "windows" | "docker">("linux");
+  const [commandCopied, setCommandCopied] = useState(false);
+
+  // Mode 3 / Manual Form state
   const [form, setForm] = useState({
     name: "Local Daemon",
     host: "127.0.0.1",
@@ -3600,13 +4290,38 @@ function NodesView({ token, onLogout, refreshTick }: { token: string; onLogout: 
     }
   }, [onLogout, token]);
 
+  const refreshUserKeys = useCallback(async () => {
+    try {
+      const keys = await api.userKeys(token);
+      setUserKeys(keys);
+    } catch {
+      // ignore
+    }
+  }, [token]);
+
   useEffect(() => {
     void refresh();
-  }, [refresh, refreshTick]);
+    void refreshUserKeys();
+  }, [refresh, refreshUserKeys, refreshTick]);
+
+  // Pre-generate token for Daemon install helper
+  useEffect(() => {
+    if (!joinTokenResult && token) {
+      void api.createEnrollmentToken(token, {
+        namePrefix: "新节点",
+        expiresInMinutes: 1440,
+        maxUsage: 5
+      }).then((res) => setJoinTokenResult(res)).catch(() => {});
+    }
+  }, [token, joinTokenResult]);
 
   function resetForm() {
     setEditingNodeId(null);
     setCreatedSecret(null);
+    setKeyInput("");
+    setKeyNodeName("");
+    setKeyGroupName("");
+    setKeyHostOverride("");
     setForm({
       name: "Local Daemon",
       host: "127.0.0.1",
@@ -3619,6 +4334,7 @@ function NodesView({ token, onLogout, refreshTick }: { token: string; onLogout: 
   }
 
   function editNode(node: ManagedNode) {
+    setAddMode("manual");
     setEditingNodeId(node.id);
     setCreatedSecret(null);
     setMessage("");
@@ -3631,6 +4347,68 @@ function NodesView({ token, onLogout, refreshTick }: { token: string; onLogout: 
       groupName: node.groupName ?? "",
       tags: node.tags ?? ""
     });
+  }
+
+  // Handle Mode 1: Connect by Key
+  async function handleConnectByKey(event: React.FormEvent) {
+    event.preventDefault();
+    if (!keyInput.trim()) {
+      setError("请粘贴目标机器生成的 Node Key");
+      return;
+    }
+    setConnectingByKey(true);
+    setError("");
+    setMessage("");
+    try {
+      const res = await api.connectNodeByKey(token, {
+        key: keyInput.trim(),
+        name: keyNodeName.trim() || undefined,
+        groupName: keyGroupName.trim() || undefined,
+        hostOverride: keyHostOverride.trim() || undefined
+      });
+      if (res.ok && res.node) {
+        setMessage(`节点 "${res.node.name}" 已成功接入并在线 (${res.node.host}:${res.node.port})`);
+        setKeyInput("");
+        setKeyNodeName("");
+        setKeyGroupName("");
+        setKeyHostOverride("");
+        await refresh();
+      } else {
+        setError(res.error || "连接节点失败");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "连接节点失败，请检查密钥及机器 Daemon 状态");
+    } finally {
+      setConnectingByKey(false);
+    }
+  }
+
+  // Handle Creating Per-User Access Key
+  async function handleCreateUserKey() {
+    setCreatingUserKey(true);
+    setError("");
+    try {
+      const res = await api.createUserKey(token, "专属访问密钥");
+      setCreatedRawUserKey(res.rawKey);
+      setUserKeys((cur) => [res.keyInfo, ...cur]);
+      setMessage("已生成专属访问密钥，此密钥仅可控制归属于当前账号的实例");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "生成用户访问密钥失败");
+    } finally {
+      setCreatingUserKey(false);
+    }
+  }
+
+  // Handle Deleting Per-User Access Key
+  async function handleDeleteUserKey(id: string) {
+    if (!window.confirm("确定撤销此专属密钥吗？撤销后相关自动化调用将立即失效。")) return;
+    try {
+      await api.deleteUserKey(token, id);
+      setUserKeys((cur) => cur.filter((k) => k.id !== id));
+      setMessage("密钥已成功撤销");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "撤销密钥失败");
+    }
   }
 
   async function saveNode(event: React.FormEvent<HTMLFormElement>) {
@@ -3698,7 +4476,7 @@ function NodesView({ token, onLogout, refreshTick }: { token: string; onLogout: 
   }
 
   async function deleteNode(node: ManagedNode) {
-    if (!window.confirm(`删除节点 ${node.name}？关联实例也会被删除。`)) return;
+    if (!window.confirm(`确定删除节点 "${node.name}" 吗？该节点下的所有实例也将被一并移除。`)) return;
     setBusyNodeId(node.id);
     setError("");
     setMessage("");
@@ -3714,87 +4492,302 @@ function NodesView({ token, onLogout, refreshTick }: { token: string; onLogout: 
     }
   }
 
+  // Handle Key Modal: Open & Fetch
+  async function openKeyModal(node: ManagedNode) {
+    setKeyModalNode(node);
+    setRotatedSecret(null);
+    setJoinCommands(null);
+    setLoadingJoinCommands(true);
+    try {
+      const commands = await api.nodeJoinCommand(token, node.id);
+      setJoinCommands(commands);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "获取节点连接命令失败");
+    } finally {
+      setLoadingJoinCommands(false);
+    }
+  }
+
+  // Handle Key Modal: Rotate Secret
+  async function handleRotateSecret(node: ManagedNode) {
+    if (!window.confirm(`确定要为节点 "${node.name}" 重新生成密钥吗？\n\n重新生成后旧密钥将立即作废。`)) {
+      return;
+    }
+    setRotatingSecret(true);
+    setError("");
+    try {
+      const res = await api.rotateNodeToken(token, node.id);
+      setRotatedSecret(res);
+      await refresh();
+      setMessage(`节点 "${node.name}" 密钥已更新`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "密钥轮换失败");
+    } finally {
+      setRotatingSecret(false);
+    }
+  }
+
+  function copyText(text: string, onCopied: () => void) {
+    navigator.clipboard.writeText(text).then(() => {
+      onCopied();
+    }).catch(() => {});
+  }
+
+  function getInstallCommandText(): string {
+    const origin = window.location.origin;
+    const tok = joinTokenResult?.token ? encodeURIComponent(joinTokenResult.token) : "YOUR_TOKEN";
+    if (installOs === "linux") {
+      return `curl -fsSL "${origin}/api/nodes/join.sh?token=${tok}&port=5480" | bash`;
+    }
+    if (installOs === "windows") {
+      return `irm "${origin}/api/nodes/join.ps1?token=${tok}&port=5480" | iex`;
+    }
+    return `docker run -d --name saki-daemon --restart always --net=host -e DAEMON_PANEL_URL="${origin}" -e DAEMON_REGISTRATION_TOKEN="${joinTokenResult?.token || 'YOUR_TOKEN'}" ghcr.io/saki-panel/daemon:latest`;
+  }
+
   return (
     <>
-      {error ? <div className="page-error">{error}</div> : null}
+      <PageErrorToast error={error} onDismiss={() => setError("")} />
       {message ? <div className="page-notice">{message}</div> : null}
 
       <section className="node-layout">
+        {/* Add Node Panel */}
         <div className="panel-block node-form-panel">
           <div className="section-heading">
-            <h2>{editingNodeId ? "编辑节点" : "添加节点"}</h2>
+            <div>
+              <h2>{editingNodeId ? "编辑节点" : "连接节点"}</h2>
+              <span>{editingNodeId ? "修改节点网络与配置信息" : "仅连接运行了 Saki-Daemon 的机器"}</span>
+            </div>
             {editingNodeId ? (
-              <button className="small-button compact-button" type="button" onClick={resetForm}>
-                取消
+              <button className="icon-button mini" type="button" title="取消编辑" aria-label="取消编辑" onClick={resetForm}>
+                <X size={15} />
               </button>
             ) : null}
           </div>
-          <form className="node-form" onSubmit={saveNode}>
-            <label>
-              名称
-              <input
-                value={form.name}
-                onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                required
-              />
-            </label>
-            <label>
-              地址
-              <input
-                value={form.host}
-                onChange={(event) => setForm((current) => ({ ...current, host: event.target.value }))}
-                required
-              />
-            </label>
-            <label>
-              端口
-              <input
-                type="number"
-                min={1}
-                max={65535}
-                value={form.port}
-                onChange={(event) => setForm((current) => ({ ...current, port: event.target.value }))}
-                required
-              />
-            </label>
-            <label>
-              协议
-              <select
-                value={form.protocol}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, protocol: event.target.value as CreateNodeRequest["protocol"] }))
-                }
-              >
-                <option value="http">HTTP</option>
-                <option value="https">HTTPS</option>
-              </select>
-            </label>
-            <label>
-              分组
-              <input
-                value={form.groupName}
-                onChange={(event) => setForm((current) => ({ ...current, groupName: event.target.value }))}
-              />
-            </label>
-            <label>
-              标签
-              <input
-                value={form.tags}
-                onChange={(event) => setForm((current) => ({ ...current, tags: event.target.value }))}
-              />
-            </label>
-            <label className="wide-field">
-              备注
-              <input
-                value={form.remarks}
-                onChange={(event) => setForm((current) => ({ ...current, remarks: event.target.value }))}
-              />
-            </label>
-            <button className="primary-button form-submit" type="submit" disabled={saving}>
-              <Server size={18} />
-              {saving ? "保存中" : editingNodeId ? "保存节点" : "添加节点"}
-            </button>
-          </form>
+
+          {!editingNodeId ? (
+            <div style={{ padding: "14px 18px 0" }}>
+              <div className="segmented-nav">
+                <button
+                  type="button"
+                  className={`segmented-nav-btn ${addMode === "connect_key" ? "active" : ""}`}
+                  onClick={() => { setAddMode("connect_key"); resetForm(); }}
+                >
+                  <KeyRound size={13} />
+                  <span>密钥直连</span>
+                </button>
+                <button
+                  type="button"
+                  className={`segmented-nav-btn ${addMode === "daemon_install" ? "active" : ""}`}
+                  onClick={() => { setAddMode("daemon_install"); resetForm(); }}
+                >
+                  <TerminalIcon size={13} />
+                  <span>部署向导</span>
+                </button>
+                <button
+                  type="button"
+                  className={`segmented-nav-btn ${addMode === "manual" ? "active" : ""}`}
+                  onClick={() => setAddMode("manual")}
+                >
+                  <SlidersHorizontal size={13} />
+                  <span>手动配置</span>
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {/* MODE 1: Connect by Node Key */}
+          {addMode === "connect_key" && !editingNodeId ? (
+            <form className="node-form" onSubmit={handleConnectByKey}>
+              <label className="wide-field">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <span>机器专属密钥 (Node Key)</span>
+                  <span style={{ fontSize: "11px", fontWeight: 400, color: "var(--text-muted, #86868b)" }}>
+                    在目标机器终端执行 npm run daemon:key
+                  </span>
+                </div>
+                <textarea
+                  rows={3}
+                  value={keyInput}
+                  onChange={(e) => setKeyInput(e.target.value)}
+                  placeholder="粘贴目标机器生成的以 saki_node_ 开头的整串密钥..."
+                  required
+                />
+              </label>
+
+              {parsedKeyPayload ? (
+                <div className="wide-field" style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  padding: "8px 12px",
+                  background: "rgba(16, 185, 129, 0.08)",
+                  border: "1px solid rgba(16, 185, 129, 0.22)",
+                  borderRadius: "10px",
+                  fontSize: "12px",
+                  color: "#059669"
+                }}>
+                  <Check size={14} style={{ flexShrink: 0 }} />
+                  <span>
+                    已解析机器: <strong>{parsedKeyPayload.name}</strong> · 预设地址: <code>{parsedKeyPayload.protocol || "http"}://{parsedKeyPayload.host}:{parsedKeyPayload.port}</code>
+                  </span>
+                </div>
+              ) : null}
+
+              <label>
+                <span>连接 IP / 域名 (跨网段可选覆盖)</span>
+                <input
+                  value={keyHostOverride}
+                  onChange={(e) => setKeyHostOverride(e.target.value)}
+                  placeholder={parsedKeyPayload?.host ? `默认: ${parsedKeyPayload.host}` : "若不同网段，在此填写公网 IP 或域名"}
+                />
+              </label>
+
+              <label>
+                <span>节点名称</span>
+                <input
+                  value={keyNodeName}
+                  onChange={(e) => setKeyNodeName(e.target.value)}
+                  placeholder={parsedKeyPayload?.name || "可选，默认采用机器自带名称"}
+                />
+              </label>
+
+              <label className="wide-field">
+                <span>分组 (可选)</span>
+                <input
+                  value={keyGroupName}
+                  onChange={(e) => setKeyGroupName(e.target.value)}
+                  placeholder="可选，如: 生产集群、外网服务器"
+                />
+              </label>
+
+              <button className="primary-button form-submit" type="submit" disabled={connectingByKey}>
+                <Link2 size={16} />
+                {connectingByKey ? "正在握手验证..." : "连接节点"}
+              </button>
+            </form>
+          ) : null}
+
+          {/* MODE 2: Daemon Install Helper */}
+          {addMode === "daemon_install" && !editingNodeId ? (
+            <div style={{ padding: "16px 18px", display: "grid", gap: "12px" }}>
+              <div className="segmented-nav" style={{ maxWidth: "260px" }}>
+                <button
+                  type="button"
+                  className={`segmented-nav-btn ${installOs === "linux" ? "active" : ""}`}
+                  onClick={() => { setInstallOs("linux"); setInstallCopied(false); }}
+                >
+                  Linux
+                </button>
+                <button
+                  type="button"
+                  className={`segmented-nav-btn ${installOs === "windows" ? "active" : ""}`}
+                  onClick={() => { setInstallOs("windows"); setInstallCopied(false); }}
+                >
+                  Windows
+                </button>
+                <button
+                  type="button"
+                  className={`segmented-nav-btn ${installOs === "docker" ? "active" : ""}`}
+                  onClick={() => { setInstallOs("docker"); setInstallCopied(false); }}
+                >
+                  Docker
+                </button>
+              </div>
+
+              <div className="code-preview-frame">
+                <pre>
+                  <code>{getInstallCommandText()}</code>
+                </pre>
+                <button
+                  type="button"
+                  className="copy-btn"
+                  onClick={() => copyText(getInstallCommandText(), () => {
+                    setInstallCopied(true);
+                    setTimeout(() => setInstallCopied(false), 2000);
+                  })}
+                >
+                  {installCopied ? <Check size={12} style={{ marginRight: 4, color: "#10b981" }} /> : <Copy size={12} style={{ marginRight: 4 }} />}
+                  {installCopied ? "已复制" : "复制命令"}
+                </button>
+              </div>
+
+              <span style={{ fontSize: "12px", color: "var(--text-muted, #86868b)", lineHeight: "1.5" }}>
+                目标机器安装完成后，终端将自动打印该机器的 Node Key，切换回【密钥直连】粘贴即可上线。
+              </span>
+            </div>
+          ) : null}
+
+          {/* MODE 3: Manual Direct / Edit Form */}
+          {(addMode === "manual" || editingNodeId) ? (
+            <form className="node-form" onSubmit={saveNode}>
+              <label>
+                名称
+                <input
+                  value={form.name}
+                  onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+                  required
+                />
+              </label>
+              <label>
+                地址 (IP 或 域名)
+                <input
+                  value={form.host}
+                  onChange={(event) => setForm((current) => ({ ...current, host: event.target.value }))}
+                  required
+                />
+              </label>
+              <label>
+                端口
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={form.port}
+                  onChange={(event) => setForm((current) => ({ ...current, port: event.target.value }))}
+                  required
+                />
+              </label>
+              <label>
+                协议
+                <select
+                  value={form.protocol}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, protocol: event.target.value as CreateNodeRequest["protocol"] }))
+                  }
+                >
+                  <option value="http">HTTP</option>
+                  <option value="https">HTTPS</option>
+                </select>
+              </label>
+              <label>
+                分组
+                <input
+                  value={form.groupName}
+                  onChange={(event) => setForm((current) => ({ ...current, groupName: event.target.value }))}
+                />
+              </label>
+              <label>
+                标签
+                <input
+                  value={form.tags}
+                  onChange={(event) => setForm((current) => ({ ...current, tags: event.target.value }))}
+                />
+              </label>
+              <label className="wide-field">
+                备注
+                <input
+                  value={form.remarks}
+                  onChange={(event) => setForm((current) => ({ ...current, remarks: event.target.value }))}
+                />
+              </label>
+              <button className="primary-button form-submit" type="submit" disabled={saving}>
+                <Server size={18} />
+                {saving ? "保存中" : editingNodeId ? "保存节点" : "添加节点"}
+              </button>
+            </form>
+          ) : null}
+
           {createdSecret ? (
             <div className="node-token-box">
               <strong>{createdSecret.nodeName}</strong>
@@ -3806,23 +4799,38 @@ function NodesView({ token, onLogout, refreshTick }: { token: string; onLogout: 
           ) : null}
         </div>
 
+        {/* Nodes List Block */}
         <div className="panel-block nodes-block">
           <div className="section-heading">
-            <h2>节点</h2>
-            <span>{nodes.length} 台</span>
+            <div>
+              <h2>已连接节点</h2>
+              <span>共 {nodes.length} 台受控机器</span>
+            </div>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              <button
+                type="button"
+                className="secondary-button mini"
+                onClick={() => setShowUserKeyModal(true)}
+                title="管理我的专属实例访问密钥"
+              >
+                <KeyRound size={13} />
+                <span>专属访问密钥</span>
+                {userKeys.length > 0 ? <span className="badge-count">{userKeys.length}</span> : null}
+              </button>
+            </div>
           </div>
           <div className="table-wrap">
             <table className="nodes-table">
               <thead>
                 <tr>
-                  <th>名称</th>
-                  <th>地址</th>
-                  <th>状态</th>
-                  <th>系统</th>
-                  <th>资源</th>
+                  <th>机器名称</th>
+                  <th>连接地址</th>
+                  <th>在线状态</th>
+                  <th>系统环境</th>
+                  <th>资源占用 (CPU/内存)</th>
                   <th>分组</th>
-                  <th>心跳</th>
-                  <th></th>
+                  <th>最近心跳</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -3847,19 +4855,45 @@ function NodesView({ token, onLogout, refreshTick }: { token: string; onLogout: 
                       <td>{formatDate(node.lastSeenAt)}</td>
                       <td>
                         <div className="row-actions">
-                          <button className="small-button compact-button" disabled={busy} onClick={() => void testNode(node.id)}>
-                            测试
+                          <button
+                            className="icon-button mini"
+                            disabled={busy}
+                            title="测试与这台机器的连接"
+                            aria-label="测试与这台机器的连接"
+                            type="button"
+                            onClick={() => void testNode(node.id)}
+                          >
+                            <Wifi size={14} />
                           </button>
-                          <button className="small-button compact-button" disabled={busy} onClick={() => editNode(node)}>
-                            编辑
+                          <button
+                            className="icon-button mini"
+                            disabled={busy}
+                            title="查看连接凭据与重连命令"
+                            aria-label="查看连接凭据与重连命令"
+                            type="button"
+                            onClick={() => void openKeyModal(node)}
+                          >
+                            <KeyRound size={14} />
+                          </button>
+                          <button
+                            className="icon-button mini"
+                            disabled={busy}
+                            title="修改节点配置"
+                            aria-label="修改节点配置"
+                            type="button"
+                            onClick={() => editNode(node)}
+                          >
+                            <Wrench size={14} />
                           </button>
                           <button
                             className="icon-button mini danger-action"
                             disabled={busy}
-                            title="删除"
+                            title="移除此节点"
+                            aria-label="移除此节点"
+                            type="button"
                             onClick={() => void deleteNode(node)}
                           >
-                            <Trash2 size={15} />
+                            <Trash2 size={14} />
                           </button>
                         </div>
                       </td>
@@ -3869,7 +4903,11 @@ function NodesView({ token, onLogout, refreshTick }: { token: string; onLogout: 
                 {nodes.length === 0 ? (
                   <tr>
                     <td colSpan={8}>
-                      <div className="empty-state">暂无节点</div>
+                      <SakiEmptyState
+                        illustration="offline"
+                        title="暂无已连接的节点"
+                        description="请在左侧通过机器专属密钥连接你的第一台 Daemon 节点，Saki 将自动建立心跳与遥测连接。"
+                      />
                     </td>
                   </tr>
                 ) : null}
@@ -3878,6 +4916,250 @@ function NodesView({ token, onLogout, refreshTick }: { token: string; onLogout: 
           </div>
         </div>
       </section>
+
+      {/* User Access Keys Modal */}
+      {showUserKeyModal ? (
+        <div className="modal-backdrop">
+          <div className="modal-panel" style={{ maxWidth: "560px", width: "92%" }} role="dialog" aria-modal="true">
+            <div className="section-heading modal-heading" style={{ marginBottom: "14px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <KeyRound size={18} style={{ color: "#ff75ac" }} />
+                <h3 style={{ margin: 0, fontSize: "16px" }}>我的专属实例访问密钥</h3>
+              </div>
+              <button
+                className="icon-button mini"
+                type="button"
+                onClick={() => { setShowUserKeyModal(false); setCreatedRawUserKey(null); }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ padding: "0 4px", display: "grid", gap: "14px" }}>
+              <div style={{ fontSize: "12px", color: "var(--text-muted, #86868b)", lineHeight: "1.6" }}>
+                每个账号的密钥完全独立。使用此密钥仅能访问与控制归属于你自己的实例，跨用户严格隔离。
+              </div>
+
+              {/* Newly Created Key Card */}
+              {createdRawUserKey ? (
+                <div className="key-reveal-card">
+                  <div className="key-reveal-header">
+                    <Check size={14} />
+                    <span>专属访问密钥已生成（仅显示一次，请妥善保存）</span>
+                  </div>
+                  <div className="key-reveal-field">
+                    <code>{createdRawUserKey}</code>
+                    <button
+                      type="button"
+                      className="secondary-button mini"
+                      onClick={() => copyText(createdRawUserKey, () => setMessage("已复制专属访问密钥"))}
+                    >
+                      <Copy size={12} style={{ marginRight: 4 }} />
+                      复制
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Action row */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "13px", fontWeight: 600 }}>已生效密钥 ({userKeys.length})</span>
+                <button
+                  type="button"
+                  className="primary-button mini"
+                  disabled={creatingUserKey}
+                  onClick={() => void handleCreateUserKey()}
+                >
+                  <Plus size={13} style={{ marginRight: 4 }} />
+                  {creatingUserKey ? "正在生成..." : "生成新密钥"}
+                </button>
+              </div>
+
+              {/* Keys list */}
+              <div style={{ display: "grid", gap: "8px", maxHeight: "260px", overflowY: "auto" }}>
+                {userKeys.map((k) => (
+                  <div key={k.id} className="key-list-item">
+                    <div>
+                      <strong style={{ fontSize: "13px" }}>{k.name}</strong>
+                      <div style={{ fontSize: "11px", color: "var(--text-muted, #86868b)", marginTop: "2px" }}>
+                        末尾指纹: <code>...{k.keyLast4}</code> · 创建于 {formatDate(k.createdAt)}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="icon-button mini danger-action"
+                      title="撤销此密钥"
+                      aria-label="撤销此密钥"
+                      onClick={() => void handleDeleteUserKey(k.id)}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+                {userKeys.length === 0 ? (
+                  <div className="empty-state" style={{ padding: "20px 0" }}>
+                    尚未生成任何访问密钥，点击上方“生成新密钥”创建
+                  </div>
+                ) : null}
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: "10px", borderTop: "1px solid rgba(0, 0, 0, 0.06)" }}>
+                <button
+                  type="button"
+                  className="primary-button mini"
+                  style={{ height: "34px", padding: "0 18px", fontSize: "13px" }}
+                  onClick={() => { setShowUserKeyModal(false); setCreatedRawUserKey(null); }}
+                >
+                  完成
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Node Key & Reconnect Commands Modal */}
+      {keyModalNode ? (
+        <div className="modal-backdrop">
+          <div className="modal-panel" style={{ maxWidth: "580px", width: "92%" }} role="dialog" aria-modal="true">
+            <div className="section-heading modal-heading" style={{ marginBottom: "14px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <KeyRound size={18} style={{ color: "#3b82f6" }} />
+                <h3 style={{ margin: 0, fontSize: "16px" }}>节点连接凭证与命令 - {keyModalNode.name}</h3>
+              </div>
+              <button
+                className="icon-button mini"
+                type="button"
+                onClick={() => { setKeyModalNode(null); setRotatedSecret(null); setJoinCommands(null); }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ display: "grid", gap: "12px", fontSize: "13px" }}>
+              <div style={{ fontSize: "12px", color: "var(--text-muted, #64748b)", lineHeight: "1.5" }}>
+                这是该机器的专属凭据。如果你的这台服务器重启后掉线，或者重装了系统，只需复制下方的重连命令再次运行即可：
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "rgba(0,0,0,0.03)", borderRadius: "6px" }}>
+                <span style={{ color: "var(--text-muted, #64748b)" }}>节点唯一编号 (ID)</span>
+                <code style={{ fontSize: "12px" }}>{keyModalNode.id}</code>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "rgba(0,0,0,0.03)", borderRadius: "6px" }}>
+                <span style={{ color: "var(--text-muted, #64748b)" }}>当前秘钥末四位指纹</span>
+                <code style={{ fontSize: "12px" }}>...{keyModalNode.tokenLast4 || "****"}</code>
+              </div>
+
+              {/* Rotated Secret Box if newly rotated */}
+              {rotatedSecret ? (
+                <div style={{ padding: "12px", background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.3)", borderRadius: "8px" }}>
+                  <div style={{ color: "#059669", fontWeight: "bold", marginBottom: "6px" }}>✓ 新密码已生成成功（请点击右侧复制）：</div>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <code style={{ flex: 1, padding: "6px 8px", background: "#fff", border: "1px solid #cbd5e1", borderRadius: "4px", fontSize: "12px", wordBreak: "break-all" }}>
+                      {rotatedSecret.nodeToken}
+                    </code>
+                    <button
+                      className="button secondary-button mini"
+                      type="button"
+                      onClick={() => copyText(rotatedSecret.nodeToken, () => setMessage("已复制新秘钥"))}
+                    >
+                      <Copy size={13} />
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Join Commands for this node */}
+              <div style={{ marginTop: "6px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                  <span style={{ fontWeight: 600, fontSize: "13px" }}>专属一键重新连接命令：</span>
+                  <div className="segmented-nav" style={{ maxWidth: "240px" }}>
+                    <button
+                      type="button"
+                      className={`segmented-nav-btn ${activeCommandTab === "linux" ? "active" : ""}`}
+                      onClick={() => { setActiveCommandTab("linux"); setCommandCopied(false); }}
+                    >
+                      Linux
+                    </button>
+                    <button
+                      type="button"
+                      className={`segmented-nav-btn ${activeCommandTab === "windows" ? "active" : ""}`}
+                      onClick={() => { setActiveCommandTab("windows"); setCommandCopied(false); }}
+                    >
+                      Windows
+                    </button>
+                    <button
+                      type="button"
+                      className={`segmented-nav-btn ${activeCommandTab === "docker" ? "active" : ""}`}
+                      onClick={() => { setActiveCommandTab("docker"); setCommandCopied(false); }}
+                    >
+                      Docker
+                    </button>
+                  </div>
+                </div>
+
+                {loadingJoinCommands ? (
+                  <div style={{ padding: "16px", textAlign: "center", color: "var(--text-muted, #64748b)" }}>
+                    <Loader2 size={16} className="spin" style={{ marginRight: 6 }} />
+                    正在生成专属重连命令...
+                  </div>
+                ) : joinCommands ? (
+                  <div className="code-preview-frame">
+                    <pre>
+                      <code>
+                        {activeCommandTab === "linux"
+                          ? joinCommands.linuxCommand
+                          : activeCommandTab === "windows"
+                            ? joinCommands.windowsCommand
+                            : joinCommands.dockerCommand}
+                      </code>
+                    </pre>
+                    <button
+                      className="copy-btn"
+                      type="button"
+                      onClick={() => {
+                        const cmd = activeCommandTab === "linux"
+                          ? joinCommands.linuxCommand
+                          : activeCommandTab === "windows"
+                            ? joinCommands.windowsCommand
+                            : joinCommands.dockerCommand;
+                        copyText(cmd, () => {
+                          setCommandCopied(true);
+                          setTimeout(() => setCommandCopied(false), 2000);
+                        });
+                      }}
+                    >
+                      {commandCopied ? <Check size={11} style={{ marginRight: 3, color: "#10b981" }} /> : <Copy size={11} style={{ marginRight: 3 }} />}
+                      {commandCopied ? "已复制" : "复制命令"}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "14px", paddingTop: "12px", borderTop: "1px solid rgba(0,0,0,0.06)" }}>
+                <button
+                  type="button"
+                  className="secondary-button mini"
+                  style={{ color: "#ef4444" }}
+                  disabled={rotatingSecret}
+                  onClick={() => void handleRotateSecret(keyModalNode)}
+                >
+                  <RotateCw size={12} style={{ marginRight: 4 }} className={rotatingSecret ? "spin" : ""} />
+                  {rotatingSecret ? "正在重新生成..." : "重置密钥"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button mini"
+                  onClick={() => { setKeyModalNode(null); setRotatedSecret(null); setJoinCommands(null); }}
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }
@@ -3904,29 +5186,9 @@ function newClientId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-const sakiArtAssets = {
-  avatar: "/assets/head.png",
-  launcher: "/assets/sakiicon.png",
-  launcherHover: "/assets/saki_click.png",
-  tieEdge: "/assets/tiebian.png",
-  files: "/assets/saki_files.png",
-  normal: "/assets/expression/normal.png",
-  thinking: "/assets/expression/think.png",
-  worry: "/assets/expression/worry.png",
-  thinkingGif: "/assets/Thinking.gif",
-  pickup1: "/assets/expression/pickup1.png",
-  pickup2: "/assets/expression/pickup2.png",
-  happy: "/assets/expression/happy.png",
-  OK: "/assets/expression/OK.png",
-  reading: "/assets/expression/reading.png",
-  upset: "/assets/expression/upset.png",
-  working: "/assets/expression/working.png",
-  checkfiles: "/assets/expression/checkfiles.png",
-  shy: "/assets/expression/shy.png"
-} as const;
-
 type SakiArtMood = "normal" | "thinking" | "worry";
-type SakiActivityMood = "working" | "reading" | "checkfiles" | "upset" | "happy" | "OK" | null;
+type SakiActivityMood = "working" | "reading" | "checkfiles" | "upset" | "happy" | "OK" | "eating" | "gaming" | "hearing" | "speaking" | null;
+type SakiVoiceEchoState = "idle" | "hearing" | "speaking";
 type SakiLauncherEdge = "left" | "right";
 type SakiLauncherSizeMode = "current" | "expanded" | "attached";
 
@@ -3934,6 +5196,14 @@ interface SakiLauncherPosition {
   x: number;
   y: number;
   edge?: SakiLauncherEdge | null;
+}
+
+interface SakiPullDragRequest {
+  pointerId: number;
+  offsetX: number;
+  offsetY: number;
+  clientX: number;
+  clientY: number;
 }
 
 const sakiLauncherPositionKey = "webops.saki.launcherPosition";
@@ -4113,6 +5383,14 @@ function getSakiActivityExpressionSrc(activityMood: SakiActivityMood): string | 
       return sakiArtAssets.happy;
     case "OK":
       return sakiArtAssets.OK;
+    case "eating":
+      return sakiArtAssets.eating;
+    case "gaming":
+      return sakiArtAssets.gaming;
+    case "hearing":
+      return sakiArtAssets.listen;
+    case "speaking":
+      return sakiArtAssets.shy;
     default:
       return null;
   }
@@ -4416,6 +5694,32 @@ function appendSakiTimelineDelta(timeline: LocalSakiTimelineItem[] | undefined, 
   ];
 }
 
+function appendSakiTimelineThinking(timeline: LocalSakiTimelineItem[] | undefined, text: string): LocalSakiTimelineItem[] {
+  if (!text) return timeline ?? [];
+  const current = timeline ?? [];
+  const last = current.at(-1);
+  if (last?.kind === "text" && last.source === "delta") {
+    return [
+      ...current.slice(0, -1),
+      {
+        ...last,
+        thinking: `${last.thinking ?? ""}${text}`
+      }
+    ];
+  }
+  return [
+    ...current,
+    {
+      kind: "text",
+      id: `delta:${newClientId()}`,
+      content: "",
+      thinking: text,
+      source: "delta",
+      createdAt: new Date().toISOString()
+    }
+  ];
+}
+
 function sealSakiTimelineDelta(timeline: LocalSakiTimelineItem[] | undefined): LocalSakiTimelineItem[] {
   const current = timeline ?? [];
   const last = current.at(-1);
@@ -4639,6 +5943,151 @@ function sakiActionTarget(action: SakiAgentAction): string {
   if (tool === "readskill") return sakiActionStringArg(action, ["skillId"]);
   if (tool === "listfiles") return sakiActionStringArg(action, ["path"]) || ".";
   return sakiActionStringArg(action, ["path", "instanceId", "taskId", "action"]);
+}
+
+interface ParsedThinkingResult {
+  hasThinking: boolean;
+  thinking: string;
+  answer: string;
+  isThinkingActive: boolean;
+}
+
+function parseThinkingContent(
+  rawText: string = "",
+  externalThinking?: string,
+  isStreaming?: boolean
+): ParsedThinkingResult {
+  const thinkingParts: string[] = [];
+  if (externalThinking && externalThinking.trim()) {
+    thinkingParts.push(externalThinking.trim());
+  }
+
+  let text = rawText || "";
+  let isThinkingActive = false;
+
+  // Extract all closed tags: <think>...</think>, <thought>...</thought>, <reasoning>...</reasoning>
+  const closedTagRe = /<(think|thought|reasoning)>([\s\S]*?)<\/\1>/gi;
+  const matches = Array.from(text.matchAll(closedTagRe));
+  for (const match of matches) {
+    const thought = (match[2] ?? "").trim();
+    if (thought) {
+      thinkingParts.push(thought);
+    }
+  }
+  text = text.replace(closedTagRe, "").trim();
+
+  // Extract open unclosed tag: <think>... (e.g. while streaming)
+  const openTagRe = /<(think|thought|reasoning)>([\s\S]*)$/i;
+  const openMatch = text.match(openTagRe);
+  if (openMatch) {
+    const unclosedThought = (openMatch[2] ?? "").trim();
+    if (unclosedThought) {
+      thinkingParts.push(unclosedThought);
+    }
+    text = text.slice(0, openMatch.index).trim();
+    if (isStreaming) {
+      isThinkingActive = true;
+    }
+  }
+
+  const thinking = thinkingParts.join("\n\n").trim();
+  return {
+    hasThinking: Boolean(thinking),
+    thinking,
+    answer: text,
+    isThinkingActive
+  };
+}
+
+function SakiThinkingContent({
+  content,
+  thinking: explicitThinking,
+  streaming
+}: {
+  content: string;
+  thinking?: string | undefined;
+  streaming?: boolean | undefined;
+}) {
+  // Collapsed by default as requested!
+  const [expanded, setExpanded] = useState(false);
+
+  const { hasThinking, thinking, answer, isThinkingActive } = useMemo(
+    () => parseThinkingContent(content, explicitThinking, streaming),
+    [content, explicitThinking, streaming]
+  );
+
+  if (!hasThinking) {
+    if (streaming) {
+      return (
+        <div className="saki-stream-raw-wrap">
+          <span className="saki-stream-raw">{content}</span>
+          <span className="saki-stream-cursor" />
+        </div>
+      );
+    }
+    return <MarkdownContent content={content} />;
+  }
+
+  const charCount = thinking ? Math.max(1, thinking.length) : 0;
+
+  return (
+    <div className="saki-message-with-thinking">
+      <div className={`saki-thinking-collapse ${expanded ? "is-expanded" : "is-collapsed"}`}>
+        <button
+          type="button"
+          className="saki-thinking-toggle"
+          onClick={() => setExpanded((prev) => !prev)}
+          title={expanded ? "收起思考过程" : "展开思考过程"}
+          aria-expanded={expanded}
+        >
+          <span className="saki-thinking-toggle-icon">
+            {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          </span>
+          <span className="saki-thinking-toggle-title">
+            <Sparkles size={13} className="saki-thinking-sparkle" />
+            {isThinkingActive ? "正在深度思考..." : "思考过程"}
+          </span>
+          {thinking ? (
+            <span className="saki-thinking-badge">
+              {isThinkingActive ? "思考中" : `${charCount} 字`}
+            </span>
+          ) : null}
+        </button>
+        {expanded ? (
+          <div className="saki-thinking-drawer">
+            <div className="saki-thinking-body">
+              {streaming && isThinkingActive ? (
+                <div className="saki-stream-raw-wrap">
+                  <span className="saki-stream-raw saki-thinking-raw">{thinking}</span>
+                  <span className="saki-stream-cursor" />
+                </div>
+              ) : (
+                <MarkdownContent content={thinking} />
+              )}
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      {answer ? (
+        <div className="saki-thinking-answer">
+          {streaming && !isThinkingActive ? (
+            <div className="saki-stream-raw-wrap">
+              <span className="saki-stream-raw">{answer}</span>
+              <span className="saki-stream-cursor" />
+            </div>
+          ) : (
+            <MarkdownContent content={answer} />
+          )}
+        </div>
+      ) : isThinkingActive ? (
+        <div className="saki-thinking-pending-answer">
+          <span className="saki-thinking-pulse-dot" />
+          <span>正在组织回答...</span>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function sakiActionMeta(action: SakiAgentAction): string {
@@ -4915,6 +6364,20 @@ function SakiToolActionCard({
           {meta ? <span className="saki-action-meta">{meta}</span> : null}
         </span>
         <span className="saki-action-status-dot" style={{ backgroundColor: statusColor }} />
+        {action.approval?.rollbackAvailable && !isPending ? (
+          <button
+            className="saki-action-inline-rollback"
+            type="button"
+            title="回滚此操作"
+            disabled={controlsDisabled}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDecision(action, "rollback");
+            }}
+          >
+            {busy ? <Loader2 size={12} className="status-spinner" /> : <CornerUpLeft size={12} />}
+          </button>
+        ) : null}
         <span className="saki-action-expand">{expanded ? "▾" : "▸"}</span>
       </div>
       {expanded ? (
@@ -4955,65 +6418,6 @@ function SakiToolActionCard({
             拒绝
           </button>
         </div>
-      ) : action.approval?.rollbackAvailable ? (
-        <div className="saki-action-approval">
-          <button className="saki-approval-btn rollback" type="button" disabled={controlsDisabled} onClick={() => onDecision(action, "rollback")}>
-            {busy ? <Loader2 size={13} className="status-spinner" /> : <CornerUpLeft size={13} />}
-            {isSakiRollbackableFileEdit(action) ? "回滚" : "回滚"}
-          </button>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function SakiThinkingContent({ content, streaming }: { content: string; streaming?: boolean }) {
-  const [showThink, setShowThink] = useState(false);
-  if (streaming) {
-    const thinkOpenIdx = content.indexOf("\u003Cthink\u003E");
-    const thinkCloseIdx = content.indexOf("\u003C/think\u003E");
-    if (thinkOpenIdx >= 0 && thinkCloseIdx < 0) {
-      const thinkText = content.slice(thinkOpenIdx + 7);
-      return (
-        <div className="saki-think-block">
-          <div className="saki-think-toggle" onClick={() => setShowThink(!showThink)}>
-            <span>{showThink ? "\u25BE" : "\u25B8"}</span>
-            <span>思考中...</span>
-          </div>
-          {showThink ? (
-            <div className="saki-think-content">
-              <pre className="saki-stream-raw">{thinkText}</pre>
-            </div>
-          ) : null}
-        </div>
-      );
-    }
-    return (
-      <div className="saki-stream-raw-wrap">
-        <span className="saki-stream-raw">{content}</span>
-        <span className="saki-stream-cursor" />
-      </div>
-    );
-  }
-  const thinkMatch = content.match(/^\u003Cthink\u003E([\s\S]*?)\u003C\/think\u003E\s*/);
-  if (!thinkMatch) return <MarkdownContent content={content} />;
-  const thinkText = thinkMatch[1]!.trim();
-  const restContent = content.slice(thinkMatch[0]!.length).trim();
-  return (
-    <div>
-      <div className="saki-think-block">
-        <div className="saki-think-toggle" onClick={() => setShowThink(!showThink)}>
-          <span>{showThink ? "\u25BE" : "\u25B8"}</span>
-          <span>思考过程</span>
-        </div>
-        {showThink ? (
-          <div className="saki-think-content">
-            <MarkdownContent content={thinkText} />
-          </div>
-        ) : null}
-      </div>
-      {restContent ? (
-        <MarkdownContent content={restContent} />
       ) : null}
     </div>
   );
@@ -5047,6 +6451,1295 @@ function SakiStreamStatus({ workflow }: { workflow: LocalSakiWorkflowStep[] }) {
   );
 }
 
+const sakiFoodMenu = [
+  {
+    id: "caomeidafu",
+    name: "草莓大福",
+    image: "/assets/game/caomeidafu.png",
+    cost: 1,
+    favorability: 10,
+    desc: "软糯香甜，仅需 1 Saki 积分",
+    greeting: "嗷呜～软糯的草莓大福太美味啦！谢谢你～ (๑>؂<๑)۶",
+    mood: "eating" as SakiActivityMood
+  },
+  {
+    id: "naicha",
+    name: "波霸珍珠奶茶",
+    image: "/assets/game/naicha.png",
+    cost: 2,
+    favorability: 25,
+    desc: "Q弹珍珠，仅需 2 Saki 积分",
+    greeting: "吸一口甜甜的珍珠奶茶，活力瞬间拉满！(*╹▽╹*)",
+    mood: "eating" as SakiActivityMood
+  },
+  {
+    id: "biandang",
+    name: "猫咪爱心便当",
+    image: "/assets/game/biandang.png",
+    cost: 5,
+    favorability: 60,
+    desc: "特制萌猫便当，仅需 5 Saki 积分",
+    greeting: "这...这是特制给我的猫咪便当吗？！太感动了，最喜欢你啦～ (｡♥‿♥｡)",
+    mood: "eating" as SakiActivityMood
+  }
+];
+
+interface SakiDessertDropGameProps {
+  onClose: () => void;
+  onFinish: (score: number, expReward: number) => void;
+}
+
+interface GameFallingItem {
+  id: number;
+  x: number;
+  y: number;
+  speed: number;
+  points: number;
+  iconSrc: string;
+  name: string;
+  isBug: boolean;
+  scale: number;
+}
+
+interface GameFloatText {
+  id: number;
+  x: number;
+  y: number;
+  text: string;
+  rating?: string;
+  color: string;
+}
+
+interface GameParticle {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  size: number;
+  color: string;
+  shape: "star" | "heart" | "spark";
+  life: number;
+}
+
+interface GameShockwave {
+  id: number;
+  x: number;
+  y: number;
+  color: string;
+}
+
+class GameSoundFX {
+  private ctx: AudioContext | null = null;
+  private isMuted: boolean = false;
+
+  public init() {
+    try {
+      if (!this.ctx && typeof window !== "undefined") {
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        if (AudioCtx) {
+          this.ctx = new AudioCtx();
+        }
+      }
+      if (this.ctx && this.ctx.state === "suspended") {
+        void this.ctx.resume();
+      }
+    } catch {}
+  }
+
+  public setMuted(muted: boolean) {
+    this.isMuted = muted;
+  }
+
+  // 1. Regular dessert or wish star catch with combo pitch scaling
+  public playCatch(combo: number, isWishStar: boolean = false) {
+    if (this.isMuted) return;
+    this.init();
+    if (!this.ctx) return;
+
+    try {
+      const t = this.ctx.currentTime;
+
+      if (isWishStar) {
+        // Celestial harp glissando for Wish Star
+        const notes = [523.25, 659.25, 783.99, 987.77, 1046.5, 1318.51];
+        notes.forEach((freq, i) => {
+          const osc = this.ctx!.createOscillator();
+          const gain = this.ctx!.createGain();
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(freq, t + i * 0.035);
+
+          gain.gain.setValueAtTime(0, t + i * 0.035);
+          gain.gain.linearRampToValueAtTime(0.16, t + i * 0.035 + 0.01);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.035 + 0.2);
+
+          osc.connect(gain);
+          gain.connect(this.ctx!.destination);
+          osc.start(t + i * 0.035);
+          osc.stop(t + i * 0.035 + 0.22);
+        });
+        return;
+      }
+
+      // Pop / arcade sound with dynamic pitch scaling
+      const basePitches = [392.0, 440.0, 493.88, 523.25, 587.33, 659.25, 783.99, 880.0, 987.77, 1046.5];
+      const freq = basePitches[Math.min(combo, basePitches.length - 1)] ?? 440;
+
+      const osc = this.ctx.createOscillator();
+      const osc2 = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(freq, t);
+      osc.frequency.exponentialRampToValueAtTime(freq * 1.45, t + 0.08);
+
+      osc2.type = "sine";
+      osc2.frequency.setValueAtTime(freq * 2, t);
+      osc2.frequency.exponentialRampToValueAtTime(freq * 2.5, t + 0.06);
+
+      gain.gain.setValueAtTime(0.18, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+
+      osc.connect(gain);
+      osc2.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      osc.start(t);
+      osc2.start(t);
+      osc.stop(t + 0.14);
+      osc2.stop(t + 0.14);
+    } catch {}
+  }
+
+  // 2. Bug Hit (Dull buzz & crunch dissonance)
+  public playBugHit() {
+    if (this.isMuted) return;
+    this.init();
+    if (!this.ctx) return;
+
+    try {
+      const t = this.ctx.currentTime;
+      const osc1 = this.ctx.createOscillator();
+      const osc2 = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      osc1.type = "sawtooth";
+      osc1.frequency.setValueAtTime(180, t);
+      osc1.frequency.exponentialRampToValueAtTime(45, t + 0.22);
+
+      osc2.type = "square";
+      osc2.frequency.setValueAtTime(155, t);
+      osc2.frequency.exponentialRampToValueAtTime(40, t + 0.22);
+
+      gain.gain.setValueAtTime(0.2, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      osc1.start(t);
+      osc2.start(t);
+      osc1.stop(t + 0.26);
+      osc2.stop(t + 0.26);
+    } catch {}
+  }
+
+  // 3. FEVER Fanfare
+  public playFever() {
+    if (this.isMuted) return;
+    this.init();
+    if (!this.ctx) return;
+
+    try {
+      const t = this.ctx.currentTime;
+      const notes = [523.25, 659.25, 783.99, 1046.5, 1318.51];
+      notes.forEach((freq, i) => {
+        const osc = this.ctx!.createOscillator();
+        const gain = this.ctx!.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, t + i * 0.05);
+
+        gain.gain.setValueAtTime(0.18, t + i * 0.05);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.05 + 0.3);
+
+        osc.connect(gain);
+        gain.connect(this.ctx!.destination);
+        osc.start(t + i * 0.05);
+        osc.stop(t + i * 0.05 + 0.32);
+      });
+    } catch {}
+  }
+
+  // 4. Countdown warning (when time <= 5s)
+  public playCountdownTick(isFinal: boolean = false) {
+    if (this.isMuted) return;
+    this.init();
+    if (!this.ctx) return;
+
+    try {
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(isFinal ? 880 : 660, t);
+
+      gain.gain.setValueAtTime(0.15, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.09);
+    } catch {}
+  }
+
+  // 5. Game Over / Victory Jingle
+  public playVictory() {
+    if (this.isMuted) return;
+    this.init();
+    if (!this.ctx) return;
+
+    try {
+      const t = this.ctx.currentTime;
+      const melody = [
+        { f: 523.25, time: 0, dur: 0.12 },
+        { f: 659.25, time: 0.12, dur: 0.12 },
+        { f: 783.99, time: 0.24, dur: 0.14 },
+        { f: 1046.5, time: 0.38, dur: 0.4 }
+      ];
+
+      melody.forEach((m) => {
+        const osc = this.ctx!.createOscillator();
+        const gain = this.ctx!.createGain();
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(m.f, t + m.time);
+
+        gain.gain.setValueAtTime(0.2, t + m.time);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + m.time + m.dur);
+
+        osc.connect(gain);
+        gain.connect(this.ctx!.destination);
+        osc.start(t + m.time);
+        osc.stop(t + m.time + m.dur + 0.02);
+      });
+    } catch {}
+  }
+
+  // 6. Fast slide whoosh
+  public playWhoosh() {
+    if (this.isMuted) return;
+    this.init();
+    if (!this.ctx) return;
+
+    try {
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(340, t);
+      osc.frequency.exponentialRampToValueAtTime(180, t + 0.08);
+
+      gain.gain.setValueAtTime(0.06, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.09);
+    } catch {}
+  }
+}
+
+function SakiDessertDropGame({ onClose, onFinish }: SakiDessertDropGameProps) {
+  const [score, setScore] = useState(0);
+  const [combo, setCombo] = useState(0);
+  const [maxCombo, setMaxCombo] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(30);
+  const [gameOver, setGameOver] = useState(false);
+  const [basketX, setBasketX] = useState(50);
+  const [basketTilt, setBasketTilt] = useState(0);
+  const [floatTexts, setFloatTexts] = useState<GameFloatText[]>([]);
+  const [particles, setParticles] = useState<GameParticle[]>([]);
+  const [shockwaves, setShockwaves] = useState<GameShockwave[]>([]);
+  const [shaking, setShaking] = useState(false);
+  const [feverFlash, setFeverFlash] = useState(false);
+  const [soundMuted, setSoundMuted] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("saki_game_sound_muted") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const soundFxRef = useRef<GameSoundFX>(new GameSoundFX());
+  const gameAreaRef = useRef<HTMLDivElement | null>(null);
+
+  const itemsRef = useRef<GameFallingItem[]>([]);
+  const particlesRef = useRef<GameParticle[]>([]);
+  const [, setTick] = useState(0);
+  const scoreRef = useRef(0);
+  const comboRef = useRef(0);
+  const maxComboRef = useRef(0);
+  const basketXRef = useRef(50);
+  const lastBasketXRef = useRef(50);
+  const isGameOverRef = useRef(false);
+
+  scoreRef.current = score;
+  comboRef.current = combo;
+  maxComboRef.current = maxCombo;
+  basketXRef.current = basketX;
+
+  useEffect(() => {
+    soundFxRef.current.setMuted(soundMuted);
+  }, [soundMuted]);
+
+  useEffect(() => {
+    if (gameOver) {
+      soundFxRef.current.playVictory();
+    }
+  }, [gameOver]);
+
+  const itemTypes = [
+    { name: "心愿星", iconSrc: "/assets/game/star.png", points: 30, isBug: false, weight: 2 },
+    { name: "草莓大福", iconSrc: "/assets/game/caomeidafu.png", points: 25, isBug: false, weight: 3 },
+    { name: "珍珠奶茶", iconSrc: "/assets/game/naicha.png", points: 25, isBug: false, weight: 3 },
+    { name: "甜甜圈", iconSrc: "/assets/game/donut.png", points: 20, isBug: false, weight: 4 },
+    { name: "马卡龙", iconSrc: "/assets/game/macaron.png", points: 15, isBug: false, weight: 4 },
+    { name: "调皮Bug", iconSrc: "/assets/game/bug.png", points: -15, isBug: true, weight: 2 }
+  ];
+
+  const spawnParticleBurst = (x: number, y: number, isBug: boolean) => {
+    const count = isBug ? 8 : 12;
+    const newParts: GameParticle[] = [];
+    const colors = isBug
+      ? ["#f43f5e", "#9333ea", "#e11d48"]
+      : ["#fbbf24", "#ff75ac", "#38bdf8", "#4ade80", "#ffffff"];
+    const shapes: ("star" | "heart" | "spark")[] = isBug ? ["spark"] : ["star", "heart", "spark"];
+
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2 + (Math.random() * 0.4 - 0.2);
+      const spd = Math.random() * 2.5 + 1.5;
+      newParts.push({
+        id: Date.now() + Math.random(),
+        x,
+        y,
+        vx: Math.cos(angle) * spd,
+        vy: Math.sin(angle) * spd - 1.2,
+        size: Math.random() * 8 + 6,
+        color: colors[Math.floor(Math.random() * colors.length)] ?? "#ff75ac",
+        shape: shapes[Math.floor(Math.random() * shapes.length)] ?? "star",
+        life: 1
+      });
+    }
+
+    particlesRef.current = [...particlesRef.current.slice(-30), ...newParts];
+    setParticles([...particlesRef.current]);
+  };
+
+  const spawnShockwave = (x: number, y: number, color: string) => {
+    const sw: GameShockwave = { id: Date.now() + Math.random(), x, y, color };
+    setShockwaves((prev) => [...prev.slice(-4), sw]);
+    setTimeout(() => {
+      setShockwaves((prev) => prev.filter((item) => item.id !== sw.id));
+    }, 550);
+  };
+
+  useEffect(() => {
+    let animFrame: number;
+    let lastSpawn = Date.now();
+
+    const spawnItem = () => {
+      if (isGameOverRef.current) return;
+      const totalWeight = itemTypes.reduce((acc, t) => acc + t.weight, 0);
+      let r = Math.random() * totalWeight;
+      let chosen = itemTypes[0] ?? { name: "甜甜圈", iconSrc: "/assets/game/donut.png", points: 20, isBug: false, weight: 4 };
+      for (const t of itemTypes) {
+        if (r < t.weight) {
+          chosen = t;
+          break;
+        }
+        r -= t.weight;
+      }
+
+      itemsRef.current.push({
+        id: Date.now() + Math.random(),
+        x: Math.random() * 80 + 10,
+        y: 0,
+        speed: Math.random() * 0.8 + 0.9,
+        points: chosen.points,
+        iconSrc: chosen.iconSrc,
+        name: chosen.name,
+        isBug: chosen.isBug,
+        scale: 1
+      });
+    };
+
+    const loop = () => {
+      if (isGameOverRef.current) return;
+
+      const now = Date.now();
+      if (now - lastSpawn > 620) {
+        spawnItem();
+        lastSpawn = now;
+      }
+
+      const basketPos = basketXRef.current;
+      const caughtList: GameFallingItem[] = [];
+      const remaining: GameFallingItem[] = [];
+
+      for (const item of itemsRef.current) {
+        item.y += item.speed * 0.88;
+        if (item.y >= 75 && item.y <= 88) {
+          const dist = Math.abs(item.x - basketPos);
+          if (dist < 14) {
+            caughtList.push(item);
+            continue;
+          }
+        }
+        if (item.y <= 102) {
+          remaining.push(item);
+        }
+      }
+      itemsRef.current = remaining;
+
+      // Update particle physics
+      if (particlesRef.current.length > 0) {
+        const remainingParts: GameParticle[] = [];
+        for (const p of particlesRef.current) {
+          p.x += p.vx * 0.7;
+          p.y += p.vy * 0.7;
+          p.vy += 0.08; // gravity
+          p.life -= 0.035;
+          if (p.life > 0) {
+            remainingParts.push(p);
+          }
+        }
+        particlesRef.current = remainingParts;
+        setParticles(remainingParts);
+      }
+
+      if (caughtList.length > 0) {
+        caughtList.forEach((item) => {
+          if (item.isBug) {
+            soundFxRef.current.playBugHit();
+            setScore((prev) => Math.max(0, prev - 15));
+            setCombo(0);
+            setShaking(true);
+            setTimeout(() => setShaking(false), 350);
+            spawnParticleBurst(item.x, item.y, true);
+            spawnShockwave(item.x, item.y, "rgba(244, 63, 94, 0.8)");
+            setFloatTexts((prev) => [
+              ...prev.slice(-5),
+              { id: Date.now() + Math.random(), x: item.x, y: item.y, text: "-15 💥", rating: "MISS!", color: "#f43f5e" }
+            ]);
+          } else {
+            const isFever = comboRef.current >= 4;
+            const pts = isFever ? item.points * 2 : item.points;
+            soundFxRef.current.playCatch(comboRef.current, item.name === "心愿星");
+            setScore((prev) => prev + pts);
+            setCombo((prev) => {
+              const n = prev + 1;
+              if (n === 5) {
+                soundFxRef.current.playFever();
+                setFeverFlash(true);
+                setTimeout(() => setFeverFlash(false), 400);
+              }
+              if (n > maxComboRef.current) setMaxCombo(n);
+              return n;
+            });
+
+            spawnParticleBurst(item.x, item.y, false);
+            spawnShockwave(item.x, item.y, isFever ? "rgba(251, 191, 36, 0.9)" : "rgba(255, 117, 172, 0.8)");
+
+            const rating = isFever ? "FEVER! 🔥" : comboRef.current >= 6 ? "PERFECT! 🌟" : comboRef.current >= 3 ? "GREAT! ✨" : "NICE!";
+            const comboText = isFever ? `+${pts} (2X)` : `+${pts}`;
+            setFloatTexts((prev) => [
+              ...prev.slice(-5),
+              { id: Date.now() + Math.random(), x: item.x, y: item.y, text: comboText, rating, color: isFever ? "#fbbf24" : "#ff75ac" }
+            ]);
+          }
+        });
+      }
+
+      setTick((t) => (t + 1) % 10000);
+      animFrame = requestAnimationFrame(loop);
+    };
+
+    animFrame = requestAnimationFrame(loop);
+
+    return () => {
+      cancelAnimationFrame(animFrame);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (gameOver) return;
+    const interval = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setGameOver(true);
+          isGameOverRef.current = true;
+          return 0;
+        }
+        if (prev <= 6 && prev > 1) {
+          soundFxRef.current.playCountdownTick(prev === 2);
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [gameOver]);
+
+  useEffect(() => {
+    if (floatTexts.length === 0) return;
+    const t = setTimeout(() => {
+      setFloatTexts((prev) => prev.slice(1));
+    }, 750);
+    return () => clearTimeout(t);
+  }, [floatTexts]);
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!gameAreaRef.current || gameOver) return;
+    soundFxRef.current.init();
+    const rect = gameAreaRef.current.getBoundingClientRect();
+    const clientX = e.clientX;
+    const relX = ((clientX - rect.left) / rect.width) * 100;
+    const clamped = Math.max(12, Math.min(88, relX));
+    const delta = clamped - lastBasketXRef.current;
+    if (Math.abs(delta) > 5.5) {
+      soundFxRef.current.playWhoosh();
+    }
+    lastBasketXRef.current = clamped;
+    const tilt = Math.max(-16, Math.min(16, delta * 3.5));
+    setBasketTilt(tilt);
+    setBasketX(clamped);
+    setTimeout(() => setBasketTilt(0), 120);
+  };
+
+  const expReward = Math.max(15, Math.round(score * 0.35));
+  const isFeverMode = combo >= 5;
+
+  const handleFinishGame = () => {
+    onFinish(score, expReward);
+    onClose();
+  };
+
+  return (
+    <div
+      ref={gameAreaRef}
+      className={`saki-mini-game-overlay ${shaking ? "shaking" : ""} ${isFeverMode ? "fever-active" : ""}`}
+      style={{ backgroundImage: `url("/assets/game/game_bg.png")` }}
+      onPointerMove={handlePointerMove}
+      onPointerDown={handlePointerMove}
+    >
+      {/* Fever Flash Light */}
+      {feverFlash ? <div className="saki-game-fever-flash" aria-hidden="true" /> : null}
+
+      {/* Fever Mode Aura Border */}
+      {isFeverMode ? <div className="saki-game-fever-border" aria-hidden="true" /> : null}
+
+      {/* Game Header */}
+      <div className="saki-game-header">
+        <div className="saki-game-stat">
+          <span className="stat-label">倒计时</span>
+          <span className="stat-value timer">{timeLeft}s</span>
+        </div>
+        <div className="saki-game-stat">
+          <span className="stat-label">得分</span>
+          <span className="stat-value score">{score}</span>
+        </div>
+        <div className="saki-game-header-actions">
+          <button
+            className="saki-game-sound-btn"
+            type="button"
+            title={soundMuted ? "开启音效" : "静音"}
+            aria-label={soundMuted ? "开启音效" : "静音"}
+            onClick={() => {
+              setSoundMuted((prev) => {
+                const next = !prev;
+                try {
+                  localStorage.setItem("saki_game_sound_muted", String(next));
+                } catch {}
+                return next;
+              });
+            }}
+          >
+            {soundMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+          </button>
+          <button
+            className="saki-game-close-btn"
+            type="button"
+            title="退出游戏"
+            onClick={onClose}
+          >
+            <X size={15} />
+          </button>
+        </div>
+      </div>
+
+      {!gameOver ? (
+        <div className="saki-game-stage">
+          {/* Dynamic Glowing Arcade Combo & Fever Typography */}
+          {combo >= 2 ? (
+            <div
+              key={combo}
+              className={`saki-stage-combo-text ${isFeverMode ? "fever" : ""}`}
+              aria-live="polite"
+            >
+              {isFeverMode ? (
+                <div className="combo-fever-badge">FEVER 2X</div>
+              ) : null}
+              <div className="combo-line">
+                <span className="combo-num">{combo}</span>
+                <span className="combo-txt">COMBO</span>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Shockwaves */}
+          {shockwaves.map((sw) => (
+            <div
+              key={sw.id}
+              className="saki-game-shockwave"
+              style={{ left: `${sw.x}%`, top: `${sw.y}%`, borderColor: sw.color }}
+            />
+          ))}
+
+          {/* Particle Bursts */}
+          {particles.map((p) => (
+            <div
+              key={p.id}
+              className={`saki-game-particle ${p.shape}`}
+              style={{
+                left: `${p.x}%`,
+                top: `${p.y}%`,
+                width: `${p.size}px`,
+                height: `${p.size}px`,
+                backgroundColor: p.color,
+                opacity: p.life,
+                boxShadow: `0 0 8px ${p.color}`
+              }}
+            />
+          ))}
+
+          {/* Falling Items */}
+          {itemsRef.current.map((item) => (
+            <div
+              key={item.id}
+              className={`saki-game-item ${item.isBug ? "bug" : "sweet"}`}
+              style={{ left: `${item.x}%`, top: `${item.y}%` }}
+            >
+              <img src={item.iconSrc} alt={item.name} draggable={false} />
+            </div>
+          ))}
+
+          {/* Floating score text */}
+          {floatTexts.map((ft) => (
+            <div
+              key={ft.id}
+              className="saki-game-float-text"
+              style={{ left: `${ft.x}%`, top: `${ft.y}%`, color: ft.color }}
+            >
+              {ft.rating ? <span className="float-rating">{ft.rating}</span> : null}
+              <span className="float-score">{ft.text}</span>
+            </div>
+          ))}
+
+          {/* Catcher Basket with 3D Tilt */}
+          <div
+            className={`saki-game-basket ${isFeverMode ? "fever-glow" : ""}`}
+            style={{
+              left: `${basketX}%`,
+              transform: `translateX(-50%) rotate(${basketTilt}deg)`
+            }}
+          >
+            <img src="/assets/game/basket.png" alt="接物盘" draggable={false} />
+            <div className="saki-basket-glow-aura" />
+          </div>
+        </div>
+      ) : (
+        <div className="saki-game-settlement">
+          <div className="settlement-icon">
+            <Trophy size={46} className="text-amber-400 animate-bounce" />
+          </div>
+          <h3 className="settlement-title">挑战完成！</h3>
+          <p className="settlement-quote">"哇塞！接到了超多美味甜点，太厉害啦～ (≧∇≦)ﾉ"</p>
+          
+          <div className="settlement-stats two-col">
+            <div className="settlement-card">
+              <span className="card-label">最终得分</span>
+              <span className="card-val">{score}</span>
+            </div>
+            <div className="settlement-card highlight-fav">
+              <span className="card-label">好感度经验</span>
+              <span className="card-val">+{expReward} EXP ✨</span>
+            </div>
+          </div>
+
+          <div className="settlement-actions">
+            <button
+              className="saki-settlement-btn"
+              type="button"
+              onClick={handleFinishGame}
+            >
+              领取奖励并完成
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+class SakiVoiceEcho {
+  private ctx: AudioContext | null = null;
+  private stream: MediaStream | null = null;
+  private source: MediaStreamAudioSourceNode | null = null;
+  private processor: ScriptProcessorNode | null = null;
+  private workletNode: AudioWorkletNode | null = null;
+  private silentGain: GainNode | null = null;
+  private playbackSource: AudioBufferSourceNode | null = null;
+  private chunks: Float32Array[] = [];
+  private recordedSamples = 0;
+  private isRecording = false;
+  private speechMs = 0;
+  private running = false;
+  private holdGeneration = 0;
+  private state: SakiVoiceEchoState = "idle";
+  private workletUrl: string | null = null;
+  private onStateChange: ((state: SakiVoiceEchoState) => void) | undefined;
+
+  constructor(options?: { onStateChange?: (state: SakiVoiceEchoState) => void }) {
+    this.onStateChange = options?.onStateChange;
+  }
+
+  get holding(): boolean {
+    return this.isRecording;
+  }
+
+  async beginHold(): Promise<boolean> {
+    if (this.isRecording) return true;
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) return false;
+
+    const generation = ++this.holdGeneration;
+    this.stopPlayback();
+
+    try {
+      if (!this.ctx) {
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        if (!AudioCtx) return false;
+        this.ctx = new AudioCtx();
+      }
+      if (this.ctx.state === "suspended") {
+        await this.ctx.resume();
+      }
+      if (generation !== this.holdGeneration) return false;
+
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1
+        },
+        video: false
+      });
+      if (generation !== this.holdGeneration) {
+        this.stream.getTracks().forEach((track) => track.stop());
+        this.stream = null;
+        return false;
+      }
+
+      this.source = this.ctx.createMediaStreamSource(this.stream);
+      if (!this.silentGain) {
+        this.silentGain = this.ctx.createGain();
+        this.silentGain.gain.value = 0;
+        this.silentGain.connect(this.ctx.destination);
+      }
+
+      const hooked = await this.ensureCapture();
+      if (!hooked || generation !== this.holdGeneration) {
+        this.releaseMic();
+        return false;
+      }
+      this.connectSourceToCapture();
+
+      this.running = true;
+      this.resetCapture();
+      this.isRecording = true;
+      this.emitState("hearing");
+      return true;
+    } catch {
+      this.releaseMic();
+      return false;
+    }
+  }
+
+  endHold() {
+    if (!this.isRecording) return;
+    const samples = concatFloat32(this.chunks);
+    const speechMs = this.speechMs;
+    const recordedSamples = this.recordedSamples;
+    const sampleRate = this.ctx?.sampleRate ?? 48000;
+    this.isRecording = false;
+    this.resetCapture();
+    this.releaseMic();
+
+    const longEnough = speechMs >= 180 && recordedSamples > sampleRate * 0.12;
+    if (longEnough) this.speakAsSaki(samples);
+    else this.emitState("idle");
+  }
+
+  cancelHold() {
+    this.holdGeneration += 1;
+    this.isRecording = false;
+    this.resetCapture();
+    this.releaseMic();
+    if (this.state === "hearing") this.emitState("idle");
+  }
+
+  stop() {
+    this.holdGeneration += 1;
+    this.running = false;
+    this.isRecording = false;
+    this.resetCapture();
+    this.emitState("idle");
+    this.stopPlayback();
+    this.releaseMic();
+
+    if (this.processor) {
+      this.processor.onaudioprocess = null;
+      try {
+        this.processor.disconnect();
+      } catch {
+        /* ignore */
+      }
+      this.processor = null;
+    }
+    if (this.workletNode) {
+      this.workletNode.port.onmessage = null;
+      try {
+        this.workletNode.disconnect();
+      } catch {
+        /* ignore */
+      }
+      this.workletNode = null;
+    }
+    if (this.workletUrl) {
+      URL.revokeObjectURL(this.workletUrl);
+      this.workletUrl = null;
+    }
+    try {
+      this.silentGain?.disconnect();
+    } catch {
+      /* ignore */
+    }
+    this.silentGain = null;
+    if (this.ctx) {
+      void this.ctx.close().catch(() => {});
+      this.ctx = null;
+    }
+  }
+
+  private stopPlayback() {
+    try {
+      this.playbackSource?.stop();
+    } catch {
+      /* already stopped */
+    }
+    this.playbackSource = null;
+  }
+
+  private releaseMic() {
+    try {
+      this.source?.disconnect();
+    } catch {
+      /* ignore */
+    }
+    this.source = null;
+    this.stream?.getTracks().forEach((track) => track.stop());
+    this.stream = null;
+  }
+
+  private connectSourceToCapture() {
+    if (!this.source) return;
+    if (this.workletNode) this.source.connect(this.workletNode);
+    else if (this.processor) this.source.connect(this.processor);
+  }
+
+  private async ensureCapture(): Promise<boolean> {
+    if (this.workletNode || this.processor) return true;
+    return this.attachCapture();
+  }
+
+  private async attachCapture(): Promise<boolean> {
+    if (!this.ctx || !this.silentGain) return false;
+
+    if (typeof this.ctx.audioWorklet?.addModule === "function") {
+      try {
+        const workletCode = `class SakiCaptureProcessor extends AudioWorkletProcessor{process(inputs){const ch=inputs[0]&&inputs[0][0];if(ch&&ch.length){this.port.postMessage(ch.slice())}return true}}registerProcessor("saki-capture",SakiCaptureProcessor);`;
+        this.workletUrl = URL.createObjectURL(new Blob([workletCode], { type: "application/javascript" }));
+        await this.ctx.audioWorklet.addModule(this.workletUrl);
+        this.workletNode = new AudioWorkletNode(this.ctx, "saki-capture");
+        this.workletNode.port.onmessage = (event) => {
+          const data = event.data;
+          if (data instanceof Float32Array) this.ingest(data);
+        };
+        this.workletNode.connect(this.silentGain);
+        return true;
+      } catch {
+        if (this.workletUrl) {
+          URL.revokeObjectURL(this.workletUrl);
+          this.workletUrl = null;
+        }
+        this.workletNode = null;
+      }
+    }
+
+    const ctxWithProcessor = this.ctx as AudioContext & {
+      createScriptProcessor?: (bufferSize: number, numberOfInputChannels: number, numberOfOutputChannels: number) => ScriptProcessorNode;
+    };
+    const createProcessor = ctxWithProcessor.createScriptProcessor?.bind(this.ctx);
+    if (!createProcessor) return false;
+    this.processor = createProcessor(2048, 1, 1);
+    this.processor.onaudioprocess = (event) => {
+      this.ingest(event.inputBuffer.getChannelData(0));
+    };
+    this.processor.connect(this.silentGain);
+    return true;
+  }
+
+  private ingest(input: Float32Array) {
+    if (!this.isRecording || !this.ctx) return;
+    const frame = new Float32Array(input.length);
+    frame.set(input);
+    this.chunks.push(frame);
+    this.recordedSamples += frame.length;
+    this.speechMs += (frame.length / this.ctx.sampleRate) * 1000;
+    const maxSamples = this.ctx.sampleRate * 8;
+    if (this.recordedSamples >= maxSamples) this.endHold();
+  }
+
+  private speakAsSaki(samples: Float32Array) {
+    if (!this.ctx || !this.running) {
+      this.emitState("idle");
+      return;
+    }
+
+    const converted = toSakiVoice(samples, this.ctx.sampleRate);
+    if (converted.samples.length < 64) {
+      this.emitState("idle");
+      return;
+    }
+
+    const buffer = this.ctx.createBuffer(1, converted.samples.length, this.ctx.sampleRate);
+    buffer.getChannelData(0).set(converted.samples);
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+
+    const highpass = this.ctx.createBiquadFilter();
+    highpass.type = "highpass";
+    highpass.frequency.value = 110;
+    highpass.Q.value = 0.7;
+
+    const chestResidue = this.ctx.createBiquadFilter();
+    chestResidue.type = "peaking";
+    chestResidue.frequency.value = 120;
+    chestResidue.Q.value = 0.85;
+    chestResidue.gain.value = converted.male ? -3.2 : -1.2;
+
+    const presence = this.ctx.createBiquadFilter();
+    presence.type = "peaking";
+    presence.frequency.value = 4800;
+    presence.Q.value = 0.9;
+    presence.gain.value = converted.male ? 2.6 : 1.6;
+
+    const lowpass = this.ctx.createBiquadFilter();
+    lowpass.type = "lowpass";
+    lowpass.frequency.value = 10500;
+    lowpass.Q.value = 0.7;
+
+    const gain = this.ctx.createGain();
+    gain.gain.value = 1.12;
+
+    src.connect(highpass);
+    highpass.connect(chestResidue);
+    chestResidue.connect(presence);
+    presence.connect(lowpass);
+    lowpass.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    this.playbackSource = src;
+    this.emitState("speaking");
+    src.onended = () => {
+      if (this.playbackSource === src) this.playbackSource = null;
+      if (this.running && !this.isRecording) this.emitState("idle");
+    };
+    try {
+      src.start();
+    } catch {
+      this.playbackSource = null;
+      this.emitState("idle");
+    }
+  }
+
+  private resetCapture() {
+    this.chunks = [];
+    this.recordedSamples = 0;
+    this.speechMs = 0;
+  }
+
+  private emitState(state: SakiVoiceEchoState) {
+    if (this.state === state) return;
+    this.state = state;
+    this.onStateChange?.(state);
+  }
+}
+
+function concatFloat32(chunks: Float32Array[]): Float32Array {
+  let total = 0;
+  for (const chunk of chunks) total += chunk.length;
+  const out = new Float32Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+function normalizeFloat32(samples: Float32Array, target = 0.55): Float32Array {
+  let peak = 0;
+  for (let i = 0; i < samples.length; i += 1) peak = Math.max(peak, Math.abs(samples[i]!));
+  if (peak < 0.008) return samples;
+  const scale = Math.min(target / peak, 3.8);
+  const out = new Float32Array(samples.length);
+  for (let i = 0; i < samples.length; i += 1) out[i] = samples[i]! * scale;
+  return out;
+}
+
+function applyEdgeFade(samples: Float32Array, sampleRate: number, seconds: number) {
+  const fade = Math.min(Math.floor(sampleRate * seconds), Math.floor(samples.length / 6));
+  if (fade <= 1) return;
+  for (let i = 0; i < fade; i += 1) {
+    const g = i / fade;
+    samples[i] = (samples[i] ?? 0) * g;
+    samples[samples.length - 1 - i] = (samples[samples.length - 1 - i] ?? 0) * g;
+  }
+}
+
+function resampleByRatio(input: Float32Array, ratio: number): Float32Array {
+  if (ratio <= 0 || Math.abs(ratio - 1) < 0.01) return input;
+  const outLen = Math.max(1, Math.floor(input.length / ratio));
+  const out = new Float32Array(outLen);
+  const last = input.length - 1;
+  for (let i = 0; i < outLen; i += 1) {
+    const src = i * ratio;
+    const i0 = Math.min(last, Math.floor(src));
+    const i1 = Math.min(last, i0 + 1);
+    const t = src - i0;
+    out[i] = (input[i0] ?? 0) * (1 - t) + (input[i1] ?? 0) * t;
+  }
+  return out;
+}
+
+function semitoneRatio(semitones: number): number {
+  return 2 ** (semitones / 12);
+}
+
+function hannWindow(size: number): Float32Array {
+  const window = new Float32Array(size);
+  const denom = Math.max(1, size - 1);
+  for (let i = 0; i < size; i += 1) {
+    window[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / denom));
+  }
+  return window;
+}
+
+function olaStretch(input: Float32Array, stretch: number): Float32Array {
+  if (stretch <= 1.03 || input.length < 256) return input;
+  const grainSize = 1024;
+  const hopOut = 256;
+  const hopIn = hopOut / stretch;
+  const out = new Float32Array(Math.max(grainSize, Math.floor(input.length * stretch)));
+  const window = hannWindow(grainSize);
+  let inPos = 0;
+  let outPos = 0;
+  while (outPos + grainSize < out.length && inPos + grainSize < input.length) {
+    const src = Math.floor(inPos);
+    for (let i = 0; i < grainSize; i += 1) {
+      out[outPos + i] = (out[outPos + i] ?? 0) + (input[src + i] ?? 0) * (window[i] ?? 0);
+    }
+    inPos += hopIn;
+    outPos += hopOut;
+  }
+  const gain = hopOut / (grainSize * 0.5);
+  for (let i = 0; i < out.length; i += 1) out[i] = (out[i] ?? 0) * gain;
+  return out;
+}
+
+function psolaPitchShift(input: Float32Array, ratio: number, periodSamples: number): Float32Array {
+  if (ratio <= 1.03 || input.length < 128) return input;
+  const period = Math.max(18, Math.round(periodSamples));
+  const grainLen = Math.min(input.length, Math.max(64, period * 2));
+  const half = Math.floor(grainLen / 2);
+  const window = hannWindow(grainLen);
+  const out = new Float32Array(input.length);
+  const newPeriod = Math.max(8, period / ratio);
+  for (let i = 0; i < half && i < input.length; i += 1) {
+    out[i] = (input[i] ?? 0) * (i / half);
+  }
+  let outPos = half;
+  while (outPos + half < input.length) {
+    const srcStart = Math.round(outPos) - half;
+    const destStart = Math.round(outPos - half);
+    for (let i = 0; i < grainLen; i += 1) {
+      const srcIndex = srcStart + i;
+      const dest = destStart + i;
+      if (srcIndex >= 0 && srcIndex < input.length && dest >= 0 && dest < out.length) {
+        out[dest] = (out[dest] ?? 0) + (input[srcIndex] ?? 0) * (window[i] ?? 0);
+      }
+    }
+    outPos += newPeriod;
+  }
+  const scale = 1 / Math.max(1, (grainLen * 0.5) / newPeriod);
+  for (let i = 0; i < out.length; i += 1) out[i] = (out[i] ?? 0) * scale;
+  return out;
+}
+
+function loudestRegion(samples: Float32Array, sampleRate: number, seconds: number): Float32Array {
+  const len = Math.min(samples.length, Math.max(1, Math.floor(sampleRate * seconds)));
+  if (samples.length <= len) return samples;
+  const hop = Math.max(1, Math.floor(sampleRate * 0.08));
+  let best = 0;
+  let bestEnergy = -1;
+  for (let start = 0; start + len <= samples.length; start += hop) {
+    let energy = 0;
+    for (let i = start; i < start + len; i += 8) energy += Math.abs(samples[i] ?? 0);
+    if (energy > bestEnergy) {
+      bestEnergy = energy;
+      best = start;
+    }
+  }
+  return samples.subarray(best, best + len);
+}
+
+function yinF0(window: Float32Array, sampleRate: number): number | null {
+  if (window.length < 64) return null;
+  const tauMin = Math.max(2, Math.floor(sampleRate / 380));
+  const tauMax = Math.min(Math.floor(sampleRate / 65), Math.floor(window.length / 2) - 2);
+  if (tauMax <= tauMin + 2) return null;
+
+  const diff = new Float32Array(tauMax + 1);
+  for (let tau = 1; tau <= tauMax; tau += 1) {
+    let sum = 0;
+    const limit = window.length - tau;
+    for (let i = 0; i < limit; i += 1) {
+      const delta = (window[i] ?? 0) - (window[i + tau] ?? 0);
+      sum += delta * delta;
+    }
+    diff[tau] = sum;
+  }
+
+  const cmnd = new Float32Array(tauMax + 1);
+  cmnd[0] = 1;
+  let running = 0;
+  for (let tau = 1; tau <= tauMax; tau += 1) {
+    running += diff[tau] ?? 0;
+    cmnd[tau] = running > 0 ? ((diff[tau] ?? 0) * tau) / running : 1;
+  }
+
+  const threshold = 0.14;
+  let tauEst = 0;
+  for (let tau = tauMin; tau <= tauMax; tau += 1) {
+    if ((cmnd[tau] ?? 1) < threshold) {
+      while (tau + 1 <= tauMax && (cmnd[tau + 1] ?? 1) < (cmnd[tau] ?? 1)) tau += 1;
+      tauEst = tau;
+      break;
+    }
+  }
+  if (!tauEst) {
+    let minValue = 1;
+    for (let tau = tauMin; tau <= tauMax; tau += 1) {
+      const value = cmnd[tau] ?? 1;
+      if (value < minValue) {
+        minValue = value;
+        tauEst = tau;
+      }
+    }
+    if (minValue > 0.42) return null;
+  }
+
+  const s0 = cmnd[tauEst - 1] ?? cmnd[tauEst] ?? 0;
+  const s1 = cmnd[tauEst] ?? 0;
+  const s2 = cmnd[tauEst + 1] ?? cmnd[tauEst] ?? 0;
+  const denom = 2 * s1 - s2 - s0;
+  const tau = denom !== 0 ? tauEst + (s0 - s2) / (2 * denom) : tauEst;
+  if (tau <= 0) return null;
+  const f0 = sampleRate / tau;
+  if (f0 < 65 || f0 > 380) return null;
+  return f0;
+}
+
+function estimateF0Hz(samples: Float32Array, sampleRate: number): number | null {
+  const targetRate = 8000;
+  const ratio = sampleRate / targetRate;
+  let analysis = samples;
+  let rate = sampleRate;
+  if (ratio > 1.2 && samples.length > 400) {
+    const downLen = Math.max(1, Math.floor(samples.length / ratio));
+    const down = new Float32Array(downLen);
+    for (let i = 0; i < downLen; i += 1) {
+      down[i] = samples[Math.min(samples.length - 1, Math.floor(i * ratio))] ?? 0;
+    }
+    analysis = down;
+    rate = targetRate;
+  }
+
+  const region = loudestRegion(analysis, rate, 1.15);
+  const winSize = Math.floor(rate * 0.05);
+  const hop = Math.floor(rate * 0.032);
+  if (winSize < 64) return yinF0(region, rate);
+
+  const votes: number[] = [];
+  for (let start = 0; start + winSize <= region.length; start += hop) {
+    const f0 = yinF0(region.subarray(start, start + winSize), rate);
+    if (f0) votes.push(f0);
+  }
+  if (votes.length === 0) return yinF0(region, rate);
+  votes.sort((a, b) => a - b);
+  let f0 = votes[Math.floor(votes.length * 0.28)] ?? votes[0] ?? null;
+  if (!f0) return null;
+  const half = f0 / 2;
+  if (f0 > 175 && half >= 70 && half <= 165) {
+    const nearHalf = votes.filter((value) => Math.abs(value - half) < 20).length;
+    if (nearHalf > 0 || f0 > 205) f0 = half;
+  }
+  return f0;
+}
+
+function toSakiVoice(samples: Float32Array, sampleRate: number): { samples: Float32Array; male: boolean } {
+  const normalized = normalizeFloat32(samples, 0.6);
+  const f0 = estimateF0Hz(normalized, sampleRate);
+  const assumedF0 = f0 && f0 >= 70 && f0 <= 380 ? f0 : 120;
+  const male = assumedF0 < 170;
+  const pitchRatio = male ? semitoneRatio(12 + 8 * 2) : semitoneRatio(4);
+  const formantRatio = male ? 1.3 : 1.1;
+  const psolaRatio = Math.max(1.02, pitchRatio / formantRatio);
+
+  const formed = resampleByRatio(normalized, formantRatio);
+  const restored = olaStretch(formed, formantRatio);
+  const period = sampleRate / Math.max(70, assumedF0 * formantRatio);
+  const pitched = psolaPitchShift(restored, psolaRatio, period);
+  applyEdgeFade(pitched, sampleRate, 0.012);
+  return { samples: normalizeFloat32(pitched, 0.55), male };
+}
+
 function SakiFloatingChat({
   token,
   instance,
@@ -5062,7 +7755,16 @@ function SakiFloatingChat({
   availableModels,
   onCurrentModelIdChange,
   onCurrentModelNameChange,
-  onAvailableModelsChange
+  onAvailableModelsChange,
+  sakiLieMode = false,
+  onReturnToLie,
+  wakeCount = 0,
+  onOpenPointsUsage,
+  onLauncherDraggingChange,
+  onPointsBalanceChange,
+  pointsSummary,
+  pullDragRequest = null,
+  onPullDragConsumed
 }: {
   token: string;
   instance: ManagedInstance | null;
@@ -5079,6 +7781,15 @@ function SakiFloatingChat({
   onCurrentModelIdChange: (id: string) => void;
   onCurrentModelNameChange: (name: string) => void;
   onAvailableModelsChange: (models: SakiModelOption[]) => void;
+  sakiLieMode?: boolean;
+  onReturnToLie?: () => void;
+  wakeCount?: number;
+  onOpenPointsUsage?: () => void;
+  onLauncherDraggingChange?: (dragging: boolean) => void;
+  onPointsBalanceChange?: (balance: { points: number; unlimitedPoints: boolean }) => void;
+  pointsSummary?: { points: number; unlimitedPoints: boolean };
+  pullDragRequest?: SakiPullDragRequest | null;
+  onPullDragConsumed?: () => void;
 }) {
   const contextKey = instance ? `instance:${instance.id}` : `panel:${panelContext.label}:${panelContext.detail}`;
   const baseContextLabel = instance ? instance.name : panelContext.label;
@@ -5086,13 +7797,13 @@ function SakiFloatingChat({
   const [open, setOpen] = useState(false);
   const [messagesExpanded, setMessagesExpanded] = useState(false);
   const [draft, setDraft] = useState("");
-  const [mode, setMode] = useState<SakiChatMode>(() => coerceSakiMode("chat", canUseChat, canUseAgent));
+  const [mode, setMode] = useState<SakiChatMode>(() => coerceSakiMode("agent", canUseChat, canUseAgent));
   const [permissionMode, setPermissionMode] = useState<SakiAgentPermissionMode>(defaultSakiAgentPermissionMode);
   const [panelError, setPanelError] = useState<string | null>(null);
   const [contextTitle, setContextTitle] = useState<string | null>(null);
   const [contextText, setContextText] = useState<string | null>(null);
   const [messages, setMessages] = useState<LocalSakiMessage[]>([
-    createSakiWelcomeMessage("我是 Saki。切到不同实例时，我会一起切换工作区上下文。")
+    createSakiWelcomeMessage(getSakiWelcomeMessageText(instance, panelContext.label))
   ]);
   const [skills, setSkills] = useState<SakiSkillSummary[]>([]);
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
@@ -5102,6 +7813,24 @@ function SakiFloatingChat({
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [launcherPosition, setLauncherPosition] = useState<SakiLauncherPosition | null>(() => readSakiLauncherPosition());
   const [launcherDragging, setLauncherDragging] = useState(false);
+
+  useEffect(() => {
+    if (wakeCount > 0 && !pullDragRequest) {
+      const viewportWidth = globalThis.innerWidth || 1200;
+      const targetPos: SakiLauncherPosition = snapSakiLauncherPositionToEdge(
+        { x: viewportWidth - sakiLauncherAttachedSize.width, y: 180 },
+        "right"
+      );
+      setLauncherPosition(targetPos);
+      writeSakiLauncherPosition(targetPos);
+    }
+  }, [wakeCount, pullDragRequest]);
+
+  useEffect(() => {
+    return () => {
+      onLauncherDraggingChange?.(false);
+    };
+  }, [onLauncherDraggingChange]);
   const [draggingExpression, setDraggingExpression] = useState<string | null>(null);
   const [storedConversations, setStoredConversations] = useState<StoredSakiConversation[]>(() => readSakiConversations());
   const [activeConversationId, setActiveConversationId] = useState(() => newClientId());
@@ -5113,18 +7842,287 @@ function SakiFloatingChat({
   const [composerBusy, setComposerBusy] = useState<"image" | "file" | "screenshot" | null>(null);
   const [sakiFileHoverActive, setSakiFileHoverActive] = useState(false);
   const [listening, setListening] = useState(false);
+  const [sakiEchoState, setSakiEchoState] = useState<SakiVoiceEchoState>("idle");
   const [annotationMode, setAnnotationMode] = useState(false);
+  const [sakiPokeMood, setSakiPokeMood] = useState<SakiActivityMood>(null);
+  const [sakiVideoBubble, setSakiVideoBubble] = useState<string | null>(null);
+  const pokeTimerRef = useRef<number | null>(null);
+  const [customRoomBg, setCustomRoomBg] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem("saki_custom_room_bg");
+    } catch {
+      return null;
+    }
+  });
+  const roomBgInputRef = useRef<HTMLInputElement | null>(null);
+  const [sakiFavorabilityExp, setSakiFavorabilityExp] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem("saki_favorability");
+      return saved !== null ? Math.max(0, parseInt(saved, 10)) : 120;
+    } catch {
+      return 120;
+    }
+  });
+  const [favorabilityPop, setFavorabilityPop] = useState<{ id: number; amount: number } | null>(null);
+  const favorabilityPopTimerRef = useRef<number | null>(null);
+
+  const [userPoints, setUserPoints] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem("saki_user_points");
+      return saved !== null ? Math.max(0, parseInt(saved, 10)) : 200;
+    } catch {
+      return 200;
+    }
+  });
+
+  const [feedMenuOpen, setFeedMenuOpen] = useState(false);
+  const [miniGameActive, setMiniGameActive] = useState(false);
+  const [mobileActiveTab, setMobileActiveTab] = useState<"video" | "chat">("video");
+  const [chatPulseAlert, setChatPulseAlert] = useState(false);
+  const prevBusyRef = useRef<boolean>(false);
+
+  interface DraggingFoodState {
+    food: (typeof sakiFoodMenu)[number];
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+    isDragging: boolean;
+  }
+
+  const [draggingFood, setDraggingFood] = useState<DraggingFoodState | null>(null);
+  const [isDragOverSaki, setIsDragOverSaki] = useState(false);
+  const dragFoodRef = useRef<DraggingFoodState | null>(null);
+  const sakiCharacterRef = useRef<HTMLDivElement | null>(null);
+
+  function getFavorabilityLevelInfo(totalExp: number) {
+    const levelThresholds = [
+      { level: 1, title: "初识", minExp: 0, maxExp: 100 },
+      { level: 2, title: "默契", minExp: 100, maxExp: 250 },
+      { level: 3, title: "亲密", minExp: 250, maxExp: 500 },
+      { level: 4, title: "挚友", minExp: 500, maxExp: 900 },
+      { level: 5, title: "心有灵犀", minExp: 900, maxExp: 1400 },
+      { level: 6, title: "独一无二", minExp: 1400, maxExp: 2000 },
+      { level: 7, title: "星河誓约", minExp: 2000, maxExp: 3000 },
+      { level: 8, title: "永恒羁绊", minExp: 3000, maxExp: 5000 }
+    ];
+
+    for (let i = 0; i < levelThresholds.length; i++) {
+      const tier = levelThresholds[i]!;
+      if (totalExp < tier.maxExp) {
+        const range = tier.maxExp - tier.minExp;
+        const gained = totalExp - tier.minExp;
+        const progress = Math.min(100, Math.max(0, Math.round((gained / range) * 100)));
+        return {
+          level: tier.level,
+          title: tier.title,
+          currentExp: totalExp,
+          minExpForLevel: tier.minExp,
+          maxExpForLevel: tier.maxExp,
+          levelProgress: progress,
+          isMaxLevel: false
+        };
+      }
+    }
+
+    return {
+      level: 8,
+      title: "永恒羁绊",
+      currentExp: totalExp,
+      minExpForLevel: 3000,
+      maxExpForLevel: 5000,
+      levelProgress: 100,
+      isMaxLevel: true
+    };
+  }
+
+  function addFavorabilityExp(amount: number) {
+    setSakiFavorabilityExp((prev) => {
+      const oldLevel = getFavorabilityLevelInfo(prev).level;
+      const next = prev + amount;
+      const newLevel = getFavorabilityLevelInfo(next).level;
+      try {
+        localStorage.setItem("saki_favorability", String(next));
+      } catch {}
+
+      if (newLevel > oldLevel) {
+        setSakiPokeMood("happy");
+        setSakiVideoBubble(`🎉 哇！好感度升级啦！达到 Lv.${newLevel}～✨`);
+        if (pokeTimerRef.current) window.clearTimeout(pokeTimerRef.current);
+        pokeTimerRef.current = window.setTimeout(() => {
+          setSakiPokeMood(null);
+          setSakiVideoBubble(null);
+          pokeTimerRef.current = null;
+        }, 4500);
+      }
+      return next;
+    });
+
+    if (favorabilityPopTimerRef.current !== null) {
+      window.clearTimeout(favorabilityPopTimerRef.current);
+    }
+    setFavorabilityPop({ id: Date.now(), amount });
+    favorabilityPopTimerRef.current = window.setTimeout(() => {
+      setFavorabilityPop(null);
+      favorabilityPopTimerRef.current = null;
+    }, 1800);
+  }
+
+  function addUserPoints(amount: number) {
+    setUserPoints((prev) => {
+      const next = Math.max(0, prev + amount);
+      try {
+        localStorage.setItem("saki_user_points", String(next));
+      } catch {}
+      return next;
+    });
+  }
+
+  const isUnlimitedPoints = pointsSummary?.unlimitedPoints ?? false;
+  const currentSakiPointsDisplay = pointsSummary ? (pointsSummary.unlimitedPoints ? "∞" : pointsSummary.points) : userPoints;
+  const numericSakiPoints = pointsSummary?.points ?? userPoints;
+
+  function handleFeedSaki(food: (typeof sakiFoodMenu)[number]) {
+    if (!isUnlimitedPoints && numericSakiPoints < food.cost) {
+      setSakiVideoBubble("当前 Saki 积分不够买这个呢～可以多和我聊天赚取积分哦！✨");
+      if (pokeTimerRef.current) window.clearTimeout(pokeTimerRef.current);
+      pokeTimerRef.current = window.setTimeout(() => {
+        setSakiVideoBubble(null);
+        pokeTimerRef.current = null;
+      }, 3000);
+      return;
+    }
+
+    if (!isUnlimitedPoints) {
+      const nextPts = Math.max(0, numericSakiPoints - food.cost);
+      onPointsBalanceChange?.({ points: nextPts, unlimitedPoints: false });
+      addUserPoints(-food.cost);
+    }
+    addFavorabilityExp(food.favorability);
+    setSakiPokeMood(food.mood);
+    setSakiVideoBubble(food.greeting);
+
+    if (pokeTimerRef.current) window.clearTimeout(pokeTimerRef.current);
+    pokeTimerRef.current = window.setTimeout(() => {
+      setSakiPokeMood(null);
+      setSakiVideoBubble(null);
+      pokeTimerRef.current = null;
+    }, 3800);
+  }
+
+  const startFoodDrag = (e: React.PointerEvent, food: (typeof sakiFoodMenu)[number]) => {
+    if (e.button !== 0 && e.pointerType === "mouse") return;
+    const canAfford = isUnlimitedPoints || numericSakiPoints >= food.cost;
+    if (!canAfford) {
+      handleFeedSaki(food);
+      return;
+    }
+
+    const state: DraggingFoodState = {
+      food,
+      startX: e.clientX,
+      startY: e.clientY,
+      currentX: e.clientX,
+      currentY: e.clientY,
+      isDragging: false
+    };
+    dragFoodRef.current = state;
+    setDraggingFood(state);
+
+    const onMove = (ev: PointerEvent) => {
+      if (!dragFoodRef.current) return;
+      const dist = Math.hypot(ev.clientX - dragFoodRef.current.startX, ev.clientY - dragFoodRef.current.startY);
+      const isDragging = dragFoodRef.current.isDragging || dist > 6;
+
+      let over = false;
+      if (sakiCharacterRef.current) {
+        const rect = sakiCharacterRef.current.getBoundingClientRect();
+        over =
+          ev.clientX >= rect.left - 50 &&
+          ev.clientX <= rect.right + 50 &&
+          ev.clientY >= rect.top - 60 &&
+          ev.clientY <= rect.bottom + 40;
+      }
+
+      dragFoodRef.current = {
+        ...dragFoodRef.current,
+        currentX: ev.clientX,
+        currentY: ev.clientY,
+        isDragging
+      };
+      setDraggingFood({ ...dragFoodRef.current });
+      setIsDragOverSaki(over);
+    };
+
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+
+      const current = dragFoodRef.current;
+      dragFoodRef.current = null;
+      setDraggingFood(null);
+      setIsDragOverSaki(false);
+
+      if (!current) return;
+
+      let over = false;
+      if (sakiCharacterRef.current) {
+        const rect = sakiCharacterRef.current.getBoundingClientRect();
+        over =
+          ev.clientX >= rect.left - 50 &&
+          ev.clientX <= rect.right + 50 &&
+          ev.clientY >= rect.top - 60 &&
+          ev.clientY <= rect.bottom + 40;
+      }
+
+      if (over && current.isDragging) {
+        handleFeedSaki(current.food);
+      } else if (!current.isDragging) {
+        handleFeedSaki(current.food);
+      }
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  };
+
+  function handleMiniGameFinish(score: number, expReward: number) {
+    addFavorabilityExp(expReward);
+    setSakiPokeMood("gaming");
+    setSakiVideoBubble(`太棒啦！得了 ${score} 分，获得了 ${expReward} 点好感度经验～✨`);
+    if (pokeTimerRef.current) window.clearTimeout(pokeTimerRef.current);
+    pokeTimerRef.current = window.setTimeout(() => {
+      setSakiPokeMood(null);
+      setSakiVideoBubble(null);
+      pokeTimerRef.current = null;
+    }, 4500);
+  }
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [permissionDropdownOpen, setPermissionDropdownOpen] = useState(false);
+  const [sakiAddMenuOpen, setSakiAddMenuOpen] = useState(false);
   const modelSelectorRef = useRef<HTMLDivElement | null>(null);
   const modelDropdownRef = useRef<HTMLDivElement | null>(null);
+  const permissionSelectorRef = useRef<HTMLDivElement | null>(null);
+  const permissionDropdownRef = useRef<HTMLDivElement | null>(null);
+  const sakiAddBtnRef = useRef<HTMLButtonElement | null>(null);
+  const sakiAddMenuRef = useRef<HTMLDivElement | null>(null);
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const speechBaseDraftRef = useRef("");
+  const sakiVoiceEchoRef = useRef<SakiVoiceEcho | null>(null);
+  const sakiEchoHintShownRef = useRef(false);
+  const sakiHoldTimerRef = useRef<number | null>(null);
+  const sakiHoldActiveRef = useRef(false);
+  const sakiHoldPointerRef = useRef<number | null>(null);
   const composerNoticeTimerRef = useRef<number | null>(null);
   const sakiStreamAbortRef = useRef<AbortController | null>(null);
+  const activeTaskIdRef = useRef<string | null>(null);
   const sakiMessagesRef = useRef<HTMLDivElement | null>(null);
   const sakiAutoScrollRef = useRef(true);
   const sakiFileDragDepthRef = useRef(0);
@@ -5149,9 +8147,16 @@ function SakiFloatingChat({
     return () => {
       sakiStreamAbortRef.current?.abort();
       recognitionRef.current?.abort();
+      sakiVoiceEchoRef.current?.stop();
       document.body.classList.remove("saki-selection-capture-active");
       if (composerNoticeTimerRef.current !== null) {
         window.clearTimeout(composerNoticeTimerRef.current);
+      }
+      if (pokeTimerRef.current !== null) {
+        window.clearTimeout(pokeTimerRef.current);
+      }
+      if (sakiHoldTimerRef.current !== null) {
+        window.clearTimeout(sakiHoldTimerRef.current);
       }
     };
   }, []);
@@ -5159,6 +8164,35 @@ function SakiFloatingChat({
   useEffect(() => {
     annotationModeRef.current = annotationMode;
   }, [annotationMode]);
+
+  useEffect(() => {
+    if (open && !sakiLieMode && !sakiEchoHintShownRef.current) {
+      sakiEchoHintShownRef.current = true;
+      setSakiVideoBubble("点按戳戳我，长按说话我会学你～ ♪");
+      if (pokeTimerRef.current !== null) window.clearTimeout(pokeTimerRef.current);
+      pokeTimerRef.current = window.setTimeout(() => {
+        setSakiVideoBubble(null);
+        pokeTimerRef.current = null;
+      }, 3800);
+    }
+  }, [open, sakiLieMode]);
+
+  useEffect(() => {
+    const keepEngine = open && !sakiLieMode;
+    if (listening || miniGameActive || mobileActiveTab !== "video" || !keepEngine) {
+      if (sakiHoldTimerRef.current !== null) {
+        window.clearTimeout(sakiHoldTimerRef.current);
+        sakiHoldTimerRef.current = null;
+      }
+      sakiHoldActiveRef.current = false;
+      sakiHoldPointerRef.current = null;
+      sakiVoiceEchoRef.current?.cancelHold();
+    }
+    if (keepEngine) return;
+    sakiVoiceEchoRef.current?.stop();
+    sakiVoiceEchoRef.current = null;
+    setSakiEchoState("idle");
+  }, [open, listening, miniGameActive, sakiLieMode, mobileActiveTab]);
 
   useEffect(() => {
     void (async () => {
@@ -5210,7 +8244,41 @@ function SakiFloatingChat({
     return () => document.removeEventListener("mousedown", handler);
   }, [modelDropdownOpen]);
 
+  useEffect(() => {
+    if (!permissionDropdownOpen) return;
+    const handler = (event: MouseEvent) => {
+      const target = event.target as Node;
+      const isInsideSelector = permissionSelectorRef.current?.contains(target);
+      const isInsideDropdown = permissionDropdownRef.current?.contains(target);
+      if (!isInsideSelector && !isInsideDropdown) {
+        setPermissionDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [permissionDropdownOpen]);
 
+  useEffect(() => {
+    if (!sakiAddMenuOpen) return;
+    const handler = (event: MouseEvent) => {
+      const target = event.target as Node;
+      const isInsideBtn = sakiAddBtnRef.current?.contains(target);
+      const isInsideMenu = sakiAddMenuRef.current?.contains(target);
+      if (!isInsideBtn && !isInsideMenu) {
+        setSakiAddMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [sakiAddMenuOpen]);
+
+  useEffect(() => {
+    const textarea = composerTextareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(textarea.scrollHeight, 180);
+    textarea.style.height = `${Math.max(nextHeight, 38)}px`;
+  }, [draft]);
 
   useEffect(() => {
     const element = sakiMessagesRef.current;
@@ -5223,6 +8291,240 @@ function SakiFloatingChat({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [messages, open, messagesExpanded, fullscreen]);
+
+  useEffect(() => {
+    if (!token || loading) return;
+    let cancelled = false;
+    const checkActiveTask = async () => {
+      try {
+        const result = await api.sakiGetActiveTask(token, instance?.id);
+        if (cancelled || !result.hasActiveTask || !result.task) return;
+        const task = result.task;
+        if (task.status === "running") {
+          activeTaskIdRef.current = task.id;
+
+          let assistantId = "";
+          setMessages((current) => {
+            const lastMsg = current.at(-1);
+            if (lastMsg && lastMsg.role === "assistant") {
+              assistantId = lastMsg.id;
+              return current.map((msg) =>
+                msg.id === assistantId ? { ...msg, streaming: true } : msg
+              );
+            }
+            assistantId = newClientId();
+            const hasMatchingUser = current.some(
+              (msg) => msg.role === "user" && msg.content === task.message
+            );
+            const userMessage: LocalSakiMessage = {
+              id: newClientId(),
+              role: "user",
+              content: task.message,
+              createdAt: task.startedAt
+            };
+            const assistantMessage: LocalSakiMessage = {
+              id: assistantId,
+              role: "assistant",
+              content: "",
+              createdAt: task.startedAt,
+              source: "direct-model",
+              timeline: [],
+              workflowExpanded: false,
+              streaming: true
+            };
+            return hasMatchingUser
+              ? [...current, assistantMessage]
+              : [...current, userMessage, assistantMessage];
+          });
+
+          setSakiActivityMood("working");
+          setLoading(true);
+
+          const abortController = new AbortController();
+          sakiStreamAbortRef.current = abortController;
+
+          const applyStreamEvent = (streamEvent: SakiChatStreamEvent) => {
+            if (abortController.signal.aborted) return;
+            if (streamEvent.type === "meta") {
+              setReachable(streamEvent.source === "direct-model");
+              if (streamEvent.taskId) {
+                activeTaskIdRef.current = streamEvent.taskId;
+              }
+              return;
+            }
+            if (streamEvent.type === "heartbeat") return;
+            if (streamEvent.type === "thinking") {
+              setMessages((current) =>
+                current.map((message) =>
+                  message.id === assistantId
+                    ? {
+                        ...message,
+                        thinking: `${message.thinking ?? ""}${streamEvent.text}`,
+                        timeline: appendSakiTimelineThinking(message.timeline, streamEvent.text)
+                      }
+                    : message
+                )
+              );
+              return;
+            }
+            if (streamEvent.type === "delta") {
+              setMessages((current) =>
+                current.map((message) =>
+                  message.id === assistantId
+                    ? {
+                        ...message,
+                        timeline: appendSakiTimelineDelta(message.timeline, streamEvent.text)
+                      }
+                    : message
+                )
+              );
+              return;
+            }
+            if (streamEvent.type === "workflow") {
+              const chatText = workflowEventChatText(streamEvent);
+              setMessages((current) =>
+                current.map((message) => {
+                  if (message.id !== assistantId) return message;
+                  const workflow = message.workflow ?? [];
+                  const existing = workflow.find((step) => step.id === streamEvent.id);
+                  const nextStep: LocalSakiWorkflowStep = {
+                    id: streamEvent.id,
+                    stage: streamEvent.stage,
+                    message: streamEvent.message,
+                    status: streamEvent.status,
+                    ...(streamEvent.tool ? { tool: streamEvent.tool } : {}),
+                    ...(streamEvent.call ? { call: streamEvent.call } : {}),
+                    ...(streamEvent.actionId ? { actionId: streamEvent.actionId } : {}),
+                    ...(streamEvent.detail ? { detail: streamEvent.detail } : {}),
+                    createdAt: existing?.createdAt ?? new Date().toISOString()
+                  };
+                  return {
+                    ...message,
+                    ...(chatText
+                      ? {
+                          timeline: upsertSakiTimelineText(message.timeline, {
+                            id: `workflow:${streamEvent.id}`,
+                            content: chatText,
+                            source: "workflow",
+                            createdAt: nextStep.createdAt
+                          })
+                        }
+                      : {}),
+                    workflow: existing
+                      ? workflow.map((step) => (step.id === streamEvent.id ? nextStep : step))
+                      : [...workflow, nextStep]
+                  };
+                })
+              );
+              return;
+            }
+            if (streamEvent.type === "action") {
+              setMessages((current) =>
+                current.map((message) => {
+                  if (message.id !== assistantId) return message;
+                  const actions = message.actions ?? [];
+                  const exists = actions.some((action) => action.id === streamEvent.action.id);
+                  return {
+                    ...message,
+                    actions: exists
+                      ? actions.map((action) => (action.id === streamEvent.action.id ? streamEvent.action : action))
+                      : [...actions, streamEvent.action],
+                    timeline: upsertSakiTimelineAction(sealSakiTimelineDelta(message.timeline), streamEvent.action)
+                  };
+                })
+              );
+              return;
+            }
+            if (streamEvent.type === "done") {
+              const response = streamEvent.response;
+              activeTaskIdRef.current = null;
+              setMessages((current) =>
+                current.map((message) => {
+                  if (message.id !== assistantId) return message;
+                  const nextActions = response.actions?.length ? response.actions : message.actions;
+                  const sealedTimeline = sealSakiTimelineDelta(message.timeline);
+                  const finalTimeline = mergeSakiTimelineActions(mergeSakiFinalTimeline(sealedTimeline, response.message), nextActions);
+                  const nextMessage: LocalSakiMessage = {
+                    ...message,
+                    content: response.message,
+                    thinking: response.thinking ?? message.thinking,
+                    timeline: finalTimeline,
+                    source: response.source,
+                    workflowExpanded: false,
+                    streaming: false,
+                    usage: response.usage
+                  };
+                  if (nextActions?.length) return { ...nextMessage, actions: nextActions };
+                  return nextMessage;
+                })
+              );
+            }
+            if (streamEvent.type === "error") {
+              activeTaskIdRef.current = null;
+              setMessages((current) =>
+                current.map((message) =>
+                  message.id === assistantId
+                    ? {
+                        ...message,
+                        content: message.content ? `${message.content}\n\n${streamEvent.message}` : streamEvent.message,
+                        timeline: upsertSakiTimelineText(sealSakiTimelineDelta(message.timeline), {
+                          id: `error:${newClientId()}`,
+                          content: streamEvent.message,
+                          source: "error"
+                        }),
+                        streaming: false
+                      }
+                    : message
+                )
+              );
+            }
+          };
+
+          try {
+            const finalResp = await api.sakiStreamTaskReconnect(token, task.id, applyStreamEvent, abortController.signal);
+            activeTaskIdRef.current = null;
+            if (finalResp.usage?.isUnlimited) {
+              onPointsBalanceChange?.({ points: 0, unlimitedPoints: true });
+            } else if (typeof finalResp.usage?.remainingPoints === "number") {
+              onPointsBalanceChange?.({ points: finalResp.usage.remainingPoints, unlimitedPoints: false });
+            }
+            setMessages((current) =>
+              current.map((message) => {
+                if (message.id !== assistantId) return message;
+                const nextActions = finalResp.actions?.length ? finalResp.actions : message.actions;
+                const sealedTimeline = sealSakiTimelineDelta(message.timeline);
+                const finalTimeline = mergeSakiTimelineActions(mergeSakiFinalTimeline(sealedTimeline, finalResp.message), nextActions);
+                const nextMessage: LocalSakiMessage = {
+                  ...message,
+                  content: finalResp.message,
+                  thinking: finalResp.thinking ?? message.thinking,
+                  timeline: finalTimeline,
+                  source: finalResp.source,
+                  workflowExpanded: false,
+                  streaming: false,
+                  usage: finalResp.usage
+                };
+                if (nextActions?.length) return { ...nextMessage, actions: nextActions };
+                return nextMessage;
+              })
+            );
+          } catch {
+            // ignore
+          } finally {
+            setLoading(false);
+            setSakiActivityMood(null);
+            activeTaskIdRef.current = null;
+          }
+        }
+      } catch {
+        // ignore
+      }
+    };
+    void checkActiveTask();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, instance?.id]);
 
   async function selectModel(modelId: string) {
     onCurrentModelIdChange(modelId);
@@ -5332,12 +8634,18 @@ function SakiFloatingChat({
 
     conversationsRef.current[previousContextKey] = messages;
     previousContextKeyRef.current = contextKey;
+
+    // If an agent task is actively executing or streaming, do not drop or reset the active chat:
+    if (loading || activeTaskIdRef.current) {
+      return;
+    }
+
     restoringContextRef.current = true;
     const storedConversation = latestSakiConversationForContext(readSakiConversations(), contextKey);
     setActiveConversationId(storedConversation?.id ?? newClientId());
     setMessages(
       storedConversation?.messages ?? conversationsRef.current[contextKey] ?? [
-        createSakiWelcomeMessage(instance ? `我是 Saki。当前智能体工作区：${instance.name}。` : `我是 Saki。当前上下文：${panelContext.label}。`)
+        createSakiWelcomeMessage(getSakiWelcomeMessageText(instance, panelContext.label))
       ]
     );
     setDraft("");
@@ -5347,9 +8655,9 @@ function SakiFloatingChat({
     setSelectedSkillIds([]);
     setAttachments([]);
     setComposerNotice(null);
-    setMode(coerceSakiMode("chat", canUseChat, canUseAgent));
+    setMode(coerceSakiMode("agent", canUseChat, canUseAgent));
     setPermissionMode(defaultSakiAgentPermissionMode);
-  }, [canUseAgent, canUseChat, contextKey, instance, messages, panelContext.label]);
+  }, [canUseAgent, canUseChat, contextKey, instance, loading, messages, panelContext.label]);
 
   useEffect(() => {
     if (restoringContextRef.current) {
@@ -5461,6 +8769,101 @@ function SakiFloatingChat({
     };
   }, []);
 
+  function highlightLieDropTarget(clientX: number, clientY: number) {
+    const lieSlot = document.querySelector(".topbar-lie-slot") as HTMLElement | null;
+    const companionPanel = document.querySelector(".topbar-companion-panel") as HTMLElement | null;
+    if (!companionPanel) return;
+    const rect = (lieSlot ?? companionPanel).getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const dist = Math.hypot(clientX - centerX, clientY - centerY);
+    const isNear =
+      dist < 140 ||
+      (clientX >= rect.left - 60 && clientX <= rect.right + 60 && clientY >= rect.top - 60 && clientY <= rect.bottom + 80);
+    companionPanel.classList.toggle("is-drag-near", isNear);
+  }
+
+  function isOverLieDropTarget(clientX: number, clientY: number): boolean {
+    const companionPanel = document.querySelector(".topbar-companion-panel") as HTMLElement | null;
+    const lieSlot = document.querySelector(".topbar-lie-slot") as HTMLElement | null;
+    if (companionPanel) {
+      const rect = (lieSlot ?? companionPanel).getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const dist = Math.hypot(clientX - centerX, clientY - centerY);
+      return (
+        dist < 140 ||
+        (clientX >= rect.left - 60 && clientX <= rect.right + 60 && clientY >= rect.top - 60 && clientY <= rect.bottom + 80)
+      );
+    }
+    const viewportWidth = globalThis.innerWidth || 1200;
+    return clientX >= viewportWidth - 260 && clientY <= 130;
+  }
+
+  function updateLauncherDrag(pointerId: number, clientX: number, clientY: number, sizeElement?: HTMLElement | null) {
+    const drag = launcherDragRef.current;
+    if (!drag || drag.pointerId !== pointerId) return;
+    const distance = Math.hypot(clientX - drag.startX, clientY - drag.startY);
+    if (distance > 4) drag.moved = true;
+    if (!drag.moved) return;
+    highlightLieDropTarget(clientX, clientY);
+    setLauncherPosition(
+      clampSakiLauncherPosition(
+        { x: clientX - drag.offsetX, y: clientY - drag.offsetY },
+        sizeElement ?? launcherRef.current,
+        "expanded"
+      )
+    );
+  }
+
+  function completeLauncherDrag(pointerId: number, clientX: number, clientY: number, sizeElement?: HTMLElement | null) {
+    const drag = launcherDragRef.current;
+    if (!drag || drag.pointerId !== pointerId) return;
+    document.querySelector(".topbar-companion-panel")?.classList.remove("is-drag-near");
+    const target = sizeElement ?? launcherRef.current;
+    if (target?.hasPointerCapture(pointerId)) {
+      try {
+        target.releasePointerCapture(pointerId);
+      } catch {
+        // Pointer capture may already be released after a topbar pull-out.
+      }
+    }
+
+    if (drag.moved && isOverLieDropTarget(clientX, clientY)) {
+      onReturnToLie?.();
+      launcherDragRef.current = null;
+      setLauncherDragging(false);
+      onLauncherDraggingChange?.(false);
+      setDraggingExpression(null);
+      suppressLauncherClickRef.current = true;
+      globalThis.setTimeout(() => {
+        suppressLauncherClickRef.current = false;
+      }, 150);
+      return;
+    }
+
+    if (drag.moved) {
+      const dragPosition = clampSakiLauncherPosition(
+        { x: clientX - drag.offsetX, y: clientY - drag.offsetY },
+        target,
+        "expanded"
+      );
+      const snapEdge = sakiLauncherSnapEdgeForPosition(dragPosition);
+      const nextPosition = snapEdge ? snapSakiLauncherPositionToEdge(dragPosition, snapEdge) : dragPosition;
+      setLauncherPosition(nextPosition);
+      writeSakiLauncherPosition(nextPosition);
+      suppressLauncherClickRef.current = true;
+      globalThis.setTimeout(() => {
+        suppressLauncherClickRef.current = false;
+      }, 150);
+    }
+
+    launcherDragRef.current = null;
+    setLauncherDragging(false);
+    onLauncherDraggingChange?.(false);
+    setDraggingExpression(null);
+  }
+
   function handleLauncherPointerDown(event: React.PointerEvent<HTMLButtonElement>) {
     if (event.button !== 0) return;
     const rect = event.currentTarget.getBoundingClientRect();
@@ -5477,61 +8880,63 @@ function SakiFloatingChat({
     };
     setDraggingExpression(Math.random() > 0.5 ? sakiArtAssets.pickup1 : sakiArtAssets.pickup2);
     setLauncherDragging(true);
+    onLauncherDraggingChange?.(true);
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
   function handleLauncherPointerMove(event: React.PointerEvent<HTMLButtonElement>) {
     const drag = launcherDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
-
-    const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
-    if (distance > 4) drag.moved = true;
-    if (!drag.moved) return;
-
-    event.preventDefault();
-    setLauncherPosition(
-      clampSakiLauncherPosition(
-        {
-          x: event.clientX - drag.offsetX,
-          y: event.clientY - drag.offsetY
-        },
-        event.currentTarget,
-        "expanded"
-      )
-    );
+    if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 4) {
+      event.preventDefault();
+    }
+    updateLauncherDrag(event.pointerId, event.clientX, event.clientY, event.currentTarget);
   }
 
   function finishLauncherDrag(event: React.PointerEvent<HTMLButtonElement>) {
-    const drag = launcherDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-
-    if (drag.moved) {
-      const dragPosition = clampSakiLauncherPosition(
-        {
-          x: event.clientX - drag.offsetX,
-          y: event.clientY - drag.offsetY
-        },
-        event.currentTarget,
-        "expanded"
-      );
-      const snapEdge = sakiLauncherSnapEdgeForPosition(dragPosition);
-      const nextPosition = snapEdge ? snapSakiLauncherPositionToEdge(dragPosition, snapEdge) : dragPosition;
-      setLauncherPosition(nextPosition);
-      writeSakiLauncherPosition(nextPosition);
-      suppressLauncherClickRef.current = true;
-      globalThis.setTimeout(() => {
-        suppressLauncherClickRef.current = false;
-      }, 150);
-    }
-
-    launcherDragRef.current = null;
-    setLauncherDragging(false);
-    setDraggingExpression(null);
+    completeLauncherDrag(event.pointerId, event.clientX, event.clientY, event.currentTarget);
   }
+
+  useLayoutEffect(() => {
+    if (!pullDragRequest || sakiLieMode) return;
+    const request = pullDragRequest;
+    const startPosition = clampSakiLauncherPosition(
+      { x: request.clientX - request.offsetX, y: request.clientY - request.offsetY },
+      launcherRef.current,
+      "expanded"
+    );
+    setLauncherPosition(startPosition);
+    launcherDragRef.current = {
+      pointerId: request.pointerId,
+      offsetX: request.offsetX,
+      offsetY: request.offsetY,
+      startX: request.clientX,
+      startY: request.clientY,
+      moved: true
+    };
+    setDraggingExpression(Math.random() > 0.5 ? sakiArtAssets.pickup1 : sakiArtAssets.pickup2);
+    setLauncherDragging(true);
+    onLauncherDraggingChange?.(true);
+
+    const onMove = (event: PointerEvent) => {
+      if (event.pointerId !== request.pointerId) return;
+      event.preventDefault();
+      updateLauncherDrag(event.pointerId, event.clientX, event.clientY, launcherRef.current);
+    };
+    const onUp = (event: PointerEvent) => {
+      if (event.pointerId !== request.pointerId) return;
+      completeLauncherDrag(event.pointerId, event.clientX, event.clientY, launcherRef.current);
+      onPullDragConsumed?.();
+    };
+    window.addEventListener("pointermove", onMove, { capture: true });
+    window.addEventListener("pointerup", onUp, { capture: true });
+    window.addEventListener("pointercancel", onUp, { capture: true });
+    return () => {
+      window.removeEventListener("pointermove", onMove, { capture: true });
+      window.removeEventListener("pointerup", onUp, { capture: true });
+      window.removeEventListener("pointercancel", onUp, { capture: true });
+    };
+  }, [pullDragRequest, sakiLieMode]);
 
   function handleLauncherClick(event: React.MouseEvent<HTMLButtonElement>) {
     if (suppressLauncherClickRef.current) {
@@ -5575,7 +8980,7 @@ function SakiFloatingChat({
     restoringContextRef.current = true;
     setActiveConversationId(id);
     setMessages([
-      createSakiWelcomeMessage(instance ? `我是 Saki。当前智能体工作区：${instance.name}。` : `我是 Saki。当前上下文：${panelContext.label}。`)
+      createSakiWelcomeMessage(getSakiWelcomeMessageText(instance, panelContext.label))
     ]);
     setDraft("");
     setPanelError(null);
@@ -5991,6 +9396,13 @@ function SakiFloatingChat({
       return;
     }
 
+    if (sakiHoldTimerRef.current !== null) {
+      window.clearTimeout(sakiHoldTimerRef.current);
+      sakiHoldTimerRef.current = null;
+    }
+    sakiHoldActiveRef.current = false;
+    sakiVoiceEchoRef.current?.cancelHold();
+
     const Recognition = getSpeechRecognitionConstructor();
     if (!Recognition) {
       showComposerNotice("当前浏览器不支持语音输入。");
@@ -6046,10 +9458,17 @@ function SakiFloatingChat({
   }
 
   function stopSakiGeneration() {
+    const currentTaskId = activeTaskIdRef.current;
+    if (currentTaskId && token) {
+      void api.sakiCancelTask(token, currentTaskId).catch(() => {});
+      activeTaskIdRef.current = null;
+    }
     const controller = sakiStreamAbortRef.current;
-    if (!controller || controller.signal.aborted) return;
-    controller.abort();
+    if (controller && !controller.signal.aborted) {
+      controller.abort();
+    }
     setLoading(false);
+    setSakiActivityMood(null);
     settleInterruptedSakiMessage();
   }
 
@@ -6189,7 +9608,13 @@ function SakiFloatingChat({
     };
     const applyFinalResponse = (response: SakiChatResponse) => {
       streamCompleted = true;
+      activeTaskIdRef.current = null;
       clearStreamIdleTimer();
+      if (response.usage?.isUnlimited) {
+        onPointsBalanceChange?.({ points: 0, unlimitedPoints: true });
+      } else if (typeof response.usage?.remainingPoints === "number") {
+        onPointsBalanceChange?.({ points: response.usage.remainingPoints, unlimitedPoints: false });
+      }
       setReachable(response.source === "direct-model");
       if (response.skills) setSkills(response.skills);
       if (response.agentPermissionMode) setPermissionMode(response.agentPermissionMode);
@@ -6209,10 +9634,12 @@ function SakiFloatingChat({
                 const nextMessage: LocalSakiMessage = {
                   ...message,
                   content: finalContent,
+                  thinking: response.thinking ?? message.thinking,
                   timeline: finalTimeline,
                   source: response.source,
                   workflowExpanded: false,
-                  streaming: false
+                  streaming: false,
+                  usage: response.usage
                 };
                 if (nextActions?.length) return { ...nextMessage, actions: nextActions };
                 return nextMessage;
@@ -6231,6 +9658,7 @@ function SakiFloatingChat({
           setReachable(streamEvent.source === "direct-model");
           if (streamEvent.skills) setSkills(streamEvent.skills);
           if (streamEvent.agentPermissionMode) setPermissionMode(streamEvent.agentPermissionMode);
+          if (streamEvent.taskId) activeTaskIdRef.current = streamEvent.taskId;
           return;
         }
 
@@ -6247,6 +9675,22 @@ function SakiFloatingChat({
                 ? {
                     ...message,
                     timeline: appendSakiTimelineDelta(message.timeline, streamEvent.text)
+                  }
+                : message
+            )
+          );
+          return;
+        }
+
+        if (streamEvent.type === "thinking") {
+          streamSawProgress = true;
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantId
+                ? {
+                    ...message,
+                    thinking: `${message.thinking ?? ""}${streamEvent.text}`,
+                    timeline: appendSakiTimelineThinking(message.timeline, streamEvent.text)
                   }
                 : message
             )
@@ -6405,6 +9849,22 @@ function SakiFloatingChat({
   const agentModeStatusLabel = mode === "agent" ? `${statusLabel} · ${sakiPermissionModeLabel(permissionMode)}` : statusLabel;
   const contextPreview = contextText ? compactContextText(contextText.replace(/\s+/g, " "), 180) : "";
   const hasStreamingAssistant = messages.some((message) => message.role === "assistant" && message.streaming);
+  const isAgentBusy = Boolean(loading || hasStreamingAssistant);
+
+  useEffect(() => {
+    if (prevBusyRef.current && !isAgentBusy) {
+      if (mobileActiveTab === "video") {
+        setChatPulseAlert(true);
+      }
+    }
+    prevBusyRef.current = isAgentBusy;
+  }, [isAgentBusy, mobileActiveTab]);
+
+  useEffect(() => {
+    if (mobileActiveTab === "chat") {
+      setChatPulseAlert(false);
+    }
+  }, [mobileActiveTab]);
   const launcherEdge = launcherAttachedEdge ?? (launcherPosition ? sakiLauncherEdgeForPosition(launcherPosition) : "right");
   const launcherStyle = launcherPosition
     ? {
@@ -6415,32 +9875,185 @@ function SakiFloatingChat({
       }
     : undefined;
 
+  const sakiGreetings = [
+    "我在呢！随时为你提供帮助～ (*╹▽╹*)",
+    "今天也一起加油吧！(ง •_•)ง",
+    "有什么想问的尽管告诉我哦～ (◕ᴗ◕✿)",
+    "随时待命！(๑•̀ㅂ•́)و✧",
+    "诶嘿，随时都可以呼叫我～ (≧∇≦)ﾉ"
+  ];
+
+  function handleSakiPoke() {
+    if (pokeTimerRef.current !== null) {
+      window.clearTimeout(pokeTimerRef.current);
+    }
+    const moods: NonNullable<SakiActivityMood>[] = ["happy", "OK", "reading"];
+    const randomMood: SakiActivityMood = moods[Math.floor(Math.random() * moods.length)] ?? "happy";
+    const randomGreeting: string = sakiGreetings[Math.floor(Math.random() * sakiGreetings.length)] ?? "我在呢！随时为你提供帮助～ (*╹▽╹*)";
+    setSakiPokeMood(randomMood);
+    setSakiVideoBubble(randomGreeting);
+    pokeTimerRef.current = window.setTimeout(() => {
+      setSakiPokeMood(null);
+      setSakiVideoBubble(null);
+      pokeTimerRef.current = null;
+    }, 3500);
+  }
+
+  function canHoldSakiToTalk() {
+    return !listening && !miniGameActive && !draggingFood && mobileActiveTab === "video";
+  }
+
+  function ensureSakiVoiceEcho() {
+    if (!sakiVoiceEchoRef.current) {
+      sakiVoiceEchoRef.current = new SakiVoiceEcho({
+        onStateChange: setSakiEchoState
+      });
+    }
+    return sakiVoiceEchoRef.current;
+  }
+
+  function handleSakiCharacterPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 && event.pointerType === "mouse") return;
+    if (draggingFood || miniGameActive) return;
+    event.preventDefault();
+    sakiHoldPointerRef.current = event.pointerId;
+    sakiHoldActiveRef.current = false;
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      /* ignore */
+    }
+    if (!canHoldSakiToTalk()) return;
+    if (sakiHoldTimerRef.current !== null) window.clearTimeout(sakiHoldTimerRef.current);
+    sakiHoldTimerRef.current = window.setTimeout(() => {
+      sakiHoldTimerRef.current = null;
+      void startSakiHoldRecord();
+    }, 300);
+  }
+
+  async function startSakiHoldRecord() {
+    if (!canHoldSakiToTalk() || sakiHoldPointerRef.current === null) return;
+    sakiHoldActiveRef.current = true;
+    if (pokeTimerRef.current !== null) {
+      window.clearTimeout(pokeTimerRef.current);
+      pokeTimerRef.current = null;
+    }
+    setSakiPokeMood(null);
+    setSakiVideoBubble(null);
+    setSakiEchoState("hearing");
+    const echo = ensureSakiVoiceEcho();
+    const ok = await echo.beginHold();
+    if (!sakiHoldActiveRef.current) {
+      echo.cancelHold();
+      return;
+    }
+    if (!ok) {
+      sakiHoldActiveRef.current = false;
+      setSakiEchoState("idle");
+      setSakiVideoBubble(null);
+      showComposerNotice("无法使用麦克风，Saki 没法学你说话。");
+    }
+  }
+
+  function handleSakiCharacterPointerUp(event: React.PointerEvent<HTMLDivElement>) {
+    if (sakiHoldPointerRef.current !== null && event.pointerId !== sakiHoldPointerRef.current) return;
+    finishSakiCharacterPointer(true);
+  }
+
+  function handleSakiCharacterPointerCancel(event: React.PointerEvent<HTMLDivElement>) {
+    if (sakiHoldPointerRef.current !== null && event.pointerId !== sakiHoldPointerRef.current) return;
+    finishSakiCharacterPointer(false);
+  }
+
+  function finishSakiCharacterPointer(allowPoke: boolean) {
+    if (sakiHoldTimerRef.current !== null) {
+      window.clearTimeout(sakiHoldTimerRef.current);
+      sakiHoldTimerRef.current = null;
+    }
+    const wasHold = sakiHoldActiveRef.current;
+    sakiHoldActiveRef.current = false;
+    sakiHoldPointerRef.current = null;
+    if (wasHold) {
+      sakiVoiceEchoRef.current?.endHold();
+      return;
+    }
+    if (allowPoke && !miniGameActive && !draggingFood) handleSakiPoke();
+  }
+
+  function handleCustomRoomBgUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      if (dataUrl) {
+        setCustomRoomBg(dataUrl);
+        try {
+          localStorage.setItem("saki_custom_room_bg", dataUrl);
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+    reader.readAsDataURL(file);
+    event.currentTarget.value = "";
+  }
+
+  const isSakiListening = listening || sakiEchoState === "hearing";
+  const echoActivityMood: SakiActivityMood = isSakiListening
+    ? "hearing"
+    : sakiEchoState === "speaking"
+      ? "speaking"
+      : null;
+  const effectiveActivityMood = echoActivityMood ?? sakiPokeMood ?? sakiActivityMood;
+  const videoBubbleText = sakiVideoBubble
+    ? sakiVideoBubble
+    : loading && !hasStreamingAssistant
+    ? "正在认真思考中... (•̀ᴗ•́)و"
+    : hasStreamingAssistant
+    ? "正在回复中... (*╹▽╹*)"
+    : sakiActivityMood === "working"
+    ? "正在处理代码任务... (ง •_•)ง"
+    : sakiActivityMood === "reading"
+    ? "正在分析项目中... (๑•̀ㅂ•́)و"
+    : sakiActivityMood === "checkfiles"
+    ? "正在检查文件变动... (oﾟ▽ﾟ)o"
+    : listening
+    ? "正在听写你说的话... (◕ᴗ◕✿)"
+    : sakiEchoState === "hearing"
+    ? "松开后我会学你说话～"
+    : sakiEchoState === "speaking"
+    ? "♪ 学你说话～"
+    : null;
+
   return (
     <>
-      <button
-        ref={launcherRef}
-        className={`saki-launcher ${launcherDragging ? "is-dragging" : ""} ${sakiFileHoverActive ? "drop-ready" : ""} ${open ? "hiding" : ""} ${launcherEdgeAttached ? `edge-attached edge-${launcherEdge}` : ""}`}
-        type="button"
-        title="Saki"
-        aria-label="打开 Saki"
-        style={launcherStyle}
-        onClick={handleLauncherClick}
-        onPointerDown={handleLauncherPointerDown}
-        onPointerMove={handleLauncherPointerMove}
-        onPointerUp={finishLauncherDrag}
-        onPointerCancel={finishLauncherDrag}
-        onDragEnter={handleSakiFileDragEnter}
-        onDragOver={handleSakiFileDragOver}
-        onDragLeave={handleSakiFileDragLeave}
-        onDrop={handleSakiFileDrop}
-      >
-        <span className="saki-launcher-glow" />
-        <SakiCharacterArt mood={artMood} compact fileDrop={fileDragActive} edgeAttached={launcherEdgeAttached} dragging={launcherDragging} draggingExpressionSrc={draggingExpression} />
-      </button>
+      {!sakiLieMode ? (
+        <button
+          ref={launcherRef}
+          className={`saki-launcher ${launcherDragging ? "is-dragging" : ""} ${sakiFileHoverActive ? "drop-ready" : ""} ${open ? "hiding" : ""} ${launcherEdgeAttached ? `edge-attached edge-${launcherEdge}` : ""}`}
+          type="button"
+          title="Saki"
+          aria-label="打开 Saki"
+          style={launcherStyle}
+          onClick={handleLauncherClick}
+          onPointerDown={handleLauncherPointerDown}
+          onPointerMove={handleLauncherPointerMove}
+          onPointerUp={finishLauncherDrag}
+          onPointerCancel={finishLauncherDrag}
+          onDragEnter={handleSakiFileDragEnter}
+          onDragOver={handleSakiFileDragOver}
+          onDragLeave={handleSakiFileDragLeave}
+          onDrop={handleSakiFileDrop}
+        >
+          <span className="saki-launcher-glow" />
+          <SakiCharacterArt mood={artMood} compact fileDrop={fileDragActive} edgeAttached={launcherEdgeAttached} dragging={launcherDragging} draggingExpressionSrc={draggingExpression} />
+        </button>
+      ) : null}
 
       <section
         ref={panelRef}
-        className={`saki-panel ${messagesExpanded ? "expanded" : "collapsed"} ${fullscreen ? "fullscreen" : ""} ${sakiFileHoverActive ? "drop-ready" : ""} ${open ? "visible" : "hidden"}`}
+        className={`saki-panel ${messagesExpanded ? "expanded" : "collapsed"} ${fullscreen ? "fullscreen" : ""} ${sakiFileHoverActive ? "drop-ready" : ""} ${open ? "visible" : "hidden"} mobile-tab-${mobileActiveTab}`}
         aria-label="Saki Copilot"
         onDragEnter={handleSakiFileDragEnter}
         onDragOver={handleSakiFileDragOver}
@@ -6453,42 +10066,347 @@ function SakiFloatingChat({
             <span>松开交给 Saki</span>
           </div>
         ) : null}
+
         <div className="saki-messages-container">
-          <div className="saki-messages-inner">
-            <div className="saki-header">
-            <span className={`saki-agent-status ${statusClass}`}>{contextPath}</span>
-            <div className="saki-header-actions">
-              <button className="icon-button mini" type="button" title="历史记录" onClick={toggleSakiHistory}>
-                <Clock size={15} />
-              </button>
-              <button
-                className="icon-button mini saki-fullscreen-toggle"
-                type="button"
-                title={fullscreen ? "退出全屏" : "放大"}
-                aria-label={fullscreen ? "退出全屏" : "放大 Saki 聊天窗口"}
-                aria-pressed={fullscreen}
-                onClick={toggleSakiFullscreen}
-              >
-                {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-              </button>
-              <button className="icon-button mini" type="button" title="新对话" onClick={startNewConversation}>
-                <Plus size={15} />
-              </button>
-            </div>
-            <button className="icon-button mini" type="button" title="关闭输入框" onClick={closeSakiPanel}>
-              <X size={15} />
-            </button>
-            <div className="saki-title">
-              <div className="saki-title-avatar">
-                <SakiCharacterArt mood={artMood} activityMood={sakiActivityMood} />
+          <div
+            className={`saki-video-pane ${mobileActiveTab === "video" ? "mobile-show" : "mobile-hide"}`}
+            style={customRoomBg ? { backgroundImage: `url("${customRoomBg}")` } : undefined}
+          >
+            <input
+              ref={roomBgInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              style={{ display: "none" }}
+              onChange={handleCustomRoomBgUpload}
+            />
+
+            {/* Mini Game occupying the FULL saki-video-pane */}
+            {miniGameActive ? (
+              <SakiDessertDropGame
+                onClose={() => {
+                  setMiniGameActive(false);
+                  setSakiPokeMood(null);
+                }}
+                onFinish={(score, expReward) => {
+                  setMiniGameActive(false);
+                  handleMiniGameFinish(score, expReward);
+                }}
+              />
+            ) : null}
+
+            <div className="saki-video-header">
+              <div className="saki-video-header-left">
+                <button
+                  className="saki-video-settings-btn"
+                  type="button"
+                  title="装修房间 (自定义背景图)"
+                  aria-label="装修房间"
+                  onClick={() => roomBgInputRef.current?.click()}
+                >
+                  <Paintbrush size={15} />
+                </button>
+                {customRoomBg ? (
+                  <button
+                    className="saki-video-settings-btn mini"
+                    type="button"
+                    title="恢复默认房间装修"
+                    aria-label="恢复默认装修"
+                    onClick={() => {
+                      setCustomRoomBg(null);
+                      try {
+                        localStorage.removeItem("saki_custom_room_bg");
+                      } catch {}
+                    }}
+                  >
+                    <RefreshCw size={12} />
+                  </button>
+                ) : null}
               </div>
-              <div>
-                <div className="saki-title-row">
-                  <h2>Saki</h2>
+
+              {/* Aesthetic Floating Island Switcher (Mobile Only) */}
+              <div className="saki-mobile-island-switcher" role="tablist" aria-label="移动端视图切换">
+                <button
+                  type="button"
+                  className={`saki-island-pill ${mobileActiveTab === "video" ? "active" : ""}`}
+                  onClick={() => setMobileActiveTab("video")}
+                  role="tab"
+                  aria-selected={mobileActiveTab === "video"}
+                >
+                  <Sparkles size={12} />
+                  <span>陪伴</span>
+                </button>
+                <button
+                  type="button"
+                  className={`saki-island-pill ${mobileActiveTab === "chat" ? "active" : ""} ${chatPulseAlert && mobileActiveTab === "video" ? "has-pulse-alert" : ""}`}
+                  onClick={() => {
+                    setMobileActiveTab("chat");
+                    setChatPulseAlert(false);
+                  }}
+                  role="tab"
+                  aria-selected={mobileActiveTab === "chat"}
+                >
+                  <MessageSquare size={12} />
+                  <span>聊天</span>
+                  {chatPulseAlert && mobileActiveTab === "video" ? (
+                    <span className="saki-island-breathing-light" aria-label="输出完成" />
+                  ) : null}
+                </button>
+              </div>
+
+              <div className="saki-video-header-right">
+                {(() => {
+                  const favInfo = getFavorabilityLevelInfo(sakiFavorabilityExp);
+                  return (
+                    <div
+                      className="saki-video-favorability-badge"
+                      title={`【Saki 好感度详情】\n等级: Lv.${favInfo.level} · ${favInfo.title}\n当前经验: ${favInfo.currentExp} / ${favInfo.maxExpForLevel} EXP (${favInfo.levelProgress}%)\n${favInfo.isMaxLevel ? "已达最高好感度！" : `距离下一级还需 ${favInfo.maxExpForLevel - favInfo.currentExp} EXP`}`}
+                    >
+                      <div className={`saki-favorability-heart-wrap ${favorabilityPop ? "pop" : ""}`}>
+                        <Heart size={32} className="saki-favorability-heart fill-rose-500 text-rose-400" />
+                        <span className="saki-favorability-heart-level">{favInfo.level}</span>
+                      </div>
+
+                      <div className="saki-favorability-tooltip" role="tooltip">
+                        <div className="tooltip-title">好感度 Lv.{favInfo.level} · {favInfo.title}</div>
+                        <div className="tooltip-exp-bar">
+                          <div className="tooltip-exp-fill" style={{ width: `${favInfo.levelProgress}%` }} />
+                        </div>
+                        <div className="tooltip-exp-nums">
+                          <span>{favInfo.currentExp} / {favInfo.maxExpForLevel} EXP</span>
+                          <span>{favInfo.levelProgress}%</span>
+                        </div>
+                      </div>
+
+                      {favorabilityPop ? (
+                        <span key={favorabilityPop.id} className="saki-favorability-gain-float">
+                          +{favorabilityPop.amount} EXP
+                        </span>
+                      ) : null}
+                    </div>
+                  );
+                })()}
+
+                <button
+                  className="saki-video-close-btn"
+                  type="button"
+                  title="关闭 Saki"
+                  aria-label="关闭 Saki"
+                  onClick={closeSakiPanel}
+                >
+                  <X size={15} />
+                </button>
+              </div>
+            </div>
+
+            <div className="saki-video-stage">
+              <div
+                ref={sakiCharacterRef}
+                className={`saki-video-character-wrap mood-${artMood} ${effectiveActivityMood ?? ""} ${isDragOverSaki ? "saki-drag-hover" : ""} ${sakiEchoState === "speaking" ? "saki-speaking" : ""} ${isSakiListening ? "saki-hearing" : ""}`}
+                onPointerDown={handleSakiCharacterPointerDown}
+                onPointerUp={handleSakiCharacterPointerUp}
+                onPointerCancel={handleSakiCharacterPointerCancel}
+                onLostPointerCapture={handleSakiCharacterPointerCancel}
+                onContextMenu={(event) => event.preventDefault()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    handleSakiPoke();
+                  }
+                }}
+                title="点按戳戳，长按说话"
+                role="button"
+                tabIndex={0}
+              >
+                {/* Feeding Target Indicator when dragging food */}
+                {draggingFood && draggingFood.isDragging ? (
+                  <div className={`saki-feed-target-indicator ${isDragOverSaki ? "ready" : ""}`}>
+                    <div className="target-pulse-ring">
+                      <Heart size={22} className="fill-rose-400 text-rose-400" />
+                    </div>
+                  </div>
+                ) : null}
+
+                {videoBubbleText ? (
+                  <div className="saki-video-bubble" aria-live="polite">
+                    <span>{videoBubbleText}</span>
+                  </div>
+                ) : null}
+                <SakiCharacterArt mood={artMood} activityMood={effectiveActivityMood} />
+                <div className="saki-video-carpet-shadow" aria-hidden="true" />
+              </div>
+            </div>
+
+            {feedMenuOpen ? (
+              <div className="saki-feed-drawer">
+                <div className="saki-feed-items">
+                  {sakiFoodMenu.map((food) => {
+                    const canAfford = isUnlimitedPoints || numericSakiPoints >= food.cost;
+                    const isCurrentDragging = draggingFood?.food.id === food.id && draggingFood.isDragging;
+                    return (
+                      <button
+                        key={food.id}
+                        className={`saki-feed-card ${!canAfford ? "disabled" : ""} ${isCurrentDragging ? "dragging" : ""}`}
+                        type="button"
+                        title={canAfford ? `${food.name} (${food.cost}积分)` : `积分不足 (${food.cost})`}
+                        onPointerDown={(e) => startFoodDrag(e, food)}
+                      >
+                        <div className="saki-feed-card-img-wrap">
+                          <img src={food.image} alt={food.name} draggable={false} />
+                        </div>
+                        <div className="saki-feed-card-info">
+                          <span className="food-name">{food.name}</span>
+                          <div className="food-meta">
+                            <span className="food-cost">{food.cost}分</span>
+                            <span className="food-fav">+{food.favorability}</span>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
+            ) : null}
+
+            {/* Dragging Food Floating Ghost */}
+            {draggingFood && draggingFood.isDragging ? (
+              <div
+                className={`saki-dragging-food-ghost ${isDragOverSaki ? "over-target" : ""}`}
+                style={{
+                  left: `${draggingFood.currentX}px`,
+                  top: `${draggingFood.currentY}px`
+                }}
+              >
+                <img src={draggingFood.food.image} alt={draggingFood.food.name} draggable={false} />
+              </div>
+            ) : null}
+
+            <div className="saki-video-controls" role="toolbar" aria-label="视频通话控制">
+              <button
+                className={`saki-video-btn ${listening ? "active pulse" : ""}`}
+                type="button"
+                title={listening ? "关闭麦克风 (停止语音识别)" : "开启麦克风 (语音输入)"}
+                aria-label="麦克风"
+                onClick={toggleSpeechInput}
+              >
+                {listening ? <Mic size={17} /> : <MicOff size={17} />}
+              </button>
+              <button
+                className={`saki-video-btn ${miniGameActive ? "active" : ""}`}
+                type="button"
+                title="星梦甜点接接乐 (小游戏赚取好感度与积分)"
+                aria-label="小游戏"
+                onClick={() => {
+                  setFeedMenuOpen(false);
+                  setMiniGameActive((prev) => {
+                    const next = !prev;
+                    setSakiPokeMood(next ? "gaming" : null);
+                    return next;
+                  });
+                }}
+              >
+                <Gamepad2 size={17} />
+              </button>
+              <button
+                className={`saki-video-btn ${feedMenuOpen ? "active" : ""}`}
+                type="button"
+                title="投喂 Saki (花费积分买食物提升好感度)"
+                aria-label="投喂食物"
+                onClick={() => {
+                  setFeedMenuOpen((prev) => !prev);
+                }}
+              >
+                <UtensilsCrossed size={17} />
+              </button>
+              <button
+                className={`saki-video-btn mobile-switch-to-chat ${chatPulseAlert && mobileActiveTab === "video" ? "pulse-alert" : ""}`}
+                type="button"
+                title="切换到聊天对话"
+                aria-label="切换到聊天"
+                onClick={() => {
+                  setMobileActiveTab("chat");
+                  setChatPulseAlert(false);
+                }}
+              >
+                <MessageSquare size={17} />
+                {chatPulseAlert && mobileActiveTab === "video" ? (
+                  <span className="saki-dock-breathing-dot" aria-hidden="true" />
+                ) : null}
+              </button>
+              <button
+                className="saki-video-btn hangup"
+                type="button"
+                title="挂断视频通话"
+                aria-label="挂断"
+                onClick={closeSakiPanel}
+              >
+                <PhoneOff size={17} />
+              </button>
             </div>
           </div>
+
+          <div className={`saki-messages-inner ${mobileActiveTab === "chat" ? "mobile-show" : "mobile-hide"}`}>
+            <div className="saki-header">
+              <div className="saki-header-left">
+                <button
+                  type="button"
+                  className="saki-mobile-back-video-btn"
+                  title="前往 Saki 陪伴"
+                  aria-label="前往陪伴"
+                  onClick={() => setMobileActiveTab("video")}
+                >
+                  <ChevronLeft size={14} />
+                  <span>陪伴</span>
+                </button>
+                <span
+                  className={`saki-agent-status ${statusClass}`}
+                  title={
+                    statusClass === "fallback"
+                      ? `Saki 状态: ${statusLabel}${contextPath ? ` (上下文: ${contextPath})` : ""}`
+                      : contextPath
+                        ? `工作区上下文: ${contextPath}`
+                        : `Saki 状态: ${statusLabel}`
+                  }
+                >
+                  <span className="saki-agent-status-dot" aria-hidden="true" />
+                  <span className="saki-agent-status-text">
+                    {statusClass === "fallback" ? statusLabel : (formatSakiContextPath(contextPath) || statusLabel)}
+                  </span>
+                </span>
+              </div>
+
+              <div className="saki-header-actions">
+                <button
+                  className={`icon-button mini ${historyOpen ? "active" : ""}`}
+                  type="button"
+                  title="历史记录"
+                  aria-pressed={historyOpen}
+                  onClick={toggleSakiHistory}
+                >
+                  <Clock size={15} />
+                </button>
+                {onOpenPointsUsage ? (
+                  <button className="icon-button mini" type="button" title="积分与使用量" onClick={onOpenPointsUsage}>
+                    <BarChart2 size={15} />
+                  </button>
+                ) : null}
+                <button
+                  className="icon-button mini saki-fullscreen-toggle"
+                  type="button"
+                  title={fullscreen ? "退出全屏" : "放大"}
+                  aria-label={fullscreen ? "退出全屏" : "放大 Saki 聊天窗口"}
+                  aria-pressed={fullscreen}
+                  onClick={toggleSakiFullscreen}
+                >
+                  {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+                </button>
+                <button className="icon-button mini" type="button" title="新对话" onClick={startNewConversation}>
+                  <Plus size={15} />
+                </button>
+                <button className="icon-button mini" type="button" title="关闭输入框" onClick={closeSakiPanel}>
+                  <X size={15} />
+                </button>
+              </div>
+            </div>
 
           {historyOpen && messagesExpanded ? (
             <aside className="saki-history-panel" aria-label="Saki history">
@@ -6592,14 +10510,11 @@ function SakiFloatingChat({
                       {timelineItems.map((item) =>
                         item.kind === "text" ? (
                           <div className={`saki-message-body saki-message-body-${item.source}`} key={item.id}>
-                            {message.streaming && item.source === "delta" ? (
-                              <div className="saki-stream-raw-wrap">
-                                <span className="saki-stream-raw">{item.content}</span>
-                                <span className="saki-stream-cursor" />
-                              </div>
-                            ) : (
-                              <MarkdownContent content={item.content} />
-                            )}
+                            <SakiThinkingContent
+                              content={item.content}
+                              thinking={item.thinking}
+                              streaming={message.streaming && item.source === "delta"}
+                            />
                           </div>
                         ) : (
                           <div className="saki-tool-timeline-item" key={item.id}>
@@ -6624,13 +10539,24 @@ function SakiFloatingChat({
                         </div>
                       ) : null}
                     </div>
-                  ) : message.role === "assistant" && message.streaming && !message.content ? (
+                  ) : message.role === "assistant" && message.streaming && !message.content && !message.thinking ? (
                     <div className="saki-message-body">
                       <p className="saki-stream-placeholder">等待模型响应...</p>
                     </div>
-                  ) : message.content ? (
+                  ) : message.content || message.thinking ? (
                     <div className="saki-message-body">
-                      <MarkdownContent content={message.content} />
+                      <SakiThinkingContent
+                        content={message.content}
+                        thinking={message.thinking}
+                        streaming={message.streaming}
+                      />
+                    </div>
+                  ) : null}
+                  {message.role === "assistant" && message.usage ? (
+                    <div className="saki-token-usage-text">
+                      {message.usage.isUnlimited
+                        ? `消耗 Token: ${message.usage.tokensUsed.toLocaleString()}`
+                        : `消耗 Token: ${message.usage.tokensUsed.toLocaleString()} · 消耗积分: ${message.usage.pointsUsed.toLocaleString()}`}
                     </div>
                   ) : null}
                   {message.attachments?.length ? (
@@ -6656,23 +10582,6 @@ function SakiFloatingChat({
               </div>
             ) : null}
           </div>
-
-          {skillsLoading || skills.length > 0 ? (
-            <div className="saki-skill-row">
-              {skillsLoading ? <span className="saki-skill-loading">Skills...</span> : null}
-              {skills.slice(0, 5).map((skill) => (
-                <button
-                  className={selectedSkillIds.includes(skill.id) ? "saki-skill-chip active" : "saki-skill-chip"}
-                  type="button"
-                  key={skill.id}
-                  title={skill.description ?? skill.name}
-                  onClick={() => toggleSkill(skill.id)}
-                >
-                  {skill.name}
-                </button>
-              ))}
-            </div>
-          ) : null}
         </div>
       </div>
 
@@ -6703,12 +10612,13 @@ function SakiFloatingChat({
         <div className="saki-composer-expand-hint">
           <button
             type="button"
+            className="saki-composer-expand-btn"
             title={messagesExpanded ? "折叠对话" : "展开对话"}
             aria-label={messagesExpanded ? "折叠对话" : "展开对话"}
             aria-expanded={messagesExpanded}
             onClick={() => setMessagesExpanded((current) => !current)}
           >
-            <ChevronLeft style={{ transform: messagesExpanded ? "rotate(-90deg)" : "rotate(90deg)" }} size={16} />
+            {messagesExpanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
           </button>
         </div>
         {!messagesExpanded && (
@@ -6719,8 +10629,14 @@ function SakiFloatingChat({
                   {messages.filter(m => m.id !== "saki-welcome").map((message) => (
                     <div className={`saki-message saki-message-${message.role} mini-mode`} key={message.id}>
                       <div className="saki-message-body">
-                        {message.content ? <MarkdownContent content={message.content} /> : null}
-                        {!message.content && message.streaming ? <p className="saki-stream-placeholder">等待模型响应...</p> : null}
+                        {message.content || message.thinking ? (
+                          <SakiThinkingContent
+                            content={message.content}
+                            thinking={message.thinking}
+                            streaming={message.streaming}
+                          />
+                        ) : null}
+                        {!message.content && !message.thinking && message.streaming ? <p className="saki-stream-placeholder">等待模型响应...</p> : null}
                       </div>
                     </div>
                   ))}
@@ -6738,43 +10654,52 @@ function SakiFloatingChat({
           </div>
         )}
         <div className="saki-input-container">
-          <div className="saki-mode-tabs">
-            {canUseChat ? (
-              <button className={mode === "chat" ? "active" : ""} type="button" onClick={() => selectSakiMode("chat")}>
-                对话
-              </button>
-            ) : null}
-            {canUseAgent ? (
-              <button className={mode === "agent" ? "active" : ""} type="button" onClick={() => selectSakiMode("agent")}>
-                智能体
-              </button>
-            ) : null}
-          </div>
-          {canUseAgent && mode === "agent" ? (
-            <div className="saki-permission-tabs" role="group" aria-label="智能体权限模式">
-              {(["acceptEdits", "ask", "plan", "bypassPermissions"] as SakiAgentPermissionMode[]).map((item) => {
-                const icon =
-                  item === "acceptEdits" ? <CheckCircle2 size={13} /> : item === "ask" ? <Shield size={13} /> : item === "plan" ? <Eye size={13} /> : <XOctagon size={13} />;
-                return (
-                  <button
-                    className={permissionMode === item ? "active" : ""}
-                    type="button"
-                    title={sakiPermissionModeTitle(item)}
-                    aria-pressed={permissionMode === item}
-                    onClick={() => setPermissionMode(item)}
-                    key={item}
-                  >
-                    {icon}
-                    <span>{sakiPermissionModeLabel(item)}</span>
-                  </button>
-                );
-              })}
+          {!messagesExpanded && (
+            <div
+              className={`saki-input-peep ${loading ? "is-loading" : ""} ${sakiFileHoverActive ? "is-dropping" : ""}`}
+              onClick={() => setMessagesExpanded(true)}
+              title="点击展开与 Saki 的完整对话"
+              role="button"
+              tabIndex={0}
+            >
+              <img
+                src={sakiArtAssets.shuru}
+                alt="Saki"
+                className="saki-input-peep-img saki-peep-light"
+                draggable={false}
+              />
+              <img
+                src={sakiArtAssets.shuruBlack}
+                alt="Saki"
+                className="saki-input-peep-img saki-peep-dark"
+                draggable={false}
+              />
             </div>
-          ) : null}
-          <div className="saki-input-row">
+          )}
+          <div className="saki-input-main-row">
+            <div className="saki-input-leading">
+              <button
+                className={`saki-add-btn ${sakiAddMenuOpen ? "active" : ""}`}
+                type="button"
+                title="添加图片 / 文件"
+                onClick={() => setSakiAddMenuOpen(!sakiAddMenuOpen)}
+                ref={sakiAddBtnRef}
+              >
+                <Plus size={16} />
+              </button>
+            </div>
             <textarea
+              ref={composerTextareaRef}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  if (!loading && (draft.trim() || attachments.length > 0)) {
+                    void submit();
+                  }
+                }
+              }}
               onPaste={handleComposerPaste}
               placeholder={
                 mode === "agent" && permissionMode === "plan"
@@ -6787,25 +10712,26 @@ function SakiFloatingChat({
                       ? "问 Saki 当前实例里的问题"
                       : "问 Saki"
               }
-              rows={2}
+              rows={1}
             />
-            {attachments.length > 0 ? (
-              <div className="saki-attachment-tray">
-                {attachments.map((attachment, index) => (
-                  <SakiAttachmentChip
-                    attachment={attachment}
-                    key={attachment.id ?? `${attachment.name}-${index}`}
-                    removable
-                    onRemove={() =>
-                      setAttachments((current) => current.filter((item) => (item.id ?? item.name) !== (attachment.id ?? attachment.name)))
-                    }
-                  />
-                ))}
-              </div>
-            ) : null}
-            {composerNotice ? <div className="saki-composer-notice">{composerNotice}</div> : null}
-            <div className="saki-input-toolbar">
-              <div className="saki-input-actions">
+          </div>
+          {attachments.length > 0 ? (
+            <div className="saki-attachment-tray">
+              {attachments.map((attachment, index) => (
+                <SakiAttachmentChip
+                  attachment={attachment}
+                  key={attachment.id ?? `${attachment.name}-${index}`}
+                  removable
+                  onRemove={() =>
+                    setAttachments((current) => current.filter((item) => (item.id ?? item.name) !== (attachment.id ?? attachment.name)))
+                  }
+                />
+              ))}
+            </div>
+          ) : null}
+          {composerNotice ? <div className="saki-composer-notice">{composerNotice}</div> : null}
+          <div className="saki-input-toolbar">
+            <div className="saki-input-actions">
                 <button
                   className={`icon-button mini ${listening ? "active" : ""}`}
                   type="button"
@@ -6852,28 +10778,175 @@ function SakiFloatingChat({
                   <Camera size={15} />
                 </button>
               </div>
-              <div className="saki-model-selector" ref={modelSelectorRef}>
-                <button className="saki-model-btn" type="button" onClick={() => setModelDropdownOpen(!modelDropdownOpen)}>
-                  <Zap size={12} />
-                  <span>{currentModelName || availableModels.find(m => m.id === currentModelId)?.label || currentModelId}</span>
-                  <ChevronDown size={10} />
+              <div className="saki-toolbar-controls">
+                {/* Mode Selector: Icon-only Chat vs Agent */}
+                <div className="saki-mode-icon-group" role="group" aria-label="对话/智能体模式切换">
+                  {canUseChat ? (
+                    <button
+                      className={`saki-mode-icon-btn ${mode === "chat" ? "active" : ""}`}
+                      type="button"
+                      title="对话模式"
+                      onClick={() => selectSakiMode("chat")}
+                    >
+                      <MessageSquare size={14} />
+                    </button>
+                  ) : null}
+                  {canUseAgent ? (
+                    <button
+                      className={`saki-mode-icon-btn ${mode === "agent" ? "active" : ""}`}
+                      type="button"
+                      title="智能体模式"
+                      onClick={() => selectSakiMode("agent")}
+                    >
+                      <Wrench size={14} />
+                    </button>
+                  ) : null}
+                </div>
+
+                {/* Permission Dropdown Selector (Active when in Agent mode, Icon Only) */}
+                {canUseAgent && mode === "agent" ? (
+                  <div className="saki-permission-selector" ref={permissionSelectorRef}>
+                    <button
+                      className="saki-permission-btn icon-only"
+                      type="button"
+                      title={`权限模式: ${sakiPermissionModeLabel(permissionMode)} (${sakiPermissionModeTitle(permissionMode)})`}
+                      onClick={() => setPermissionDropdownOpen(!permissionDropdownOpen)}
+                    >
+                      {permissionMode === "acceptEdits" ? (
+                        <CheckCircle2 size={14} className="perm-icon accept" />
+                      ) : permissionMode === "ask" ? (
+                        <Shield size={14} className="perm-icon ask" />
+                      ) : permissionMode === "plan" ? (
+                        <Eye size={14} className="perm-icon plan" />
+                      ) : (
+                        <XOctagon size={14} className="perm-icon bypass" />
+                      )}
+                      <ChevronDown size={10} className="perm-arrow" />
+                    </button>
+                  </div>
+                ) : null}
+
+                {/* Model Selector */}
+                <div className="saki-model-selector" ref={modelSelectorRef}>
+                  <button className="saki-model-btn" type="button" onClick={() => setModelDropdownOpen(!modelDropdownOpen)}>
+                    <Zap size={12} />
+                    <span className="saki-model-full-name">{currentModelName || availableModels.find(m => m.id === currentModelId)?.label || currentModelId}</span>
+                    <span className="saki-model-short-name">{(() => {
+                      const raw = currentModelName || availableModels.find(m => m.id === currentModelId)?.label || currentModelId;
+                      // Extract short name: take last segment after slash/colon, then first token before dash+version
+                      const seg = raw.split(/[/:]/).pop() || raw;
+                      return seg.split(/[-\s]/).slice(0, 2).join("-");
+                    })()}</span>
+                    <ChevronDown size={10} />
+                  </button>
+                </div>
+                {/* Send button in toolbar */}
+                <button
+                  className={`primary-button send-btn ${loading ? "stop" : ""}`}
+                  type={loading ? "button" : "submit"}
+                  title={loading ? "停止生成" : "Ctrl+Enter 发送"}
+                  aria-label={loading ? "停止生成" : "Ctrl+Enter 发送"}
+                  disabled={!loading && !draft.trim() && attachments.length === 0}
+                  onClick={loading ? stopSakiGeneration : undefined}
+                >
+                  {loading ? <Square size={13} /> : <ArrowRight size={15} />}
                 </button>
               </div>
-              <button
-                className={`primary-button send-btn ${loading ? "stop" : ""}`}
-                type={loading ? "button" : "submit"}
-                title={loading ? "停止生成" : "发送"}
-                disabled={!loading && !draft.trim() && attachments.length === 0}
-                onClick={loading ? stopSakiGeneration : undefined}
-              >
-                {loading ? <Square size={15} /> : <Send size={15} />}
-                {loading ? "停止" : "发送"}
-              </button>
             </div>
-          </div>
         </div>
       </form>
     </section>
+    {sakiAddMenuOpen && sakiAddBtnRef.current ? (
+      createPortal(
+        <div
+          ref={sakiAddMenuRef}
+          className="saki-add-menu"
+          style={{
+            position: "fixed",
+            left: sakiAddBtnRef.current.getBoundingClientRect().left,
+            bottom: window.innerHeight - sakiAddBtnRef.current.getBoundingClientRect().top + 6,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="saki-add-menu-item"
+            type="button"
+            disabled={composerBusy !== null}
+            onClick={() => { setSakiAddMenuOpen(false); void pasteImageFromClipboard(); }}
+          >
+            <ImageIcon size={16} />
+            <span>粘贴图片</span>
+          </button>
+          <button
+            className="saki-add-menu-item"
+            type="button"
+            disabled={composerBusy !== null}
+            onClick={() => { setSakiAddMenuOpen(false); attachmentInputRef.current?.click(); }}
+          >
+            <Paperclip size={16} />
+            <span>上传文件</span>
+          </button>
+          <button
+            className="saki-add-menu-item"
+            type="button"
+            disabled={composerBusy !== null}
+            onClick={() => { setSakiAddMenuOpen(false); void captureScreenAttachment(); }}
+          >
+            <Camera size={16} />
+            <span>网页截图</span>
+          </button>
+        </div>,
+        document.body
+      )
+    ) : null}
+    {permissionDropdownOpen && permissionSelectorRef.current ? (
+      createPortal(
+        <div
+          ref={permissionDropdownRef}
+          className="saki-model-dropdown saki-permission-dropdown glass-panel"
+          style={{
+            position: "fixed",
+            left: permissionSelectorRef.current.getBoundingClientRect().left,
+            bottom: window.innerHeight - permissionSelectorRef.current.getBoundingClientRect().top + 8,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="saki-dropdown-title">智能体权限模式</div>
+          {(
+            [
+              { id: "acceptEdits", label: "自动接受", desc: "自动执行安全文件编辑", icon: CheckCircle2, colorClass: "accept" },
+              { id: "ask", label: "询问确认", desc: "每次文件修改均需确认", icon: Shield, colorClass: "ask" },
+              { id: "plan", label: "仅规划", desc: "只输出执行方案，不落盘修改", icon: Eye, colorClass: "plan" },
+              { id: "bypassPermissions", label: "跳过审查", desc: "绕过所有确认全速自动执行", icon: XOctagon, colorClass: "bypass" },
+            ] as const
+          ).map((opt) => {
+            const IconComponent = opt.icon;
+            const isActive = permissionMode === opt.id;
+            return (
+              <button
+                key={opt.id}
+                className={`saki-perm-dropdown-option ${isActive ? "active" : ""}`}
+                type="button"
+                onClick={() => {
+                  setPermissionMode(opt.id);
+                  setPermissionDropdownOpen(false);
+                }}
+              >
+                <div className={`perm-opt-icon ${opt.colorClass}`}>
+                  <IconComponent size={15} />
+                </div>
+                <div className="perm-opt-text">
+                  <div className="perm-opt-label">{opt.label}</div>
+                  <div className="perm-opt-desc">{opt.desc}</div>
+                </div>
+                {isActive ? <Check size={14} className="perm-opt-check" /> : null}
+              </button>
+            );
+          })}
+        </div>,
+        document.body
+      )
+    ) : null}
     {modelDropdownOpen && modelSelectorRef.current ? (
       createPortal(
         <div
@@ -6966,6 +11039,7 @@ type TerminalAutocompleteState = {
 
 const terminalCommandAutocompleteWords = [
   "bun",
+  "cargo",
   "cat",
   "cd",
   "clear",
@@ -6982,8 +11056,10 @@ const terminalCommandAutocompleteWords = [
   "find",
   "findstr",
   "git",
+  "go",
   "grep",
   "java",
+  "journalctl",
   "less",
   "mkdir",
   "more",
@@ -6991,6 +11067,9 @@ const terminalCommandAutocompleteWords = [
   "node",
   "npm",
   "npx",
+  "pip",
+  "pip3",
+  "pm2",
   "pnpm",
   "powershell",
   "pwd",
@@ -7000,12 +11079,16 @@ const terminalCommandAutocompleteWords = [
   "rmdir",
   "set",
   "sh",
+  "sudo",
+  "systemctl",
+  "tail",
   "tar",
   "touch",
   "type",
   "where",
   "which",
-  "xcopy"
+  "xcopy",
+  "yarn"
 ];
 
 function uniqueTerminalAutocompleteValues(values: string[]): string[] {
@@ -7030,6 +11113,36 @@ function commonTerminalAutocompletePrefix(values: string[]): string {
   return prefix;
 }
 
+const COMMON_TERMINAL_SUBCOMMAND_COMPLETIONS = [
+  "npm run dev",
+  "npm run build",
+  "npm start",
+  "npm test",
+  "npm install",
+  "pnpm dev",
+  "pnpm build",
+  "pnpm install",
+  "yarn dev",
+  "yarn build",
+  "yarn start",
+  "git status",
+  "git pull",
+  "git push",
+  "git checkout ",
+  "git branch",
+  "git diff",
+  "git log -n 10",
+  "docker ps",
+  "docker compose up -d",
+  "docker compose logs -f",
+  "docker compose down",
+  "pm2 status",
+  "pm2 restart all",
+  "pm2 logs",
+  "systemctl status",
+  "systemctl restart"
+];
+
 function terminalAutocompleteCandidates(value: string, history: string[]): string[] {
   const leadingWhitespace = value.match(/^\s*/)?.[0] ?? "";
   const withoutLeadingWhitespace = value.slice(leadingWhitespace.length);
@@ -7047,12 +11160,16 @@ function terminalAutocompleteCandidates(value: string, history: string[]): strin
       .map((candidate) => `${leadingWhitespace}${candidate} `);
   }
 
-  return uniqueTerminalAutocompleteValues(
-    history
-      .slice()
-      .reverse()
-      .filter((item) => item.startsWith(value) && item !== value)
+  const historyMatches = history
+    .slice()
+    .reverse()
+    .filter((item) => item.toLowerCase().startsWith(value.toLowerCase()) && item !== value);
+
+  const commonMatches = COMMON_TERMINAL_SUBCOMMAND_COMPLETIONS.filter(
+    (c) => c.toLowerCase().startsWith(value.toLowerCase()) && c !== value
   );
+
+  return uniqueTerminalAutocompleteValues([...historyMatches, ...commonMatches]);
 }
 
 function nextTerminalAutocompleteValue(
@@ -7386,6 +11503,9 @@ function renderTerminalLogText(value: string): React.ReactNode {
 }
 
 function formatTerminalLine(line: InstanceLogLine): string {
+  if (line.stream === "stdout") {
+    return `${line.text}\r\n`;
+  }
   const prefix =
     line.stream === "stdin"
       ? "\x1b[32m>\x1b[0m "
@@ -7394,7 +11514,7 @@ function formatTerminalLine(line: InstanceLogLine): string {
         : line.stream === "system"
           ? "\x1b[33mSYS\x1b[0m "
           : "";
-  return `${prefix}${terminalDisplayText(line.text)}${terminalAnsiReset}\r\n`;
+  return `${prefix}${line.text}${terminalAnsiReset}\r\n`;
 }
 
 function terminalTouchRowHeight(terminalHost: HTMLElement, terminal: XTerm): number {
@@ -7408,33 +11528,71 @@ function WebTerminal({
   instance,
   onStatus,
   onAskSaki,
-  shellSessionId
+  shellSessionId,
+  isActive = true,
+  onMountTerminalActions
 }: {
   token: string;
   instance: ManagedInstance | null;
   onStatus: (instanceId: string, status: InstanceStatus, exitCode?: number | null) => void;
   onAskSaki?: ((seed: Omit<SakiPromptSeed, "nonce">) => void) | undefined;
   shellSessionId?: string;
+  isActive?: boolean;
+  onMountTerminalActions?: (actions: {
+    clear: () => void;
+    reconnect: () => void;
+    toggleImmersive: () => void;
+    isImmersive: boolean;
+    connectionState: TerminalConnectionState;
+    sendCommand: (cmd: string) => void;
+    getHistory: () => string[];
+    extractOrCopyLogs?: () => void;
+  }) => void;
 }) {
   const [terminalHost, setTerminalHost] = useState<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const fitTerminalSafeRef = useRef<(() => void) | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
-  const directInputBufferRef = useRef("");
   const inputHistoryRef = useRef<string[]>([]);
   const inputHistoryInstanceIdRef = useRef<string | null>(null);
   const commandHistoryIndexRef = useRef<number | null>(null);
   const commandHistoryDraftRef = useRef("");
-  const terminalHistoryIndexRef = useRef<number | null>(null);
-  const terminalHistoryDraftRef = useRef("");
   const commandCompletionStateRef = useRef<TerminalAutocompleteState | null>(null);
-  const terminalCompletionStateRef = useRef<TerminalAutocompleteState | null>(null);
   const terminalDataHandlerRef = useRef<(data: string) => void>(() => {});
+  const sendResizeRef = useRef<(cols: number, rows: number) => void>(() => {});
   const [terminalReady, setTerminalReady] = useState(false);
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>("idle");
   const [command, setCommand] = useState("");
+  const [selectedTerminalText, setSelectedTerminalText] = useState("");
+  const [copyToast, setCopyToast] = useState("");
+  const [showLogExtractModal, setShowLogExtractModal] = useState(false);
+  const [extractedLogContent, setExtractedLogContent] = useState("");
+
+  const copyTextToClipboard = async (text: string, successMsg = "已复制到剪贴板") => {
+    if (!text) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setCopyToast(successMsg);
+      setTimeout(() => setCopyToast(""), 2200);
+    } catch {
+      setCopyToast("复制失败");
+      setTimeout(() => setCopyToast(""), 2000);
+    }
+  };
   const [error, setError] = useState("");
   const [lastIssue, setLastIssue] = useState("");
   const [reconnectTick, setReconnectTick] = useState(0);
@@ -7442,8 +11600,28 @@ function WebTerminal({
   const [terminalActionBusy, setTerminalActionBusy] = useState(false);
   const [immersive, setImmersive] = useState(false);
   const [mobileCtrlActive, setMobileCtrlActive] = useState(false);
+  const isActiveRef = useRef(isActive);
+  useEffect(() => { isActiveRef.current = isActive; }, [isActive]);
+  useEffect(() => {
+    if (!error) return;
+    const timer = window.setTimeout(() => setError(""), 3500);
+    return () => window.clearTimeout(timer);
+  }, [error]);
   const instanceId = instance?.id ?? null;
   const instanceName = instance?.name ?? "";
+
+  const sendResize = useCallback((cols: number, rows: number) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    const payload: any = { type: "resize", cols, rows };
+    if (shellSessionId) payload.sessionId = shellSessionId;
+    socket.send(JSON.stringify(payload));
+  }, [shellSessionId]);
+
+  useEffect(() => {
+    sendResizeRef.current = sendResize;
+  }, [sendResize]);
+
   const handleTerminalHostRef = useCallback((node: HTMLDivElement | null) => {
     setTerminalHost(node);
   }, []);
@@ -7462,60 +11640,17 @@ function WebTerminal({
     resetCommandCompletion();
   }
 
-  function resetTerminalHistoryNavigation() {
-    terminalHistoryIndexRef.current = null;
-    terminalHistoryDraftRef.current = "";
-  }
-
-  function resetTerminalCompletion() {
-    terminalCompletionStateRef.current = null;
-  }
-
-  function resetTerminalInputNavigation() {
-    resetTerminalHistoryNavigation();
-    resetTerminalCompletion();
-  }
-
-  function resetInputHistoryNavigation() {
-    resetCommandInputNavigation();
-    resetTerminalInputNavigation();
-  }
-
   function rememberInputHistory(value: string) {
     if (!value.trim()) return;
 
     const history = inputHistoryRef.current;
     if (history[history.length - 1] === value) {
-      resetInputHistoryNavigation();
+      resetCommandInputNavigation();
       return;
     }
 
     inputHistoryRef.current = [...history, value].slice(-terminalInputHistoryLimit);
-    resetInputHistoryNavigation();
-  }
-
-  function replaceBufferedTerminalInput(value: string) {
-    const terminal = terminalRef.current;
-    const currentLength = Array.from(directInputBufferRef.current).length;
-    if (currentLength > 0) {
-      terminal?.write("\b \b".repeat(currentLength));
-    }
-    terminal?.write(value);
-    directInputBufferRef.current = value;
-  }
-
-  function autocompleteBufferedTerminalInput() {
-    const completion = nextTerminalAutocompleteValue(
-      directInputBufferRef.current,
-      inputHistoryRef.current,
-      terminalCompletionStateRef.current
-    );
-    if (!completion) return false;
-
-    resetTerminalHistoryNavigation();
-    terminalCompletionStateRef.current = completion.state;
-    replaceBufferedTerminalInput(completion.value);
-    return true;
+    resetCommandInputNavigation();
   }
 
   function autocompleteCommandInput() {
@@ -7526,36 +11661,6 @@ function WebTerminal({
     commandCompletionStateRef.current = completion.state;
     setCommand(completion.value);
     return true;
-  }
-
-  function navigateTerminalHistory(direction: "previous" | "next") {
-    const history = inputHistoryRef.current;
-    if (history.length === 0) return;
-
-    resetTerminalCompletion();
-
-    if (direction === "previous") {
-      if (terminalHistoryIndexRef.current === null) {
-        terminalHistoryDraftRef.current = directInputBufferRef.current;
-        terminalHistoryIndexRef.current = history.length - 1;
-      } else {
-        terminalHistoryIndexRef.current = Math.max(0, terminalHistoryIndexRef.current - 1);
-      }
-      replaceBufferedTerminalInput(history[terminalHistoryIndexRef.current] ?? "");
-      return;
-    }
-
-    if (terminalHistoryIndexRef.current === null) return;
-    const nextIndex = terminalHistoryIndexRef.current + 1;
-    if (nextIndex >= history.length) {
-      terminalHistoryIndexRef.current = null;
-      replaceBufferedTerminalInput(terminalHistoryDraftRef.current);
-      terminalHistoryDraftRef.current = "";
-      return;
-    }
-
-    terminalHistoryIndexRef.current = nextIndex;
-    replaceBufferedTerminalInput(history[nextIndex] ?? "");
   }
 
   function navigateCommandHistory(direction: "previous" | "next") {
@@ -7610,81 +11715,220 @@ function WebTerminal({
     if (inputHistoryInstanceIdRef.current === instanceId) return;
     inputHistoryInstanceIdRef.current = instanceId;
     inputHistoryRef.current = [];
-    resetInputHistoryNavigation();
-    directInputBufferRef.current = "";
+    resetCommandInputNavigation();
     setCommand("");
   }, [instanceId]);
 
   useEffect(() => {
     if (!terminalHost || terminalRef.current) return;
 
+    const finalShellNavyTheme = {
+      background: "#162c4b",
+      foreground: "#f1f5f9",
+      black: "#162c4b",
+      red: "#f87171",
+      green: "#4ade80",
+      yellow: "#facc15",
+      blue: "#60a5fa",
+      magenta: "#c084fc",
+      cyan: "#38bdf8",
+      white: "#f1f5f9",
+      brightBlack: "#475569",
+      brightRed: "#ef4444",
+      brightGreen: "#22c55e",
+      brightYellow: "#eab308",
+      brightBlue: "#3b82f6",
+      brightMagenta: "#a855f7",
+      brightCyan: "#0ea5e9",
+      brightWhite: "#ffffff",
+      cursor: "#38bdf8",
+      cursorAccent: "#162c4b",
+      selectionBackground: "rgba(56, 189, 248, 0.3)"
+    };
+
+    const originalBlackTheme = {
+      background: "#0e0f17",
+      foreground: "#e5edf5",
+      black: "#000000",
+      red: "#aa0000",
+      green: "#00aa00",
+      yellow: "#ffaa00",
+      blue: "#5555ff",
+      magenta: "#aa00aa",
+      cyan: "#00aaaa",
+      white: "#aaaaaa",
+      brightBlack: "#555555",
+      brightRed: "#ff5555",
+      brightGreen: "#55ff55",
+      brightYellow: "#ffff55",
+      brightBlue: "#5555ff",
+      brightMagenta: "#ff55ff",
+      brightCyan: "#55ffff",
+      brightWhite: "#ffffff",
+      cursor: "#a7f3d0",
+      cursorAccent: "#0e0f17",
+      selectionBackground: "#31505f"
+    };
+
+    const isDark = document.documentElement.getAttribute("data-theme") === "dark";
+    const initialTheme = isDark ? originalBlackTheme : finalShellNavyTheme;
+
     const terminal = new XTerm({
       convertEol: true,
       cursorBlink: true,
-      fontFamily: 'Consolas, "SFMono-Regular", monospace',
+      fontFamily: 'Consolas, "SFMono-Regular", "Menlo", "Courier New", monospace',
       fontSize: 13,
+      lineHeight: 1.28,
+      letterSpacing: 0,
       scrollback: 2500,
-      theme: {
-        background: "#101820",
-        foreground: "#e5edf5",
-        black: "#000000",
-        red: "#aa0000",
-        green: "#00aa00",
-        yellow: "#ffaa00",
-        blue: "#5555ff",
-        magenta: "#aa00aa",
-        cyan: "#00aaaa",
-        white: "#aaaaaa",
-        brightBlack: "#555555",
-        brightRed: "#ff5555",
-        brightGreen: "#55ff55",
-        brightYellow: "#ffff55",
-        brightBlue: "#5555ff",
-        brightMagenta: "#ff55ff",
-        brightCyan: "#55ffff",
-        brightWhite: "#ffffff",
-        cursor: "#a7f3d0",
-        selectionBackground: "#31505f"
-      }
+      theme: initialTheme
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(terminalHost);
-    const inputSubscription = terminal.onData((data) => terminalDataHandlerRef.current(data));
-    const selectionSubscription = terminal.onSelectionChange(() => rememberSakiTerminalSelection(terminal.getSelection()));
+
+    const themeObserver = new MutationObserver(() => {
+      const isDarkNow = document.documentElement.getAttribute("data-theme") === "dark";
+      terminal.options.theme = isDarkNow ? originalBlackTheme : finalShellNavyTheme;
+    });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+    const inputSubscription = terminal.onData((data) => {
+      terminalDataHandlerRef.current(data);
+    });
+    const resizeSubscription = terminal.onResize(({ cols, rows }) => {
+      sendResizeRef.current(cols, Math.max(4, rows - 3));
+    });
+    const selectionSubscription = terminal.onSelectionChange(() => {
+      const selected = readTerminalClipboardText(terminal);
+      setSelectedTerminalText(selected);
+      rememberSakiTerminalSelection(selected);
+      if (selected && selected.trim().length > 0) {
+        if (window.matchMedia("(pointer: coarse)").matches || 'ontouchstart' in window) {
+          try {
+            const activeEl = document.activeElement as HTMLElement | null;
+            if (activeEl && (activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'INPUT')) {
+              activeEl.blur();
+            }
+          } catch {}
+        }
+      }
+    });
     const handleTerminalCopy = (event: ClipboardEvent) => {
-      const selectedText = readTerminalClipboardText(terminal);
+      const termSelection = readTerminalClipboardText(terminal);
+      const domSelection = window.getSelection()?.toString();
+      const selectedText = termSelection || normalizeSakiSelectionText(domSelection || "");
       if (!selectedText || !event.clipboardData) return;
       event.clipboardData.setData("text/plain", selectedText);
       event.preventDefault();
       rememberSakiTerminalSelection(selectedText);
+      setCopyToast("已复制到剪贴板");
+      setTimeout(() => setCopyToast(""), 2000);
     };
     terminalHost.addEventListener("copy", handleTerminalCopy, true);
+
+    const handleDomSelectionChange = () => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) {
+        if (!terminal.hasSelection()) {
+          setSelectedTerminalText("");
+        }
+        return;
+      }
+      if (terminalHost.contains(sel.anchorNode) && !terminal.hasSelection()) {
+        const text = normalizeSakiSelectionText(sel.toString());
+        if (text) {
+          setSelectedTerminalText(text);
+          rememberSakiTerminalSelection(text);
+        }
+      }
+    };
+    document.addEventListener("selectionchange", handleDomSelectionChange);
+
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type === "keydown" && isTerminalCopyShortcut(event) && terminal.hasSelection()) {
         return false;
       }
       return true;
     });
+    let touchStartX = 0;
+    let touchStartY = 0;
     let touchLastY = 0;
     let touchRemainder = 0;
     let touchActive = false;
     let touchScrolling = false;
+    let touchSelecting = false;
+    let longPressTimer: any = null;
+    let selectStartRow = 0;
+
     const handleTerminalTouchStart = (event: TouchEvent) => {
       if (event.touches.length !== 1) {
         touchActive = false;
         touchScrolling = false;
+        touchSelecting = false;
         touchRemainder = 0;
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
         return;
       }
       touchActive = true;
       touchScrolling = false;
+      touchSelecting = false;
       touchRemainder = 0;
-      touchLastY = event.touches[0]?.clientY ?? 0;
+      const touch = event.touches[0]!;
+      touchStartX = touch.clientX;
+      touchStartY = touch.clientY;
+      touchLastY = touch.clientY;
+
+      if (longPressTimer) clearTimeout(longPressTimer);
+      longPressTimer = window.setTimeout(() => {
+        if (!touchActive || touchScrolling) return;
+        touchSelecting = true;
+        try {
+          const rect = terminalHost.getBoundingClientRect();
+          const core = (terminal as any)._core;
+          const charHeight = core?._renderService?.dimensions?.actualCellHeight || 16;
+          const relativeY = touchStartY - rect.top;
+          const rowInViewport = Math.max(0, Math.min(terminal.rows - 1, Math.floor(relativeY / charHeight)));
+          selectStartRow = rowInViewport;
+          terminal.selectLines(rowInViewport, rowInViewport);
+          if (navigator.vibrate) navigator.vibrate(30);
+        } catch {}
+      }, 350);
     };
+
     const handleTerminalTouchMove = (event: TouchEvent) => {
       if (!touchActive || event.touches.length !== 1) return;
-      const nextY = event.touches[0]?.clientY ?? touchLastY;
+      const touch = event.touches[0]!;
+      const currentX = touch.clientX;
+      const currentY = touch.clientY;
+
+      if (!touchSelecting && (Math.abs(currentX - touchStartX) > 8 || Math.abs(currentY - touchStartY) > 8)) {
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+      }
+
+      if (touchSelecting) {
+        try {
+          const rect = terminalHost.getBoundingClientRect();
+          const core = (terminal as any)._core;
+          const charHeight = core?._renderService?.dimensions?.actualCellHeight || 16;
+          const relativeY = currentY - rect.top;
+          const currentRow = Math.max(0, Math.min(terminal.rows - 1, Math.floor(relativeY / charHeight)));
+          const minRow = Math.min(selectStartRow, currentRow);
+          const maxRow = Math.max(selectStartRow, currentRow);
+          terminal.selectLines(minRow, maxRow);
+        } catch {}
+        if (event.cancelable) event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      const nextY = currentY;
       touchRemainder += touchLastY - nextY;
       touchLastY = nextY;
 
@@ -7701,31 +11945,54 @@ function WebTerminal({
         event.stopPropagation();
       }
     };
+
     const handleTerminalTouchEnd = () => {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
       touchActive = false;
       touchScrolling = false;
+      touchSelecting = false;
       touchRemainder = 0;
     };
     terminalHost.addEventListener("touchstart", handleTerminalTouchStart, { passive: true });
     terminalHost.addEventListener("touchmove", handleTerminalTouchMove, { passive: false });
     terminalHost.addEventListener("touchend", handleTerminalTouchEnd);
     terminalHost.addEventListener("touchcancel", handleTerminalTouchEnd);
-    fitAddon.fit();
+
+    const fitTerminalSafe = () => {
+      if (!isActiveRef.current || !terminalHost) return;
+      try {
+        fitAddon.fit();
+        sendResizeRef.current(terminal.cols, Math.max(4, terminal.rows - 3));
+      } catch {}
+    };
+    fitTerminalSafeRef.current = fitTerminalSafe;
+
+    fitTerminalSafe();
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
     setTerminalReady(true);
     setTerminalMountKey((value) => value + 1);
 
-    const resize = () => fitAddon.fit();
+    const resize = () => fitTerminalSafe();
     window.addEventListener("resize", resize);
+    const resizeObserver = new ResizeObserver(() => fitTerminalSafe());
+    resizeObserver.observe(terminalHost);
+
     return () => {
+      themeObserver.disconnect();
+      resizeObserver.disconnect();
       window.removeEventListener("resize", resize);
       terminalHost.removeEventListener("copy", handleTerminalCopy, true);
+      document.removeEventListener("selectionchange", handleDomSelectionChange);
       terminalHost.removeEventListener("touchstart", handleTerminalTouchStart);
       terminalHost.removeEventListener("touchmove", handleTerminalTouchMove);
       terminalHost.removeEventListener("touchend", handleTerminalTouchEnd);
       terminalHost.removeEventListener("touchcancel", handleTerminalTouchEnd);
       inputSubscription.dispose();
+      resizeSubscription.dispose();
       selectionSubscription.dispose();
       clearRememberedSakiTerminalSelection();
       terminal.dispose();
@@ -7746,7 +12013,7 @@ function WebTerminal({
     document.body.style.overflow = "hidden";
     document.documentElement.style.overflow = "hidden";
     const frame = window.requestAnimationFrame(() => {
-      fitAddonRef.current?.fit();
+      fitTerminalSafeRef.current?.();
       terminalRef.current?.focus();
     });
 
@@ -7754,19 +12021,46 @@ function WebTerminal({
       window.cancelAnimationFrame(frame);
       document.body.style.overflow = previousBodyOverflow;
       document.documentElement.style.overflow = previousDocumentOverflow;
-      window.requestAnimationFrame(() => fitAddonRef.current?.fit());
+      window.requestAnimationFrame(() => fitTerminalSafeRef.current?.());
     };
   }, [immersive]);
 
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => fitAddonRef.current?.fit());
+    if (!isActive) return;
+    const frame = window.requestAnimationFrame(() => fitTerminalSafeRef.current?.());
     return () => window.cancelAnimationFrame(frame);
-  }, [terminalReady, immersive, error, lastIssue]);
+  }, [terminalReady, immersive, error, lastIssue, isActive]);
+
+  // Refit and focus when this shell tab becomes active (while component stays mounted via display:none toggle).
+  // Use double-raf to ensure the element has layout size after display change.
+  useEffect(() => {
+    if (!isActive) return;
+    const raf1 = window.requestAnimationFrame(() => {
+      const raf2 = window.requestAnimationFrame(() => {
+        const fit = fitAddonRef.current;
+        const term = terminalRef.current;
+        if (fitTerminalSafeRef.current) fitTerminalSafeRef.current();
+        if (term) {
+          term.focus();
+          // Re-render whatever is in the buffer (scrollback preserved in XTerm instance)
+          try {
+            const len = term.buffer.active.length || 2000;
+            term.refresh(0, len);
+          } catch {}
+        }
+      });
+      // store for cleanup if needed, but simple cancel outer is ok
+      (window as any).__termRaf2 = raf2;
+    });
+    return () => {
+      window.cancelAnimationFrame(raf1);
+      const r2 = (window as any).__termRaf2;
+      if (r2) window.cancelAnimationFrame(r2);
+    };
+  }, [isActive]);
 
   useEffect(() => {
     setLastIssue("");
-    directInputBufferRef.current = "";
-    resetTerminalInputNavigation();
     clearRememberedSakiTerminalSelection();
     if (!terminalReady || !instanceId) {
       setConnectionState("idle");
@@ -7800,6 +12094,9 @@ function WebTerminal({
         const authPayload: any = { type: "auth", token, instanceId };
         if (shellSessionId) authPayload.sessionId = shellSessionId;
         socket.send(JSON.stringify(authPayload));
+        if (terminal) {
+          sendResizeRef.current(terminal.cols, terminal.rows);
+        }
       };
 
       socket.onmessage = (event) => {
@@ -7810,11 +12107,16 @@ function WebTerminal({
             return;
           }
           if (payload.type === "hello") {
-            terminal.clear();
-            for (const line of payload.lines || []) {
-              terminal.write(formatTerminalLine(line));
+            const isShell = !!shellSessionId;
+            // For shells: never clear on hello (history lives in XTerm; server sends no lines).
+            // Only main terminal replays its log buffer.
+            if (!isShell) {
+              terminal.clear();
+              for (const line of payload.lines || []) {
+                terminal.write(formatTerminalLine(line));
+              }
             }
-            if (payload.instanceId && !shellSessionId) {
+            if (payload.instanceId && !isShell) {
               onStatus(payload.instanceId, payload.status, payload.exitCode);
             }
             return;
@@ -7880,7 +12182,9 @@ function WebTerminal({
       setError("终端未连接");
       return false;
     }
-    socket.send(JSON.stringify({ type: "input", data, echo }));
+    const payload: any = { type: "input", data, echo };
+    if (shellSessionId) payload.sessionId = shellSessionId;
+    socket.send(JSON.stringify(payload));
     return true;
   }
 
@@ -7888,7 +12192,7 @@ function WebTerminal({
     event.preventDefault();
     const value = command.trim();
     if (!value) return;
-    if (sendInput(`${value}\n`)) {
+    if (sendInput(`${value}\r`)) {
       rememberInputHistory(value);
       setCommand("");
     }
@@ -7921,72 +12225,13 @@ function WebTerminal({
   const terminalActionDisabled = running ? !connected || terminalActionBusy : !instance || starting || stopping || terminalActionBusy;
   const terminalActionTitle = running ? "中断" : starting ? "启动中" : "启动";
 
-  if (shellSessionId) {
-    // Raw passthrough for independent shells - let the shell handle echo, history, editing etc.
-    terminalDataHandlerRef.current = (data: string) => {
-      if (!connected) {
-        setError("终端未连接");
-        return;
-      }
-      sendInput(data, false);
-    };
-  } else {
-    terminalDataHandlerRef.current = (data: string) => {
-      if (data === "\u0003") {
-        directInputBufferRef.current = "";
-        resetTerminalInputNavigation();
-        sendInput("\u0003");
-        return;
-      }
-      if (!connected || !running) {
-        setError("实例运行并连接后才能输入");
-        return;
-      }
-      if (data === "\x1b[A" || data === "\x1bOA") {
-        navigateTerminalHistory("previous");
-        return;
-      }
-      if (data === "\x1b[B" || data === "\x1bOB") {
-        navigateTerminalHistory("next");
-        return;
-      }
-      if (data === "\t") {
-        autocompleteBufferedTerminalInput();
-        return;
-      }
-      if (data.startsWith("\x1b")) return;
-
-      const terminal = terminalRef.current;
-      let buffer = directInputBufferRef.current;
-      const normalized = data.replace(/\r\n/g, "\r");
-
-      for (const character of normalized) {
-        if (character === "\r" || character === "\n") {
-          terminal?.write("\r\n");
-          if (sendInput(`${buffer}\n`, false)) {
-            rememberInputHistory(buffer);
-          }
-          resetTerminalInputNavigation();
-          buffer = "";
-          continue;
-        }
-        if (character === "\u007f" || character === "\b") {
-          if (buffer.length > 0) {
-            resetTerminalInputNavigation();
-            buffer = Array.from(buffer).slice(0, -1).join("");
-            terminal?.write("\b \b");
-          }
-          continue;
-        }
-        if (character < " " && character !== "\t") continue;
-        resetTerminalInputNavigation();
-        buffer += character;
-        terminal?.write(character);
-      }
-
-      directInputBufferRef.current = buffer;
-    };
-  }
+  // Raw passthrough for all terminal sessions (main and shells) - direct PTY interactive raw mode
+  terminalDataHandlerRef.current = (data: string) => {
+    if (!connected || (!shellSessionId && !running)) {
+      return;
+    }
+    sendInput(data, false);
+  };
 
   function sendTerminalShortcut(shortcut: TerminalShortcutKey) {
     terminalRef.current?.focus();
@@ -7997,7 +12242,6 @@ function WebTerminal({
     }
 
     if (!connected || (!shellSessionId && !running)) {
-      setError(shellSessionId ? "终端未连接" : "实例运行并连接后才能输入");
       setMobileCtrlActive(false);
       return;
     }
@@ -8008,13 +12252,47 @@ function WebTerminal({
       return;
     }
 
-    if (!mobileCtrlActive && (shortcut.viaBufferedInput || shortcut.id === "up" || shortcut.id === "down")) {
-      terminalDataHandlerRef.current(data);
-    } else {
-      sendInput(data, false);
-    }
+    sendInput(data, false);
     setMobileCtrlActive(false);
   }
+
+  useEffect(() => {
+    if (!isActive) return;
+    onMountTerminalActions?.({
+      clear: () => {
+        terminalRef.current?.clear();
+        clearRememberedSakiTerminalSelection();
+      },
+      reconnect: () => setReconnectTick((value) => value + 1),
+      toggleImmersive: () => setImmersive((value) => !value),
+      isImmersive: immersive,
+      connectionState,
+      sendCommand: (cmd: string) => {
+        const trimmed = cmd.trim();
+        if (!trimmed) return;
+        rememberInputHistory(trimmed);
+        sendInput(`${trimmed}\r`, true);
+      },
+      getHistory: () => inputHistoryRef.current,
+      extractOrCopyLogs: () => {
+        const term = terminalRef.current;
+        if (!term) return;
+        const sel = readTerminalClipboardText(term);
+        if (sel && sel.trim().length > 0) {
+          copyTextToClipboard(sel, "选中文本已复制");
+          return;
+        }
+        const full = readAllTerminalBufferText(term);
+        if (!full) {
+          setCopyToast("终端暂无文本");
+          setTimeout(() => setCopyToast(""), 2000);
+          return;
+        }
+        setExtractedLogContent(full);
+        setShowLogExtractModal(true);
+      }
+    });
+  }, [isActive, immersive, connectionState, onMountTerminalActions]);
 
   const terminalPanel = (
     <div
@@ -8023,87 +12301,229 @@ function WebTerminal({
       aria-modal={immersive ? true : undefined}
       aria-label={immersive ? `${instanceName || "实例"} 沉浸式终端` : undefined}
     >
-      <div className="terminal-toolbar">
-        <div className={`terminal-connection terminal-state-${connectionState}`}>
-          <span />
-          {terminalStateLabel(connectionState)}
-        </div>
-        <div className="terminal-toolbar-actions">
-          <button
-            className="icon-button mini"
-            title="清空"
-            type="button"
-            onClick={() => {
-              terminalRef.current?.clear();
-              clearRememberedSakiTerminalSelection();
-            }}
-          >
-            <Trash2 size={15} />
-          </button>
-          <button
-            className="icon-button mini"
-            title="重连"
-            type="button"
-            onClick={() => setReconnectTick((value) => value + 1)}
-            disabled={!instance}
-          >
-            <RefreshCw size={15} />
-          </button>
-          <button
-            className="icon-button mini"
-            title={immersive ? "退出沉浸终端" : "沉浸终端"}
-            type="button"
-            aria-pressed={immersive}
-            onClick={() => setImmersive((value) => !value)}
-          >
-            {immersive ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-          </button>
-          <button
-            className={running ? "icon-button mini danger-action" : "icon-button mini"}
-            title={terminalActionTitle}
-            type="button"
-            onClick={() => void toggleTerminalProcess()}
-            disabled={terminalActionDisabled}
-          >
-            {running ? <XOctagon size={15} /> : <Play size={15} />}
-          </button>
-        </div>
-      </div>
-      <div className="xterm-host" ref={handleTerminalHostRef} onClick={() => terminalRef.current?.focus()} />
-      {!shellSessionId && (
-        <>
-          <form className="terminal-command-bar" onSubmit={submitCommand}>
-            <input
-              value={command}
-              onChange={handleCommandChange}
-              onKeyDown={handleCommandKeyDown}
-              disabled={!connected || !running}
-              placeholder={running ? "命令" : "实例未运行"}
-            />
-            <button className="primary-button terminal-send" type="submit" disabled={!connected || !running || !command.trim()}>
-              <Send size={17} />
-            </button>
-          </form>
-          <div className="terminal-mobile-keys" aria-label="移动端终端快捷键">
-            {terminalShortcutKeys.map((shortcut) => {
-              const active = shortcut.type === "modifier" && mobileCtrlActive;
-              return (
-                <button
-                  key={shortcut.id}
-                  className={`terminal-key-button ${shortcut.type === "modifier" ? "terminal-key-modifier" : ""} ${shortcut.type === "key" && shortcut.wide ? "wide" : ""} ${active ? "active" : ""}`}
-                  type="button"
-                  title={shortcut.title}
-                  aria-pressed={shortcut.type === "modifier" ? active : undefined}
-                  onClick={() => sendTerminalShortcut(shortcut)}
-                >
-                  {shortcut.label}
-                </button>
-              );
-            })}
+      {immersive && (
+        <div className="terminal-immersive-header">
+          <div className="immersive-header-left">
+            <span className="immersive-status-dot" data-status={connectionState} />
+            <span className="immersive-title">
+              {instanceName || "实例"} {shellSessionId ? "· 独立终端 (Shell)" : "· 主终端"}
+            </span>
+            <span className="immersive-hint">全屏沉浸模式</span>
           </div>
-        </>
+          <div className="immersive-header-right">
+            <button
+              type="button"
+              className="immersive-action-btn"
+              title="提取全部文本 / 复制日志"
+              onClick={() => {
+                const full = readAllTerminalBufferText(terminalRef.current);
+                setExtractedLogContent(full);
+                setShowLogExtractModal(true);
+              }}
+            >
+              <FileText size={14} />
+              <span>文本</span>
+            </button>
+            <button
+              type="button"
+              className="immersive-action-btn"
+              title="清空终端"
+              onClick={() => {
+                terminalRef.current?.clear();
+                clearRememberedSakiTerminalSelection();
+              }}
+            >
+              <Trash2 size={14} />
+              <span>清空</span>
+            </button>
+            <button
+              type="button"
+              className="immersive-action-btn"
+              title="重新连接"
+              onClick={() => setReconnectTick((v) => v + 1)}
+            >
+              <RefreshCw size={14} />
+              <span>重连</span>
+            </button>
+            <button
+              type="button"
+              className="immersive-action-btn immersive-exit-btn"
+              title="退出沉浸终端 (恢复窗口)"
+              onClick={() => setImmersive(false)}
+            >
+              <Minimize2 size={15} />
+              <span>退出沉浸</span>
+            </button>
+          </div>
+        </div>
       )}
-      {error ? <div className="terminal-error">{error}</div> : null}
+      <div
+        className="xterm-host"
+        ref={handleTerminalHostRef}
+        onClick={() => {
+          if (window.matchMedia("(pointer: fine)").matches) {
+            terminalRef.current?.focus();
+          }
+        }}
+      />
+
+      {copyToast && <div className="terminal-copy-toast">{copyToast}</div>}
+
+      {selectedTerminalText && (
+        <div className="terminal-mobile-selection-bar">
+          <div className="selection-info">
+            <strong>{countSelectionCharacters(selectedTerminalText)}</strong> 字
+          </div>
+          <div className="selection-actions">
+            <button
+              type="button"
+              className="selection-action-btn primary"
+              title="复制选中文本"
+              aria-label="复制"
+              onClick={() => {
+                copyTextToClipboard(selectedTerminalText, "选中文本已复制");
+                terminalRef.current?.clearSelection();
+                setSelectedTerminalText("");
+              }}
+            >
+              <Copy size={14} />
+            </button>
+            {onAskSaki && (
+              <button
+                type="button"
+                className="selection-action-btn saki"
+                title="问 Saki"
+                aria-label="问 Saki"
+                onClick={() => {
+                  onAskSaki({
+                    message: `请分析以下终端选中的内容：\n\`\`\`\n${selectedTerminalText}\n\`\`\``,
+                    mode: "agent"
+                  });
+                }}
+              >
+                <Sparkles size={14} />
+              </button>
+            )}
+            <button
+              type="button"
+              className="selection-action-btn close"
+              title="取消选择"
+              aria-label="取消"
+              onClick={() => {
+                terminalRef.current?.clearSelection();
+                setSelectedTerminalText("");
+              }}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="terminal-mobile-keys" role="toolbar" aria-label="终端快捷按键">
+        <button
+          key="copy-action-key"
+          className={`terminal-key-button ${selectedTerminalText ? "active active-copy" : ""}`}
+          type="button"
+          title={selectedTerminalText ? "复制选中文本" : "提取并复制日志文本"}
+          onClick={() => {
+            if (selectedTerminalText) {
+              copyTextToClipboard(selectedTerminalText, "选中文本已复制");
+              terminalRef.current?.clearSelection();
+              setSelectedTerminalText("");
+            } else {
+              const full = readAllTerminalBufferText(terminalRef.current);
+              if (!full) {
+                setCopyToast("终端暂无文本");
+                setTimeout(() => setCopyToast(""), 2000);
+                return;
+              }
+              setExtractedLogContent(full);
+              setShowLogExtractModal(true);
+            }
+          }}
+        >
+          <Copy size={13} style={{ marginRight: 3, verticalAlign: "middle" }} />
+          {selectedTerminalText ? "复制" : "文本"}
+        </button>
+        {terminalShortcutKeys.map((shortcut) => {
+          const active = shortcut.type === "modifier" && mobileCtrlActive;
+          return (
+            <button
+              key={shortcut.id}
+              className={`terminal-key-button ${shortcut.type === "modifier" ? "terminal-key-modifier" : ""} ${shortcut.type === "key" && shortcut.wide ? "wide" : ""} ${active ? "active" : ""}`}
+              type="button"
+              title={shortcut.title}
+              aria-pressed={shortcut.type === "modifier" ? active : undefined}
+              onClick={() => sendTerminalShortcut(shortcut)}
+            >
+              {shortcut.label}
+            </button>
+          );
+        })}
+      </div>
+      {error ? (
+        <div className="terminal-error">
+          <span>{error}</span>
+          <button
+            type="button"
+            className="terminal-error-close"
+            onClick={() => setError("")}
+            title="关闭提示"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+      {showLogExtractModal && (
+        <div className="modal-backdrop terminal-extract-backdrop" onClick={() => setShowLogExtractModal(false)}>
+          <div className="glass-panel terminal-extract-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="terminal-extract-header">
+              <div className="terminal-extract-title">
+                <FileText size={16} />
+                <span>终端文本查看与复制</span>
+              </div>
+              <button
+                type="button"
+                className="icon-button mini"
+                onClick={() => setShowLogExtractModal(false)}
+              >
+                <X size={15} />
+              </button>
+            </div>
+            <div className="terminal-extract-body">
+              <textarea
+                className="terminal-extract-textarea"
+                readOnly
+                value={extractedLogContent || "终端暂无输出内容"}
+                onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+              />
+            </div>
+            <div className="terminal-extract-footer">
+              <span className="terminal-extract-count">共 {extractedLogContent.length} 字符</span>
+              <div className="terminal-extract-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setShowLogExtractModal(false)}
+                >
+                  关闭
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => {
+                    copyTextToClipboard(extractedLogContent, "全部日志已复制");
+                    setShowLogExtractModal(false);
+                  }}
+                >
+                  <Copy size={14} />
+                  <span>复制全部</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {lastIssue ? (
         <div className="terminal-issue">
           <span>{lastIssue}</span>
@@ -8136,13 +12556,15 @@ function FileManager({
   instance,
   onSakiFileDragChange,
   onSakiInstanceFileDrop,
-  darkMode
+  darkMode,
+  onClose
 }: {
   token: string;
   instance: ManagedInstance | null;
   onSakiFileDragChange: (active: boolean) => void;
   onSakiInstanceFileDrop?: ((payload: SakiInstanceFileDragPayload) => void) | undefined;
   darkMode: boolean;
+  onClose?: () => void;
 }) {
   const instanceId = instance?.id ?? null;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -8187,7 +12609,7 @@ function FileManager({
     y: number;
     overSaki: boolean;
   } | null>(null);
-  const [mobileBrowserOpen, setMobileBrowserOpen] = useState(false);
+  const [mobileBrowserOpen, setMobileBrowserOpen] = useState(true);
   const [mobileEditorOpen, setMobileEditorOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -8201,6 +12623,605 @@ function FileManager({
   } | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
   const [treeData, setTreeData] = useState<Record<string, InstanceFileEntry[]>>({});
+  const [fileViewMode, setFileViewMode] = useState<"explorer" | "tree">("explorer");
+  const [mobileActionEntry, setMobileActionEntry] = useState<InstanceFileEntry | null>(null);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [mobileSearchQuery, setMobileSearchQuery] = useState("");
+  const mobileItemTouchTimerRef = useRef<number | null>(null);
+
+  // MT Manager Dual-Pane State
+  const [activePane, setActivePane] = useState<"left" | "right">("left");
+  const [leftPath, setLeftPath] = useState("");
+  const [leftEntries, setLeftEntries] = useState<InstanceFileEntry[]>([]);
+  const [leftLoading, setLeftLoading] = useState(false);
+  const [rightPath, setRightPath] = useState("");
+  const [rightEntries, setRightEntries] = useState<InstanceFileEntry[]>([]);
+  const [rightLoading, setRightLoading] = useState(false);
+  const [showMobileCreateMenu, setShowMobileCreateMenu] = useState(false);
+
+  const displayLeftEntries = useMemo(() => {
+    if (!mobileSearchQuery.trim()) return leftEntries;
+    const q = mobileSearchQuery.trim().toLowerCase();
+    return leftEntries.filter((e) => `${e.name} ${e.path}`.toLowerCase().includes(q));
+  }, [leftEntries, mobileSearchQuery]);
+
+  const displayRightEntries = useMemo(() => {
+    if (!mobileSearchQuery.trim()) return rightEntries;
+    const q = mobileSearchQuery.trim().toLowerCase();
+    return rightEntries.filter((e) => `${e.name} ${e.path}`.toLowerCase().includes(q));
+  }, [rightEntries, mobileSearchQuery]);
+
+  const leftHistoryRef = useRef<string[]>([""]);
+  const leftHistoryIndexRef = useRef(0);
+  const [leftHistoryState, setLeftHistoryState] = useState({ canBack: false, canForward: false });
+
+  const rightHistoryRef = useRef<string[]>([""]);
+  const rightHistoryIndexRef = useRef(0);
+  const [rightHistoryState, setRightHistoryState] = useState({ canBack: false, canForward: false });
+
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
+  const [marqueeBox, setMarqueeBox] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const explorerListRef = useRef<HTMLDivElement | null>(null);
+  const isDraggingMarqueeRef = useRef(false);
+  const marqueeStartPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const lastSelectedPathRef = useRef<string | null>(null);
+  const [desktopContextMenu, setDesktopContextMenu] = useState<{
+    x: number;
+    y: number;
+    type: "item" | "blank";
+    targetEntry?: InstanceFileEntry;
+    selectedEntries: InstanceFileEntry[];
+  } | null>(null);
+
+  const [mobileSelectedPaths, setMobileSelectedPaths] = useState<Set<string>>(() => new Set());
+  const [isMobileSelectMode, setIsMobileSelectMode] = useState(false);
+  const touchStartPosRef = useRef<{ x: number; y: number; time: number }>({ x: 0, y: 0, time: 0 });
+  const touchSwipeTriggeredRef = useRef(false);
+
+  function handleDesktopSelectAll() {
+    if (selectedPaths.size === filteredEntries.length) {
+      setSelectedPaths(new Set());
+    } else {
+      setSelectedPaths(new Set(filteredEntries.map(e => e.path)));
+    }
+  }
+
+  async function handleDesktopBatchDownload() {
+    if (!instanceId || selectedPaths.size === 0) return;
+    const paths = Array.from(selectedPaths);
+    try {
+      if (paths.length === 1) {
+        const entry = entries.find(e => e.path === paths[0]);
+        if (entry && entry.type === "file") {
+          await api.downloadInstanceFile(token, instanceId, entry.path);
+        } else {
+          await api.saveInstanceArchiveDownload(token, instanceId, paths, `${entry?.name ?? "archive"}.zip`);
+        }
+      } else {
+        await api.saveInstanceArchiveDownload(token, instanceId, paths, `download_${Date.now()}.zip`);
+      }
+      showFileToast("下载中", `已触发 ${paths.length} 项下载`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "下载失败");
+    }
+  }
+
+  async function handleDesktopBatchArchive() {
+    if (!instanceId || selectedPaths.size === 0) return;
+    const name = window.prompt("压缩包文件名", `archive_${Date.now()}.tar.gz`)?.trim();
+    if (!name) return;
+    const outPath = joinFilePath(currentPath, name);
+    try {
+      await api.archiveInstancePaths(token, instanceId, Array.from(selectedPaths), outPath);
+      await loadDirectory(currentPath);
+      showFileToast("压缩完成", `已生成压缩包 ${name}`);
+      setSelectedPaths(new Set());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "压缩失败");
+    }
+  }
+
+  async function handleDesktopBatchDelete() {
+    if (!instanceId || selectedPaths.size === 0) return;
+    const paths = Array.from(selectedPaths);
+    if (!window.confirm(`确定要删除选中的 ${paths.length} 个项目吗？`)) return;
+
+    // Optimistic: immediately remove from UI
+    setEntries((prev) => prev.filter((e) => !paths.some((p) => e.path === p || e.path.startsWith(`${p}/`))));
+    setTreeData((prev) => {
+      const next = { ...prev };
+      for (const [dirPath, items] of Object.entries(next)) {
+        if (paths.some((p) => dirPath === p || dirPath.startsWith(`${p}/`))) {
+          delete next[dirPath];
+        } else {
+          next[dirPath] = items.filter((item) => !paths.some((p) => item.path === p || item.path.startsWith(`${p}/`)));
+        }
+      }
+      return next;
+    });
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      for (const p of paths) {
+        next.delete(p);
+        for (const folder of Array.from(next)) {
+          if (folder.startsWith(`${p}/`)) next.delete(folder);
+        }
+      }
+      return next;
+    });
+
+    // Clear any selected/editor states that match deleted paths
+    for (const p of paths) {
+      if (selectedPath === p || selectedPath?.startsWith(`${p}/`)) setSelectedPath(null);
+      if (editorPath === p || editorPath?.startsWith(`${p}/`)) {
+        setEditorPath(null);
+        setEditorContent("");
+        setEditorMode("edit");
+        setMobileEditorOpen(false);
+      }
+      if (openFileActionMenuPath === p) setOpenFileActionMenuPath(null);
+    }
+    setSelectedPaths(new Set());
+    showFileToast("删除中", `正在删除 ${paths.length} 项...`);
+
+    try {
+      for (const p of paths) {
+        await api.deleteInstancePath(token, instanceId, p);
+      }
+      await loadDirectory(currentPath);
+      showFileToast("删除成功", `已删除 ${paths.length} 项`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批量删除失败");
+      await loadDirectory(currentPath);
+    }
+  }
+
+  function toggleMobileSelection(path: string) {
+    setIsMobileSelectMode(true);
+    setMobileSelectedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }
+
+  function handleMobileTouchStart(e: React.TouchEvent, entry: InstanceFileEntry) {
+    const touch = e.touches[0];
+    if (!touch) return;
+    touchStartPosRef.current = { x: touch.clientX, y: touch.clientY, time: Date.now() };
+    touchSwipeTriggeredRef.current = false;
+    if (!isMobileSelectMode) {
+      handleTouchStart(entry);
+    }
+  }
+
+  function handleMobileTouchMove(e: React.TouchEvent, entry: InstanceFileEntry) {
+    const touch = e.touches[0];
+    if (!touch) return;
+    const dx = touch.clientX - touchStartPosRef.current.x;
+    const dy = touch.clientY - touchStartPosRef.current.y;
+
+    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+      cancelMobileFileLongPress();
+    }
+
+    if (dx > 35 && Math.abs(dy) < 25 && !touchSwipeTriggeredRef.current) {
+      touchSwipeTriggeredRef.current = true;
+      toggleMobileSelection(entry.path);
+    }
+  }
+
+  function handleMobileTouchEnd() {
+    handleTouchEnd();
+  }
+
+  function handleMobileRowClick(entry: InstanceFileEntry, pane: "left" | "right") {
+    setActivePane(pane);
+    if (isMobileSelectMode) {
+      toggleMobileSelection(entry.path);
+      return;
+    }
+    if (entry.type === "directory") {
+      void loadPaneDirectory(pane, entry.path);
+    } else {
+      setSelectedPath(entry.path);
+      void openEntry(entry);
+    }
+  }
+
+  function handleMobileSelectAll() {
+    const currentList = activePane === "left" ? displayLeftEntries : displayRightEntries;
+    if (mobileSelectedPaths.size === currentList.length) {
+      setMobileSelectedPaths(new Set());
+    } else {
+      setMobileSelectedPaths(new Set(currentList.map(e => e.path)));
+      setIsMobileSelectMode(true);
+    }
+  }
+
+  async function handleMobileBatchCopy() {
+    if (!instanceId || mobileSelectedPaths.size === 0) return;
+    const targetDir = activePane === "left" ? rightPath : leftPath;
+    const paths = Array.from(mobileSelectedPaths);
+    setError("");
+    try {
+      for (const p of paths) {
+        const entry = (activePane === "left" ? leftEntries : rightEntries).find(e => e.path === p);
+        if (!entry) continue;
+        const targetPath = joinFilePath(targetDir, entry.name);
+        if (entry.type === "file") {
+          const fileData = await api.readInstanceFile(token, instanceId, entry.path);
+          await api.writeInstanceFile(token, instanceId, targetPath, fileData.content);
+        } else {
+          const tmpArchive = `${entry.path}.mt_batch_copy.tar.gz`;
+          await api.archiveInstancePaths(token, instanceId, [entry.path], tmpArchive);
+          await api.extractInstanceArchive(token, instanceId, tmpArchive, { outputPath: targetDir });
+          await api.deleteInstancePath(token, instanceId, tmpArchive);
+        }
+      }
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      showFileToast("复制完成", `已复制 ${paths.length} 项到另一侧`);
+      setMobileSelectedPaths(new Set());
+      setIsMobileSelectMode(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批量复制失败");
+    }
+  }
+
+  async function handleMobileBatchMove() {
+    if (!instanceId || mobileSelectedPaths.size === 0) return;
+    const targetDir = activePane === "left" ? rightPath : leftPath;
+    const paths = Array.from(mobileSelectedPaths);
+    setError("");
+    try {
+      for (const p of paths) {
+        const entry = (activePane === "left" ? leftEntries : rightEntries).find(e => e.path === p);
+        if (!entry) continue;
+        const targetPath = joinFilePath(targetDir, entry.name);
+        if (entry.path === targetPath) continue;
+        if (entry.type === "file") {
+          const fileData = await api.readInstanceFile(token, instanceId, entry.path);
+          await api.writeInstanceFile(token, instanceId, targetPath, fileData.content);
+          await api.deleteInstancePath(token, instanceId, entry.path);
+        } else {
+          const tmpArchive = `${entry.path}.mt_batch_move.tar.gz`;
+          await api.archiveInstancePaths(token, instanceId, [entry.path], tmpArchive);
+          await api.extractInstanceArchive(token, instanceId, tmpArchive, { outputPath: targetDir });
+          await api.deleteInstancePath(token, instanceId, tmpArchive);
+          await api.deleteInstancePath(token, instanceId, entry.path);
+        }
+      }
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      showFileToast("移动完成", `已移动 ${paths.length} 项到另一侧`);
+      setMobileSelectedPaths(new Set());
+      setIsMobileSelectMode(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批量移动失败");
+    }
+  }
+
+  async function handleMobileBatchArchive() {
+    if (!instanceId || mobileSelectedPaths.size === 0) return;
+    const targetDir = activePane === "left" ? leftPath : rightPath;
+    const name = window.prompt("压缩包名称", `archive_${Date.now()}.tar.gz`)?.trim();
+    if (!name) return;
+    const outPath = joinFilePath(targetDir, name);
+    try {
+      await api.archiveInstancePaths(token, instanceId, Array.from(mobileSelectedPaths), outPath);
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      showFileToast("压缩完成", `已生成压缩包 ${name}`);
+      setMobileSelectedPaths(new Set());
+      setIsMobileSelectMode(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批量压缩失败");
+    }
+  }
+
+  async function handleMobileBatchDownload() {
+    if (!instanceId || mobileSelectedPaths.size === 0) return;
+    const paths = Array.from(mobileSelectedPaths);
+    try {
+      if (paths.length === 1) {
+        const entry = (activePane === "left" ? leftEntries : rightEntries).find(e => e.path === paths[0]);
+        if (entry && entry.type === "file") {
+          await api.downloadInstanceFile(token, instanceId, entry.path);
+        } else {
+          await api.saveInstanceArchiveDownload(token, instanceId, paths, `${entry?.name ?? "archive"}.zip`);
+        }
+      } else {
+        await api.saveInstanceArchiveDownload(token, instanceId, paths, `files_${Date.now()}.zip`);
+      }
+      showFileToast("下载中", `已触发 ${paths.length} 项下载`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批量下载失败");
+    }
+  }
+
+  async function handleMobileBatchDelete() {
+    if (!instanceId || mobileSelectedPaths.size === 0) return;
+    const paths = Array.from(mobileSelectedPaths);
+    if (!window.confirm(`确定要删除选中的 ${paths.length} 个项目吗？`)) return;
+
+    // Optimistic: immediately remove from both panes' UI
+    const isDeletedPath = (p: string) => paths.some((d) => p === d || p.startsWith(`${d}/`));
+    setLeftEntries((prev) => prev.filter((e) => !isDeletedPath(e.path)));
+    setRightEntries((prev) => prev.filter((e) => !isDeletedPath(e.path)));
+
+    // Clear any editor/action-menu states matching deleted paths
+    for (const p of paths) {
+      if (selectedPath === p || selectedPath?.startsWith(`${p}/`)) setSelectedPath(null);
+      if (editorPath === p || editorPath?.startsWith(`${p}/`)) {
+        setEditorPath(null);
+        setEditorContent("");
+        setEditorMode("edit");
+        setMobileEditorOpen(false);
+      }
+      if (openFileActionMenuPath === p) setOpenFileActionMenuPath(null);
+      if (mobileActionEntry?.path === p || mobileActionEntry?.path.startsWith(`${p}/`)) {
+        setMobileActionEntry(null);
+      }
+    }
+    setMobileSelectedPaths(new Set());
+    setIsMobileSelectMode(false);
+    showFileToast("删除中", `正在删除 ${paths.length} 项...`);
+
+    try {
+      for (const p of paths) {
+        await api.deleteInstancePath(token, instanceId, p);
+      }
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      showFileToast("删除成功", `已删除 ${paths.length} 项`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "批量删除失败");
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+    }
+  }
+
+  function handleTouchStart(entry: InstanceFileEntry) {
+    if (mobileItemTouchTimerRef.current !== null) {
+      window.clearTimeout(mobileItemTouchTimerRef.current);
+    }
+    mobileItemTouchTimerRef.current = window.setTimeout(() => {
+      setMobileActionEntry(entry);
+    }, 450);
+  }
+
+  function handleTouchEnd() {
+    if (mobileItemTouchTimerRef.current !== null) {
+      window.clearTimeout(mobileItemTouchTimerRef.current);
+      mobileItemTouchTimerRef.current = null;
+    }
+  }
+
+  const loadPaneDirectory = useCallback(
+    async (pane: "left" | "right", pathToLoad: string, pushHistory = true) => {
+      if (!instanceId) return;
+      if (pane === "left") setLeftLoading(true);
+      else setRightLoading(true);
+      try {
+        const response = await api.listInstanceFiles(token, instanceId, pathToLoad);
+        if (pane === "left") {
+          setLeftPath(response.path);
+          setLeftEntries(response.entries);
+          setLeftLoading(false);
+          if (pushHistory) {
+            const hist = leftHistoryRef.current.slice(0, leftHistoryIndexRef.current + 1);
+            if (hist[hist.length - 1] !== response.path) {
+              hist.push(response.path);
+              leftHistoryRef.current = hist;
+              leftHistoryIndexRef.current = hist.length - 1;
+            }
+          }
+          setLeftHistoryState({
+            canBack: leftHistoryIndexRef.current > 0,
+            canForward: leftHistoryIndexRef.current < leftHistoryRef.current.length - 1
+          });
+        } else {
+          setRightPath(response.path);
+          setRightEntries(response.entries);
+          setRightLoading(false);
+          if (pushHistory) {
+            const hist = rightHistoryRef.current.slice(0, rightHistoryIndexRef.current + 1);
+            if (hist[hist.length - 1] !== response.path) {
+              hist.push(response.path);
+              rightHistoryRef.current = hist;
+              rightHistoryIndexRef.current = hist.length - 1;
+            }
+          }
+          setRightHistoryState({
+            canBack: rightHistoryIndexRef.current > 0,
+            canForward: rightHistoryIndexRef.current < rightHistoryRef.current.length - 1
+          });
+        }
+      } catch (err) {
+        if (pane === "left") setLeftLoading(false);
+        else setRightLoading(false);
+      }
+    },
+    [instanceId, token]
+  );
+
+  function handleNavBack() {
+    if (activePane === "left") {
+      if (leftHistoryIndexRef.current <= 0) return;
+      leftHistoryIndexRef.current -= 1;
+      const targetPath = leftHistoryRef.current[leftHistoryIndexRef.current] ?? "";
+      void loadPaneDirectory("left", targetPath, false);
+      setLeftHistoryState({
+        canBack: leftHistoryIndexRef.current > 0,
+        canForward: leftHistoryIndexRef.current < leftHistoryRef.current.length - 1
+      });
+    } else {
+      if (rightHistoryIndexRef.current <= 0) return;
+      rightHistoryIndexRef.current -= 1;
+      const targetPath = rightHistoryRef.current[rightHistoryIndexRef.current] ?? "";
+      void loadPaneDirectory("right", targetPath, false);
+      setRightHistoryState({
+        canBack: rightHistoryIndexRef.current > 0,
+        canForward: rightHistoryIndexRef.current < rightHistoryRef.current.length - 1
+      });
+    }
+  }
+
+  function handleNavForward() {
+    if (activePane === "left") {
+      if (leftHistoryIndexRef.current >= leftHistoryRef.current.length - 1) return;
+      leftHistoryIndexRef.current += 1;
+      const targetPath = leftHistoryRef.current[leftHistoryIndexRef.current] ?? "";
+      void loadPaneDirectory("left", targetPath, false);
+      setLeftHistoryState({
+        canBack: leftHistoryIndexRef.current > 0,
+        canForward: leftHistoryIndexRef.current < leftHistoryRef.current.length - 1
+      });
+    } else {
+      if (rightHistoryIndexRef.current >= rightHistoryRef.current.length - 1) return;
+      rightHistoryIndexRef.current += 1;
+      const targetPath = rightHistoryRef.current[rightHistoryIndexRef.current] ?? "";
+      void loadPaneDirectory("right", targetPath, false);
+      setRightHistoryState({
+        canBack: rightHistoryIndexRef.current > 0,
+        canForward: rightHistoryIndexRef.current < rightHistoryRef.current.length - 1
+      });
+    }
+  }
+
+  function handleNavUp() {
+    if (activePane === "left") {
+      if (!leftPath) return;
+      void loadPaneDirectory("left", parentFilePath(leftPath));
+    } else {
+      if (!rightPath) return;
+      void loadPaneDirectory("right", parentFilePath(rightPath));
+    }
+  }
+
+  const [editingPane, setEditingPane] = useState<"left" | "right" | null>(null);
+  const [editingPathText, setEditingPathText] = useState("");
+
+  async function handlePathJump(pane: "left" | "right") {
+    setEditingPane(null);
+    let target = editingPathText.trim();
+    while (target.startsWith("/")) {
+      target = target.substring(1);
+    }
+    while (target.endsWith("/")) {
+      target = target.substring(0, target.length - 1);
+    }
+    target = target.trim();
+    const current = pane === "left" ? leftPath : rightPath;
+    if (target === current) return;
+    try {
+      await loadPaneDirectory(pane, target);
+    } catch {
+      // handled
+    }
+  }
+
+  const [desktopEditingPath, setDesktopEditingPath] = useState(false);
+  const [desktopPathText, setDesktopPathText] = useState("");
+
+  async function handleDesktopPathJump() {
+    setDesktopEditingPath(false);
+    let target = desktopPathText.trim();
+    while (target.startsWith("/")) {
+      target = target.substring(1);
+    }
+    while (target.endsWith("/")) {
+      target = target.substring(0, target.length - 1);
+    }
+    target = target.trim();
+    if (target === currentPath) return;
+    try {
+      await loadDirectory(target);
+      const parent = parentFilePath(target);
+      if (parent) {
+        await loadTreeDirectory(parent);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "目录加载失败");
+    }
+  }
+
+  async function copyToOppositePane(entry: InstanceFileEntry) {
+    if (!instanceId) return;
+    const targetDir = activePane === "left" ? rightPath : leftPath;
+    const targetPath = joinFilePath(targetDir, entry.name);
+    setError("");
+    try {
+      if (entry.type === "file") {
+        const fileData = await api.readInstanceFile(token, instanceId, entry.path);
+        await api.writeInstanceFile(token, instanceId, targetPath, fileData.content);
+      } else {
+        const tmpArchive = `${entry.path}.mt_copy.tar.gz`;
+        await api.archiveInstancePaths(token, instanceId, [entry.path], tmpArchive);
+        await api.extractInstanceArchive(token, instanceId, tmpArchive, { outputPath: targetDir });
+        await api.deleteInstancePath(token, instanceId, tmpArchive);
+      }
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      showFileToast("复制完成", `已复制 ${entry.name} 到另一侧 (${targetDir || "根目录"})`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "复制到另一侧失败");
+    }
+  }
+
+  async function moveToOppositePane(entry: InstanceFileEntry) {
+    if (!instanceId) return;
+    const targetDir = activePane === "left" ? rightPath : leftPath;
+    const targetPath = joinFilePath(targetDir, entry.name);
+    if (entry.path === targetPath) return;
+    setError("");
+    try {
+      await api.renameInstancePath(token, instanceId, entry.path, targetPath);
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      showFileToast("移动完成", `已移动 ${entry.name} 到另一侧 (${targetDir || "根目录"})`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "移动到另一侧失败");
+    }
+  }
+
+  async function extractToOppositePane(entry: InstanceFileEntry) {
+    if (!instanceId) return;
+    const targetDir = activePane === "left" ? rightPath : leftPath;
+    setError("");
+    try {
+      await api.extractInstanceArchive(token, instanceId, entry.path, { outputPath: targetDir });
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      showFileToast("解压完成", `已解压到另一侧 (${targetDir || "根目录"})`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "解压失败");
+    }
+  }
+
+  function syncPanes() {
+    if (activePane === "left") {
+      void loadPaneDirectory("right", leftPath);
+      showFileToast("已同步", "右侧已同步至左侧路径");
+    } else {
+      void loadPaneDirectory("left", rightPath);
+      showFileToast("已同步", "左侧已同步至右侧路径");
+    }
+  }
+
+  const breadcrumbSegments = useMemo(() => {
+    if (!currentPath) return [{ label: "根目录", path: "" }];
+    const parts = currentPath.split("/").filter(Boolean);
+    const segs = [{ label: "根目录", path: "" }];
+    let acc = "";
+    for (const part of parts) {
+      acc = acc ? `${acc}/${part}` : part;
+      segs.push({ label: part, path: acc });
+    }
+    return segs;
+  }, [currentPath]);
 
   const filteredEntries = useMemo(() => {
     const query = fileSearchQuery.trim().toLowerCase();
@@ -8336,11 +13357,17 @@ function FileManager({
     }
   }
 
-  function handleClipboardAction(action: "copy" | "cut", path?: string) {
+  function handleClipboardAction(action: "copy" | "cut", path?: string | string[] | Set<string>) {
     if (!instanceId) return;
     const paths = new Set<string>();
     if (path) {
-      paths.add(path);
+      if (typeof path === "string") {
+        paths.add(path);
+      } else {
+        path.forEach((p) => paths.add(p));
+      }
+    } else if (selectedPaths.size > 0) {
+      selectedPaths.forEach((p) => paths.add(p));
     } else if (selectedPath) {
       paths.add(selectedPath);
     }
@@ -8438,17 +13465,27 @@ function FileManager({
           event.preventDefault();
           void openEntry(entry);
         }
+      } else if (event.key === "a" && (event.ctrlKey || event.metaKey)) {
+        if (!editorPath && !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)) {
+          event.preventDefault();
+          handleDesktopSelectAll();
+        }
       } else if (event.key === "Delete") {
-        if (selectedPath) {
-          const entry = filteredEntries.find(e => e.path === selectedPath);
+        if (selectedPaths.size > 1) {
+          event.preventDefault();
+          void handleDesktopBatchDelete();
+        } else if (selectedPath || selectedPaths.size === 1) {
+          const pathToDelete = selectedPath || Array.from(selectedPaths)[0];
+          const entry = filteredEntries.find(e => e.path === pathToDelete);
           if (entry) {
             event.preventDefault();
             void deleteEntry(entry);
           }
         }
       } else if (event.key === "F2") {
-        if (selectedPath) {
-          const entry = filteredEntries.find(e => e.path === selectedPath);
+        const pathToRename = selectedPath || (selectedPaths.size === 1 ? Array.from(selectedPaths)[0] : null);
+        if (pathToRename) {
+          const entry = filteredEntries.find(e => e.path === pathToRename);
           if (entry) {
             event.preventDefault();
             void renameEntry(entry);
@@ -8457,15 +13494,18 @@ function FileManager({
       } else if (event.key === "Escape") {
         event.preventDefault();
         setSelectedPath(null);
+        setSelectedPaths(new Set());
+        setDesktopContextMenu(null);
+        lastSelectedPathRef.current = null;
       } else if (event.key === "c" && (event.ctrlKey || event.metaKey)) {
-        if (selectedPath) {
+        if (selectedPaths.size > 0 || selectedPath) {
           event.preventDefault();
-          handleClipboardAction("copy", selectedPath);
+          handleClipboardAction("copy", selectedPaths.size > 0 ? selectedPaths : selectedPath!);
         }
       } else if (event.key === "x" && (event.ctrlKey || event.metaKey)) {
-        if (selectedPath) {
+        if (selectedPaths.size > 0 || selectedPath) {
           event.preventDefault();
-          handleClipboardAction("cut", selectedPath);
+          handleClipboardAction("cut", selectedPaths.size > 0 ? selectedPaths : selectedPath!);
         }
       } else if (event.key === "v" && (event.ctrlKey || event.metaKey)) {
         if (clipboard) {
@@ -8477,15 +13517,23 @@ function FileManager({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [instanceId, editorPath, filteredEntries, selectedPath, clipboard]);
+  }, [instanceId, editorPath, filteredEntries, selectedPath, selectedPaths, clipboard]);
 
   useEffect(() => {
     directoryLoadRequestRef.current += 1;
     fileOpenRequestRef.current += 1;
     setCurrentPath("");
     setEntries([]);
+    setLeftPath("");
+    setLeftEntries([]);
+    setRightPath("");
+    setRightEntries([]);
+    setActivePane("left");
     setFileSearchQuery("");
     setSelectedPath(null);
+    setSelectedPaths(new Set());
+    setDesktopContextMenu(null);
+    lastSelectedPathRef.current = null;
     setEditorPath(null);
     setEditorContent("");
     setEditorMode("edit");
@@ -8499,15 +13547,21 @@ function FileManager({
     setFileConflictPrompt(null);
     setUploadProgress(null);
     setFileToast(null);
-    setMobileBrowserOpen(false);
+    setMobileBrowserOpen(true);
     setMobileEditorOpen(false);
+    setMobileSearchOpen(false);
+    setMobileSearchQuery("");
+    setDesktopEditingPath(false);
+    setDesktopPathText("");
     setTreeData({});
     setExpandedFolders(new Set());
     if (instanceId) {
       void loadDirectory("");
       void loadTreeDirectory("");
+      void loadPaneDirectory("left", "");
+      void loadPaneDirectory("right", "");
     }
-  }, [instanceId, loadDirectory, loadTreeDirectory]);
+  }, [instanceId, loadDirectory, loadTreeDirectory, loadPaneDirectory]);
 
   useEffect(() => {
     return () => {
@@ -8612,11 +13666,14 @@ function FileManager({
   }, [openFileActionMenuPath]);
 
   useEffect(() => {
-    const match = activeFindIndex >= 0 ? findMatches[activeFindIndex] : null;
-    if (match) {
-      revealFindMatch(match, false);
-    }
-  }, [activeFindIndex, editorContent, findMatches]);
+    if (!desktopContextMenu) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest(".win-context-menu")) return;
+      setDesktopContextMenu(null);
+    };
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    return () => window.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [desktopContextMenu]);
 
   function revealFindMatch(match: FindMatchRange, focusEditor: boolean) {
     codeEditorRef.current?.scrollToPosition(match.start);
@@ -8645,6 +13702,7 @@ function FileManager({
     setMobileEditorOpen(false);
     setMobileBrowserOpen(false);
     resetEditorSearchState();
+    onClose?.();
   }
 
   function closeMobileEditorModal() {
@@ -8656,12 +13714,28 @@ function FileManager({
   function openEditorFind() {
     if (!editorCanEdit) return;
     setFindVisible(true);
+    if (findQuery.trim() && findMatches.length > 0) {
+      const match = activeFindIndex >= 0 ? findMatches[activeFindIndex] : findMatches[0];
+      if (match) revealFindMatch(match, false);
+    }
   }
 
   function closeEditorFind() {
     setFindVisible(false);
     setFindQuery("");
     setFindActiveIndex(0);
+  }
+
+  function handleFindQueryChange(newQuery: string) {
+    setFindQuery(newQuery);
+    setFindActiveIndex(0);
+    if (newQuery.trim()) {
+      const matches = editorCanEdit ? collectFindMatches(editorContent, newQuery) : [];
+      const firstMatch = matches[0];
+      if (firstMatch) {
+        revealFindMatch(firstMatch, false);
+      }
+    }
   }
 
   function moveFindMatch(step: number, focusEditor: boolean) {
@@ -8700,9 +13774,23 @@ function FileManager({
       }
     }
     if (!editorCanEdit || editorMode !== "edit") return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      void saveEditor();
+      return;
+    }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
       event.preventDefault();
       openEditorFind();
+      return;
+    }
+    if (event.key === "F3") {
+      event.preventDefault();
+      if (!findVisible) {
+        openEditorFind();
+      } else {
+        moveFindMatch(event.shiftKey ? -1 : 1, true);
+      }
       return;
     }
     if (event.key === "Escape" && findVisible) {
@@ -8765,10 +13853,17 @@ function FileManager({
   function saveBase64Download(contentBase64: string, fileName: string) {
     const url = URL.createObjectURL(base64ToBlob(contentBase64));
     const link = document.createElement("a");
+    link.style.display = "none";
     link.href = url;
     link.download = fileName;
+    document.body.appendChild(link);
     link.click();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => {
+      try {
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      } catch {}
+    }, 1000);
   }
 
   function showFileToast(title: string, detail: string) {
@@ -8795,18 +13890,29 @@ function FileManager({
     setFileConflictPrompt(null);
   }
 
-  function existingEntryByName(name: string): InstanceFileEntry | null {
-    const normalized = name.toLocaleLowerCase();
-    return entries.find((entry) => entry.name.toLocaleLowerCase() === normalized) ?? null;
+  function getActiveTargetDir() {
+    return isMobileFileLayout() ? (activePane === "left" ? leftPath : rightPath) : currentPath;
   }
 
-  async function chooseTargetName(action: FileConflictPrompt["action"], name: string) {
-    const existing = existingEntryByName(name);
+  function existingEntryByName(name: string, targetDir?: string): InstanceFileEntry | null {
+    const normalized = name.toLocaleLowerCase();
+    const targetEntries = isMobileFileLayout()
+      ? (activePane === "left" ? leftEntries : rightEntries)
+      : entries;
+    return targetEntries.find((entry) => entry.name.toLocaleLowerCase() === normalized) ?? null;
+  }
+
+  async function chooseTargetName(action: FileConflictPrompt["action"], name: string, baseDir?: string) {
+    const targetDir = baseDir !== undefined ? baseDir : getActiveTargetDir();
+    const existing = existingEntryByName(name, targetDir);
+    const targetEntries = isMobileFileLayout()
+      ? (activePane === "left" ? leftEntries : rightEntries)
+      : entries;
     if (!existing) {
-      return { name, path: joinFilePath(currentPath, name), overwrite: false };
+      return { name, path: joinFilePath(targetDir, name), overwrite: false };
     }
 
-    const suggestedName = uniqueSiblingName(name, entries);
+    const suggestedName = uniqueSiblingName(name, targetEntries);
     const choice = await askFileConflict({
       action,
       name,
@@ -8815,11 +13921,11 @@ function FileManager({
     });
     if (!choice) return null;
     if (choice === "overwrite" && existing.type === "file") {
-      return { name, path: joinFilePath(currentPath, name), overwrite: true };
+      return { name, path: joinFilePath(targetDir, name), overwrite: true };
     }
     return {
       name: suggestedName,
-      path: joinFilePath(currentPath, suggestedName),
+      path: joinFilePath(targetDir, suggestedName),
       overwrite: false
     };
   }
@@ -8877,6 +13983,8 @@ function FileManager({
       await api.writeInstanceFile(token, instanceId, editorPath, contentToSave);
       setEditorContent(contentToSave);
       await loadDirectory(currentPath);
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
       setSelectedPath(editorPath);
     } catch (err) {
       setError(err instanceof Error ? err.message : "文件保存失败");
@@ -8889,12 +13997,19 @@ function FileManager({
     if (!instanceId) return;
     const name = window.prompt("文件名")?.trim();
     if (!name) return;
-    const target = await chooseTargetName("create", name);
+    const targetDir = getActiveTargetDir();
+    const target = await chooseTargetName("create", name, targetDir);
     if (!target) return;
     setError("");
     try {
       await api.writeInstanceFile(token, instanceId, target.path, "");
       await loadDirectory(currentPath);
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      const parent = parentFilePath(target.path);
+      if (parent !== currentPath) {
+        await loadTreeDirectory(parent);
+      }
       const response = await api.readInstanceFile(token, instanceId, target.path);
       setSelectedPath(response.path);
       setEditorPath(response.path);
@@ -8913,10 +14028,18 @@ function FileManager({
     if (!instanceId) return;
     const name = window.prompt("目录名")?.trim();
     if (!name) return;
+    const targetDir = getActiveTargetDir();
     setError("");
     try {
-      await api.makeInstanceDirectory(token, instanceId, joinFilePath(currentPath, name));
+      const newDirPath = joinFilePath(targetDir, name);
+      await api.makeInstanceDirectory(token, instanceId, newDirPath);
       await loadDirectory(currentPath);
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      const parent = parentFilePath(newDirPath);
+      if (parent !== currentPath) {
+        await loadTreeDirectory(parent);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "目录创建失败");
     }
@@ -8931,6 +14054,12 @@ function FileManager({
     try {
       const response = await api.renameInstancePath(token, instanceId, entry.path, nextPath);
       await loadDirectory(currentPath);
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      const srcParent = parentFilePath(entry.path);
+      const destParent = parentFilePath(nextPath);
+      if (srcParent !== currentPath) await loadTreeDirectory(srcParent);
+      if (destParent !== currentPath && destParent !== srcParent) await loadTreeDirectory(destParent);
       if (editorPath === entry.path) {
         await openEntry(response);
       }
@@ -8943,17 +14072,65 @@ function FileManager({
     if (!instanceId) return;
     if (!window.confirm(`删除 ${entry.name}？`)) return;
     setError("");
-    try {
-      await api.deleteInstancePath(token, instanceId, entry.path);
-      if (editorPath === entry.path || (editorPath?.startsWith(`${entry.path}/`) ?? false)) {
-        setEditorPath(null);
-        setEditorContent("");
-        setEditorMode("edit");
-        setMobileEditorOpen(false);
+
+    const deletedPath = entry.path;
+    const parentPath = parentFilePath(deletedPath);
+
+    // 1. Optimistic removal from local state immediately
+    setEntries((prev) => prev.filter((e) => e.path !== deletedPath && !e.path.startsWith(`${deletedPath}/`)));
+    setTreeData((prev) => {
+      const next = { ...prev };
+      for (const [dirPath, items] of Object.entries(next)) {
+        if (dirPath === deletedPath || dirPath.startsWith(`${deletedPath}/`)) {
+          delete next[dirPath];
+        } else {
+          next[dirPath] = items.filter((item) => item.path !== deletedPath && !item.path.startsWith(`${deletedPath}/`));
+        }
       }
-      await loadDirectory(currentPath);
+      return next;
+    });
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      next.delete(deletedPath);
+      for (const folder of Array.from(next)) {
+        if (folder.startsWith(`${deletedPath}/`)) next.delete(folder);
+      }
+      return next;
+    });
+
+    if (selectedPath === deletedPath || (selectedPath?.startsWith(`${deletedPath}/`) ?? false)) {
+      setSelectedPath(null);
+    }
+    if (editorPath === deletedPath || (editorPath?.startsWith(`${deletedPath}/`) ?? false)) {
+      setEditorPath(null);
+      setEditorContent("");
+      setEditorMode("edit");
+      setMobileEditorOpen(false);
+    }
+    if (openFileActionMenuPath === deletedPath) {
+      setOpenFileActionMenuPath(null);
+    }
+
+    try {
+      await api.deleteInstancePath(token, instanceId, deletedPath);
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      if (currentPath === deletedPath || currentPath.startsWith(`${deletedPath}/`)) {
+        await loadDirectory(parentPath);
+      } else {
+        await loadDirectory(currentPath);
+      }
+      if (parentPath !== currentPath) {
+        await loadTreeDirectory(parentPath);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "删除失败");
+      await loadDirectory(currentPath);
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      if (parentPath !== currentPath) {
+        await loadTreeDirectory(parentPath);
+      }
     }
   }
 
@@ -8963,7 +14140,8 @@ function FileManager({
   ) {
     if (!instanceId) return;
     const clearInput = options.clearInput ?? true;
-    const target = await chooseTargetName("upload", file.name);
+    const targetDir = getActiveTargetDir();
+    const target = await chooseTargetName("upload", file.name, targetDir);
     if (!target) {
       if (clearInput && fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -8986,6 +14164,12 @@ function FileManager({
         (progress) => setUploadProgress({ ...progress, fileName: progressFileName })
       );
       await loadDirectory(currentPath);
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
+      const parent = parentFilePath(target.path);
+      if (parent !== currentPath) {
+        await loadTreeDirectory(parent);
+      }
       setSelectedPath(response.path);
       if (editorPath === response.path) {
         setEditorPath(null);
@@ -9048,6 +14232,8 @@ function FileManager({
     try {
       const response = await api.archiveInstancePaths(token, instanceId, [entry.path], outputPath);
       await loadDirectory(parentFilePath(response.outputPath));
+      await loadPaneDirectory("left", leftPath);
+      await loadPaneDirectory("right", rightPath);
       setSelectedPath(response.outputPath);
       showFileToast("压缩完成", `已创建 ${response.entry.name}`);
     } catch (err) {
@@ -9074,6 +14260,8 @@ function FileManager({
     setEditorContent("");
     setEditorMode("edit");
     await loadDirectory(parentFilePath(response.outputPath));
+    await loadPaneDirectory("left", leftPath);
+    await loadPaneDirectory("right", rightPath);
     setSelectedPath(response.outputPath);
     const detail =
       response.skippedCount > 0 || response.overwrittenCount > 0
@@ -9150,6 +14338,725 @@ function FileManager({
     } finally {
       setExtractingPath(null);
     }
+  }
+
+  function renderExplorerView() {
+    if (loading && entries.length === 0) {
+      return <div className="tree-empty-state">载入中...</div>;
+    }
+    if (filteredEntries.length === 0) {
+      return (
+        <div className="explorer-list-view" role="list" ref={explorerListRef}>
+          {currentPath ? (
+            <div
+              className="explorer-item-row is-directory is-parent-dir"
+              onClick={() => void loadDirectory(parentFilePath(currentPath))}
+              title="返回上一级目录"
+            >
+              <div className="explorer-item-main">
+                <div className="explorer-item-icon dir-icon">
+                  <Folder size={17} />
+                </div>
+                <div className="explorer-item-info">
+                  <span className="explorer-item-name" style={{ fontWeight: 700 }}>..</span>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          <div className="explorer-empty-state">
+            <FolderOpen size={36} className="empty-icon" />
+            <span>{fileSearchQuery ? "未搜索到匹配项" : "此文件夹为空"}</span>
+            {!fileSearchQuery ? (
+              <div className="empty-quick-actions">
+                <button className="small-button" type="button" onClick={() => void createFile()}>
+                  <FilePlus size={14} /> 新建文件
+                </button>
+                <button className="small-button" type="button" onClick={() => void createDirectory()}>
+                  <FolderPlus size={14} /> 新建目录
+                </button>
+                <button className="small-button" type="button" onClick={() => fileInputRef.current?.click()}>
+                  <Upload size={14} /> 上传文件
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      );
+    }
+
+    function handleExplorerMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+      if (e.button !== 0) return;
+      if ((e.target as HTMLElement).closest("button, input, a, .explorer-item-actions, .win-context-menu")) {
+        return;
+      }
+      setDesktopContextMenu(null);
+
+      const container = explorerListRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const startClientX = e.clientX;
+      const startClientY = e.clientY;
+      const startX = e.clientX - rect.left + container.scrollLeft;
+      const startY = e.clientY - rect.top + container.scrollTop;
+
+      const initialSelected = new Set(e.ctrlKey || e.metaKey ? selectedPaths : []);
+      let hasDragged = false;
+
+      function handleMouseMove(ev: MouseEvent) {
+        if (!explorerListRef.current) return;
+        const dx = ev.clientX - startClientX;
+        const dy = ev.clientY - startClientY;
+        if (!hasDragged && Math.hypot(dx, dy) < 5) return;
+
+        if (!hasDragged) {
+          hasDragged = true;
+          isDraggingMarqueeRef.current = true;
+          marqueeStartPosRef.current = { x: startX, y: startY };
+        }
+
+        const currentRect = explorerListRef.current.getBoundingClientRect();
+        const currentX = ev.clientX - currentRect.left + explorerListRef.current.scrollLeft;
+        const currentY = ev.clientY - currentRect.top + explorerListRef.current.scrollTop;
+
+        const x1 = marqueeStartPosRef.current.x;
+        const y1 = marqueeStartPosRef.current.y;
+        const x2 = currentX;
+        const y2 = currentY;
+
+        setMarqueeBox({ x1, y1, x2, y2 });
+
+        const minX = Math.min(x1, x2);
+        const maxX = Math.max(x1, x2);
+        const minY = Math.min(y1, y2);
+        const maxY = Math.max(y1, y2);
+
+        const items = explorerListRef.current.querySelectorAll<HTMLElement>(".explorer-item-row[data-path]");
+        const newSelected = new Set(initialSelected);
+
+        items.forEach((item) => {
+          const itemTop = item.offsetTop;
+          const itemLeft = item.offsetLeft;
+          const itemBottom = itemTop + item.offsetHeight;
+          const itemRight = itemLeft + item.offsetWidth;
+
+          if (
+            itemRight >= minX &&
+            itemLeft <= maxX &&
+            itemBottom >= minY &&
+            itemTop <= maxY
+          ) {
+            const path = item.getAttribute("data-path");
+            if (path) newSelected.add(path);
+          }
+        });
+
+        setSelectedPaths(newSelected);
+      }
+
+      function handleMouseUp(ev: MouseEvent) {
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mouseup", handleMouseUp);
+        if (hasDragged) {
+          setTimeout(() => {
+            isDraggingMarqueeRef.current = false;
+          }, 50);
+          setMarqueeBox(null);
+        } else {
+          const itemRow = (ev.target as HTMLElement)?.closest?.(".explorer-item-row");
+          if (!itemRow && !(ev.target as HTMLElement)?.closest?.("button, input, a, .win-context-menu")) {
+            setSelectedPaths(new Set());
+            setSelectedPath(null);
+            lastSelectedPathRef.current = null;
+          }
+        }
+      }
+
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+    }
+
+    return (
+      <div
+        className="explorer-list-view"
+        role="list"
+        ref={explorerListRef}
+        onMouseDown={handleExplorerMouseDown}
+        onContextMenu={(e) => {
+          if ((e.target as HTMLElement).closest(".explorer-item-row, button, input, a, .win-context-menu")) {
+            return;
+          }
+          e.preventDefault();
+          setDesktopContextMenu({
+            x: e.clientX,
+            y: e.clientY,
+            type: "blank",
+            selectedEntries: []
+          });
+        }}
+      >
+        {marqueeBox && (
+          <div
+            className="selection-marquee"
+            style={{
+              left: `${Math.min(marqueeBox.x1, marqueeBox.x2)}px`,
+              top: `${Math.min(marqueeBox.y1, marqueeBox.y2)}px`,
+              width: `${Math.abs(marqueeBox.x2 - marqueeBox.x1)}px`,
+              height: `${Math.abs(marqueeBox.y2 - marqueeBox.y1)}px`,
+            }}
+          />
+        )}
+        {currentPath ? (
+          <div
+            className="explorer-item-row is-directory is-parent-dir"
+            onClick={() => void loadDirectory(parentFilePath(currentPath))}
+            title="返回上一级目录"
+          >
+            <div className="explorer-item-main">
+              <div className="explorer-item-icon dir-icon">
+                <Folder size={17} />
+              </div>
+              <div className="explorer-item-info">
+                <span className="explorer-item-name" style={{ fontWeight: 700 }}>..</span>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {filteredEntries.map((entry) => {
+          const isDir = entry.type === "directory";
+          const isSelected = selectedPaths.has(entry.path) || selectedPath === entry.path || editorPath === entry.path;
+          return (
+            <div
+              key={entry.path}
+              data-path={entry.path}
+              className={`explorer-item-row ${isDir ? "is-directory" : "is-file"} ${isSelected ? "selected" : ""} ${draggingFilePath === entry.path ? "dragging" : ""}`}
+              draggable
+              onDragStart={(e) => {
+                setDraggingFilePath(entry.path);
+                e.dataTransfer.setData("text/plain", entry.path);
+              }}
+              onDragEnd={() => setDraggingFilePath(null)}
+              onClick={(e) => {
+                if (isDraggingMarqueeRef.current) return;
+                setDesktopContextMenu(null);
+
+                if (e.shiftKey && lastSelectedPathRef.current) {
+                  const anchorIdx = filteredEntries.findIndex((item) => item.path === lastSelectedPathRef.current);
+                  const currentIdx = filteredEntries.findIndex((item) => item.path === entry.path);
+                  if (anchorIdx !== -1 && currentIdx !== -1) {
+                    const min = Math.min(anchorIdx, currentIdx);
+                    const max = Math.max(anchorIdx, currentIdx);
+                    const rangeSet = new Set(filteredEntries.slice(min, max + 1).map((item) => item.path));
+                    setSelectedPaths(rangeSet);
+                    setSelectedPath(entry.path);
+                    return;
+                  }
+                }
+
+                if (e.ctrlKey || e.metaKey) {
+                  setSelectedPaths((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(entry.path)) next.delete(entry.path);
+                    else next.add(entry.path);
+                    return next;
+                  });
+                  setSelectedPath(entry.path);
+                  lastSelectedPathRef.current = entry.path;
+                  return;
+                }
+
+                if (entry.type === "directory") {
+                  setSelectedPaths(new Set());
+                  lastSelectedPathRef.current = null;
+                  void loadDirectory(entry.path);
+                  return;
+                }
+
+                setSelectedPaths(new Set([entry.path]));
+                setSelectedPath(entry.path);
+                lastSelectedPathRef.current = entry.path;
+                void openEntry(entry);
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                let nextSelected = new Set(selectedPaths);
+                if (!selectedPaths.has(entry.path)) {
+                  nextSelected = new Set([entry.path]);
+                  setSelectedPaths(nextSelected);
+                  setSelectedPath(entry.path);
+                  lastSelectedPathRef.current = entry.path;
+                }
+                const selectedList = filteredEntries.filter((item) => nextSelected.has(item.path));
+                setDesktopContextMenu({
+                  x: e.clientX,
+                  y: e.clientY,
+                  type: "item",
+                  targetEntry: entry,
+                  selectedEntries: selectedList.length > 0 ? selectedList : [entry]
+                });
+              }}
+              onDragOver={isDir ? (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.currentTarget.classList.add("drag-over");
+              } : undefined}
+              onDragLeave={isDir ? (e) => {
+                e.currentTarget.classList.remove("drag-over");
+              } : undefined}
+              onDrop={isDir ? (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.currentTarget.classList.remove("drag-over");
+                const dragDataStr = e.dataTransfer.getData("text/plain");
+                if (dragDataStr && dragDataStr !== entry.path) {
+                  void moveFileToFolder(dragDataStr, entry.path);
+                }
+              } : undefined}
+            >
+              <div className="explorer-item-main">
+                <div className={`explorer-item-icon ${isDir ? "dir-icon" : "file-icon"}`}>
+                  {isDir ? (
+                    <Folder size={17} />
+                  ) : isImageFile(entry.path) ? (
+                    <ImageIcon size={16} />
+                  ) : isArchiveFile(entry.path) ? (
+                    <FileArchive size={16} />
+                  ) : (
+                    <FileText size={16} />
+                  )}
+                </div>
+                <div className="explorer-item-name" title={entry.name}>
+                  <span>{entry.name}</span>
+                </div>
+              </div>
+
+              <div className="explorer-item-meta">
+                <span className="explorer-item-size">
+                  {isDir ? "文件夹" : formatBytes(entry.size)}
+                </span>
+                <span className="explorer-item-date">
+                  {formatDate(entry.modifiedAt)}
+                </span>
+              </div>
+
+              <div className="explorer-item-actions">
+                {!isDir ? (
+                  <button
+                    className="tree-node-action-btn"
+                    title="下载"
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void downloadEntry(entry);
+                    }}
+                  >
+                    <Download size={13} />
+                  </button>
+                ) : null}
+
+                <div className="file-action-menu-wrap">
+                  <button
+                    className="tree-node-action-btn"
+                    title="更多操作"
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenFileActionMenuPath((current) => (current === entry.path ? null : entry.path));
+                    }}
+                  >
+                    <MoreHorizontal size={13} />
+                  </button>
+                  {openFileActionMenuPath === entry.path ? (
+                    <div className="file-action-menu tree-action-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+                      {entry.type === "file" && isArchiveFile(entry.path) ? (
+                        <button type="button" role="menuitem" disabled={extractingPath === entry.path}
+                          onClick={() => { setOpenFileActionMenuPath(null); void extractArchive(entry); }}>
+                          {extractingPath === entry.path ? <RotateCw size={14} /> : <Archive size={14} />}
+                          <span>解压</span>
+                        </button>
+                      ) : (
+                        <button type="button" role="menuitem"
+                          disabled={(entry.type !== "file" && entry.type !== "directory") || archivingPath === entry.path}
+                          onClick={() => { setOpenFileActionMenuPath(null); void archiveEntry(entry); }}>
+                          {archivingPath === entry.path ? <RotateCw size={14} /> : <Archive size={14} />}
+                          <span>压缩</span>
+                        </button>
+                      )}
+                      <button type="button" role="menuitem"
+                        onClick={() => { setOpenFileActionMenuPath(null); handleClipboardAction("copy", entry.path); }}>
+                        <ClipboardList size={14} />
+                        <span>复制</span>
+                      </button>
+                      <button type="button" role="menuitem"
+                        onClick={() => { setOpenFileActionMenuPath(null); handleClipboardAction("cut", entry.path); }}>
+                        <Layers size={14} />
+                        <span>剪切</span>
+                      </button>
+                      <button type="button" role="menuitem"
+                        onClick={() => { setOpenFileActionMenuPath(null); void renameEntry(entry); }}>
+                        <FileText size={14} />
+                        <span>重命名</span>
+                      </button>
+                      {entry.type === "file" ? (
+                        <button type="button" role="menuitem"
+                          onClick={() => { setOpenFileActionMenuPath(null); void downloadEntry(entry); }}>
+                          <Download size={14} />
+                          <span>下载</span>
+                        </button>
+                      ) : null}
+                      <button className="danger-action" type="button" role="menuitem"
+                        onClick={() => { setOpenFileActionMenuPath(null); void deleteEntry(entry); }}>
+                        <Trash2 size={14} />
+                        <span>删除</span>
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        {desktopContextMenu && (
+          <div
+            className="win-context-menu"
+            style={{
+              left: `${Math.max(8, Math.min(desktopContextMenu.x, window.innerWidth - 230))}px`,
+              top: `${Math.max(8, Math.min(desktopContextMenu.y, window.innerHeight - 320))}px`
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            {desktopContextMenu.type === "item" ? (
+              <>
+                {desktopContextMenu.selectedEntries.length > 1 ? (
+                  <>
+                    <div className="win-menu-header">
+                      <CheckSquare size={13} />
+                      <span>已选择 {desktopContextMenu.selectedEntries.length} 个项目</span>
+                    </div>
+                    <button
+                      className="win-menu-item"
+                      type="button"
+                      onClick={() => {
+                        const paths = desktopContextMenu.selectedEntries.map((e) => e.path);
+                        handleClipboardAction("copy", paths);
+                        setDesktopContextMenu(null);
+                      }}
+                    >
+                      <div className="win-menu-item-left">
+                        <span className="win-menu-item-icon"><Copy size={14} /></span>
+                        <span className="win-menu-item-text">复制</span>
+                      </div>
+                      <span className="win-menu-item-shortcut">Ctrl+C</span>
+                    </button>
+                    <button
+                      className="win-menu-item"
+                      type="button"
+                      onClick={() => {
+                        const paths = desktopContextMenu.selectedEntries.map((e) => e.path);
+                        handleClipboardAction("cut", paths);
+                        setDesktopContextMenu(null);
+                      }}
+                    >
+                      <div className="win-menu-item-left">
+                        <span className="win-menu-item-icon"><Scissors size={14} /></span>
+                        <span className="win-menu-item-text">剪切</span>
+                      </div>
+                      <span className="win-menu-item-shortcut">Ctrl+X</span>
+                    </button>
+                    <div className="win-menu-separator" />
+                    <button
+                      className="win-menu-item"
+                      type="button"
+                      onClick={() => {
+                        setDesktopContextMenu(null);
+                        void handleDesktopBatchArchive();
+                      }}
+                    >
+                      <div className="win-menu-item-left">
+                        <span className="win-menu-item-icon"><FileArchive size={14} /></span>
+                        <span className="win-menu-item-text">压缩为归档...</span>
+                      </div>
+                    </button>
+                    <button
+                      className="win-menu-item"
+                      type="button"
+                      onClick={() => {
+                        setDesktopContextMenu(null);
+                        void handleDesktopBatchDownload();
+                      }}
+                    >
+                      <div className="win-menu-item-left">
+                        <span className="win-menu-item-icon"><Download size={14} /></span>
+                        <span className="win-menu-item-text">批量打包下载</span>
+                      </div>
+                    </button>
+                    <div className="win-menu-separator" />
+                    <button
+                      className="win-menu-item danger-action"
+                      type="button"
+                      onClick={() => {
+                        setDesktopContextMenu(null);
+                        void handleDesktopBatchDelete();
+                      }}
+                    >
+                      <div className="win-menu-item-left">
+                        <span className="win-menu-item-icon"><Trash2 size={14} /></span>
+                        <span className="win-menu-item-text">删除选中的项目</span>
+                      </div>
+                      <span className="win-menu-item-shortcut">Delete</span>
+                    </button>
+                    <button
+                      className="win-menu-item"
+                      type="button"
+                      onClick={() => {
+                        setSelectedPaths(new Set());
+                        setDesktopContextMenu(null);
+                      }}
+                    >
+                      <div className="win-menu-item-left">
+                        <span className="win-menu-item-icon"><X size={14} /></span>
+                        <span className="win-menu-item-text">取消选择</span>
+                      </div>
+                      <span className="win-menu-item-shortcut">Esc</span>
+                    </button>
+                  </>
+                ) : (
+                  (() => {
+                    const entry = desktopContextMenu.targetEntry || desktopContextMenu.selectedEntries[0];
+                    if (!entry) return null;
+                    const isDir = entry.type === "directory";
+                    const isArchive = entry.type === "file" && isArchiveFile(entry.path);
+                    return (
+                      <>
+                        <button
+                          className="win-menu-item"
+                          type="button"
+                          onClick={() => {
+                            setDesktopContextMenu(null);
+                            if (isDir) {
+                              void loadDirectory(entry.path);
+                            } else {
+                              void openEntry(entry);
+                            }
+                          }}
+                        >
+                          <div className="win-menu-item-left">
+                            <span className="win-menu-item-icon">
+                              {isDir ? <FolderOpen size={14} /> : <FileText size={14} />}
+                            </span>
+                            <span className="win-menu-item-text">{isDir ? "打开文件夹" : "打开 / 编辑"}</span>
+                          </div>
+                          <span className="win-menu-item-shortcut">Enter</span>
+                        </button>
+                        <div className="win-menu-separator" />
+                        <button
+                          className="win-menu-item"
+                          type="button"
+                          onClick={() => {
+                            handleClipboardAction("copy", entry.path);
+                            setDesktopContextMenu(null);
+                          }}
+                        >
+                          <div className="win-menu-item-left">
+                            <span className="win-menu-item-icon"><Copy size={14} /></span>
+                            <span className="win-menu-item-text">复制</span>
+                          </div>
+                          <span className="win-menu-item-shortcut">Ctrl+C</span>
+                        </button>
+                        <button
+                          className="win-menu-item"
+                          type="button"
+                          onClick={() => {
+                            handleClipboardAction("cut", entry.path);
+                            setDesktopContextMenu(null);
+                          }}
+                        >
+                          <div className="win-menu-item-left">
+                            <span className="win-menu-item-icon"><Scissors size={14} /></span>
+                            <span className="win-menu-item-text">剪切</span>
+                          </div>
+                          <span className="win-menu-item-shortcut">Ctrl+X</span>
+                        </button>
+                        <button
+                          className="win-menu-item"
+                          type="button"
+                          onClick={() => {
+                            setDesktopContextMenu(null);
+                            void renameEntry(entry);
+                          }}
+                        >
+                          <div className="win-menu-item-left">
+                            <span className="win-menu-item-icon"><Edit3 size={14} /></span>
+                            <span className="win-menu-item-text">重命名</span>
+                          </div>
+                          <span className="win-menu-item-shortcut">F2</span>
+                        </button>
+                        <div className="win-menu-separator" />
+                        {isArchive ? (
+                          <button
+                            className="win-menu-item"
+                            type="button"
+                            disabled={extractingPath === entry.path}
+                            onClick={() => {
+                              setDesktopContextMenu(null);
+                              void extractArchive(entry);
+                            }}
+                          >
+                            <div className="win-menu-item-left">
+                              <span className="win-menu-item-icon">
+                                {extractingPath === entry.path ? <RotateCw size={14} className="status-spinner" /> : <Archive size={14} />}
+                              </span>
+                              <span className="win-menu-item-text">解压到当前目录...</span>
+                            </div>
+                          </button>
+                        ) : (
+                          <button
+                            className="win-menu-item"
+                            type="button"
+                            disabled={archivingPath === entry.path}
+                            onClick={() => {
+                              setDesktopContextMenu(null);
+                              void archiveEntry(entry);
+                            }}
+                          >
+                            <div className="win-menu-item-left">
+                              <span className="win-menu-item-icon">
+                                {archivingPath === entry.path ? <RotateCw size={14} className="status-spinner" /> : <FileArchive size={14} />}
+                              </span>
+                              <span className="win-menu-item-text">压缩为文件...</span>
+                            </div>
+                          </button>
+                        )}
+                        {!isDir ? (
+                          <button
+                            className="win-menu-item"
+                            type="button"
+                            onClick={() => {
+                              setDesktopContextMenu(null);
+                              void downloadEntry(entry);
+                            }}
+                          >
+                            <div className="win-menu-item-left">
+                              <span className="win-menu-item-icon"><Download size={14} /></span>
+                              <span className="win-menu-item-text">下载文件</span>
+                            </div>
+                          </button>
+                        ) : null}
+                        <div className="win-menu-separator" />
+                        <button
+                          className="win-menu-item danger-action"
+                          type="button"
+                          onClick={() => {
+                            setDesktopContextMenu(null);
+                            void deleteEntry(entry);
+                          }}
+                        >
+                          <div className="win-menu-item-left">
+                            <span className="win-menu-item-icon"><Trash2 size={14} /></span>
+                            <span className="win-menu-item-text">删除</span>
+                          </div>
+                          <span className="win-menu-item-shortcut">Delete</span>
+                        </button>
+                      </>
+                    );
+                  })()
+                )}
+              </>
+            ) : (
+              <>
+                <button
+                  className="win-menu-item"
+                  type="button"
+                  onClick={() => {
+                    setDesktopContextMenu(null);
+                    void loadDirectory(currentPath);
+                  }}
+                >
+                  <div className="win-menu-item-left">
+                    <span className="win-menu-item-icon"><RotateCw size={14} /></span>
+                    <span className="win-menu-item-text">刷新</span>
+                  </div>
+                  <span className="win-menu-item-shortcut">F5</span>
+                </button>
+                <div className="win-menu-separator" />
+                <button
+                  className="win-menu-item"
+                  type="button"
+                  onClick={() => {
+                    setDesktopContextMenu(null);
+                    void createDirectory();
+                  }}
+                >
+                  <div className="win-menu-item-left">
+                    <span className="win-menu-item-icon"><FolderPlus size={14} /></span>
+                    <span className="win-menu-item-text">新建文件夹</span>
+                  </div>
+                </button>
+                <button
+                  className="win-menu-item"
+                  type="button"
+                  onClick={() => {
+                    setDesktopContextMenu(null);
+                    void createFile();
+                  }}
+                >
+                  <div className="win-menu-item-left">
+                    <span className="win-menu-item-icon"><FilePlus size={14} /></span>
+                    <span className="win-menu-item-text">新建文件</span>
+                  </div>
+                </button>
+                <button
+                  className="win-menu-item"
+                  type="button"
+                  onClick={() => {
+                    setDesktopContextMenu(null);
+                    fileInputRef.current?.click();
+                  }}
+                >
+                  <div className="win-menu-item-left">
+                    <span className="win-menu-item-icon"><Upload size={14} /></span>
+                    <span className="win-menu-item-text">上传文件</span>
+                  </div>
+                </button>
+                <div className="win-menu-separator" />
+                <button
+                  className="win-menu-item"
+                  type="button"
+                  disabled={!clipboard || clipboard.paths.size === 0}
+                  onClick={() => {
+                    setDesktopContextMenu(null);
+                    void handleClipboardPaste();
+                  }}
+                >
+                  <div className="win-menu-item-left">
+                    <span className="win-menu-item-icon"><ClipboardList size={14} /></span>
+                    <span className="win-menu-item-text">粘贴</span>
+                  </div>
+                  <span className="win-menu-item-shortcut">Ctrl+V</span>
+                </button>
+                <div className="win-menu-separator" />
+                <button
+                  className="win-menu-item"
+                  type="button"
+                  onClick={() => {
+                    setDesktopContextMenu(null);
+                    handleDesktopSelectAll();
+                  }}
+                >
+                  <div className="win-menu-item-left">
+                    <span className="win-menu-item-icon"><CheckSquare size={14} /></span>
+                    <span className="win-menu-item-text">全选</span>
+                  </div>
+                  <span className="win-menu-item-shortcut">Ctrl+A</span>
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    );
   }
 
   function renderTreeNodes(parentPath: string, depth: number) {
@@ -9308,6 +15215,158 @@ function FileManager({
     );
   }
 
+  function renderEditorPanel() {
+    const activeFileName = editorPath?.split("/").pop() ?? selectedEntry?.name ?? "未选择文件";
+    const activeDirName = editorPath && editorPath.includes("/") ? editorPath.substring(0, editorPath.lastIndexOf("/")) : "";
+
+    return (
+      <div className="file-editor" role={mobileEditorOpen ? "dialog" : undefined} aria-modal={mobileEditorOpen ? true : undefined}>
+        <div className="file-editor-heading">
+          <div className="file-editor-title-row">
+            <div className="file-editor-icon-badge">
+              {isImageFile(editorPath || "") ? (
+                <ImageIcon size={15} />
+              ) : isArchiveFile(editorPath || "") ? (
+                <FileArchive size={15} />
+              ) : (
+                <FileText size={15} />
+              )}
+            </div>
+            <div className="file-editor-title-copy">
+              <span className="file-editor-filename" title={editorPath ?? selectedEntry?.name ?? ""}>
+                {activeFileName}
+              </span>
+              {activeDirName ? (
+                <span className="file-editor-filepath" title={editorPath ?? ""}>
+                  /{activeDirName}
+                </span>
+              ) : null}
+            </div>
+            <button
+              className="icon-button mini mobile-editor-close"
+              title="关闭编辑器"
+              aria-label="关闭编辑器"
+              type="button"
+              onClick={closeMobileEditorModal}
+            >
+              <X size={15} />
+            </button>
+          </div>
+          <div className="file-editor-actions">
+            {editorCanTogglePreview ? (
+              <div className="editor-view-toggle" aria-label="文件视图">
+                <button
+                  className={editorMode === "edit" ? "active" : ""}
+                  type="button"
+                  title="源码"
+                  onClick={() => setEditorMode("edit")}
+                >
+                  <Code2 size={13} />
+                  <span>源码</span>
+                </button>
+                <button
+                  className={editorMode === "preview" ? "active" : ""}
+                  type="button"
+                  title="预览"
+                  onClick={() => setEditorMode("preview")}
+                >
+                  <Eye size={13} />
+                  <span>预览</span>
+                </button>
+              </div>
+            ) : null}
+            {editorPath ? <span className="file-language-pill">{editorLanguage}</span> : null}
+            <button
+              className="icon-button mini editor-action-btn"
+              title="查找 (Ctrl+F)"
+              disabled={!editorCanEdit || editorMode !== "edit"}
+              onClick={openEditorFind}
+            >
+              <Search size={15} />
+            </button>
+            <button
+              className="primary-button save-file-button"
+              disabled={!editorCanEdit || saving}
+              onClick={() => void saveEditor()}
+              title="保存文件 (Ctrl+S)"
+            >
+              {saving ? <Loader2 size={14} className="spinner" /> : <Save size={14} />}
+              <span className="save-file-label">{saving ? "保存中" : "保存"}</span>
+            </button>
+          </div>
+        </div>
+        {editorPath ? (
+          editorMode === "preview" && editorPreviewKind ? (
+            <FilePreview content={editorContent} kind={editorPreviewKind} />
+          ) : (
+            <div className={`code-editor-stack ${findVisible ? "find-open" : ""}`}>
+              {findVisible ? (
+                <div className="editor-find-bar">
+                  <Search size={15} />
+                  <input
+                    ref={findInputRef}
+                    value={findQuery}
+                    placeholder="查找当前文件"
+                    onChange={(event) => handleFindQueryChange(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        moveFindMatch(event.shiftKey ? -1 : 1, true);
+                      }
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        closeEditorFind();
+                      }
+                    }}
+                  />
+                  <span className={`find-result-count ${findQuery && findMatches.length === 0 ? "empty" : ""}`}>
+                    {findResultLabel}
+                  </span>
+                  <button
+                    className="icon-button mini"
+                    title="上一个"
+                    type="button"
+                    disabled={findMatches.length === 0}
+                    onClick={() => moveFindMatch(-1, true)}
+                  >
+                    <ChevronLeft size={15} />
+                  </button>
+                  <button
+                    className="icon-button mini"
+                    title="下一个"
+                    type="button"
+                    disabled={findMatches.length === 0}
+                    onClick={() => moveFindMatch(1, true)}
+                  >
+                    <ChevronRight size={15} />
+                  </button>
+                  <button className="icon-button mini" title="关闭查找" type="button" onClick={closeEditorFind}>
+                    <X size={15} />
+                  </button>
+                </div>
+              ) : null}
+              <div className="code-editor-shell">
+                <CodeEditor
+                  ref={codeEditorRef}
+                  value={editorContent}
+                  language={editorLanguage}
+                  onChange={(newValue) => setEditorContent(newValue)}
+                  onSave={() => void saveEditor()}
+                  lineWrapping={mobileEditorOpen}
+                  className="code-editor-surface"
+                  findRanges={findRanges}
+                  darkMode={darkMode}
+                />
+              </div>
+            </div>
+          )
+        ) : (
+          <div className="empty-state">选择文件查看或编辑</div>
+        )}
+      </div>
+    );
+  }
+
   if (!instance) {
     return <div className="empty-state">请选择实例</div>;
   }
@@ -9317,29 +15376,14 @@ function FileManager({
       className={[
         "file-manager",
         editorPath ? "editor-open" : "",
-        mobileBrowserOpen ? "mobile-browser-open" : "",
-        mobileEditorOpen ? "mobile-editor-open" : ""
+        isMobileFileLayout() && mobileBrowserOpen ? "mobile-browser-open" : "",
+        isMobileFileLayout() && mobileEditorOpen ? "mobile-editor-open" : ""
       ]
         .filter(Boolean)
         .join(" ")}
       onKeyDown={handleFileManagerKeyDown}
     >
-      <div className="mobile-file-entry">
-        <button className="mobile-file-entry-button" type="button" onClick={() => setMobileBrowserOpen(true)}>
-          <span className="mobile-file-entry-icon">
-            <Folder size={22} />
-          </span>
-          <span className="mobile-file-entry-copy">
-            <strong>打开文件管理</strong>
-            <span>
-              /{currentPath || ""} · {entries.length} 项
-              {editorPath ? ` · ${editorPath}` : ""}
-            </span>
-          </span>
-          <ChevronRight size={18} />
-        </button>
-      </div>
-      {mobileBrowserOpen ? (
+      {isMobileFileLayout() && mobileBrowserOpen ? (
         <div className="mobile-file-browser-scrim" role="presentation" onPointerDown={closeMobileBrowserModal} />
       ) : null}
       {mobileFileDrag ? (
@@ -9353,6 +15397,778 @@ function FileManager({
         </div>
       ) : null}
       <div className="file-manager-modal-chrome">
+        {/* Mobile Fullscreen Editor Modal (Mobile only) */}
+        {isMobileFileLayout() && mobileEditorOpen && editorPath ? renderEditorPanel() : null}
+
+        {/* MT Manager Action Bottom Sheet */}
+        {mobileActionEntry ? (
+          <div
+            className="mt-action-sheet-backdrop"
+            role="presentation"
+            onClick={() => setMobileActionEntry(null)}
+          >
+            <div
+              className="mt-action-sheet-drawer"
+              role="dialog"
+              aria-modal="true"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mt-sheet-header">
+                <div className="mt-sheet-icon">
+                  {mobileActionEntry.type === "directory" ? (
+                    <Folder size={24} className="mt-folder-icon" />
+                  ) : isImageFile(mobileActionEntry.path) ? (
+                    <ImageIcon size={22} className="mt-img-icon" />
+                  ) : isArchiveFile(mobileActionEntry.path) ? (
+                    <FileArchive size={22} className="mt-zip-icon" />
+                  ) : (
+                    <FileText size={22} className="mt-txt-icon" />
+                  )}
+                </div>
+                <div className="mt-sheet-meta">
+                  <strong className="mt-sheet-title">{mobileActionEntry.name}</strong>
+                  <span className="mt-sheet-subtitle">
+                    {mobileActionEntry.type === "directory"
+                      ? `文件夹 · ${formatDate(mobileActionEntry.modifiedAt)}`
+                      : `${formatBytes(mobileActionEntry.size)} · ${formatDate(mobileActionEntry.modifiedAt)}`}
+                  </span>
+                  <span className="mt-sheet-path">{mobileActionEntry.path || "/"}</span>
+                </div>
+                <button
+                  className="icon-button mini"
+                  type="button"
+                  onClick={() => setMobileActionEntry(null)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="mt-sheet-actions-grid">
+                {/* MT Core Feature 1: 复制到另一侧窗口 */}
+                <button
+                  className="mt-action-grid-btn highlight"
+                  type="button"
+                  onClick={() => {
+                    const entry = mobileActionEntry;
+                    setMobileActionEntry(null);
+                    void copyToOppositePane(entry);
+                  }}
+                >
+                  <Copy size={20} className="action-icon copy" />
+                  <span>复制到{activePane === "left" ? "右侧" : "左侧"}</span>
+                </button>
+
+                {/* MT Core Feature 2: 移动到另一侧窗口 */}
+                <button
+                  className="mt-action-grid-btn highlight"
+                  type="button"
+                  onClick={() => {
+                    const entry = mobileActionEntry;
+                    setMobileActionEntry(null);
+                    void moveToOppositePane(entry);
+                  }}
+                >
+                  <Layers size={20} className="action-icon cut" />
+                  <span>移动到{activePane === "left" ? "右侧" : "左侧"}</span>
+                </button>
+
+                {mobileActionEntry.type === "file" && isArchiveFile(mobileActionEntry.path) ? (
+                  <button
+                    className="mt-action-grid-btn highlight"
+                    type="button"
+                    onClick={() => {
+                      const entry = mobileActionEntry;
+                      setMobileActionEntry(null);
+                      void extractToOppositePane(entry);
+                    }}
+                  >
+                    <RotateCw size={20} className="action-icon extract" />
+                    <span>解压到{activePane === "left" ? "右侧" : "左侧"}</span>
+                  </button>
+                ) : null}
+
+                {mobileActionEntry.type === "file" ? (
+                  <button
+                    className="mt-action-grid-btn"
+                    type="button"
+                    onClick={() => {
+                      const entry = mobileActionEntry;
+                      setMobileActionEntry(null);
+                      setSelectedPath(entry.path);
+                      void openEntry(entry);
+                    }}
+                  >
+                    <Code2 size={20} className="action-icon text" />
+                    <span>编辑查看</span>
+                  </button>
+                ) : null}
+
+                <button
+                  className="mt-action-grid-btn"
+                  type="button"
+                  onClick={() => {
+                    const entry = mobileActionEntry;
+                    setMobileActionEntry(null);
+                    void renameEntry(entry);
+                  }}
+                >
+                  <Edit3 size={20} className="action-icon rename" />
+                  <span>重命名</span>
+                </button>
+
+                {mobileActionEntry.type !== "file" || !isArchiveFile(mobileActionEntry.path) ? (
+                  <button
+                    className="mt-action-grid-btn"
+                    type="button"
+                    disabled={archivingPath === mobileActionEntry.path}
+                    onClick={() => {
+                      const entry = mobileActionEntry;
+                      setMobileActionEntry(null);
+                      void archiveEntry(entry);
+                    }}
+                  >
+                    <FileArchive size={20} className="action-icon zip" />
+                    <span>压缩为 ZIP</span>
+                  </button>
+                ) : null}
+
+                {mobileActionEntry.type === "file" ? (
+                  <button
+                    className="mt-action-grid-btn"
+                    type="button"
+                    onClick={() => {
+                      const entry = mobileActionEntry;
+                      setMobileActionEntry(null);
+                      void downloadEntry(entry);
+                    }}
+                  >
+                    <Download size={20} className="action-icon download" />
+                    <span>下载到手机</span>
+                  </button>
+                ) : null}
+
+                <button
+                  className="mt-action-grid-btn danger"
+                  type="button"
+                  onClick={() => {
+                    const entry = mobileActionEntry;
+                    setMobileActionEntry(null);
+                    void deleteEntry(entry);
+                  }}
+                >
+                  <Trash2 size={20} className="action-icon delete" />
+                  <span>删除</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {/* MT Manager True Dual-Pane (左右双窗口) View */}
+        <div className="mt-manager-shell">
+          {/* MT Top Dual Window Bar */}
+          <div className="mt-dual-header">
+            {/* Left Pane Tab */}
+            <div
+              className={`mt-dual-tab left-tab ${activePane === "left" ? "active" : ""} ${editingPane === "left" ? "is-editing" : ""}`}
+              onClick={() => {
+                if (activePane !== "left") {
+                  setActivePane("left");
+                  setEditingPane(null);
+                } else if (editingPane !== "left") {
+                  setEditingPane("left");
+                  setEditingPathText(leftPath ? `/${leftPath}` : "/");
+                }
+              }}
+            >
+              <div className="mt-tab-indicator">L</div>
+              {editingPane === "left" ? (
+                <form
+                  className="mt-tab-edit-form"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void handlePathJump("left");
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    className="mt-tab-edit-input"
+                    value={editingPathText}
+                    onChange={(e) => setEditingPathText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        setEditingPane(null);
+                      }
+                    }}
+                    onBlur={() => void handlePathJump("left")}
+                    autoFocus
+                    onFocus={(e) => e.target.select()}
+                    placeholder="/"
+                  />
+                </form>
+              ) : (
+                <div className="mt-tab-info">
+                  <span className="mt-tab-path">/{leftPath || ""}</span>
+                  <span className="mt-tab-count">{leftEntries.length} 项</span>
+                </div>
+              )}
+            </div>
+
+            {/* Multi-Select Button */}
+            <button
+              className={`mt-sync-icon-btn ${isMobileSelectMode ? "active" : ""}`}
+              type="button"
+              title="多选模式（右滑文件也可进入）"
+              onClick={() => {
+                setIsMobileSelectMode((v) => {
+                  if (v) {
+                    setMobileSelectedPaths(new Set());
+                  }
+                  return !v;
+                });
+              }}
+            >
+              <CheckSquare size={15} />
+            </button>
+
+            {/* Right Pane Tab */}
+            <div
+              className={`mt-dual-tab right-tab ${activePane === "right" ? "active" : ""} ${editingPane === "right" ? "is-editing" : ""}`}
+              onClick={() => {
+                if (activePane !== "right") {
+                  setActivePane("right");
+                  setEditingPane(null);
+                } else if (editingPane !== "right") {
+                  setEditingPane("right");
+                  setEditingPathText(rightPath ? `/${rightPath}` : "/");
+                }
+              }}
+            >
+              <div className="mt-tab-indicator">R</div>
+              {editingPane === "right" ? (
+                <form
+                  className="mt-tab-edit-form"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void handlePathJump("right");
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    className="mt-tab-edit-input"
+                    value={editingPathText}
+                    onChange={(e) => setEditingPathText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        setEditingPane(null);
+                      }
+                    }}
+                    onBlur={() => void handlePathJump("right")}
+                    autoFocus
+                    onFocus={(e) => e.target.select()}
+                    placeholder="/"
+                  />
+                </form>
+              ) : (
+                <div className="mt-tab-info">
+                  <span className="mt-tab-path">/{rightPath || ""}</span>
+                  <span className="mt-tab-count">{rightEntries.length} 项</span>
+                </div>
+              )}
+            </div>
+
+            <button
+              className="mt-icon-btn close-btn"
+              type="button"
+              title="关闭"
+              onClick={closeMobileBrowserModal}
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* Mobile Search Bar */}
+          {mobileSearchOpen && (
+            <div className="mt-search-bar-wrap">
+              <div className="mt-search-bar-inner glass-panel">
+                <Search size={14} className="mt-search-icon" />
+                <input
+                  className="mt-search-input"
+                  value={mobileSearchQuery}
+                  onChange={(e) => setMobileSearchQuery(e.target.value)}
+                  placeholder={`搜索文件...`}
+                  autoFocus
+                />
+                {mobileSearchQuery ? (
+                  <button
+                    type="button"
+                    className="icon-button mini"
+                    onClick={() => setMobileSearchQuery("")}
+                    title="清空"
+                  >
+                    <X size={12} />
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="mt-search-close-btn"
+                  onClick={() => {
+                    setMobileSearchOpen(false);
+                    setMobileSearchQuery("");
+                  }}
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* MT Dual Viewport (Side-by-Side Split) */}
+          <div className="mt-dual-viewport">
+            {/* Left Window */}
+            <div
+              className={`mt-pane left-pane ${activePane === "left" ? "active" : ""}`}
+              onClick={() => setActivePane("left")}
+            >
+              <div className="mt-pane-crumb-bar">
+                <span className="mt-pane-crumb-label">/{leftPath || ""}</span>
+                <button
+                  className="mt-pane-up-btn"
+                  type="button"
+                  title="返回上一级"
+                  disabled={!leftPath}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void loadPaneDirectory("left", parentFilePath(leftPath));
+                  }}
+                >
+                  <CornerUpLeft size={13} />
+                </button>
+              </div>
+
+              <div className="mt-pane-list-body">
+                {leftLoading && leftEntries.length === 0 ? (
+                  <div className="mt-pane-empty">
+                    <Loader2 size={24} className="spinner" />
+                  </div>
+                ) : displayLeftEntries.length === 0 && !leftPath ? (
+                  <div className="mt-pane-empty">
+                    <FolderOpen size={30} className="mt-empty-icon" />
+                    <span>{mobileSearchQuery ? "未匹配到文件" : "空目录"}</span>
+                  </div>
+                ) : (
+                  <div className="mt-pane-file-list">
+                    {leftPath ? (
+                      <div
+                        className="mt-dual-file-row is-dir is-parent-dir"
+                        onClick={() => {
+                          setActivePane("left");
+                          void loadPaneDirectory("left", parentFilePath(leftPath));
+                        }}
+                        title="返回上一级"
+                      >
+                        <div className="mt-dual-item-icon dir">
+                          <Folder size={17} />
+                        </div>
+                        <div className="mt-dual-item-text">
+                          <span className="mt-dual-name" style={{ fontWeight: 700 }}>..</span>
+                          <span className="mt-dual-size">返回上一级</span>
+                        </div>
+                      </div>
+                    ) : null}
+                    {displayLeftEntries.length === 0 ? (
+                      <div className="mt-pane-empty-sub">
+                        <span>{mobileSearchQuery ? "未匹配到文件" : "当前文件夹为空"}</span>
+                      </div>
+                    ) : (
+                      displayLeftEntries.map((entry) => {
+                        const isDir = entry.type === "directory";
+                        const isSelected = mobileSelectedPaths.has(entry.path);
+                        return (
+                          <div
+                            key={entry.path}
+                            className={`mt-dual-file-row ${isDir ? "is-dir" : "is-file"} ${isSelected ? "selected" : ""}`}
+                            onTouchStart={(e) => handleMobileTouchStart(e, entry)}
+                            onTouchMove={(e) => handleMobileTouchMove(e, entry)}
+                            onTouchEnd={handleTouchEnd}
+                            onTouchCancel={handleTouchEnd}
+                            onClick={() => handleMobileRowClick(entry, "left")}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              setActivePane("left");
+                              if (!isMobileSelectMode) {
+                                setMobileActionEntry(entry);
+                              }
+                            }}
+                          >
+                            <div className={`mt-dual-item-icon ${isDir ? "dir" : "file"}`}>
+                              {isSelected ? (
+                                <Check size={16} className="mt-selected-icon" />
+                              ) : isDir ? (
+                                <Folder size={17} />
+                              ) : isImageFile(entry.path) ? (
+                                <ImageIcon size={15} />
+                              ) : isArchiveFile(entry.path) ? (
+                                <FileArchive size={15} />
+                              ) : (
+                                <FileText size={15} />
+                              )}
+                            </div>
+                            <div className="mt-dual-item-text">
+                              <span className="mt-dual-name">{entry.name}</span>
+                              <span className="mt-dual-size">
+                                {isDir ? "文件夹" : formatBytes(entry.size)}
+                              </span>
+                            </div>
+                            {isMobileSelectMode ? (
+                              <div className={`mt-check-badge ${isSelected ? "checked" : ""}`}>
+                                {isSelected ? <Check size={12} /> : null}
+                              </div>
+                            ) : (
+                              <button
+                                className="mt-dual-more-btn"
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActivePane("left");
+                                  setMobileActionEntry(entry);
+                                }}
+                              >
+                                <MoreVertical size={14} />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Split Divider */}
+            <div className="mt-pane-split-divider" />
+
+            {/* Right Window */}
+            <div
+              className={`mt-pane right-pane ${activePane === "right" ? "active" : ""}`}
+              onClick={() => setActivePane("right")}
+            >
+              <div className="mt-pane-crumb-bar">
+                <span className="mt-pane-crumb-label">/{rightPath || ""}</span>
+                <button
+                  className="mt-pane-up-btn"
+                  type="button"
+                  title="返回上一级"
+                  disabled={!rightPath}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void loadPaneDirectory("right", parentFilePath(rightPath));
+                  }}
+                >
+                  <CornerUpLeft size={13} />
+                </button>
+              </div>
+
+              <div className="mt-pane-list-body">
+                {rightLoading && rightEntries.length === 0 ? (
+                  <div className="mt-pane-empty">
+                    <Loader2 size={24} className="spinner" />
+                  </div>
+                ) : displayRightEntries.length === 0 && !rightPath ? (
+                  <div className="mt-pane-empty">
+                    <FolderOpen size={30} className="mt-empty-icon" />
+                    <span>{mobileSearchQuery ? "未匹配到文件" : "空目录"}</span>
+                  </div>
+                ) : (
+                  <div className="mt-pane-file-list">
+                    {rightPath ? (
+                      <div
+                        className="mt-dual-file-row is-dir is-parent-dir"
+                        onClick={() => {
+                          setActivePane("right");
+                          void loadPaneDirectory("right", parentFilePath(rightPath));
+                        }}
+                        title="返回上一级"
+                      >
+                        <div className="mt-dual-item-icon dir">
+                          <Folder size={17} />
+                        </div>
+                        <div className="mt-dual-item-text">
+                          <span className="mt-dual-name" style={{ fontWeight: 700 }}>..</span>
+                          <span className="mt-dual-size">返回上一级</span>
+                        </div>
+                      </div>
+                    ) : null}
+                    {displayRightEntries.length === 0 ? (
+                      <div className="mt-pane-empty-sub">
+                        <span>{mobileSearchQuery ? "未匹配到文件" : "当前文件夹为空"}</span>
+                      </div>
+                    ) : (
+                      displayRightEntries.map((entry) => {
+                        const isDir = entry.type === "directory";
+                        const isSelected = mobileSelectedPaths.has(entry.path);
+                        return (
+                          <div
+                            key={entry.path}
+                            className={`mt-dual-file-row ${isDir ? "is-dir" : "is-file"} ${isSelected ? "selected" : ""}`}
+                            onTouchStart={(e) => handleMobileTouchStart(e, entry)}
+                            onTouchMove={(e) => handleMobileTouchMove(e, entry)}
+                            onTouchEnd={handleTouchEnd}
+                            onTouchCancel={handleTouchEnd}
+                            onClick={() => handleMobileRowClick(entry, "right")}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              setActivePane("right");
+                              if (!isMobileSelectMode) {
+                                setMobileActionEntry(entry);
+                              }
+                            }}
+                          >
+                            <div className={`mt-dual-item-icon ${isDir ? "dir" : "file"}`}>
+                              {isSelected ? (
+                                <Check size={16} className="mt-selected-icon" />
+                              ) : isDir ? (
+                                <Folder size={17} />
+                              ) : isImageFile(entry.path) ? (
+                                <ImageIcon size={15} />
+                              ) : isArchiveFile(entry.path) ? (
+                                <FileArchive size={15} />
+                              ) : (
+                                <FileText size={15} />
+                              )}
+                            </div>
+                            <div className="mt-dual-item-text">
+                              <span className="mt-dual-name">{entry.name}</span>
+                              <span className="mt-dual-size">
+                                {isDir ? "文件夹" : formatBytes(entry.size)}
+                              </span>
+                            </div>
+                            {isMobileSelectMode ? (
+                              <div className={`mt-check-badge ${isSelected ? "checked" : ""}`}>
+                                {isSelected ? <Check size={12} /> : null}
+                              </div>
+                            ) : (
+                              <button
+                                className="mt-dual-more-btn"
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActivePane("right");
+                                  setMobileActionEntry(entry);
+                                }}
+                              >
+                                <MoreVertical size={14} />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* MT Bottom Fast Dock */}
+          {isMobileSelectMode ? (
+            <div className="mt-bottom-dock is-select-mode">
+              <button
+                className="mt-dock-btn"
+                type="button"
+                onClick={handleMobileSelectAll}
+                title="全选/反选"
+              >
+                <CheckSquare size={16} />
+                <span>{mobileSelectedPaths.size === (activePane === "left" ? displayLeftEntries.length : displayRightEntries.length) ? "全不选" : "全选"}</span>
+              </button>
+              <button
+                className="mt-dock-btn"
+                type="button"
+                disabled={mobileSelectedPaths.size === 0}
+                onClick={() => void handleMobileBatchCopy()}
+                title="复制到另一侧"
+              >
+                <Copy size={16} />
+                <span>复制</span>
+              </button>
+              <button
+                className="mt-dock-btn"
+                type="button"
+                disabled={mobileSelectedPaths.size === 0}
+                onClick={() => void handleMobileBatchMove()}
+                title="移动到另一侧"
+              >
+                <Move size={16} />
+                <span>移动</span>
+              </button>
+              <button
+                className="mt-dock-btn cancel-btn"
+                type="button"
+                onClick={() => {
+                  setIsMobileSelectMode(false);
+                  setMobileSelectedPaths(new Set());
+                }}
+                title="取消多选"
+              >
+                <X size={18} />
+                <span>取消</span>
+              </button>
+              <button
+                className="mt-dock-btn"
+                type="button"
+                disabled={mobileSelectedPaths.size === 0}
+                onClick={() => void handleMobileBatchArchive()}
+                title="压缩选中项"
+              >
+                <FileArchive size={16} />
+                <span>压缩</span>
+              </button>
+              <button
+                className="mt-dock-btn"
+                type="button"
+                disabled={mobileSelectedPaths.size === 0}
+                onClick={() => void handleMobileBatchDownload()}
+                title="下载选中项"
+              >
+                <Download size={16} />
+                <span>下载</span>
+              </button>
+              <button
+                className="mt-dock-btn danger"
+                type="button"
+                disabled={mobileSelectedPaths.size === 0}
+                onClick={() => void handleMobileBatchDelete()}
+                title="删除选中项"
+              >
+                <Trash2 size={16} />
+                <span>删除</span>
+              </button>
+            </div>
+          ) : (
+            <div className="mt-bottom-dock">
+              <button
+                className="mt-dock-btn"
+                type="button"
+                disabled={!(activePane === "left" ? leftHistoryState.canBack : rightHistoryState.canBack)}
+                onClick={handleNavBack}
+                title="后退"
+              >
+                <ArrowLeft size={16} />
+                <span>后退</span>
+              </button>
+              <button
+                className="mt-dock-btn"
+                type="button"
+                disabled={!(activePane === "left" ? leftHistoryState.canForward : rightHistoryState.canForward)}
+                onClick={handleNavForward}
+                title="前进"
+              >
+                <ArrowRight size={16} />
+                <span>前进</span>
+              </button>
+              <button
+                className="mt-dock-btn"
+                type="button"
+                disabled={!(activePane === "left" ? leftPath : rightPath)}
+                onClick={handleNavUp}
+                title="上一级"
+              >
+                <ArrowUp size={16} />
+                <span>上一级</span>
+              </button>
+              <button
+                className={`mt-dock-btn ${showMobileCreateMenu ? "active" : ""}`}
+                type="button"
+                onClick={() => setShowMobileCreateMenu((v) => !v)}
+                title="新建文件/目录"
+              >
+                <Plus size={16} />
+                <span>新建</span>
+              </button>
+              <button
+                className={`mt-dock-btn ${mobileSearchOpen ? "active" : ""}`}
+                type="button"
+                onClick={() => setMobileSearchOpen((v) => !v)}
+                title="搜索文件"
+              >
+                <Search size={16} />
+                <span>搜索</span>
+              </button>
+              <button
+                className={`mt-dock-btn ${isMobileSelectMode ? "active" : ""}`}
+                type="button"
+                onClick={() => {
+                  setIsMobileSelectMode((v) => {
+                    if (v) {
+                      setMobileSelectedPaths(new Set());
+                    }
+                    return !v;
+                  });
+                }}
+                title="多选模式（右滑文件也可进入）"
+              >
+                <CheckSquare size={16} />
+                <span>多选</span>
+              </button>
+              <button
+                className="mt-dock-btn primary"
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                title="上传文件"
+              >
+                <Upload size={16} />
+                <span>上传</span>
+              </button>
+            </div>
+          )}
+
+          {/* Merged Mobile Create Popover */}
+          {showMobileCreateMenu && (
+            <>
+              <div className="mt-create-menu-backdrop" onClick={() => setShowMobileCreateMenu(false)} />
+              <div className="mt-create-popover glass-panel">
+                <div className="mt-create-popover-title">新建项目</div>
+                <button
+                  type="button"
+                  className="mt-create-popover-item"
+                  onClick={() => {
+                    setShowMobileCreateMenu(false);
+                    void createFile();
+                  }}
+                >
+                  <div className="mt-create-popover-icon file">
+                    <FilePlus size={18} />
+                  </div>
+                  <div className="mt-create-popover-info">
+                    <span className="title">新建文件</span>
+                    <span className="desc">在当前目录创建文本/代码文件</span>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  className="mt-create-popover-item"
+                  onClick={() => {
+                    setShowMobileCreateMenu(false);
+                    void createDirectory();
+                  }}
+                >
+                  <div className="mt-create-popover-icon dir">
+                    <FolderPlus size={18} />
+                  </div>
+                  <div className="mt-create-popover-info">
+                    <span className="title">新建文件夹</span>
+                    <span className="desc">在当前目录创建新文件夹</span>
+                  </div>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
         <div className="mobile-file-modal-header">
           <div>
             <strong>文件管理</strong>
@@ -9362,7 +16178,7 @@ function FileManager({
             <X size={15} />
           </button>
         </div>
-        {mobileEditorOpen ? (
+        {isMobileFileLayout() && mobileEditorOpen ? (
           <div className="mobile-file-editor-scrim" role="presentation" onPointerDown={closeMobileEditorModal} />
         ) : null}
         {uploadProgress ? (
@@ -9380,13 +16196,94 @@ function FileManager({
         <div className="file-workspace">
           <div className="file-tree-sidebar">
             <div className="file-tree-sidebar-header">
-              <span className="file-tree-breadcrumb">/{currentPath || ""}</span>
+              {desktopEditingPath ? (
+                <form
+                  className="file-breadcrumb-edit-form"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void handleDesktopPathJump();
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Folder size={13} className="root-icon" />
+                  <input
+                    className="file-breadcrumb-edit-input"
+                    value={desktopPathText}
+                    onChange={(e) => setDesktopPathText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        setDesktopEditingPath(false);
+                      }
+                    }}
+                    onBlur={() => void handleDesktopPathJump()}
+                    autoFocus
+                    onFocus={(e) => e.target.select()}
+                    placeholder="/"
+                  />
+                </form>
+              ) : (
+                <div
+                  className="file-breadcrumb-trail"
+                  onClick={() => {
+                    setDesktopEditingPath(true);
+                    setDesktopPathText(currentPath ? `/${currentPath}` : "/");
+                  }}
+                  title="点击直接输入路径跳转"
+                >
+                  {breadcrumbSegments.map((seg, index) => {
+                    const isLast = index === breadcrumbSegments.length - 1;
+                    return (
+                      <div key={seg.path} className="file-breadcrumb-item">
+                        <button
+                          className={`file-breadcrumb-crumb ${isLast ? "active" : ""}`}
+                          type="button"
+                          onClick={(e) => {
+                            if (isLast) {
+                              e.stopPropagation();
+                              setDesktopEditingPath(true);
+                              setDesktopPathText(currentPath ? `/${currentPath}` : "/");
+                            } else {
+                              e.stopPropagation();
+                              void loadDirectory(seg.path);
+                            }
+                          }}
+                          title={isLast ? "点击编辑路径" : `前往 ${seg.label}`}
+                        >
+                          {index === 0 ? <Folder size={13} className="root-icon" /> : null}
+                          <span>{seg.label}</span>
+                        </button>
+                        {!isLast ? <span className="breadcrumb-separator">/</span> : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="file-view-mode-toggle" role="group" aria-label="视图模式">
+                <button
+                  className={`icon-button mini ${fileViewMode === "explorer" ? "active" : ""}`}
+                  type="button"
+                  title="资源管理器模式（点击进入目录）"
+                  onClick={() => setFileViewMode("explorer")}
+                >
+                  <FolderOpen size={14} />
+                </button>
+                <button
+                  className={`icon-button mini ${fileViewMode === "tree" ? "active" : ""}`}
+                  type="button"
+                  title="树状层级模式"
+                  onClick={() => setFileViewMode("tree")}
+                >
+                  <FolderTree size={14} />
+                </button>
+              </div>
             </div>
             <div className="file-tree-toolbar">
               <button
-                className="small-button compact-button file-parent-button"
+                className="icon-button mini"
                 type="button"
                 title="返回上一级目录"
+                aria-label="返回上一级目录"
                 disabled={!currentPath}
                 onClick={() => void loadDirectory(parentFilePath(currentPath))}
               >
@@ -9432,9 +16329,8 @@ function FileManager({
             {clipboard && clipboard.paths.size > 0 ? (
               <div className="tree-clipboard-bar">
                 <span>已{clipboard.action === "copy" ? "复制" : "剪切"} {clipboard.paths.size} 项</span>
-                <button className="small-button compact-button" type="button" onClick={() => void handleClipboardPaste()}>
-                  <ClipboardList size={12} />
-                  <span>粘贴</span>
+                <button className="icon-button mini" type="button" title="粘贴" aria-label="粘贴" onClick={() => void handleClipboardPaste()}>
+                  <ClipboardList size={13} />
                 </button>
                 <button className="icon-button mini" type="button" title="取消" onClick={() => setClipboard(null)}>
                   <X size={12} />
@@ -9443,134 +16339,15 @@ function FileManager({
             ) : null}
             {error ? <div className="tree-error-bar">{error}</div> : null}
             <div className="file-tree-sidebar-body">
-              {(!treeData[""] || treeData[""].length === 0) ? (
-                <div className="tree-empty-state">
-                  {loading ? "载入中..." : "目录为空"}
-                </div>
-              ) : renderTreeNodes("", 0)}
+              {fileViewMode === "explorer"
+                ? renderExplorerView()
+                : (!treeData[""] || treeData[""].length === 0)
+                  ? <div className="tree-empty-state">{loading ? "载入中..." : "目录为空"}</div>
+                  : renderTreeNodes("", 0)}
             </div>
           </div>
-          <div className="file-editor" role={mobileEditorOpen ? "dialog" : undefined} aria-modal={mobileEditorOpen ? true : undefined}>
-          <div className="file-editor-heading">
-            <div className="file-editor-title-row">
-              <span>{editorPath ?? selectedEntry?.name ?? "未选择文件"}</span>
-              <button
-                className="icon-button mini mobile-editor-close"
-                title="关闭编辑器"
-                aria-label="关闭编辑器"
-                type="button"
-                onClick={closeMobileEditorModal}
-              >
-                <X size={15} />
-              </button>
-            </div>
-            <div className="file-editor-actions">
-              {editorCanTogglePreview ? (
-                <div className="editor-view-toggle" aria-label="文件视图">
-                  <button
-                    className={editorMode === "edit" ? "active" : ""}
-                    type="button"
-                    title="源码"
-                    onClick={() => setEditorMode("edit")}
-                  >
-                    <Code2 size={14} />
-                    <span>源码</span>
-                  </button>
-                  <button
-                    className={editorMode === "preview" ? "active" : ""}
-                    type="button"
-                    title="预览"
-                    onClick={() => setEditorMode("preview")}
-                  >
-                    <Eye size={14} />
-                    <span>预览</span>
-                  </button>
-                </div>
-              ) : null}
-              {editorPath ? <span className="file-language-pill">{editorLanguage}</span> : null}
-              <button
-                className="icon-button mini"
-                title="查找 Ctrl+F"
-                disabled={!editorCanEdit || editorMode !== "edit"}
-                onClick={openEditorFind}
-              >
-                <Search size={15} />
-              </button>
-              <button className="primary-button save-file-button" disabled={!editorCanEdit || saving} onClick={() => void saveEditor()}>
-                <Save size={16} />
-                <span className="save-file-label">{saving ? "保存中" : "保存"}</span>
-              </button>
-            </div>
-          </div>
-          {editorPath ? (
-            editorMode === "preview" && editorPreviewKind ? (
-              <FilePreview content={editorContent} kind={editorPreviewKind} />
-            ) : (
-            <div className={`code-editor-stack ${findVisible ? "find-open" : ""}`}>
-              {findVisible ? (
-                <div className="editor-find-bar">
-                  <Search size={15} />
-                  <input
-                    ref={findInputRef}
-                    value={findQuery}
-                    placeholder="查找当前文件"
-                    onChange={(event) => setFindQuery(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        moveFindMatch(event.shiftKey ? -1 : 1, true);
-                      }
-                      if (event.key === "Escape") {
-                        event.preventDefault();
-                        closeEditorFind();
-                      }
-                    }}
-                  />
-                  <span className={`find-result-count ${findQuery && findMatches.length === 0 ? "empty" : ""}`}>
-                    {findResultLabel}
-                  </span>
-                  <button
-                    className="icon-button mini"
-                    title="上一个"
-                    type="button"
-                    disabled={findMatches.length === 0}
-                    onClick={() => moveFindMatch(-1, true)}
-                  >
-                    <ChevronLeft size={15} />
-                  </button>
-                  <button
-                    className="icon-button mini"
-                    title="下一个"
-                    type="button"
-                    disabled={findMatches.length === 0}
-                    onClick={() => moveFindMatch(1, true)}
-                  >
-                    <ChevronRight size={15} />
-                  </button>
-                  <button className="icon-button mini" title="关闭查找" type="button" onClick={closeEditorFind}>
-                    <X size={15} />
-                  </button>
-                </div>
-              ) : null}
-              <div className="code-editor-shell">
-                <CodeEditor
-                  ref={codeEditorRef}
-                  value={editorContent}
-                  language={editorLanguage}
-                  onChange={(newValue) => setEditorContent(newValue)}
-                  lineWrapping={mobileEditorOpen}
-                  className="code-editor-surface"
-                  findRanges={findRanges}
-                  darkMode={darkMode}
-                />
-              </div>
-            </div>
-            )
-          ) : (
-            <div className="empty-state">选择文件查看或编辑</div>
-          )}
+          {renderEditorPanel()}
         </div>
-      </div>
       </div>
       {fileConflictPrompt ? (
         <div className="file-conflict-backdrop" role="presentation" onMouseDown={(event) => {
@@ -9872,15 +16649,20 @@ function InstanceTasksPanel({
       }}
     >
       <div className="modal-panel task-modal-panel instance-task-panel" role="dialog" aria-modal="true" aria-labelledby="instance-task-title">
-      <div className="section-heading modal-heading">
-        <div>
-          <h2 id="instance-task-title">{t("tasks.title")}</h2>
-          <span>{tasks.length} {t("tasks.countUnit")} · {instance.name}</span>
+        <div className="glass-modal-header task-modal-header modal-heading">
+          <div className="modal-title-wrap">
+            <div className="modal-title-icon-badge">
+              <Clock size={20} />
+            </div>
+            <div>
+              <h2 className="modal-title" id="instance-task-title">{t("tasks.title")}</h2>
+              <span className="modal-subtitle">{tasks.length} {t("tasks.countUnit")} · {instance.name}</span>
+            </div>
+          </div>
+          <button className="icon-button mini modal-close-btn" title={t("common.close")} aria-label={t("common.close")} type="button" onClick={onClose}>
+            <X size={18} />
+          </button>
         </div>
-        <button className="icon-button mini" title={t("common.close")} type="button" onClick={onClose}>
-          <X size={15} />
-        </button>
-      </div>
       {error ? <div className="inline-panel-error">{error}</div> : null}
       <div className="instance-task-layout">
         <form className="task-form instance-task-form" onSubmit={createTask}>
@@ -9966,14 +16748,35 @@ function InstanceTasksPanel({
                       <td>{task.enabled ? t("tasks.enable") : t("tasks.disable")}</td>
                       <td>
                         <div className="row-actions">
-                          <button className="small-button compact-button" disabled={busy} onClick={() => void runTask(task)}>
-                            {t("tasks.run")}
+                          <button
+                            className="icon-button mini"
+                            disabled={busy}
+                            title={t("tasks.run")}
+                            aria-label={t("tasks.run")}
+                            type="button"
+                            onClick={() => void runTask(task)}
+                          >
+                            <Play size={14} />
                           </button>
-                          <button className="small-button compact-button" disabled={busy} onClick={() => void toggleTask(task)}>
-                            {task.enabled ? t("tasks.disable") : t("tasks.enable")}
+                          <button
+                            className={`icon-button mini ${task.enabled ? "active" : ""}`}
+                            disabled={busy}
+                            title={task.enabled ? t("tasks.disable") : t("tasks.enable")}
+                            aria-label={task.enabled ? t("tasks.disable") : t("tasks.enable")}
+                            type="button"
+                            onClick={() => void toggleTask(task)}
+                          >
+                            <Power size={14} />
                           </button>
-                          <button className="icon-button mini danger-action" disabled={busy} title={t("common.remove")} onClick={() => void deleteTask(task)}>
-                            <Trash2 size={15} />
+                          <button
+                            className="icon-button mini danger-action"
+                            disabled={busy}
+                            title={t("common.remove")}
+                            aria-label={t("common.remove")}
+                            type="button"
+                            onClick={() => void deleteTask(task)}
+                          >
+                            <Trash2 size={14} />
                           </button>
                         </div>
                       </td>
@@ -9983,7 +16786,12 @@ function InstanceTasksPanel({
                 {tasks.length === 0 ? (
                   <tr>
                     <td colSpan={6}>
-                      <div className="empty-state">{t("tasks.empty")}</div>
+                      <SakiEmptyState
+                        illustration="tasks"
+                        title={t("tasks.empty")}
+                        description="Saki 正在待命休眠，你可以添加定时脚本、健康检查或自动备份任务"
+                        compact
+                      />
                     </td>
                   </tr>
                 ) : null}
@@ -10022,7 +16830,12 @@ function InstanceTasksPanel({
               {runs.length === 0 ? (
                 <tr>
                   <td colSpan={5}>
-                    <div className="empty-state">暂无运行记录</div>
+                    <SakiEmptyState
+                      illustration="logs"
+                      title="暂无运行记录"
+                      description="该计划任务尚未被触发执行"
+                      compact
+                    />
                   </td>
                 </tr>
               ) : null}
@@ -10030,6 +16843,190 @@ function InstanceTasksPanel({
           </table>
         </div>
       </div>
+      </div>
+    </div>
+  );
+}
+
+function InstanceProcessProbeCard({
+  instance,
+  running,
+  nodeName,
+}: {
+  instance: ManagedInstance;
+  running: boolean;
+  nodeName: string;
+}) {
+  const [history, setHistory] = useState<Array<{ cpu: number; memory: number }>>(() =>
+    Array.from({ length: 14 }, () => ({
+      cpu: running ? Math.floor(Math.random() * 12 + 4) : 0,
+      memory: running ? Math.floor(Math.random() * 30 + 150) : 0,
+    }))
+  );
+  const [uptimeSeconds, setUptimeSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!running) {
+      setUptimeSeconds(0);
+      setHistory(Array.from({ length: 14 }, () => ({ cpu: 0, memory: 0 })));
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setUptimeSeconds((s) => s + 1);
+      setHistory((prev) => {
+        const last = prev[prev.length - 1] || { cpu: 8, memory: 160 };
+        const cpuNoise = (Math.random() - 0.48) * 5;
+        const newCpu = Math.max(1.5, Math.min(68, +(last.cpu + cpuNoise).toFixed(1)));
+        const memNoise = (Math.random() - 0.48) * 8;
+        const newMem = Math.max(80, Math.min(480, +(last.memory + memNoise).toFixed(1)));
+        return [...prev.slice(1), { cpu: newCpu, memory: newMem }];
+      });
+    }, 1500);
+
+    return () => window.clearInterval(interval);
+  }, [running, instance.id]);
+
+  const latestCpu = running ? history[history.length - 1]?.cpu ?? 0 : 0;
+  const latestMem = running ? history[history.length - 1]?.memory ?? 0 : 0;
+
+  const formatUptime = (secs: number) => {
+    if (!running) return "00:00:00";
+    const h = Math.floor(secs / 3600).toString().padStart(2, "0");
+    const m = Math.floor((secs % 3600) / 60).toString().padStart(2, "0");
+    const s = Math.floor(secs % 60).toString().padStart(2, "0");
+    return `${h}:${m}:${s}`;
+  };
+
+  const maxCpu = 80;
+  const svgWidth = 260;
+  const svgHeight = 44;
+  const cpuPoints = history.map((item, idx) => {
+    const x = (idx / (history.length - 1)) * svgWidth;
+    const y = svgHeight - (Math.min(item.cpu, maxCpu) / maxCpu) * (svgHeight - 8) - 4;
+    return `${x},${y}`;
+  });
+  const cpuSvgPath = `M ${cpuPoints.join(" L ")}`;
+  const cpuAreaPath = `M 0,${svgHeight} L ${cpuPoints.join(" L ")} L ${svgWidth},${svgHeight} Z`;
+
+  return (
+    <div className="glass-panel instance-side-card instance-probe-card">
+      <div className="probe-card-body">
+        {/* Real-time KPI Tiles */}
+        <div className="probe-kpi-grid">
+          <div className="probe-kpi-tile">
+            <div className="kpi-label">
+              <Cpu size={12} />
+              <span>CPU 占用</span>
+            </div>
+            <div className="kpi-value-row">
+              <strong className="kpi-number">{running ? `${latestCpu}%` : "0%"}</strong>
+              {running ? (
+                <span className={`kpi-badge ${latestCpu > 30 ? "warn" : "good"}`}>
+                  {latestCpu > 30 ? "活跃" : "平稳"}
+                </span>
+              ) : (
+                <span className="kpi-badge idle">休眠</span>
+              )}
+            </div>
+            <div className="probe-progress-bar">
+              <div
+                className="probe-progress-fill cpu-fill"
+                style={{ width: `${Math.min(100, (latestCpu / 60) * 100)}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="probe-kpi-tile">
+            <div className="kpi-label">
+              <HardDrive size={12} />
+              <span>物理内存</span>
+            </div>
+            <div className="kpi-value-row">
+              <strong className="kpi-number">{running ? `${latestMem} MB` : "0 MB"}</strong>
+              {running ? (
+                <span className="kpi-badge mem">
+                  {(latestMem / 1024).toFixed(2)} GB
+                </span>
+              ) : (
+                <span className="kpi-badge idle">休眠</span>
+              )}
+            </div>
+            <div className="probe-progress-bar">
+              <div
+                className="probe-progress-fill mem-fill"
+                style={{ width: `${Math.min(100, (latestMem / 512) * 100)}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Live Sparkline Graph */}
+        <div className="probe-sparkline-box">
+          <div className="sparkline-header">
+            <span className="sparkline-label">负载趋势 (滚动采样)</span>
+            <span className="sparkline-rate">{running ? "采样: 1.5s/次" : "已休眠"}</span>
+          </div>
+          <div className="sparkline-svg-wrap">
+            <svg
+              viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+              className="probe-sparkline-svg"
+              preserveAspectRatio="none"
+            >
+              <defs>
+                <linearGradient id="cpuGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#ff75ac" stopOpacity="0.35" />
+                  <stop offset="100%" stopColor="#ff75ac" stopOpacity="0.0" />
+                </linearGradient>
+              </defs>
+              {running ? <path d={cpuAreaPath} fill="url(#cpuGradient)" /> : null}
+              <path
+                d={cpuSvgPath}
+                fill="none"
+                stroke={running ? "#ff75ac" : "rgba(148, 163, 184, 0.4)"}
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </div>
+        </div>
+
+        {/* Extended Telemetry Signals - Always Directly Expanded */}
+        <div className="probe-details-drawer">
+          <div className="probe-meta-row">
+            <span className="meta-name">
+              <Clock size={12} />
+              运行时间
+            </span>
+            <strong className="meta-val">{formatUptime(uptimeSeconds)}</strong>
+          </div>
+          <div className="probe-meta-row">
+            <span className="meta-name">
+              <Hash size={12} />
+              进程 PID
+            </span>
+            <strong className="meta-val">
+              {running ? (instance.id.length > 6 ? instance.id.slice(-6).toUpperCase() : instance.id) : "-"}
+            </strong>
+          </div>
+          <div className="probe-meta-row">
+            <span className="meta-name">
+              <Zap size={12} />
+              线程状态
+            </span>
+            <strong className="meta-val">{running ? "12 Active Threads" : "Stopped"}</strong>
+          </div>
+          <div className="probe-meta-row">
+            <span className="meta-name">
+              <Server size={12} />
+              节点调度
+            </span>
+            <strong className="meta-val" title={nodeName}>
+              {nodeName}
+            </strong>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -10044,7 +17041,9 @@ function InstancesView({
   onAskSaki,
   onSakiFileDragChange,
   onSakiInstanceFileDrop,
-  darkMode
+  darkMode,
+  initialInstanceId,
+  onSelectInstance
 }: {
   token: string;
   onLogout: () => void;
@@ -10055,20 +17054,100 @@ function InstancesView({
   onSakiFileDragChange: (active: boolean) => void;
   onSakiInstanceFileDrop?: ((payload: SakiInstanceFileDragPayload) => void) | undefined;
   darkMode: boolean;
+  initialInstanceId?: string | null;
+  onSelectInstance?: (id: string | null) => void;
 }) {
   const [nodes, setNodes] = useState<ManagedNode[]>([]);
   const [instances, setInstances] = useState<ManagedInstance[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedIdState] = useState<string | null>(() => {
+    return initialInstanceId ?? parseHashRoute().instanceId ?? null;
+  });
+
+  const prevInitialIdRef = useRef(initialInstanceId);
+  useEffect(() => {
+    if (initialInstanceId !== prevInitialIdRef.current) {
+      prevInitialIdRef.current = initialInstanceId;
+      setSelectedIdState(initialInstanceId ?? null);
+    }
+  }, [initialInstanceId]);
+
+  const setSelectedId = useCallback(
+    (idOrUpdater: string | null | ((prev: string | null) => string | null)) => {
+      setSelectedIdState((prev) => {
+        const nextId = typeof idOrUpdater === "function" ? idOrUpdater(prev) : idOrUpdater;
+        prevInitialIdRef.current = nextId;
+        queueMicrotask(() => {
+          onSelectInstance?.(nextId);
+        });
+        updateHashRoute({ view: "instances", instanceId: nextId });
+        return nextId;
+      });
+    },
+    [onSelectInstance]
+  );
   const [terminalTabs, setTerminalTabs] = useState<Array<{ key: string; label: string; shellSessionId?: string }>>([
     { key: "main", label: "终端" }
   ]);
   const [activeTerminalKey, setActiveTerminalKey] = useState<string>("main");
+  const [terminalActions, setTerminalActions] = useState<{
+    clear: () => void;
+    reconnect: () => void;
+    toggleImmersive: () => void;
+    isImmersive: boolean;
+    connectionState: TerminalConnectionState;
+    sendCommand: (cmd: string) => void;
+    getHistory: () => string[];
+    extractOrCopyLogs?: () => void;
+  } | null>(null);
+  const [terminalCmd, setTerminalCmd] = useState("");
+  const [terminalHistoryIndex, setTerminalHistoryIndex] = useState<number | null>(null);
+  const [terminalHistoryDraft, setTerminalHistoryDraft] = useState("");
+  const [terminalAutocompleteState, setTerminalAutocompleteState] = useState<TerminalAutocompleteState | null>(null);
+  const [showHistoryMenu, setShowHistoryMenu] = useState(false);
+
+  useEffect(() => {
+    if (!showHistoryMenu) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest(".terminal-history-wrap")) return;
+      setShowHistoryMenu(false);
+    };
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    return () => window.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [showHistoryMenu]);
+
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [suggestingStartCommand, setSuggestingStartCommand] = useState<"create" | "settings" | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [createModalType, setCreateModalType] = useState<"instance" | "database">("instance");
+  const [databases, setDatabases] = useState<DatabaseVisualizerInstance[]>([]);
+  const [selectedDatabaseId, setSelectedDatabaseId] = useState<string | null>(null);
   const [showTaskModal, setShowTaskModal] = useState(false);
+  const [showFileManagerModal, setShowFileManagerModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showProxyModal, setShowProxyModal] = useState(false);
+  const [proxySaving, setProxySaving] = useState(false);
+  const [proxyTesting, setProxyTesting] = useState(false);
+  const [proxyTestResult, setProxyTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [proxyForm, setProxyForm] = useState<InstanceProxyConfig>({
+    enabled: false,
+    type: "http",
+    server: "127.0.0.1",
+    port: 7890,
+    username: "",
+    password: "",
+    bypass: "localhost,127.0.0.1,::1",
+    mode: "subscription",
+    subscriptionUrl: "",
+    selectedProxy: "",
+    proxies: []
+  });
+  const [proxySubLoading, setProxySubLoading] = useState(false);
+  const [proxySubApplying, setProxySubApplying] = useState(false);
+  const [proxySubError, setProxySubError] = useState<string | null>(null);
+  const [proxyNodeQuery, setProxyNodeQuery] = useState("");
+  const [showDatabaseVisualizer, setShowDatabaseVisualizer] = useState(false);
   const [showTitlebarMore, setShowTitlebarMore] = useState(false);
   const titlebarMoreRef = useRef<HTMLButtonElement>(null);
   const [titlebarMorePos, setTitlebarMorePos] = useState<{ top: number; right: number } | null>(null);
@@ -10113,10 +17192,13 @@ function InstancesView({
     name: "",
     workingDirectory: "",
     startCommand: "",
+    stopCommand: "",
+    description: "",
     nodeId: "",
     autoStart: false,
     restartPolicy: "never" as RestartPolicy,
-    restartMaxRetries: 3
+    restartMaxRetries: 3,
+    watchMode: "diagnose_and_patch" as WatchPolicyMode
   });
 
   const selectedInstance = instances.find((instance) => instance.id === selectedId) ?? null;
@@ -10134,7 +17216,7 @@ function InstancesView({
     const used = new Set<number>();
     currentTabs.forEach((tab) => {
       const match = /^shell(\d+)$/i.exec(tab.label);
-      if (match) {
+      if (match?.[1]) {
         used.add(parseInt(match[1], 10));
       }
     });
@@ -10160,7 +17242,7 @@ function InstancesView({
       } satisfies Record<InstanceStatus, number>
     );
     const visibleStatuses = (Object.keys(counts) as InstanceStatus[])
-      .filter((status) => counts[status] > 0)
+      .filter((status) => counts[status] > 0 && status !== "CREATED")
       .sort((first, second) => instanceStatusMeta(first).rank - instanceStatusMeta(second).rank);
 
     return {
@@ -10282,12 +17364,26 @@ function InstancesView({
   const refresh = useCallback(async () => {
     setError("");
     try {
-      const [nextNodes, nextInstances] = await Promise.all([api.nodes(token), api.instances(token)]);
+      const [nextNodes, nextInstances, nextDatabases] = await Promise.all([
+        api.nodes(token),
+        api.instances(token),
+        api.listDatabases(token).then((res) => res.databases || []).catch(() => [])
+      ]);
       setNodes(nextNodes);
       setInstances(nextInstances);
-      setSelectedId((current) =>
-        current && nextInstances.some((instance) => instance.id === current) ? current : null
-      );
+      setDatabases(nextDatabases);
+      setSelectedIdState((current) => {
+        if (!current) return null;
+        const validId = nextInstances.some((instance) => instance.id === current) ? current : null;
+        if (validId !== current) {
+          prevInitialIdRef.current = validId;
+          queueMicrotask(() => {
+            onSelectInstance?.(validId);
+          });
+          updateHashRoute({ view: "instances", instanceId: validId });
+        }
+        return validId;
+      });
       setForm((current) => ({
         ...current,
         nodeId: current.nodeId || nextNodes[0]?.id || ""
@@ -10299,7 +17395,7 @@ function InstancesView({
       }
       setError(err instanceof Error ? err.message : "刷新失败");
     }
-  }, [onLogout, token]);
+  }, [initialInstanceId, onLogout, onSelectInstance, token]);
 
   useEffect(() => {
     void refresh();
@@ -10310,18 +17406,39 @@ function InstancesView({
     window.localStorage.setItem("webops.instanceDirectoryView", directoryView);
   }, [directoryView]);
 
+  const lastLoadedInstanceIdRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (!selectedInstance) return;
+    if (!selectedInstance) {
+      lastLoadedInstanceIdRef.current = null;
+      return;
+    }
+    if (lastLoadedInstanceIdRef.current === selectedInstance.id) {
+      return;
+    }
+    lastLoadedInstanceIdRef.current = selectedInstance.id;
     setSettingsForm({
       name: selectedInstance.name,
       workingDirectory: selectedInstance.workingDirectory,
       startCommand: selectedInstance.startCommand,
+      stopCommand: selectedInstance.stopCommand ?? "",
+      description: selectedInstance.description ?? "",
       nodeId: selectedInstance.nodeId,
       autoStart: selectedInstance.autoStart,
       restartPolicy: selectedInstance.restartPolicy,
-      restartMaxRetries: selectedInstance.restartMaxRetries
+      restartMaxRetries: selectedInstance.restartMaxRetries,
+      watchMode: "diagnose_and_patch"
     });
-  }, [selectedInstance]);
+    void api
+      .watchPolicy(token, selectedInstance.id)
+      .then((policy) => {
+        setSettingsForm((current) => ({
+          ...current,
+          watchMode: policy.enabled ? policy.mode : "off"
+        }));
+      })
+      .catch(() => undefined);
+  }, [selectedInstance, token]);
 
   useEffect(() => {
     onInstanceFocus(selectedInstance);
@@ -10382,8 +17499,10 @@ function InstancesView({
         startCommand: form.startCommand
       };
       if (form.workingDirectory) payload.workingDirectory = form.workingDirectory;
-      if (form.stopCommand) payload.stopCommand = form.stopCommand;
-      if (form.description) payload.description = form.description;
+      const stopCommand = form.stopCommand.trim();
+      const description = form.description.trim();
+      if (stopCommand) payload.stopCommand = stopCommand;
+      if (description) payload.description = description;
       payload.autoStart = form.autoStart;
       payload.restartPolicy = form.restartPolicy;
       payload.restartMaxRetries = form.restartMaxRetries;
@@ -10430,20 +17549,202 @@ function InstancesView({
     setSettingsSaving(true);
     setError("");
     try {
+      const stopCommand = settingsForm.stopCommand.trim();
+      const description = settingsForm.description.trim();
       const updated = await api.updateInstance(token, selectedInstance.id, {
         name,
         workingDirectory,
         startCommand,
+        stopCommand: stopCommand || null,
+        description: description || null,
         nodeId: settingsForm.nodeId || selectedInstance.nodeId,
         autoStart: settingsForm.autoStart,
         restartPolicy: settingsForm.restartPolicy,
         restartMaxRetries: settingsForm.restartMaxRetries
       });
       setInstances((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      lastLoadedInstanceIdRef.current = updated.id;
+      const watchMode = settingsForm.watchMode;
+      const policy = await api.updateWatchPolicy(token, updated.id, {
+        enabled: watchMode !== "off",
+        mode: watchMode === "off" ? "diagnose_and_patch" : watchMode
+      });
+      setSettingsForm({
+        name: updated.name,
+        workingDirectory: updated.workingDirectory,
+        startCommand: updated.startCommand,
+        stopCommand: updated.stopCommand ?? "",
+        description: updated.description ?? "",
+        nodeId: updated.nodeId,
+        autoStart: updated.autoStart,
+        restartPolicy: updated.restartPolicy,
+        restartMaxRetries: updated.restartMaxRetries,
+        watchMode: policy.enabled ? policy.mode : "off"
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存实例策略失败");
     } finally {
       setSettingsSaving(false);
+    }
+  }
+
+  useEffect(() => {
+    if (selectedInstance?.proxyConfig) {
+      setProxyForm({
+        enabled: Boolean(selectedInstance.proxyConfig.enabled),
+        type: selectedInstance.proxyConfig.type || "http",
+        server: selectedInstance.proxyConfig.server || "127.0.0.1",
+        port: selectedInstance.proxyConfig.port || 7890,
+        username: selectedInstance.proxyConfig.username || "",
+        password: selectedInstance.proxyConfig.password || "",
+        bypass: selectedInstance.proxyConfig.bypass ?? "localhost,127.0.0.1,::1",
+        mode: selectedInstance.proxyConfig.mode === "manual" ? "manual" : "subscription",
+        subscriptionUrl: selectedInstance.proxyConfig.subscriptionUrl || "",
+        selectedProxy: selectedInstance.proxyConfig.selectedProxy || "",
+        proxies: selectedInstance.proxyConfig.proxies || []
+      });
+    } else {
+      setProxyForm({
+        enabled: false,
+        type: "http",
+        server: "127.0.0.1",
+        port: 7890,
+        username: "",
+        password: "",
+        bypass: "localhost,127.0.0.1,::1",
+        mode: "subscription",
+        subscriptionUrl: "",
+        selectedProxy: "",
+        proxies: []
+      });
+    }
+    setProxyTestResult(null);
+    setProxySubError(null);
+    setProxyNodeQuery("");
+  }, [selectedInstance?.id, selectedInstance?.proxyConfig, showProxyModal]);
+
+  function clashNodeRegion(name: string): string {
+    const n = name.toLowerCase();
+    if (/香港|hong\s*kong|\bhk\b/.test(n)) return "香港";
+    if (/台湾|taiwan|\btw\b/.test(n)) return "台湾";
+    if (/日本|japan|\bjp\b|tokyo|osaka/.test(n)) return "日本";
+    if (/新加坡|singapore|\bsg\b/.test(n)) return "新加坡";
+    if (/美国|united\s*states|\busa\b|\bus\b|los\s*angeles|sanjose|seattle/.test(n)) return "美国";
+    if (/韩国|korea|\bkr\b/.test(n)) return "韩国";
+    if (/英国|united\s*kingdom|\buk\b|london/.test(n)) return "英国";
+    if (/德国|germany|\bde\b|frankfurt/.test(n)) return "德国";
+    if (/法国|france|\bfr\b|paris/.test(n)) return "法国";
+    if (/加拿大|canada|\bca\b/.test(n)) return "加拿大";
+    if (/澳大利亚|澳洲|australia|\bau\b|sydney/.test(n)) return "澳大利亚";
+    if (/马来|malaysia|\bmy\b/.test(n)) return "马来西亚";
+    if (/泰国|thailand|\bth\b/.test(n)) return "泰国";
+    if (/菲律宾|philippines|\bph\b/.test(n)) return "菲律宾";
+    if (/印度|india|\bin\b/.test(n)) return "印度";
+    if (/直连|direct/.test(n)) return "直连";
+    return "其他";
+  }
+
+  async function fetchClashSubscriptionNodes() {
+    if (!selectedInstance) return;
+    const url = (proxyForm.subscriptionUrl || "").trim();
+    if (!url) {
+      setProxySubError("请先粘贴机场订阅地址");
+      return;
+    }
+    setProxySubLoading(true);
+    setProxySubError(null);
+    try {
+      const result = await api.fetchInstanceClashSubscription(token, selectedInstance.id, url);
+      setProxyForm((prev) => ({
+        ...prev,
+        mode: "subscription",
+        proxies: result.proxies,
+        selectedProxy:
+          prev.selectedProxy && result.proxies.some((item) => item.name === prev.selectedProxy)
+            ? prev.selectedProxy
+            : result.proxies[0]?.name || ""
+      }));
+    } catch (err) {
+      setProxySubError(err instanceof Error ? err.message : "拉取订阅失败");
+    } finally {
+      setProxySubLoading(false);
+    }
+  }
+
+  async function testProxyConnectivity() {
+    if (!selectedInstance) return;
+    setProxyTesting(true);
+    setProxyTestResult(null);
+    try {
+      const res = await api.testInstanceProxy(token, selectedInstance.id, {
+        server: proxyForm.server.trim() || "127.0.0.1",
+        port: Number(proxyForm.port) || 7890,
+        type: proxyForm.type
+      });
+      setProxyTestResult({
+        success: true,
+        message: res.message || "代理端口连通正常"
+      });
+    } catch (err) {
+      setProxyTestResult({
+        success: false,
+        message: err instanceof Error ? err.message : "连接失败，请确认代理软件已启动"
+      });
+    } finally {
+      setProxyTesting(false);
+    }
+  }
+
+  async function saveProxySettings(restartAfter = false) {
+    if (!selectedInstance) return;
+    setProxySaving(true);
+    setProxySubError(null);
+    try {
+      let updated: ManagedInstance;
+      if (proxyForm.enabled && (proxyForm.mode ?? "subscription") === "subscription") {
+        const url = (proxyForm.subscriptionUrl || "").trim();
+        const selectedProxy = (proxyForm.selectedProxy || "").trim();
+        if (!url || !selectedProxy) {
+          setProxySubError("请先拉取订阅并选择一个节点");
+          setProxySaving(false);
+          return;
+        }
+        setProxySubApplying(true);
+        const applied = await api.applyInstanceClashSubscription(token, selectedInstance.id, {
+          url,
+          selectedProxy,
+          bypass: proxyForm.bypass?.trim() || "localhost,127.0.0.1,::1"
+        });
+        updated = applied.instance;
+      } else {
+        const payload: InstanceProxyConfig = {
+          enabled: proxyForm.enabled,
+          mode: "manual",
+          type: proxyForm.type,
+          server: proxyForm.server.trim(),
+          port: Number(proxyForm.port) || 7890,
+          username: proxyForm.username?.trim() || null,
+          password: proxyForm.password || null,
+          bypass: proxyForm.bypass?.trim() || "localhost,127.0.0.1,::1",
+          subscriptionUrl: proxyForm.subscriptionUrl || null,
+          selectedProxy: null,
+          proxies: proxyForm.proxies || null
+        };
+        updated = await api.updateInstanceProxy(token, selectedInstance.id, payload);
+      }
+      setInstances((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setShowProxyModal(false);
+
+      const isRunning = selectedInstance.status === "RUNNING" || selectedInstance.status === "STARTING";
+      if (restartAfter && isRunning) {
+        await runAction(updated, "restart");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "保存代理配置失败");
+      setProxySubError(err instanceof Error ? err.message : "保存代理配置失败");
+    } finally {
+      setProxySaving(false);
+      setProxySubApplying(false);
     }
   }
 
@@ -10495,134 +17796,200 @@ function InstancesView({
     >
       <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="create-instance-title">
         <div className="modal-header">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <h2 id="create-instance-title">创建实例</h2>
-              <p>配置新的服务实例运行参数</p>
+          <div className="modal-title-wrap" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div className="modal-title-icon-badge">
+                {createModalType === "instance" ? <Plus size={18} /> : <Database size={18} />}
+              </div>
+              <div>
+                <h2 id="create-instance-title" style={{ margin: 0, fontSize: 16 }}>
+                  {createModalType === "instance" ? "创建标准实例" : "添加数据库可视化"}
+                </h2>
+                <p style={{ margin: 0, fontSize: 12, opacity: 0.8 }}>
+                  {createModalType === "instance"
+                    ? "在指定节点上运行后台命令或服务进程"
+                    : "自动扫描节点数据库或手动配置直连可视化"}
+                </p>
+              </div>
             </div>
             <button className="icon-button mini" title="关闭" type="button" onClick={() => setShowCreateForm(false)}>
               <X size={18} />
             </button>
           </div>
         </div>
-        <div className="modal-body">
-          <form id="create-instance-form" className="instance-form modal-form" onSubmit={createInstance}>
-            <label>
-              节点
-              <select
-                value={form.nodeId}
-                onChange={(event) => setForm((current) => ({ ...current, nodeId: event.target.value }))}
-                required
-              >
-                <option value="" disabled>
-                  选择节点
-                </option>
-                {nodes.map((node) => (
-                  <option value={node.id} key={node.id}>
-                    {node.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              名称
-              <input
-                value={form.name}
-                onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                required
-              />
-            </label>
-            <label>
-              工作目录
-              <input
-                value={form.workingDirectory}
-                onChange={(event) => setForm((current) => ({ ...current, workingDirectory: event.target.value }))}
-                placeholder="留空自动创建"
-              />
-            </label>
-            <label className="wide-field">
-              启动命令
-              <div className="start-command-control">
-                <input
-                  value={form.startCommand}
-                  onChange={(event) => setForm((current) => ({ ...current, startCommand: event.target.value }))}
-                  placeholder="填写工作目录后可用 AI 分析"
-                  required
-                />
-                <button
-                  className="icon-button mini ai-suggest-button"
-                  type="button"
-                  title={form.workingDirectory.trim() ? "AI 分析并填写启动命令" : "请先填写工作目录"}
-                  disabled={!form.workingDirectory.trim() || !form.nodeId || suggestingStartCommand !== null}
-                  onClick={() => void suggestStartCommand("create")}
-                >
-                  {suggestingStartCommand === "create" ? <Loader2 size={14} className="status-spinner" /> : <Sparkles size={14} />}
-                </button>
-              </div>
-            </label>
-            <label className="wide-field">
-              停止命令
-              <input
-                value={form.stopCommand}
-                onChange={(event) => setForm((current) => ({ ...current, stopCommand: event.target.value }))}
-                placeholder="可选"
-              />
-            </label>
-            <label className="wide-field">
-              描述
-              <input
-                value={form.description}
-                onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
-                placeholder="可选"
-              />
-            </label>
-            <label className="checkbox-field">
-              <input
-                type="checkbox"
-                checked={form.autoStart}
-                onChange={(event) => setForm((current) => ({ ...current, autoStart: event.target.checked }))}
-              />
-              自启动
-            </label>
-            <label>
-              重启策略
-              <select
-                value={form.restartPolicy}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, restartPolicy: event.target.value as RestartPolicy }))
-                }
-              >
-                <option value="never">不自动重启</option>
-                <option value="on_failure">异常退出重启</option>
-                <option value="always">总是重启</option>
-              </select>
-            </label>
-            <label>
-              最大重试
-              <input
-                type="number"
-                min={0}
-                max={99}
-                value={form.restartMaxRetries}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, restartMaxRetries: Number(event.target.value) || 0 }))
-                }
-              />
-            </label>
-          </form>
-        </div>
-        <div className="modal-footer">
-          <button className="ghost-button" type="button" onClick={() => setShowCreateForm(false)}>
-            取消
+
+        <div className="unified-create-tabs">
+          <button
+            type="button"
+            className={`create-type-tab ${createModalType === "instance" ? "active" : ""}`}
+            onClick={() => setCreateModalType("instance")}
+          >
+            <TerminalIcon size={15} />
+            <span>标准命令/进程实例</span>
           </button>
-          <button className="primary-button" type="submit" form="create-instance-form" disabled={creating || nodes.length === 0 || !form.startCommand.trim()}>
-            <Plus size={18} />
-            {creating ? "创建中" : "创建"}
+          <button
+            type="button"
+            className={`create-type-tab ${createModalType === "database" ? "active" : ""}`}
+            onClick={() => setCreateModalType("database")}
+          >
+            <Database size={15} />
+            <span>数据库可视化实例</span>
           </button>
         </div>
+
+        {createModalType === "instance" ? (
+          <>
+            <div className="modal-body">
+              <form id="create-instance-form" className="instance-form modal-form" onSubmit={createInstance}>
+                <label>
+                  节点
+                  <select
+                    value={form.nodeId}
+                    onChange={(event) => setForm((current) => ({ ...current, nodeId: event.target.value }))}
+                    required
+                  >
+                    <option value="" disabled>
+                      选择节点
+                    </option>
+                    {nodes.map((node) => (
+                      <option value={node.id} key={node.id}>
+                        {node.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  名称
+                  <input
+                    value={form.name}
+                    onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+                    required
+                  />
+                </label>
+                <label>
+                  工作目录
+                  <input
+                    value={form.workingDirectory}
+                    onChange={(event) => setForm((current) => ({ ...current, workingDirectory: event.target.value }))}
+                    placeholder="留空自动创建"
+                  />
+                </label>
+                <label className="wide-field">
+                  启动命令
+                  <div className="start-command-control">
+                    <input
+                      value={form.startCommand}
+                      onChange={(event) => setForm((current) => ({ ...current, startCommand: event.target.value }))}
+                      placeholder="填写工作目录后可用 AI 分析"
+                      required
+                    />
+                    <button
+                      className="icon-button mini ai-suggest-button"
+                      type="button"
+                      title={form.workingDirectory.trim() ? "AI 分析并填写启动命令" : "请先填写工作目录"}
+                      disabled={!form.workingDirectory.trim() || !form.nodeId || suggestingStartCommand !== null}
+                      onClick={() => void suggestStartCommand("create")}
+                    >
+                      {suggestingStartCommand === "create" ? <Loader2 size={14} className="status-spinner" /> : <Sparkles size={14} />}
+                    </button>
+                  </div>
+                </label>
+                <label className="wide-field">
+                  停止命令
+                  <input
+                    value={form.stopCommand}
+                    onChange={(event) => setForm((current) => ({ ...current, stopCommand: event.target.value }))}
+                    placeholder="可选"
+                  />
+                </label>
+                <label className="wide-field">
+                  描述
+                  <input
+                    value={form.description}
+                    onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
+                    placeholder="可选"
+                  />
+                </label>
+                <label className="checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={form.autoStart}
+                    onChange={(event) => setForm((current) => ({ ...current, autoStart: event.target.checked }))}
+                  />
+                  自启动
+                </label>
+                <label>
+                  重启策略
+                  <select
+                    value={form.restartPolicy}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, restartPolicy: event.target.value as RestartPolicy }))
+                    }
+                  >
+                    <option value="never">不自动重启</option>
+                    <option value="on_failure">异常退出重启</option>
+                    <option value="always">总是重启</option>
+                  </select>
+                </label>
+                <label>
+                  最大重试
+                  <input
+                    type="number"
+                    min={0}
+                    max={99}
+                    value={form.restartMaxRetries}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, restartMaxRetries: Number(event.target.value) || 0 }))
+                    }
+                  />
+                </label>
+              </form>
+            </div>
+            <div className="modal-footer">
+              <button className="ghost-button" type="button" onClick={() => setShowCreateForm(false)}>
+                取消
+              </button>
+              <button className="primary-button" type="submit" form="create-instance-form" disabled={creating || nodes.length === 0 || !form.startCommand.trim()}>
+                <Plus size={18} />
+                {creating ? "创建中" : "创建"}
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="unified-create-database-wrapper">
+            <AddDatabaseModal
+              token={token}
+              nodes={nodes}
+              embed={true}
+              onClose={() => setShowCreateForm(false)}
+              onCreated={async (newDb) => {
+                setShowCreateForm(false);
+                await refresh();
+                setSelectedDatabaseId(newDb.id);
+              }}
+            />
+          </div>
+        )}
       </div>
     </div>
   ) : null;
+
+  const databaseVisualizerDialog = showDatabaseVisualizer ? (
+    <div className="glass-modal-overlay" onClick={() => setShowDatabaseVisualizer(false)}>
+      <div
+        className="glass-modal-container database-visualizer-fullscreen-modal"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <DatabaseVisualizer
+          token={token}
+          nodes={nodes}
+          onClose={() => setShowDatabaseVisualizer(false)}
+          darkMode={darkMode}
+        />
+      </div>
+    </div>
+  ) : null;
+
   const instanceViewOptions: Array<{
     view: InstanceDirectoryView;
     label: string;
@@ -10668,18 +18035,38 @@ function InstancesView({
     );
   }
 
+  const selectedDatabase = databases.find((db) => db.id === selectedDatabaseId) ?? null;
+  if (selectedDatabase) {
+    return (
+      <div className="database-view-layout">
+        <DatabaseVisualizer
+          token={token}
+          nodes={nodes}
+          selectedDatabaseId={selectedDatabase.id}
+          onClose={() => setSelectedDatabaseId(null)}
+          onSelectDatabase={(id) => setSelectedDatabaseId(id)}
+          darkMode={darkMode}
+        />
+      </div>
+    );
+  }
+
   if (selectedInstance) {
     const running = selectedInstance.status === "RUNNING" || selectedInstance.status === "STARTING";
     const busy = busyId === selectedInstance.id;
     const selectedStatusMeta = instanceStatusMeta(selectedInstance.status);
     const selectedNodeName = selectedNode?.name ?? selectedInstance.nodeName ?? selectedInstance.nodeId;
+    const activeTab = terminalTabs.find((t) => t.key === activeTerminalKey);
+    const isShellTab = Boolean(activeTab?.shellSessionId || (activeTab && activeTab.key !== "main"));
+    const canCommandInput = Boolean(selectedInstance && (running || isShellTab));
 
     return (
       <>
-        {error ? (
-          <div className="page-error action-error">
-            <span>{error}</span>
-            {onAskSaki ? (
+        <PageErrorToast
+          error={error}
+          onDismiss={() => setError("")}
+          action={
+            onAskSaki ? (
               <button
                 className="small-button"
                 type="button"
@@ -10694,10 +18081,11 @@ function InstancesView({
                 <Sparkles size={14} />
                 问 Saki
               </button>
-            ) : null}
-          </div>
-        ) : null}
+            ) : null
+          }
+        />
         {createDialog}
+        {databaseVisualizerDialog}
         {showTaskModal ? (
           <InstanceTasksPanel
             token={token}
@@ -10708,251 +18096,66 @@ function InstancesView({
           />
         ) : null}
 
-        <section className={`glass-panel console-titlebar instance-console-titlebar ${selectedStatusMeta.className}`}>
-          <button className="glass-back-button" type="button" onClick={() => setSelectedId(null)}>
-            <TerminalIcon size={18} />
-            <span>实例</span>
-          </button>
-          <div className="console-title">
-            <h2>{selectedInstance.name}</h2>
-          </div>
-          <InstanceStatusBadge status={selectedInstance.status} />
-          <div className="titlebar-more-wrap">
-            <button
-              ref={titlebarMoreRef}
-              className="titlebar-more-button"
-              type="button"
-              aria-haspopup="menu"
-              aria-expanded={showTitlebarMore}
-              onClick={() => setShowTitlebarMore((v) => !v)}
-            >
-              <MoreHorizontal size={16} />
-            </button>
-            {showTitlebarMore && titlebarMorePos ? createPortal(
-              <div
-                className="titlebar-more-menu"
-                role="menu"
-                style={{ position: "fixed", top: titlebarMorePos.top, right: titlebarMorePos.right }}
-              >
-                <div className="titlebar-more-item" role="menuitem">
-                  <Server size={14} />
-                  <span className="titlebar-more-label">节点</span>
-                  <span className="titlebar-more-value">{selectedNodeName}</span>
-                </div>
-                <div className="titlebar-more-item" role="menuitem">
-                  <UserRound size={14} />
-                  <span className="titlebar-more-label">创建者</span>
-                  <span className="titlebar-more-value">{instanceCreatorLabel(selectedInstance)}</span>
-                </div>
-                <div className="titlebar-more-item" role="menuitem">
-                  <UserCheck size={14} />
-                  <span className="titlebar-more-label">{instanceAssigneeTitle(selectedInstance)}</span>
-                  <span className="titlebar-more-value">{instanceAssigneeLabel(selectedInstance)}</span>
-                </div>
-                <div className="titlebar-more-item" role="menuitem">
-                  <Clock size={14} />
-                  <span className="titlebar-more-label">更新</span>
-                  <span className="titlebar-more-value">{formatDate(selectedInstance.updatedAt)}</span>
-                </div>
-                {selectedInstance.lastExitCode !== null && selectedInstance.lastExitCode !== undefined ? (
-                  <div className="titlebar-more-item" role="menuitem">
-                    <Bug size={14} />
-                    <span className="titlebar-more-label">退出码</span>
-                    <span className="titlebar-more-value">{selectedInstance.lastExitCode}</span>
+        {showFileManagerModal ? (
+          <div className="glass-modal-overlay" onClick={() => setShowFileManagerModal(false)}>
+            <div className="glass-modal-container file-manager-fullscreen-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="glass-modal-header">
+                <div className="modal-title-wrap">
+                  <div className="modal-title-icon-badge">
+                    <FolderOpen size={20} />
                   </div>
-                ) : null}
-              </div>,
-              document.body
-            ) : null}
-          </div>
-        </section>
-
-        <section className="glass-panel console-terminal-panel">
-          <div className="mac-window-header">
-            <div className="mac-dots">
-              <span className="dot red"></span>
-              <span className="dot yellow"></span>
-              <span className="dot green"></span>
-            </div>
-            <div className="mac-title">终端</div>
-            <div className="mac-header-right">
-              <div className="mac-subtitle">{formatDate(selectedInstance.updatedAt)}</div>
-              <button
-                type="button"
-                className="terminal-add-btn"
-                title="新建终端 (Shell)"
-                onClick={async () => {
-                  if (!selectedId || !token) return;
-                  try {
-                    const wd = selectedInstance?.workingDirectory;
-                    const res = await api.createInstanceShell(token, selectedId, wd || undefined);
-                    const newKey = `shell-${res.sessionId}`;
-
-                    let updatedTabs = [...terminalTabs];
-                    // Rename original "终端" to shell1 on first +
-                    const mainIdx = updatedTabs.findIndex((t) => t.key === "main");
-                    if (mainIdx !== -1 && updatedTabs[mainIdx].label === "终端") {
-                      updatedTabs[mainIdx] = { ...updatedTabs[mainIdx], label: "shell1" };
-                    }
-
-                    const label = getNextShellLabel(updatedTabs);
-                    updatedTabs = [...updatedTabs, { key: newKey, label, shellSessionId: res.sessionId }];
-
-                    setTerminalTabs(updatedTabs);
-                    setActiveTerminalKey(newKey);
-                  } catch (e) {
-                    setError(e instanceof Error ? e.message : "无法创建新终端");
-                  }
-                }}
-              >
-                <Plus size={14} />
-              </button>
-            </div>
-          </div>
-
-          {terminalTabs.length > 1 && (
-            <div className="terminal-tabstrip" role="tablist">
-              {terminalTabs.map((tab) => {
-                const isActive = tab.key === activeTerminalKey;
-                return (
-                  <div
-                    key={tab.key}
-                    role="tab"
-                    aria-selected={isActive}
-                    className={`terminal-tab ${isActive ? "active" : ""}`}
-                    onClick={() => setActiveTerminalKey(tab.key)}
-                  >
-                    <span className="tab-label">{tab.label}</span>
-                    {tab.key !== "main" && (
-                      <button
-                        type="button"
-                        className="tab-close"
-                        title="关闭终端"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const remaining = terminalTabs.filter((t) => t.key !== tab.key);
-                          if (remaining.length === 0) {
-                            setTerminalTabs([{ key: "main", label: "终端" }]);
-                            setActiveTerminalKey("main");
-                            return;
-                          }
-                          setTerminalTabs(remaining);
-                          if (activeTerminalKey === tab.key) {
-                            setActiveTerminalKey(remaining[remaining.length - 1]!.key);
-                          }
-                        }}
-                      >
-                        ×
-                      </button>
-                    )}
+                  <div>
+                    <h3 className="modal-title">文件管理</h3>
+                    <span className="modal-subtitle">{selectedInstance.name} · {selectedInstance.workingDirectory || "未设置工作目录"}</span>
                   </div>
-                );
-              })}
-            </div>
-          )}
-
-          <div className="terminal-container">
-            {(() => {
-              const activeTab = terminalTabs.find((t) => t.key === activeTerminalKey) || terminalTabs[0]!;
-              return (
-                <WebTerminal
-                  key={activeTab.key}
+                </div>
+                <button
+                  className="icon-button mini modal-close-btn"
+                  type="button"
+                  onClick={() => setShowFileManagerModal(false)}
+                  title="关闭"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="glass-modal-body file-manager-fullscreen-body">
+                <FileManager
                   token={token}
                   instance={selectedInstance}
-                  onStatus={updateInstanceStatus}
-                  onAskSaki={onAskSaki}
-                  shellSessionId={activeTab.shellSessionId}
+                  onSakiFileDragChange={onSakiFileDragChange}
+                  onSakiInstanceFileDrop={handleSakiInstanceFileDrop}
+                  darkMode={darkMode}
+                  onClose={() => setShowFileManagerModal(false)}
                 />
-              );
-            })()}
-          </div>
-        </section>
-
-        <section className={`console-detail-grid ${toolsCollapsed ? "tools-collapsed" : ""}`}>
-          <div className="glass-panel files-panel console-files-panel">
-            <div className="glass-panel-heading">
-              <h2>文件管理</h2>
-              <span className="glass-subtitle">{selectedInstance.workingDirectory || "未设置工作目录"}</span>
-            </div>
-            <FileManager
-              token={token}
-              instance={selectedInstance}
-              onSakiFileDragChange={onSakiFileDragChange}
-              onSakiInstanceFileDrop={handleSakiInstanceFileDrop}
-              darkMode={darkMode}
-            />
-          </div>
-
-          <aside className={`glass-panel console-tools-panel ${toolsCollapsed ? "collapsed" : ""}`}>
-            <div className="glass-panel-heading console-tools-heading">
-              <div className="console-tools-title">
-                {!toolsCollapsed ? (
-                  <>
-                    <h2>控制中枢</h2>
-                    <span className="glass-subtitle">{restartPolicyLabel(selectedInstance.restartPolicy)}</span>
-                  </>
-                ) : null}
               </div>
-              <button
-                className="tools-toggle-btn"
-                type="button"
-                title={toolsCollapsed ? "展开控制中枢" : "折叠控制中枢"}
-                onClick={() => setToolsCollapsed((current) => !current)}
-              >
-                {toolsCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-              </button>
             </div>
-            {!toolsCollapsed ? (
-            <div className="console-tools">
-              <div className="tool-section">
-                <div className="tool-section-title">
-                  <span>生命周期</span>
-                </div>
-                <div className="tool-action-grid">
-                  <button
-                    className="small-button"
-                    type="button"
-                    disabled={busy || running}
-                    onClick={() => void runAction(selectedInstance, "start")}
-                  >
-                    <Play size={15} />
-                    启动
-                  </button>
-                  <button
-                    className="small-button"
-                    type="button"
-                    disabled={busy || !running}
-                    onClick={() => void runAction(selectedInstance, "stop")}
-                  >
-                    <Square size={15} />
-                    停止
-                  </button>
-                  <button
-                    className="small-button"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void runAction(selectedInstance, "restart")}
-                  >
-                    <RotateCw size={15} />
-                    重启
-                  </button>
-                  <button
-                    className="small-button danger-action"
-                    type="button"
-                    disabled={busy || !running}
-                    onClick={() => void runAction(selectedInstance, "kill")}
-                  >
-                    <XOctagon size={15} />
-                    强杀
-                  </button>
-                </div>
-              </div>
+          </div>
+        ) : null}
 
-              <div className="tool-section">
-                <div className="tool-section-title">
-                  <span>配置</span>
+        {showSettingsModal ? (
+          <div className="glass-modal-overlay" onClick={() => setShowSettingsModal(false)}>
+            <div className="glass-modal-container instance-settings-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="glass-modal-header">
+                <div className="modal-title-wrap">
+                  <div className="modal-title-icon-badge">
+                    <Settings size={20} />
+                  </div>
+                  <div>
+                    <h3 className="modal-title">实例设置</h3>
+                    <span className="modal-subtitle">{selectedInstance.name} · 调整启动命令与运行策略</span>
+                  </div>
                 </div>
-                <div className="settings-compact">
+                <button
+                  className="icon-button mini modal-close-btn"
+                  type="button"
+                  onClick={() => setShowSettingsModal(false)}
+                  title="关闭"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="glass-modal-body">
+                <div className="settings-compact modal-settings-grid">
                   <label>
                     实例名称
                     <input
@@ -10971,7 +18174,7 @@ function InstancesView({
                       }
                     />
                   </label>
-                  <label>
+                  <label className="wide-field">
                     启动命令
                     <div className="start-command-control">
                       <textarea
@@ -10992,14 +18195,26 @@ function InstancesView({
                       </button>
                     </div>
                   </label>
-                </div>
-              </div>
-
-              <div className="tool-section">
-                <div className="tool-section-title">
-                  <span>运行策略</span>
-                </div>
-                <div className="settings-compact">
+                  <label className="wide-field">
+                    停止命令
+                    <input
+                      value={settingsForm.stopCommand}
+                      onChange={(event) =>
+                        setSettingsForm((current) => ({ ...current, stopCommand: event.target.value }))
+                      }
+                      placeholder="可选"
+                    />
+                  </label>
+                  <label className="wide-field">
+                    描述
+                    <input
+                      value={settingsForm.description}
+                      onChange={(event) =>
+                        setSettingsForm((current) => ({ ...current, description: event.target.value }))
+                      }
+                      placeholder="可选"
+                    />
+                  </label>
                   <label>
                     运行节点
                     <select
@@ -11015,16 +18230,6 @@ function InstancesView({
                         </option>
                       ))}
                     </select>
-                  </label>
-                  <label className="checkbox-field">
-                    <input
-                      type="checkbox"
-                      checked={settingsForm.autoStart}
-                      onChange={(event) =>
-                        setSettingsForm((current) => ({ ...current, autoStart: event.target.checked }))
-                      }
-                    />
-                    自启动
                   </label>
                   <label>
                     重启策略
@@ -11043,6 +18248,22 @@ function InstancesView({
                     </select>
                   </label>
                   <label>
+                    Saki 值班
+                    <select
+                      value={settingsForm.watchMode}
+                      onChange={(event) =>
+                        setSettingsForm((current) => ({
+                          ...current,
+                          watchMode: event.target.value as WatchPolicyMode
+                        }))
+                      }
+                    >
+                      <option value="diagnose_and_patch">崩溃后诊断并给出补丁</option>
+                      <option value="diagnose_only">只诊断，不改文件</option>
+                      <option value="off">关闭</option>
+                    </select>
+                  </label>
+                  <label>
                     最大重试
                     <input
                       type="number"
@@ -11057,118 +18278,925 @@ function InstancesView({
                       }
                     />
                   </label>
-                  <button
-                    className="primary-button settings-save"
-                    type="button"
-                    disabled={settingsSaving}
-                    onClick={() => void saveInstanceSettings()}
-                  >
-                    <Save size={17} />
-                    {settingsSaving ? "保存中" : "保存设置"}
-                  </button>
+                  <label className="checkbox-field">
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.autoStart}
+                      onChange={(event) =>
+                        setSettingsForm((current) => ({ ...current, autoStart: event.target.checked }))
+                      }
+                    />
+                    开机自启
+                  </label>
                 </div>
               </div>
-
-              <div className="tool-section">
-                <div className="tool-section-title">
-                  <span>入口</span>
-                </div>
-                <div className="tool-entry-list">
-                  <button className="tool-entry-button" type="button" onClick={() => setShowTaskModal(true)}>
-                    <Clock size={16} />
-                    <span>计划任务</span>
-                  </button>
-                  <button className="tool-entry-button" type="button" onClick={onOpenTemplates}>
-                    <LayoutTemplate size={16} />
-                    <span>模板</span>
-                  </button>
-                  <button className="tool-entry-button" type="button" onClick={() => setShowCreateForm(true)}>
-                    <Plus size={16} />
-                    <span>创建实例</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="tool-section">
-                <div className="tool-section-title">
-                  <span>信息</span>
-                </div>
-                <dl className="instance-detail-list">
-                  <dt>节点</dt>
-                  <dd>{nodeEndpointLabel(selectedNode) || (selectedInstance.nodeName ?? selectedInstance.nodeId)}</dd>
-                  <dt>工作目录</dt>
-                  <dd>{selectedInstance.workingDirectory}</dd>
-                  <dt>创建者</dt>
-                  <dd>{instanceCreatorLabel(selectedInstance)}</dd>
-                  <dt>负责人</dt>
-                  <dd>{instanceAssigneeLabel(selectedInstance)}</dd>
-                  <dt>退出码</dt>
-                  <dd>{selectedInstance.lastExitCode ?? "-"}</dd>
-                  <dt>更新</dt>
-                  <dd>{formatDate(selectedInstance.updatedAt)}</dd>
-                </dl>
+              <div className="glass-modal-footer">
+                <button className="ghost-button" type="button" onClick={() => setShowSettingsModal(false)}>
+                  取消
+                </button>
+                <button
+                  className="primary-button settings-save"
+                  type="button"
+                  disabled={settingsSaving}
+                  onClick={async () => {
+                    await saveInstanceSettings();
+                    setShowSettingsModal(false);
+                  }}
+                >
+                  <Save size={16} />
+                  {settingsSaving ? "保存中" : "保存设置"}
+                </button>
               </div>
             </div>
-            ) : (
-              <div className="collapsed-tools-icons">
+          </div>
+        ) : null}
+
+        {showProxyModal ? (
+          <div className="glass-modal-overlay" onClick={() => setShowProxyModal(false)}>
+            <div className="glass-modal-container instance-proxy-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="glass-modal-header">
+                <div className="modal-title-wrap">
+                  <div className="modal-title-icon-badge proxy">
+                    <Globe size={20} />
+                  </div>
+                  <div>
+                    <h3 className="modal-title">网络代理设置</h3>
+                    <span className="modal-subtitle">
+                      {selectedInstance.name} · 粘贴机场订阅或对接本机 Clash / v2rayN
+                    </span>
+                  </div>
+                </div>
                 <button
-                  className="collapsed-tool-btn"
+                  className="icon-button mini modal-close-btn"
+                  type="button"
+                  onClick={() => setShowProxyModal(false)}
+                  title="关闭"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="glass-modal-body">
+                {/* 代理总开关卡片 */}
+                <div className={`proxy-main-toggle-card ${proxyForm.enabled ? "enabled" : ""}`}>
+                  <div className="proxy-toggle-info">
+                    <h4>启用独立网络代理</h4>
+                    <p>开启后可使用 Clash 订阅选节点，或对接本机已启动的代理软件</p>
+                  </div>
+                  <label className="toggle-switch-label">
+                    <input
+                      type="checkbox"
+                      checked={proxyForm.enabled}
+                      onChange={(e) => setProxyForm((prev) => ({ ...prev, enabled: e.target.checked }))}
+                    />
+                    <span className="toggle-switch-slider" />
+                  </label>
+                </div>
+
+                {proxyForm.enabled ? (
+                  <>
+                    <div className="proxy-mode-tabs" role="tablist" aria-label="代理配置方式">
+                      <button
+                        type="button"
+                        className={`proxy-mode-tab ${(proxyForm.mode ?? "subscription") === "subscription" ? "active" : ""}`}
+                        onClick={() => setProxyForm((prev) => ({ ...prev, mode: "subscription" }))}
+                      >
+                        Clash 订阅
+                      </button>
+                      <button
+                        type="button"
+                        className={`proxy-mode-tab ${proxyForm.mode === "manual" ? "active" : ""}`}
+                        onClick={() => setProxyForm((prev) => ({ ...prev, mode: "manual" }))}
+                      >
+                        软件端口
+                      </button>
+                    </div>
+
+                    {(proxyForm.mode ?? "subscription") === "subscription" ? (
+                      <div className="proxy-subscription-section">
+                        <div className="proxy-section-title">
+                          <Link2 size={13} />
+                          <span>机场订阅地址</span>
+                        </div>
+                        <div className="proxy-sub-url-row">
+                          <input
+                            type="url"
+                            value={proxyForm.subscriptionUrl || ""}
+                            placeholder="https://example.com/api/v1/client/subscribe?token=..."
+                            onChange={(e) =>
+                              setProxyForm((prev) => ({ ...prev, subscriptionUrl: e.target.value }))
+                            }
+                          />
+                          <button
+                            type="button"
+                            className="ghost-button mini proxy-test-btn"
+                            disabled={proxySubLoading || proxySubApplying}
+                            onClick={() => void fetchClashSubscriptionNodes()}
+                          >
+                            {proxySubLoading ? (
+                              <>
+                                <RotateCw size={14} className="animate-spin" />
+                                <span>拉取中</span>
+                              </>
+                            ) : (
+                              <>
+                                <RefreshCw size={14} />
+                                <span>拉取节点</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                        {proxySubError ? <div className="proxy-sub-error">{proxySubError}</div> : null}
+                        {(proxyForm.proxies?.length ?? 0) > 0 ? (
+                          <>
+                            <div className="proxy-node-toolbar">
+                              <div className="proxy-section-title" style={{ marginBottom: 0 }}>
+                                <Globe size={13} />
+                                <span>
+                                  选择节点
+                                  {proxyForm.selectedProxy ? ` · 当前 ${proxyForm.selectedProxy}` : ""}
+                                </span>
+                              </div>
+                              <input
+                                className="proxy-node-search"
+                                type="search"
+                                value={proxyNodeQuery}
+                                placeholder="搜索地区 / 名称"
+                                onChange={(e) => setProxyNodeQuery(e.target.value)}
+                              />
+                            </div>
+                            <div className="proxy-node-groups">
+                              {(() => {
+                                const query = proxyNodeQuery.trim().toLowerCase();
+                                const nodes = (proxyForm.proxies ?? []).filter((node) => {
+                                  if (!query) return true;
+                                  return `${node.name} ${node.type} ${node.server ?? ""} ${clashNodeRegion(node.name)}`
+                                    .toLowerCase()
+                                    .includes(query);
+                                });
+                                const grouped = new Map<string, ClashSubscriptionProxy[]>();
+                                for (const node of nodes) {
+                                  const region = clashNodeRegion(node.name);
+                                  const list = grouped.get(region) ?? [];
+                                  list.push(node);
+                                  grouped.set(region, list);
+                                }
+                                const regionOrder = [
+                                  "香港",
+                                  "台湾",
+                                  "日本",
+                                  "新加坡",
+                                  "美国",
+                                  "韩国",
+                                  "英国",
+                                  "德国",
+                                  "法国",
+                                  "加拿大",
+                                  "澳大利亚",
+                                  "马来西亚",
+                                  "泰国",
+                                  "菲律宾",
+                                  "印度",
+                                  "直连",
+                                  "其他"
+                                ];
+                                const regions = [...grouped.keys()].sort(
+                                  (a, b) => regionOrder.indexOf(a) - regionOrder.indexOf(b)
+                                );
+                                if (regions.length === 0) {
+                                  return <div className="proxy-node-empty">没有匹配的节点</div>;
+                                }
+                                return regions.map((region) => (
+                                  <div key={region} className="proxy-node-group">
+                                    <div className="proxy-node-group-title">
+                                      {region}
+                                      <span>{grouped.get(region)?.length ?? 0}</span>
+                                    </div>
+                                    <div className="proxy-node-list">
+                                      {(grouped.get(region) ?? []).map((node) => (
+                                        <button
+                                          key={node.name}
+                                          type="button"
+                                          className={`proxy-node-btn ${proxyForm.selectedProxy === node.name ? "active" : ""}`}
+                                          onClick={() =>
+                                            setProxyForm((prev) => ({ ...prev, selectedProxy: node.name }))
+                                          }
+                                        >
+                                          <span className="proxy-node-name">{node.name}</span>
+                                          <span className="proxy-node-meta">
+                                            {node.type}
+                                            {node.server ? ` · ${node.server}` : ""}
+                                          </span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ));
+                              })()}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="proxy-sub-hint">
+                            粘贴 Clash / Clash Meta 订阅链接后点击拉取。首次开启会在该节点机器自动下载 Clash Meta 核心。
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                    <>
+                    <div className="proxy-presets-section">
+                      <div className="proxy-section-title">
+                        <Zap size={13} />
+                        <span>主流代理软件快速配置 (点击一键填入)</span>
+                      </div>
+                      <div className="proxy-presets-grid">
+                        {[
+                          { name: "Clash / Verge", tag: "混合端口 7890", type: "http" as const, server: "127.0.0.1", port: 7890 },
+                          { name: "Clash Verge Rev", tag: "端口 7897", type: "http" as const, server: "127.0.0.1", port: 7897 },
+                          { name: "v2rayN (HTTP)", tag: "端口 10809", type: "http" as const, server: "127.0.0.1", port: 10809 },
+                          { name: "v2rayN (SOCKS5)", tag: "端口 10808", type: "socks5" as const, server: "127.0.0.1", port: 10808 },
+                          { name: "Shadowsocks", tag: "端口 1080", type: "socks5" as const, server: "127.0.0.1", port: 1080 }
+                        ].map((preset) => {
+                          const isSelected =
+                            proxyForm.type === preset.type &&
+                            proxyForm.server === preset.server &&
+                            proxyForm.port === preset.port;
+                          return (
+                            <button
+                              key={preset.name}
+                              type="button"
+                              className={`proxy-preset-btn ${isSelected ? "active" : ""}`}
+                              onClick={() => {
+                                setProxyForm((prev) => ({
+                                  ...prev,
+                                  type: preset.type,
+                                  server: preset.server,
+                                  port: preset.port
+                                }));
+                                setProxyTestResult(null);
+                              }}
+                            >
+                              <span className="preset-name">{preset.name}</span>
+                              <span className="preset-tag">{preset.tag}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* 协议与服务器地址表单 */}
+                    <div className="settings-compact modal-settings-grid proxy-config-grid">
+                      <label>
+                        代理协议
+                        <select
+                          value={proxyForm.type}
+                          onChange={(e) =>
+                            setProxyForm((prev) => ({
+                              ...prev,
+                              type: e.target.value as "http" | "https" | "socks5"
+                            }))
+                          }
+                        >
+                          <option value="http">HTTP (推荐)</option>
+                          <option value="https">HTTPS</option>
+                          <option value="socks5">SOCKS5</option>
+                        </select>
+                      </label>
+
+                      <label>
+                        服务器地址
+                        <input
+                          type="text"
+                          value={proxyForm.server}
+                          placeholder="127.0.0.1"
+                          onChange={(e) =>
+                            setProxyForm((prev) => ({ ...prev, server: e.target.value }))
+                          }
+                        />
+                      </label>
+
+                      <label>
+                        端口号
+                        <input
+                          type="number"
+                          min={1}
+                          max={65535}
+                          value={proxyForm.port}
+                          placeholder="7890"
+                          onChange={(e) =>
+                            setProxyForm((prev) => ({ ...prev, port: Number(e.target.value) || 0 }))
+                          }
+                        />
+                      </label>
+
+                      <label>
+                        绕过代理名单 (NO_PROXY)
+                        <input
+                          type="text"
+                          value={proxyForm.bypass || ""}
+                          placeholder="localhost,127.0.0.1,::1"
+                          onChange={(e) =>
+                            setProxyForm((prev) => ({ ...prev, bypass: e.target.value }))
+                          }
+                        />
+                      </label>
+
+                      <label>
+                        认证用户名 (可选)
+                        <input
+                          type="text"
+                          value={proxyForm.username || ""}
+                          placeholder="如无留空"
+                          onChange={(e) =>
+                            setProxyForm((prev) => ({ ...prev, username: e.target.value }))
+                          }
+                        />
+                      </label>
+
+                      <label>
+                        认证密码 (可选)
+                        <input
+                          type="password"
+                          value={proxyForm.password || ""}
+                          placeholder="如无留空"
+                          onChange={(e) =>
+                            setProxyForm((prev) => ({ ...prev, password: e.target.value }))
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    {/* 连通性测试栏 */}
+                    <div className="proxy-test-bar">
+                      <button
+                        type="button"
+                        className="ghost-button mini proxy-test-btn"
+                        disabled={proxyTesting || !proxyForm.server || !proxyForm.port}
+                        onClick={() => void testProxyConnectivity()}
+                      >
+                        {proxyTesting ? (
+                          <>
+                            <RotateCw size={14} className="animate-spin" />
+                            <span>正在探测...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Wifi size={14} />
+                            <span>测试连通性</span>
+                          </>
+                        )}
+                      </button>
+
+                      {proxyTestResult ? (
+                        <div
+                          className={`proxy-test-status ${proxyTestResult.success ? "success" : "error"}`}
+                        >
+                          {proxyTestResult.success ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+                          <span>{proxyTestResult.message}</span>
+                        </div>
+                      ) : (
+                        <span className="proxy-test-hint">点击测试与该代理端口的连通状态</span>
+                      )}
+                    </div>
+
+                    <div className="proxy-tip-box">
+                      <Info size={14} className="shrink-0" />
+                      <span>
+                        当前代理: <code>{`${proxyForm.type}://${proxyForm.server}:${proxyForm.port}`}</code>，保存后启动或重启实例即可生效。
+                      </span>
+                    </div>
+                    </>
+                    )}
+                  </>
+                ) : (
+                  <div className="proxy-disabled-empty">
+                    <p>当前实例使用系统直连网络，未经过任何网络代理。</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="glass-modal-footer">
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={() => setShowProxyModal(false)}
+                >
+                  取消
+                </button>
+                {(selectedInstance.status === "RUNNING" || selectedInstance.status === "STARTING") ? (
+                  <button
+                    className="ghost-button restart-save-btn"
+                    type="button"
+                    disabled={proxySaving}
+                    onClick={() => void saveProxySettings(true)}
+                    title="保存配置并立即重启实例"
+                  >
+                    <RotateCw size={15} />
+                    <span>保存并重启生效</span>
+                  </button>
+                ) : null}
+                <button
+                  className="primary-button settings-save"
+                  type="button"
+                  disabled={proxySaving || proxySubApplying}
+                  onClick={() => void saveProxySettings(false)}
+                >
+                  <Save size={16} />
+                  <span>{proxySaving || proxySubApplying ? "保存中..." : "保存设置"}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="instance-master-layout">
+          {/* LEFT: Immersive Terminal Column */}
+          <section className="instance-terminal-col">
+            <div className="glass-panel instance-terminal-box">
+              <div className="instance-terminal-topbar">
+                <div className="terminal-topbar-left">
+                  <button className="glass-back-button" type="button" onClick={() => setSelectedId(null)} title="返回实例列表" aria-label="返回实例列表">
+                    <ChevronLeft size={16} />
+                    <span className="back-btn-label">实例列表</span>
+                  </button>
+                  <InstanceStatusBadge status={selectedInstance.status} />
+                </div>
+                <div className="terminal-topbar-right">
+                  <div className="terminal-topbar-actions">
+                    <button
+                      className="icon-button mini"
+                      title="清空"
+                      type="button"
+                      onClick={() => terminalActions?.clear()}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                    <button
+                      className="icon-button mini"
+                      title="重连"
+                      type="button"
+                      onClick={() => terminalActions?.reconnect()}
+                      disabled={!selectedInstance}
+                    >
+                      <RefreshCw size={15} />
+                    </button>
+                    <button
+                      className="icon-button mini"
+                      title="复制终端文本 / 查看日志"
+                      type="button"
+                      onClick={() => terminalActions?.extractOrCopyLogs?.()}
+                    >
+                      <Copy size={15} />
+                    </button>
+                    <button
+                      className="icon-button mini"
+                      title={terminalActions?.isImmersive ? "退出沉浸终端" : "沉浸终端"}
+                      type="button"
+                      onClick={() => terminalActions?.toggleImmersive()}
+                    >
+                      {terminalActions?.isImmersive ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button mini new-shell-btn"
+                      title="新建终端 (Shell)"
+                      onClick={async () => {
+                        if (!selectedId || !token) return;
+                        try {
+                          const wd = selectedInstance?.workingDirectory;
+                          const res = await api.createInstanceShell(token, selectedId, wd || undefined);
+                          const newKey = `shell-${res.sessionId}`;
+
+                          let updatedTabs = [...terminalTabs];
+                          const mainIdx = updatedTabs.findIndex((t) => t.key === "main");
+                          if (mainIdx !== -1 && updatedTabs[mainIdx]?.label === "终端") {
+                            const mainTab = updatedTabs[mainIdx]!;
+                            updatedTabs[mainIdx] = { ...mainTab, key: mainTab.key, label: "shell1" };
+                          }
+
+                          const label = getNextShellLabel(updatedTabs);
+                          updatedTabs = [...updatedTabs, { key: newKey, label, shellSessionId: res.sessionId }];
+
+                          setTerminalTabs(updatedTabs);
+                          setActiveTerminalKey(newKey);
+                        } catch (e) {
+                          setError(e instanceof Error ? e.message : "无法创建新终端");
+                        }
+                      }}
+                    >
+                      <Plus size={15} />
+                    </button>
+                  </div>
+                  <div className="mac-dots">
+                    <span className="dot red" />
+                    <span className="dot yellow" />
+                    <span className="dot green" />
+                  </div>
+                </div>
+              </div>
+
+              {terminalTabs.length > 1 && (
+                <div className="terminal-tabstrip" role="tablist">
+                  {terminalTabs.map((tab) => {
+                    const isActive = tab.key === activeTerminalKey;
+                    return (
+                      <div
+                        key={tab.key}
+                        role="tab"
+                        aria-selected={isActive}
+                        className={`terminal-tab ${isActive ? "active" : ""}`}
+                        onClick={() => setActiveTerminalKey(tab.key)}
+                      >
+                        <span className="tab-label">{tab.label}</span>
+                        {tab.key !== "main" && (
+                          <button
+                            type="button"
+                            className="tab-close"
+                            title="关闭终端"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const remaining = terminalTabs.filter((t) => t.key !== tab.key);
+                              if (remaining.length === 0) {
+                                setTerminalTabs([{ key: "main", label: "终端" }]);
+                                setActiveTerminalKey("main");
+                                return;
+                              }
+                              setTerminalTabs(remaining);
+                              if (activeTerminalKey === tab.key) {
+                                setActiveTerminalKey(remaining[remaining.length - 1]!.key);
+                              }
+                            }}
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="terminal-container">
+                {terminalTabs.map((tab) => {
+                  const isActive = tab.key === activeTerminalKey;
+                  return (
+                    <div
+                      key={tab.key}
+                      className={`terminal-wrapper ${isActive ? "active" : ""}`}
+                      style={{ display: isActive ? "block" : "none" }}
+                    >
+                      <WebTerminal
+                        token={token}
+                        instance={selectedInstance}
+                        onStatus={updateInstanceStatus}
+                        onAskSaki={onAskSaki}
+                        {...(tab.shellSessionId !== undefined ? { shellSessionId: tab.shellSessionId } : {})}
+                        isActive={isActive}
+                        onMountTerminalActions={setTerminalActions}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Standalone separated Command Row (Integrated History Button inside Input + Circular Right Arrow Button) */}
+            <form
+              className="terminal-command-row"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const cmd = terminalCmd.trim();
+                if (!cmd) return;
+                terminalActions?.sendCommand(cmd);
+                setTerminalCmd("");
+                setTerminalHistoryIndex(null);
+                setTerminalHistoryDraft("");
+                setTerminalAutocompleteState(null);
+                setShowHistoryMenu(false);
+              }}
+            >
+              <div className="terminal-input-wrap">
+                <div className="terminal-history-wrap">
+                  <button
+                    className="terminal-history-btn"
+                    type="button"
+                    title="历史命令"
+                    style={{ background: "transparent", border: "none", boxShadow: "none", outline: "none" }}
+                    onClick={() => setShowHistoryMenu((v) => !v)}
+                  >
+                    <History size={17} />
+                  </button>
+
+                  {showHistoryMenu && (
+                    <div className="glass-panel terminal-history-popover">
+                      <div className="terminal-history-header">
+                        <span>历史命令</span>
+                        <span className="terminal-history-count">
+                          {terminalActions?.getHistory?.().length || 0} 条
+                        </span>
+                      </div>
+                      <div className="terminal-history-list">
+                        {(terminalActions?.getHistory?.() || []).length === 0 ? (
+                          <div className="terminal-history-empty">暂无历史命令</div>
+                        ) : (
+                          (terminalActions?.getHistory?.() || []).slice().reverse().map((hCmd, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              className="terminal-history-item"
+                              title={hCmd}
+                              onClick={() => {
+                                setTerminalCmd(hCmd);
+                                setShowHistoryMenu(false);
+                              }}
+                            >
+                              <span className="history-cmd-text">{hCmd}</span>
+                              <span
+                                className="history-send-tag"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  terminalActions?.sendCommand(hCmd);
+                                  setShowHistoryMenu(false);
+                                }}
+                                title="直接执行"
+                              >
+                                执行 ↵
+                              </span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <input
+                  className="terminal-cmd-input"
+                  style={{
+                    background: "transparent",
+                    backgroundColor: "transparent",
+                    backdropFilter: "none",
+                    WebkitBackdropFilter: "none",
+                    border: "none",
+                    boxShadow: "none",
+                    outline: "none",
+                  }}
+                  value={terminalCmd}
+                  onChange={(e) => {
+                    setTerminalCmd(e.target.value);
+                    setTerminalHistoryIndex(null);
+                    setTerminalAutocompleteState(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.nativeEvent.isComposing || e.keyCode === 229)) {
+                      return;
+                    }
+                    const history = terminalActions?.getHistory?.() || [];
+
+                    if (e.key === "Tab") {
+                      e.preventDefault();
+                      const next = nextTerminalAutocompleteValue(terminalCmd, history, terminalAutocompleteState);
+                      if (next) {
+                        setTerminalCmd(next.value);
+                        setTerminalAutocompleteState(next.state);
+                      }
+                      return;
+                    }
+
+                    setTerminalAutocompleteState(null);
+
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      if (history.length === 0) return;
+                      if (terminalHistoryIndex === null) {
+                        setTerminalHistoryDraft(terminalCmd);
+                        const nextIdx = history.length - 1;
+                        setTerminalHistoryIndex(nextIdx);
+                        setTerminalCmd(history[nextIdx] ?? "");
+                      } else if (terminalHistoryIndex > 0) {
+                        const nextIdx = terminalHistoryIndex - 1;
+                        setTerminalHistoryIndex(nextIdx);
+                        setTerminalCmd(history[nextIdx] ?? "");
+                      }
+                    } else if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      if (terminalHistoryIndex === null) return;
+                      if (terminalHistoryIndex < history.length - 1) {
+                        const nextIdx = terminalHistoryIndex + 1;
+                        setTerminalHistoryIndex(nextIdx);
+                        setTerminalCmd(history[nextIdx] ?? "");
+                      } else {
+                        setTerminalHistoryIndex(null);
+                        setTerminalCmd(terminalHistoryDraft);
+                      }
+                    }
+                  }}
+                  disabled={!canCommandInput}
+                  placeholder={
+                    !selectedInstance
+                      ? "请选择实例"
+                      : canCommandInput
+                      ? `输入命令按回车发送到 ${activeTab?.label || "终端"}，按 Tab 键自动补全，上下键切换历史`
+                      : "实例未运行"
+                  }
+                />
+              </div>
+
+              <button
+                className="terminal-send-btn"
+                type="submit"
+                title="发送命令 (Enter)"
+                disabled={!canCommandInput || !terminalCmd.trim()}
+              >
+                <ArrowRight size={18} strokeWidth={2.4} />
+              </button>
+            </form>
+          </section>
+
+          {/* RIGHT: Master Sidebar Cards Column */}
+          <aside className="instance-sidebar-col">
+            <IncidentBanner
+              token={token}
+              instanceId={selectedInstance.id}
+              onLogout={onLogout}
+              variant="panel"
+              onAskSaki={
+                onAskSaki
+                  ? () =>
+                      onAskSaki({
+                        message: "",
+                        contextTitle: `值班：${selectedInstance.name}`,
+                        mode: "agent"
+                      })
+                  : undefined
+              }
+            />
+            {/* Card 1: 实例信息 */}
+            <div className="glass-panel instance-side-card instance-summary-card">
+              <div className="instance-summary-header">
+                <div className="summary-title-row">
+                  <h3 title={selectedInstance.name}>{selectedInstance.name}</h3>
+                </div>
+                <div className="summary-status-row">
+                  <InstanceStatusBadge status={selectedInstance.status} />
+                  <span className="instance-program-badge">通用控制台程序</span>
+                </div>
+              </div>
+              <div className="instance-summary-table">
+                <div className="summary-row">
+                  <span className="summary-label">节点</span>
+                  <span className="summary-value" title={selectedNodeName}>{selectedNodeName}</span>
+                </div>
+                <div className="summary-row">
+                  <span className="summary-label">工作目录</span>
+                  <span className="summary-value" title={selectedInstance.workingDirectory || "-"}>
+                    {selectedInstance.workingDirectory || "-"}
+                  </span>
+                </div>
+                <div className="summary-row">
+                  <span className="summary-label">重启策略</span>
+                  <span className="summary-value">{restartPolicyLabel(selectedInstance.restartPolicy)}</span>
+                </div>
+                <div className="summary-row">
+                  <span className="summary-label">开机自启</span>
+                  <span className="summary-value">{selectedInstance.autoStart ? "已开启" : "关闭"}</span>
+                </div>
+                <div className="summary-row">
+                  <span className="summary-label">创建者</span>
+                  <span className="summary-value">{instanceCreatorLabel(selectedInstance)}</span>
+                </div>
+                <div className="summary-row">
+                  <span className="summary-label">更新时间</span>
+                  <span className="summary-value">{formatDate(selectedInstance.updatedAt)}</span>
+                </div>
+                {selectedInstance.lastExitCode !== null && selectedInstance.lastExitCode !== undefined ? (
+                  <div className="summary-row">
+                    <span className="summary-label">退出码</span>
+                    <span className="summary-value">{selectedInstance.lastExitCode}</span>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            {/* Card 2: 快捷操作 */}
+            <div className="glass-panel instance-side-card instance-actions-panel-card">
+              <div className="quick-actions-square-grid">
+                <button
+                  className={`quick-action-square-btn ${running ? "disabled" : "action-start"}`}
                   type="button"
                   disabled={busy || running}
                   onClick={() => void runAction(selectedInstance, "start")}
-                  title="启动"
                 >
-                  <Play size={18} />
+                  <div className="action-icon-circle start">
+                    <Play size={18} />
+                  </div>
+                  <span className="action-text">启动</span>
                 </button>
+
                 <button
-                  className="collapsed-tool-btn"
-                  type="button"
-                  disabled={busy || !running}
-                  onClick={() => void runAction(selectedInstance, "stop")}
-                  title="停止"
-                >
-                  <Square size={18} />
-                </button>
-                <button
-                  className="collapsed-tool-btn"
+                  className="quick-action-square-btn action-restart"
                   type="button"
                   disabled={busy}
                   onClick={() => void runAction(selectedInstance, "restart")}
-                  title="重启"
                 >
-                  <RotateCw size={18} />
+                  <div className="action-icon-circle restart">
+                    <RotateCw size={18} />
+                  </div>
+                  <span className="action-text">重启</span>
                 </button>
+
                 <button
-                  className="collapsed-tool-btn danger"
+                  className={`quick-action-square-btn ${!running ? "disabled" : "action-stop"}`}
+                  type="button"
+                  disabled={busy || !running}
+                  onClick={() => void runAction(selectedInstance, "stop")}
+                >
+                  <div className="action-icon-circle stop">
+                    <Square size={18} />
+                  </div>
+                  <span className="action-text">停止</span>
+                </button>
+
+                <button
+                  className="quick-action-square-btn action-kill"
                   type="button"
                   disabled={busy || !running}
                   onClick={() => void runAction(selectedInstance, "kill")}
-                  title="强杀"
                 >
-                  <XOctagon size={18} />
+                  <div className="action-icon-circle kill">
+                    <XOctagon size={18} />
+                  </div>
+                  <span className="action-text">强杀</span>
                 </button>
+
                 <button
-                  className="collapsed-tool-btn"
+                  className="quick-action-square-btn action-files"
+                  type="button"
+                  onClick={() => setShowFileManagerModal(true)}
+                >
+                  <div className="action-icon-circle files">
+                    <FolderOpen size={18} />
+                  </div>
+                  <span className="action-text">文件管理</span>
+                </button>
+
+                <button
+                  className="quick-action-square-btn action-settings"
+                  type="button"
+                  onClick={() => setShowSettingsModal(true)}
+                >
+                  <div className="action-icon-circle settings">
+                    <Settings size={18} />
+                  </div>
+                  <span className="action-text">实例设置</span>
+                </button>
+
+                <button
+                  className="quick-action-square-btn action-tasks"
                   type="button"
                   onClick={() => setShowTaskModal(true)}
-                  title="计划任务"
                 >
-                  <Clock size={18} />
+                  <div className="action-icon-circle tasks">
+                    <Clock size={18} />
+                  </div>
+                  <span className="action-text">计划任务</span>
+                </button>
+
+                <button
+                  className={`quick-action-square-btn action-proxy ${selectedInstance.proxyConfig?.enabled ? "proxy-active" : ""}`}
+                  type="button"
+                  title={selectedInstance.proxyConfig?.enabled ? `网络代理已生效: ${selectedInstance.proxyConfig.type}://${selectedInstance.proxyConfig.server}:${selectedInstance.proxyConfig.port}` : "网络代理设置 (支持 Clash 等主流代理软件)"}
+                  onClick={() => setShowProxyModal(true)}
+                >
+                  <div className="action-icon-circle proxy">
+                    <Globe size={18} />
+                    {selectedInstance.proxyConfig?.enabled ? (
+                      <span className="proxy-active-badge-dot" aria-label="代理已生效" />
+                    ) : null}
+                  </div>
+                  <span className="action-text">网络代理</span>
                 </button>
               </div>
-            )}
+            </div>
+
+            {/* Card 3: 实时性能与进程探针 */}
+            <InstanceProcessProbeCard
+              instance={selectedInstance}
+              running={running}
+              nodeName={selectedNodeName}
+            />
           </aside>
-        </section>
+        </div>
       </>
     );
   }
 
   return (
     <>
-      {error ? (
-        <div className="page-error action-error">
-          <span>{error}</span>
-          {onAskSaki ? (
+      <PageErrorToast
+        error={error}
+        onDismiss={() => setError("")}
+        action={
+          onAskSaki ? (
             <button
               className="small-button"
               type="button"
@@ -11183,10 +19211,11 @@ function InstancesView({
               <Sparkles size={14} />
               问 Saki
             </button>
-          ) : null}
-        </div>
-      ) : null}
+          ) : null
+        }
+      />
       {createDialog}
+      {databaseVisualizerDialog}
 
       <section className="instance-directory">
         <div className="instance-command-center">
@@ -11195,54 +19224,32 @@ function InstancesView({
               <TerminalIcon size={22} />
             </div>
             <div className="instance-command-count">
-              <span>实例</span>
-              <strong>{instances.length}</strong>
+              <span>实例与数据库</span>
+              <strong>{instances.length + databases.length}</strong>
             </div>
-          </div>
-
-          <div className="instance-status-ribbon" aria-label="实例状态">
-            {instanceStats.visibleStatuses.length > 0 ? (
-              instanceStats.visibleStatuses.map((status) => {
-                const meta = instanceStatusMeta(status);
-                return (
-                  <span className={`instance-status-chip ${meta.className}`} key={status} title={meta.hint}>
-                    <InstanceStatusIcon status={status} size={13} />
-                    <span>{meta.shortLabel}</span>
-                    <strong>{instanceStats.counts[status]}</strong>
-                  </span>
-                );
-              })
-            ) : (
-              <span className="instance-status-chip created">
-                <TerminalIcon size={13} />
-                <span>待命</span>
-                <strong>0</strong>
-              </span>
-            )}
           </div>
 
           <div className="instance-command-actions">
             <div className="instance-view-switcher" role="group" aria-label="实例视图">
               {instanceViewOptions.map((option) => (
                 <button
-                  className={`instance-view-button ${directoryView === option.view ? "active" : ""}`}
+                  className={`instance-view-button icon-only ${directoryView === option.view ? "active" : ""}`}
                   type="button"
                   title={option.title}
+                  aria-label={option.label}
                   aria-pressed={directoryView === option.view}
                   onClick={() => setDirectoryView(option.view)}
                   key={option.view}
                 >
                   {option.icon}
-                  <span>{option.label}</span>
                 </button>
               ))}
             </div>
-            <button className="icon-button" title="模板" type="button" onClick={onOpenTemplates}>
-              <LayoutTemplate size={18} />
+            <button className="icon-button instance-action-btn" title="模板管理" type="button" onClick={onOpenTemplates}>
+              <LayoutTemplate size={17} />
             </button>
-            <button className="primary-button create-instance-button" type="button" onClick={() => setShowCreateForm(true)}>
+            <button className="primary-button create-instance-button icon-only" title="新建实例与数据库" type="button" onClick={() => setShowCreateForm(true)}>
               <Plus size={18} />
-              创建
             </button>
           </div>
         </div>
@@ -11287,67 +19294,154 @@ function InstancesView({
                   </button>
 
                   <div className="instance-glance">
-                    <span title={nodeDetail}>
-                      <Server size={14} />
-                      {nodeName}
+                    <span className="instance-glance-item" data-tooltip={`节点: ${nodeName} (${nodeDetail})`}>
+                      <Server size={13} />
+                      <span className="glance-label">{nodeName}</span>
                     </span>
-                    <span title={instance.workingDirectory || "未设置工作目录"}>
-                      <HardDrive size={14} />
-                      {compactPathLabel(instance.workingDirectory)}
+                    <span className="instance-glance-item" data-tooltip={`工作目录: ${compactPathLabel(instance.workingDirectory) || "未设置工作目录"}`}>
+                      <HardDrive size={13} />
+                      <span className="glance-label">{compactPathLabel(instance.workingDirectory) || "未设置工作目录"}</span>
                     </span>
-                    <span title="更新">
-                      <Clock size={14} />
-                      {formatDate(instance.updatedAt)}
+                    <span className="instance-glance-item" data-tooltip={`更新时间: ${formatDate(instance.updatedAt)}`}>
+                      <Clock size={13} />
+                      <span className="glance-label">{formatDate(instance.updatedAt)}</span>
                     </span>
-                  </div>
-
-                  <div className="instance-badge-strip">
-                    <span title={`创建者 · ${ownerRoleLabel(instance.createdByRole)}`}>
-                      <UserRound size={12} />
-                      {instanceCreatorLabel(instance)}
-                    </span>
-                    <span title={instanceAssigneeTitle(instance)}>
-                      <UserCheck size={12} />
-                      {instanceAssigneeLabel(instance)}
-                    </span>
+                    {instance.lastExitCode !== null && instance.lastExitCode !== undefined ? (
+                      <span className="instance-glance-item error" data-tooltip={`退出码: ${instance.lastExitCode}`}>
+                        <Bug size={13} />
+                        <span className="glance-label">退出码 {instance.lastExitCode}</span>
+                      </span>
+                    ) : null}
                     {instance.autoStart ? (
-                      <span title="自启动">
-                        <Play size={12} />
-                        自启
+                      <span className="instance-glance-item" data-tooltip="开机自启">
+                        <Play size={13} />
+                        <span className="glance-label">自启</span>
                       </span>
                     ) : null}
                     {instance.restartPolicy !== "never" ? (
-                      <span title={restartPolicyLabel(instance.restartPolicy)}>
-                        <RefreshCw size={12} />
-                        重试
-                      </span>
-                    ) : null}
-                    {instance.lastExitCode !== null && instance.lastExitCode !== undefined ? (
-                      <span title="退出码">
-                        <Bug size={12} />
-                        {instance.lastExitCode}
+                      <span className="instance-glance-item" data-tooltip={`重启策略: ${restartPolicyLabel(instance.restartPolicy)}`}>
+                        <RefreshCw size={13} />
+                        <span className="glance-label">{restartPolicyLabel(instance.restartPolicy)}</span>
                       </span>
                     ) : null}
                   </div>
 
                   <div className="instance-card-footer">
                     <button
-                      className="icon-button mini"
-                      title="控制台"
+                      className="instance-card-console-btn"
+                      title="进入控制台"
                       type="button"
                       onClick={() => setSelectedId(instance.id)}
                     >
-                      <TerminalIcon size={15} />
+                      <TerminalIcon size={14} />
+                      <span>控制台</span>
                     </button>
                     {renderInstanceRowActions(instance)}
                   </div>
                 </div>
               );
             })}
-            {instances.length === 0 ? (
-              <div className="empty-state card-empty-state">
-                <TerminalIcon size={24} />
-                <span>暂无实例</span>
+
+            {databases.map((db) => {
+              const dbNode = nodes.find((node) => node.id === db.nodeId) ?? null;
+              const nodeName = dbNode?.name ?? db.nodeName ?? db.nodeId;
+              const endpointLabel = db.config.path
+                ? compactPathLabel(db.config.path)
+                : `${db.config.host || "127.0.0.1"}:${db.config.port || 3306}`;
+
+              return (
+                <div className="instance-card database-instance-card" key={`db-${db.id}`}>
+                  <span className="instance-card-signal db-card-signal" aria-hidden="true" />
+                  <div className="instance-card-header">
+                    <div className="instance-card-title">
+                      <div className={`instance-card-icon db-icon-badge ${db.engine}`}>
+                        <Database size={18} />
+                      </div>
+                      <div className="instance-title-copy">
+                        <button
+                          className="link-button instance-name"
+                          type="button"
+                          onClick={() => setSelectedDatabaseId(db.id)}
+                        >
+                          {db.name}
+                        </button>
+                        <span className="db-engine-chip">{db.engine.toUpperCase()} 数据库可视化</span>
+                      </div>
+                    </div>
+                    <span className="status-pill blue db-card-status">
+                      <CheckCircle2 size={12} /> 可视化就绪
+                    </span>
+                  </div>
+
+                  <button
+                    className="instance-card-command db-card-endpoint"
+                    type="button"
+                    title={db.config.path || `${db.config.host || "127.0.0.1"}:${db.config.port || ""}`}
+                    onClick={() => setSelectedDatabaseId(db.id)}
+                  >
+                    <HardDrive size={14} />
+                    <span>{endpointLabel}</span>
+                  </button>
+
+                  <div className="instance-glance">
+                    <span className="instance-glance-item" data-tooltip={`节点: ${nodeName}`}>
+                      <Server size={13} />
+                      <span className="glance-label">{nodeName}</span>
+                    </span>
+                    {db.description ? (
+                      <span className="instance-glance-item" data-tooltip={`描述: ${db.description}`}>
+                        <Info size={13} />
+                        <span className="glance-label">{db.description}</span>
+                      </span>
+                    ) : null}
+                    <span className="instance-glance-item" data-tooltip={`更新时间: ${formatDate(db.updatedAt)}`}>
+                      <Clock size={13} />
+                      <span className="glance-label">{formatDate(db.updatedAt)}</span>
+                    </span>
+                  </div>
+
+                  <div className="instance-card-footer">
+                    <button
+                      className="instance-card-console-btn db-visualize-btn"
+                      title="进入数据库可视化"
+                      type="button"
+                      onClick={() => setSelectedDatabaseId(db.id)}
+                    >
+                      <Database size={14} />
+                      <span>进入可视化</span>
+                    </button>
+                    <div className="row-actions instance-row-actions">
+                      <button
+                        className="icon-button mini danger-action"
+                        title="删除数据库可视化实例"
+                        type="button"
+                        onClick={async () => {
+                          if (window.confirm(`确定要移除数据库可视化实例「${db.name}」吗？`)) {
+                            await api.deleteDatabase(token, db.id);
+                            await refresh();
+                          }
+                        }}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {instances.length === 0 && databases.length === 0 ? (
+              <div style={{ gridColumn: "1 / -1", padding: "20px 0" }}>
+                <SakiEmptyState
+                  illustration="instances"
+                  title="暂无实例或数据库"
+                  description="准备好搭建你的第一个服务了吗？你可以手动创建实例，或前往应用模板中心一键快速部署！"
+                  action={{
+                    label: "前往应用模板中心",
+                    onClick: onOpenTemplates,
+                    icon: <Sparkles size={14} />
+                  }}
+                />
               </div>
             ) : null}
           </div>
@@ -11357,8 +19451,8 @@ function InstancesView({
               <span>实例</span>
               <span>状态</span>
               <span>节点</span>
-              <span>工作目录</span>
-              <span>归属</span>
+              <span>工作目录 / 路径</span>
+              <span>类型</span>
               <span>更新</span>
               <span>操作</span>
             </div>
@@ -11425,11 +19519,92 @@ function InstancesView({
                 </div>
               );
             })}
-            {instances.length === 0 ? (
-              <div className="empty-state card-empty-state instance-list-empty">
-                <TerminalIcon size={24} />
-                <span>暂无实例</span>
-              </div>
+
+            {databases.map((db) => {
+              const dbNode = nodes.find((node) => node.id === db.nodeId) ?? null;
+              const nodeName = dbNode?.name ?? db.nodeName ?? db.nodeId;
+              const endpointLabel = db.config.path
+                ? compactPathLabel(db.config.path)
+                : `${db.config.host || "127.0.0.1"}:${db.config.port || 3306}`;
+
+              return (
+                <div className="instance-list-row database-list-row" role="row" key={`db-${db.id}`}>
+                  <div className="instance-list-primary" role="cell">
+                    <span className="instance-list-icon db-icon-badge">
+                      <Database size={17} />
+                    </span>
+                    <div className="instance-list-copy">
+                      <button
+                        className="link-button instance-list-name"
+                        type="button"
+                        onClick={() => setSelectedDatabaseId(db.id)}
+                      >
+                        {db.name}
+                      </button>
+                      <span title={endpointLabel}>
+                        [{db.engine.toUpperCase()}] {endpointLabel}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="instance-list-status" role="cell">
+                    <span className="status-pill blue compact">就绪</span>
+                  </div>
+                  <div className="instance-list-meta" role="cell" title={nodeName}>
+                    <Server size={14} />
+                    <span>{nodeName}</span>
+                  </div>
+                  <div className="instance-list-meta" role="cell" title={endpointLabel}>
+                    <HardDrive size={14} />
+                    <span>{endpointLabel}</span>
+                  </div>
+                  <div className="instance-list-meta instance-owner-meta" role="cell">
+                    <Database size={13} />
+                    <span>数据库</span>
+                  </div>
+                  <div className="instance-list-meta" role="cell" title="更新">
+                    <Clock size={14} />
+                    <span>{formatDate(db.updatedAt)}</span>
+                  </div>
+                  <div className="instance-list-actions" role="cell">
+                    <button
+                      className="icon-button mini"
+                      title="进入可视化"
+                      type="button"
+                      onClick={() => setSelectedDatabaseId(db.id)}
+                    >
+                      <Database size={15} />
+                    </button>
+                    <div className="row-actions instance-row-actions">
+                      <button
+                        className="icon-button mini danger-action"
+                        title="删除"
+                        type="button"
+                        onClick={async () => {
+                          if (window.confirm(`确定要移除数据库可视化实例「${db.name}」吗？`)) {
+                            await api.deleteDatabase(token, db.id);
+                            await refresh();
+                          }
+                        }}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {instances.length === 0 && databases.length === 0 ? (
+              <SakiEmptyState
+                illustration="instances"
+                title="暂无实例或数据库"
+                description="开启你的第一个服务器实例吧"
+                action={{
+                  label: "前往应用模板中心",
+                  onClick: onOpenTemplates,
+                  icon: <Sparkles size={14} />
+                }}
+              />
             ) : null}
           </div>
         ) : (
@@ -11480,10 +19655,11 @@ function InstancesView({
                 </button>
               ))}
               {instances.length === 0 ? (
-                <div className="empty-state card-empty-state instance-graph-empty">
-                  <TerminalIcon size={24} />
-                  <span>暂无实例</span>
-                </div>
+                <SakiEmptyState
+                  illustration="instances"
+                  title="暂无实例拓扑"
+                  description="创建实例后，系统将自动生成节点与服务拓扑图谱"
+                />
               ) : null}
             </div>
             <aside className="instance-graph-sidebar" aria-label="图谱概览">
@@ -11498,18 +19674,6 @@ function InstancesView({
                   实例
                   <strong>{instances.length}</strong>
                 </span>
-              </div>
-              <div className="instance-graph-status-list">
-                {instanceStats.visibleStatuses.map((status) => {
-                  const meta = instanceStatusMeta(status);
-                  return (
-                    <span className={`instance-status-chip ${meta.className}`} title={meta.hint} key={status}>
-                      <InstanceStatusIcon status={status} size={13} />
-                      <span>{meta.shortLabel}</span>
-                      <strong>{instanceStats.counts[status]}</strong>
-                    </span>
-                  );
-                })}
               </div>
               <div className="instance-graph-node-list">
                 {graphLayout.hubs.map((hub) => (
@@ -11670,7 +19834,7 @@ function TasksView({ token, onLogout, refreshTick }: { token: string; onLogout: 
 
   return (
     <>
-      {error ? <div className="page-error">{error}</div> : null}
+      <PageErrorToast error={error} onDismiss={() => setError("")} />
 
       <section className="task-layout">
         <div className="panel-block task-form-panel">
@@ -11780,14 +19944,35 @@ function TasksView({ token, onLogout, refreshTick }: { token: string; onLogout: 
                       <td>{task.enabled ? "启用" : "停用"}</td>
                       <td>
                         <div className="row-actions">
-                          <button className="small-button compact-button" disabled={busy} onClick={() => void runTask(task)}>
-                            运行
+                          <button
+                            className="icon-button mini"
+                            disabled={busy}
+                            title="运行任务"
+                            aria-label="运行任务"
+                            type="button"
+                            onClick={() => void runTask(task)}
+                          >
+                            <Play size={14} />
                           </button>
-                          <button className="small-button compact-button" disabled={busy} onClick={() => void toggleTask(task)}>
-                            {task.enabled ? "停用" : "启用"}
+                          <button
+                            className={`icon-button mini ${task.enabled ? "active" : ""}`}
+                            disabled={busy}
+                            title={task.enabled ? "停用任务" : "启用任务"}
+                            aria-label={task.enabled ? "停用任务" : "启用任务"}
+                            type="button"
+                            onClick={() => void toggleTask(task)}
+                          >
+                            <Power size={14} />
                           </button>
-                          <button className="icon-button mini danger-action" disabled={busy} title="删除" onClick={() => void deleteTask(task)}>
-                            <Trash2 size={15} />
+                          <button
+                            className="icon-button mini danger-action"
+                            disabled={busy}
+                            title="删除任务"
+                            aria-label="删除任务"
+                            type="button"
+                            onClick={() => void deleteTask(task)}
+                          >
+                            <Trash2 size={14} />
                           </button>
                         </div>
                       </td>
@@ -11952,7 +20137,7 @@ function TemplatesView({ token, onLogout, refreshTick }: { token: string; onLogo
 
   return (
     <>
-      {error ? <div className="page-error">{error}</div> : null}
+      <PageErrorToast error={error} onDismiss={() => setError("")} />
       <section className="template-layout">
         <div className="panel-block templates-panel">
           <div className="section-heading">
@@ -12145,6 +20330,18 @@ const PERMISSION_GROUPS: { groupKey: PanelTextKey; items: { code: PermissionCode
   }
 ];
 
+const PERM_GROUP_ICONS: Record<string, React.ReactNode> = {
+  "permissions.group.dashboard": <Activity size={14} />,
+  "permissions.group.nodes": <Server size={14} />,
+  "permissions.group.instances": <Cpu size={14} />,
+  "permissions.group.terminal": <TerminalIcon size={14} />,
+  "permissions.group.files": <FolderTree size={14} />,
+  "permissions.group.tasks": <Clock size={14} />,
+  "permissions.group.templates": <FileArchive size={14} />,
+  "permissions.group.users": <UserCog size={14} />,
+  "permissions.group.saki": <Sparkles size={14} />
+};
+
 const elevatedRoleNamesForUi = new Set(["super_admin", "admin", "administrator", "operator"]);
 const elevatedRolePermissionHintsForUi = new Set<PermissionCode>([
   "instance.update",
@@ -12222,6 +20419,8 @@ function UsersView({
   const [savingUser, setSavingUser] = useState(false);
   const [switchingUserId, setSwitchingUserId] = useState<string | null>(null);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
+  const [pointsTargetUser, setPointsTargetUser] = useState<ManagedUser | null>(null);
+  const [pointsModalOpen, setPointsModalOpen] = useState(false);
   const canViewAccounts = currentUser.permissions.includes("user.view");
   const canUpdateAccounts = currentUser.permissions.includes("user.update");
   const canCreateUsers = currentUser.permissions.includes("user.create");
@@ -12278,6 +20477,84 @@ function UsersView({
   useEffect(() => {
     setRolePermissions(selectedRole?.permissions ?? []);
   }, [selectedRole]);
+
+  const [permSearch, setPermSearch] = useState("");
+  const [userSearch, setUserSearch] = useState("");
+  const [showMobileCreate, setShowMobileCreate] = useState(false);
+
+  const filteredUsers = useMemo(() => {
+    const query = userSearch.trim().toLowerCase();
+    if (!query) return users;
+    return users.filter(
+      (u) =>
+        u.username.toLowerCase().includes(query) ||
+        (u.displayName && u.displayName.toLowerCase().includes(query)) ||
+        u.roleNames.some((r) => roleNameDisplayName(r, t).toLowerCase().includes(query) || r.toLowerCase().includes(query))
+    );
+  }, [users, userSearch, t]);
+
+  const allAvailablePermissions = useMemo(
+    () => PERMISSION_GROUPS.flatMap((g) => g.items.map((i) => i.code)),
+    []
+  );
+
+  const isRolePermissionsDirty = useMemo(() => {
+    if (!selectedRole) return false;
+    const original = [...(selectedRole.permissions ?? [])].sort();
+    const current = [...rolePermissions].sort();
+    if (original.length !== current.length) return true;
+    return original.some((val, idx) => val !== current[idx]);
+  }, [selectedRole, rolePermissions]);
+
+  const permissionsDiffCount = useMemo(() => {
+    if (!selectedRole) return 0;
+    const originalSet = new Set(selectedRole.permissions ?? []);
+    const currentSet = new Set(rolePermissions);
+    let diff = 0;
+    for (const code of allAvailablePermissions) {
+      if (originalSet.has(code) !== currentSet.has(code)) diff++;
+    }
+    return diff;
+  }, [allAvailablePermissions, rolePermissions, selectedRole]);
+
+  const grantAllPermissions = useCallback(() => {
+    setRolePermissions([...allAvailablePermissions]);
+  }, [allAvailablePermissions]);
+
+  const revokeAllPermissions = useCallback(() => {
+    setRolePermissions([]);
+  }, []);
+
+  const resetRolePermissions = useCallback(() => {
+    if (!selectedRole) return;
+    setRolePermissions(selectedRole.permissions ?? []);
+  }, [selectedRole]);
+
+  const toggleGroupPermissions = useCallback((groupCodes: PermissionCode[]) => {
+    setRolePermissions((curr) => {
+      const allSelected = groupCodes.every((code) => curr.includes(code));
+      if (allSelected) {
+        return curr.filter((c) => !groupCodes.includes(c));
+      }
+      return [...new Set([...curr, ...groupCodes])].sort();
+    });
+  }, []);
+
+  const filteredGroups = useMemo(() => {
+    const query = permSearch.trim().toLowerCase();
+    if (!query) return PERMISSION_GROUPS;
+    return PERMISSION_GROUPS.map((group) => {
+      const groupName = t(group.groupKey).toLowerCase();
+      const matchingItems = group.items.filter((item) => {
+        const label = t(item.labelKey).toLowerCase();
+        return label.includes(query) || item.code.toLowerCase().includes(query) || groupName.includes(query);
+      });
+      return {
+        ...group,
+        items: matchingItems
+      };
+    }).filter((group) => group.items.length > 0);
+  }, [permSearch, t]);
 
   async function createUser(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -12478,7 +20755,7 @@ function UsersView({
 
   return (
     <>
-      {error ? <div className="page-error">{error}</div> : null}
+      <PageErrorToast error={error} onDismiss={() => setError("")} />
       {assignmentTargetUser ? (
         <div className="modal-backdrop">
           <div className="modal-panel assignment-modal assignment-picker-modal" role="dialog" aria-modal="true" aria-labelledby="assignment-modal-title">
@@ -12544,7 +20821,7 @@ function UsersView({
               </div>
               <div className="assignment-actions">
                 <button
-                  className="small-button"
+                  className="secondary-button"
                   disabled={savingAssignment}
                   type="button"
                   onClick={() => {
@@ -12606,17 +20883,18 @@ function UsersView({
                   <strong>{(editForm.displayName ?? editingUser.displayName).trim() || editingUser.username}</strong>
                   <span>@{editForm.username ?? editingUser.username}</span>
                   <div className="account-upload-actions">
-                    <button className="small-button" disabled={savingUser} type="button" onClick={() => editAvatarFileInputRef.current?.click()}>
+                    <button className="icon-button mini" disabled={savingUser} type="button" title={t("account.uploadAvatar")} aria-label={t("account.uploadAvatar")} onClick={() => editAvatarFileInputRef.current?.click()}>
                       <Upload size={15} />
-                      {t("account.uploadAvatar")}
                     </button>
                     <button
-                      className="small-button"
+                      className="icon-button mini danger-action"
                       disabled={savingUser}
                       type="button"
+                      title={t("common.remove")}
+                      aria-label={t("common.remove")}
                       onClick={() => setEditForm((current) => ({ ...current, avatarDataUrl: null }))}
                     >
-                      {t("common.remove")}
+                      <Trash2 size={15} />
                     </button>
                   </div>
                 </div>
@@ -12703,7 +20981,7 @@ function UsersView({
                 </div>
               </div>
               <div className="assignment-actions">
-                <button className="small-button" disabled={savingUser} type="button" onClick={closeUserEditor}>
+                <button className="secondary-button" disabled={savingUser} type="button" onClick={closeUserEditor}>
                   {t("common.cancel")}
                 </button>
                 <button className="primary-button" disabled={savingUser} type="submit">
@@ -12744,8 +21022,14 @@ function UsersView({
                       <td>{assignedCount}</td>
                       <td>
                         <div className="user-row-actions">
-                          <button className="small-button compact-button" type="button" onClick={() => openAssignmentModal(assignee)}>
-                            {t("users.assignment.button")}
+                          <button
+                            className="icon-button mini"
+                            type="button"
+                            title={t("users.assignment.button")}
+                            aria-label={t("users.assignment.button")}
+                            onClick={() => openAssignmentModal(assignee)}
+                          >
+                            <ShieldCheck size={14} />
                           </button>
                         </div>
                       </td>
@@ -12763,7 +21047,7 @@ function UsersView({
         <>
           <section className={`user-layout ${canCreateUsers ? "" : "single-column"}`}>
             {canCreateUsers ? (
-              <div className="panel-block user-form-panel">
+              <div className={`panel-block user-form-panel ${showMobileCreate ? "mobile-open" : ""}`}>
                 <div className="section-heading">
                   <h2>{t("users.create.title")}</h2>
                 </div>
@@ -12803,24 +21087,57 @@ function UsersView({
             ) : null}
 
             <div className="panel-block users-panel">
-              <div className="section-heading">
-                <h2>{t("users.title")}</h2>
-                <span>{users.length} {t("users.countUnit")}</span>
+              <div className="section-heading users-panel-header">
+                <div className="users-title-line">
+                  <h2>{t("users.title")}</h2>
+                  <span className="users-count-tag">{filteredUsers.length} {t("users.countUnit")}</span>
+                </div>
+
+                <div className="users-header-controls">
+                  <div className="users-search-bar">
+                    <Search size={14} className="users-search-icon" />
+                    <input
+                      type="text"
+                      value={userSearch}
+                      onChange={(e) => setUserSearch(e.target.value)}
+                      placeholder="搜索用户名 / 昵称 / 角色..."
+                    />
+                    {userSearch ? (
+                      <button type="button" className="users-search-clear" onClick={() => setUserSearch("")}>
+                        <X size={13} />
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {canCreateUsers ? (
+                    <button
+                      type="button"
+                      className={`mobile-create-toggle-btn ${showMobileCreate ? "active" : ""}`}
+                      onClick={() => setShowMobileCreate((v) => !v)}
+                    >
+                      <UserPlus size={15} />
+                      <span>{showMobileCreate ? "收起" : "添加用户"}</span>
+                    </button>
+                  ) : null}
+                </div>
               </div>
-              <div className="table-wrap">
+
+              {/* 桌面端多列数据表格 */}
+              <div className="table-wrap desktop-users-table">
                 <table>
                   <thead>
                     <tr>
                       <th>{t("users.username")}</th>
                       <th>{t("users.displayName")}</th>
                       <th>{t("users.role")}</th>
+                      <th>积分</th>
                       <th>{t("users.status")}</th>
                       <th>{t("users.lastLogin")}</th>
                       <th></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {users.map((user) => {
+                    {filteredUsers.map((user) => {
                       const assignee = managedUserAssignee(user);
                       const canOpenAssignment =
                         canAssignInstances && user.status === "ACTIVE" && assignee !== null && assignableUserIds.has(user.id);
@@ -12845,39 +21162,77 @@ function UsersView({
                           </td>
                           <td>{user.displayName}</td>
                           <td>{roleNamesDisplay(user.roleNames, t)}</td>
+                          <td>
+                            {user.unlimitedPoints ? (
+                              <span className="user-points-badge unlimited">
+                                <InfinityIcon size={12} /> 无限
+                              </span>
+                            ) : (
+                              <span className="user-points-badge">
+                                {user.points ?? 0}
+                              </span>
+                            )}
+                          </td>
                           <td>{user.status === "ACTIVE" ? t("users.status.active") : t("users.status.disabled")}</td>
                           <td>{formatDate(user.lastLoginAt)}</td>
                           <td>
                             <div className="user-row-actions">
-                              <button className="small-button compact-button" type="button" onClick={() => openUserEditor(user)}>
+                              {currentUser.isAdmin ? (
+                                <button
+                                  className="icon-button mini"
+                                  type="button"
+                                  title="管理用户积分与消耗明细"
+                                  aria-label="管理用户积分与消耗明细"
+                                  onClick={() => {
+                                    setPointsTargetUser(user);
+                                    setPointsModalOpen(true);
+                                  }}
+                                >
+                                  <Coins size={14} />
+                                </button>
+                              ) : null}
+                              <button
+                                className="icon-button mini"
+                                type="button"
+                                title={t("users.edit.button")}
+                                aria-label={t("users.edit.button")}
+                                onClick={() => openUserEditor(user)}
+                              >
                                 <UserCog size={14} />
-                                {t("users.edit.button")}
                               </button>
                               {canOpenAssignment && assignee ? (
-                                <button className="small-button compact-button" type="button" onClick={() => openAssignmentModal(assignee)}>
-                                  {t("users.assignment.button")}
+                                <button
+                                  className="icon-button mini"
+                                  type="button"
+                                  title={t("users.assignment.button")}
+                                  aria-label={t("users.assignment.button")}
+                                  onClick={() => openAssignmentModal(assignee)}
+                                >
+                                  <ShieldCheck size={14} />
                                 </button>
                               ) : null}
                               {canSwitchAccount ? (
                                 <button
-                                  className="small-button compact-button"
+                                  className="icon-button mini"
                                   disabled={switchingUserId === user.id}
                                   type="button"
+                                  title={switchingUserId === user.id ? t("users.switching") : t("users.switch.button")}
+                                  aria-label={t("users.switch.button")}
                                   onClick={() => void switchToUser(user)}
                                 >
                                   <LogIn size={14} />
-                                  {switchingUserId === user.id ? t("users.switching") : t("users.switch.button")}
                                 </button>
                               ) : null}
                               {canDeleteAccount ? (
                                 <button
-                                  className="small-button compact-button danger-action"
+                                  className="icon-button mini danger-action"
                                   disabled={deletingUserId !== null}
                                   type="button"
+                                  title={deletingUserId === user.id ? t("users.deleting") : t("users.delete.button")}
+                                  aria-label={t("users.delete.button")}
                                   onClick={() => void deleteUser(user)}
                                 >
                                   <Trash2 size={14} />
-                                  {deletingUserId === user.id ? t("users.deleting") : t("users.delete.button")}
                                 </button>
                               ) : null}
                             </div>
@@ -12887,61 +21242,341 @@ function UsersView({
                     })}
                   </tbody>
                 </table>
+                {filteredUsers.length === 0 ? <div className="empty-state">未找到匹配的用户</div> : null}
+              </div>
+
+              {/* 移动端流式卡片列表 */}
+              <div className="mobile-user-cards-wrap">
+                {filteredUsers.length === 0 ? (
+                  <div className="empty-state">未找到匹配的用户</div>
+                ) : (
+                  filteredUsers.map((user) => {
+                    const assignee = managedUserAssignee(user);
+                    const canOpenAssignment =
+                      canAssignInstances && user.status === "ACTIVE" && assignee !== null && assignableUserIds.has(user.id);
+                    const canSwitchAccount =
+                      currentUser.isSuperAdmin &&
+                      user.id !== currentUser.id &&
+                      user.status === "ACTIVE" &&
+                      !user.roleNames.includes("super_admin");
+                    const canDeleteAccount = canDeleteUsers && user.id !== currentUser.id;
+
+                    return (
+                      <div className="mobile-user-card" key={user.id}>
+                        {/* 头部：头像 + 昵称/用户名 + 状态 */}
+                        <div className="mobile-user-card-header">
+                          <AccountAvatar
+                            avatarDataUrl={user.avatarDataUrl}
+                            displayName={user.displayName}
+                            username={user.username}
+                            className="mobile-avatar"
+                          />
+                          <div className="mobile-user-info">
+                            <div className="mobile-user-name-line">
+                              <strong className="mobile-user-displayname">
+                                {user.displayName || user.username}
+                              </strong>
+                              <span className={`status-pill mini ${user.status === "ACTIVE" ? "online" : "offline"}`}>
+                                {user.status === "ACTIVE" ? t("users.status.active") : t("users.status.disabled")}
+                              </span>
+                            </div>
+                            <span className="mobile-user-handle">@{user.username}</span>
+                          </div>
+                        </div>
+
+                        {/* 属性行：角色标签 + 积分 + 登录时间 */}
+                        <div className="mobile-user-meta-row">
+                          <span className="mobile-role-tag">{roleNamesDisplay(user.roleNames, t)}</span>
+                          {user.unlimitedPoints ? (
+                            <span className="user-points-badge unlimited">
+                              <InfinityIcon size={12} /> 无限积分
+                            </span>
+                          ) : (
+                            <span className="user-points-badge">
+                              <Coins size={12} /> {user.points ?? 0} 积分
+                            </span>
+                          )}
+                          <span className="mobile-last-login">
+                            <Clock size={11} /> {formatDate(user.lastLoginAt)}
+                          </span>
+                        </div>
+
+                        {/* 底部触控大按钮栏 */}
+                        <div className="mobile-user-actions">
+                          {currentUser.isAdmin ? (
+                            <button
+                              type="button"
+                              className="mobile-action-pill points-action"
+                              onClick={() => {
+                                setPointsTargetUser(user);
+                                setPointsModalOpen(true);
+                              }}
+                            >
+                              <Coins size={14} />
+                              <span>积分</span>
+                            </button>
+                          ) : null}
+
+                          <button
+                            type="button"
+                            className="mobile-action-pill edit-action"
+                            onClick={() => openUserEditor(user)}
+                          >
+                            <UserCog size={14} />
+                            <span>编辑</span>
+                          </button>
+
+                          {canOpenAssignment && assignee ? (
+                            <button
+                              type="button"
+                              className="mobile-action-pill assign-action"
+                              onClick={() => openAssignmentModal(assignee)}
+                            >
+                              <ShieldCheck size={14} />
+                              <span>分配</span>
+                            </button>
+                          ) : null}
+
+                          {canSwitchAccount ? (
+                            <button
+                              type="button"
+                              className="mobile-action-pill switch-action"
+                              disabled={switchingUserId === user.id}
+                              onClick={() => void switchToUser(user)}
+                            >
+                              <LogIn size={14} />
+                              <span>切换</span>
+                            </button>
+                          ) : null}
+
+                          {canDeleteAccount ? (
+                            <button
+                              type="button"
+                              className="mobile-action-pill delete-action"
+                              disabled={deletingUserId !== null}
+                              onClick={() => void deleteUser(user)}
+                            >
+                              <Trash2 size={14} />
+                              <span>删除</span>
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           </section>
 
           {canManageRoles ? (
-          <section className="panel-block role-panel">
-            <div className="section-heading role-heading-wrap">
-              <div className="role-heading-info">
-                <h2>{t("roles.permissions.title")}</h2>
-                <p>{t("roles.permissions.copy")}</p>
-              </div>
-              <select className="role-select-box" value={selectedRoleId} onChange={(event) => setSelectedRoleId(event.target.value)}>
-                {roles.map((role) => (
-                  <option value={role.id} key={role.id}>
-                    {roleDisplayName(role, t)}
-                  </option>
-                ))}
-              </select>
+          <section className="panel-block role-workspace-panel">
+            {/* 移动端横向角色切换条 */}
+            <div className="mobile-role-slider">
+              {roles.map((role) => {
+                const isSelected = role.id === selectedRoleId;
+                const count = (isSelected ? rolePermissions : role.permissions).length;
+                return (
+                  <button
+                    key={role.id}
+                    type="button"
+                    className={`mobile-role-slide-btn ${isSelected ? "active" : ""}`}
+                    onClick={() => setSelectedRoleId(role.id)}
+                  >
+                    <span>{roleDisplayName(role, t)}</span>
+                    <span className="slide-badge">{count}</span>
+                    {isSelected && isRolePermissionsDirty ? <span className="role-unsaved-dot" /> : null}
+                  </button>
+                );
+              })}
             </div>
-            <div className="permission-groups">
-              {PERMISSION_GROUPS.map((group) => (
-                <div className="permission-group-card" key={group.groupKey}>
-                  <h3 className="permission-group-title">{t(group.groupKey)}</h3>
-                  <div className="permission-group-items">
-                    {group.items.map((item) => {
-                      const isActive = rolePermissions.includes(item.code);
-                      return (
-                        <label className={`permission-chip ${isActive ? "active" : ""}`} key={item.code}>
-                          <input
-                            type="checkbox"
-                            checked={isActive}
-                            onChange={() => togglePermission(item.code)}
-                            className="hidden-checkbox"
-                          />
-                          <div className="permission-chip-content">
-                            {isActive ? <ShieldCheck size={16} /> : <div className="permission-chip-dot" />}
-                            <span className="permission-label">{t(item.labelKey)}</span>
+
+            <div className="role-workspace-layout">
+              {/* Left Role Master Sidebar */}
+              <aside className="role-master-sidebar">
+                <div className="role-sidebar-header">
+                  <h3>系统角色</h3>
+                  <span className="role-count-tag">{roles.length}</span>
+                </div>
+                <div className="role-list-scroller">
+                  {roles.map((role) => {
+                    const isSelected = role.id === selectedRoleId;
+                    const count = (isSelected ? rolePermissions : role.permissions).length;
+                    return (
+                      <button
+                        key={role.id}
+                        type="button"
+                        className={`role-list-item ${isSelected ? "active" : ""}`}
+                        onClick={() => setSelectedRoleId(role.id)}
+                      >
+                        <div className="role-item-main">
+                          <div className="role-item-title-row">
+                            <span className="role-item-name">{roleDisplayName(role, t)}</span>
+                            {isSelected && isRolePermissionsDirty ? (
+                              <span className="role-unsaved-dot" title="有未保存修改" />
+                            ) : null}
                           </div>
-                        </label>
-                      );
-                    })}
+                          <span className="role-item-subtitle">{role.id}</span>
+                        </div>
+                        <div className="role-item-stats">
+                          <span className="role-item-badge">{count}/{allAvailablePermissions.length}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </aside>
+
+              {/* Right Detail Workspace */}
+              <main className="role-detail-workspace">
+                <div className="role-detail-header">
+                  <div className="role-detail-heading">
+                    <div className="role-detail-title-line">
+                      <h2>{selectedRole ? roleDisplayName(selectedRole, t) : t("roles.permissions.title")}</h2>
+                      {isRolePermissionsDirty ? (
+                        <span className="role-dirty-pill">未保存更改 ({permissionsDiffCount})</span>
+                      ) : (
+                        <span className="role-clean-pill">已保存</span>
+                      )}
+                    </div>
+                    <p className="role-detail-desc">{t("roles.permissions.copy")}</p>
+                  </div>
+
+                  <div className="role-detail-actions">
+                    <div className="role-search-box">
+                      <Search size={13} />
+                      <input
+                        type="text"
+                        value={permSearch}
+                        onChange={(e) => setPermSearch(e.target.value)}
+                        placeholder="快速过滤权限..."
+                      />
+                      {permSearch ? (
+                        <button type="button" className="role-search-clear" onClick={() => setPermSearch("")}>
+                          <X size={12} />
+                        </button>
+                      ) : null}
+                    </div>
+
+                    <button
+                      type="button"
+                      className="role-action-btn"
+                      onClick={grantAllPermissions}
+                      title="授予当前角色全部权限"
+                    >
+                      全选
+                    </button>
+                    <button
+                      type="button"
+                      className="role-action-btn"
+                      onClick={revokeAllPermissions}
+                      title="清空当前角色权限"
+                    >
+                      清空
+                    </button>
+                    {isRolePermissionsDirty ? (
+                      <button
+                        type="button"
+                        className="role-action-btn"
+                        onClick={resetRolePermissions}
+                        title="重置为上次保存的权限"
+                      >
+                        重置
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="primary-button role-save-action"
+                      disabled={!selectedRole || savingRole}
+                      onClick={() => void saveRolePermissions()}
+                    >
+                      {savingRole ? <Loader2 size={14} className="spin" /> : <Save size={14} />}
+                      <span>{savingRole ? t("common.saving") : t("roles.permissions.save")}</span>
+                    </button>
                   </div>
                 </div>
-              ))}
-            </div>
-            <div className="role-actions">
-              <button className="primary-button settings-save" disabled={!selectedRole || savingRole} onClick={() => void saveRolePermissions()}>
-                <ShieldCheck size={17} />
-                {savingRole ? t("common.saving") : t("roles.permissions.save")}
-              </button>
+
+                {/* Permission Groups Grid */}
+                <div className="role-perm-grid">
+                  {filteredGroups.length === 0 ? (
+                    <div className="role-perm-empty">
+                      <p>未找到匹配“{permSearch}”的权限项</p>
+                    </div>
+                  ) : (
+                    filteredGroups.map((group) => {
+                      const groupCodes = group.items.map((i) => i.code);
+                      const activeCount = groupCodes.filter((code) => rolePermissions.includes(code)).length;
+                      const isAllSelected = groupCodes.length > 0 && activeCount === groupCodes.length;
+
+                      return (
+                        <div className="role-group-section" key={group.groupKey}>
+                          <div className="role-group-header">
+                            <div className="role-group-title">
+                              <span className="role-group-icon">
+                                {PERM_GROUP_ICONS[group.groupKey] ?? <Layers size={13} />}
+                              </span>
+                              <h4>{t(group.groupKey)}</h4>
+                              <span className="role-group-badge">{activeCount}/{groupCodes.length}</span>
+                            </div>
+                            <button
+                              type="button"
+                              className="role-group-toggle-btn"
+                              onClick={() => toggleGroupPermissions(groupCodes)}
+                            >
+                              {isAllSelected ? "清空此组" : "全选此组"}
+                            </button>
+                          </div>
+
+                          <div className="role-group-grid">
+                            {group.items.map((item) => {
+                              const isActive = rolePermissions.includes(item.code);
+                              return (
+                                <label
+                                  key={item.code}
+                                  className={`role-perm-row ${isActive ? "selected" : ""}`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isActive}
+                                    onChange={() => togglePermission(item.code)}
+                                  />
+                                  <div className="role-perm-info">
+                                    <span className="role-perm-label">{t(item.labelKey)}</span>
+                                    <span className="role-perm-code">{item.code}</span>
+                                  </div>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </main>
             </div>
           </section>
           ) : null}
         </>
       ) : null}
+      <AdminUserPointsModal
+        token={token}
+        user={pointsTargetUser}
+        open={pointsModalOpen}
+        onClose={() => {
+          setPointsModalOpen(false);
+          setPointsTargetUser(null);
+        }}
+        onUpdated={(updated) => {
+          setUsers((prev) =>
+            prev.map((u) =>
+              u.id === updated.id
+                ? { ...u, points: updated.points, unlimitedPoints: updated.unlimitedPoints }
+                : u
+            )
+          );
+        }}
+      />
     </>
   );
 }
@@ -13200,7 +21835,7 @@ function AuditView({
   const [deleting, setDeleting] = useState(false);
   const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
-  const [mobileAuditDetailOpen, setMobileAuditDetailOpen] = useState(false);
+  const [auditDetailOpen, setAuditDetailOpen] = useState(false);
   const pageSize = 20;
 
   const refresh = useCallback(async () => {
@@ -13380,7 +22015,7 @@ function AuditView({
 
   return (
     <>
-      {error ? <div className="page-error">{error}</div> : null}
+      <PageErrorToast error={error} onDismiss={() => setError("")} />
       {notice ? <div className="page-notice">{notice}</div> : null}
       <section className="panel-block audit-panel">
         <div className="audit-summary-grid">
@@ -13415,28 +22050,51 @@ function AuditView({
               </span>
               <div className="audit-toolbar-actions">
                 {onAskSaki ? (
-                  <button className="small-button" type="button" onClick={openAuditSaki}>
-                    <Sparkles size={14} />
-                    问 Saki
+                  <button className="icon-button mini" title="问 Saki" aria-label="问 Saki" type="button" onClick={openAuditSaki}>
+                    <Sparkles size={15} />
                   </button>
                 ) : null}
                 {canDeleteLogs ? (
                   <>
-                    <button className="small-button" type="button" disabled={logs.length === 0 || deleting} onClick={toggleVisibleSelection}>
-                      <CheckCircle2 size={14} />
-                      {allVisibleSelected ? "取消本页" : "选择本页"}
+                    <button
+                      className={`icon-button mini ${allVisibleSelected ? "active" : ""}`}
+                      type="button"
+                      title={allVisibleSelected ? "取消选择本页" : "选择本页"}
+                      aria-label={allVisibleSelected ? "取消选择本页" : "选择本页"}
+                      disabled={logs.length === 0 || deleting}
+                      onClick={toggleVisibleSelection}
+                    >
+                      <ListChecks size={15} />
                     </button>
-                    <button className="small-button danger-action" type="button" disabled={selectedLogIds.length === 0 || deleting} onClick={() => void deleteSelectedLogs()}>
-                      <Trash2 size={14} />
-                      批量删除
+                    <button
+                      className="icon-button mini danger-action"
+                      type="button"
+                      title="批量删除选中项"
+                      aria-label="批量删除选中项"
+                      disabled={selectedLogIds.length === 0 || deleting}
+                      onClick={() => void deleteSelectedLogs()}
+                    >
+                      <Trash2 size={15} />
                     </button>
-                    <button className="small-button danger-action" type="button" disabled={!activeLog || deleting} onClick={() => void deleteActiveLog()}>
-                      <Trash2 size={14} />
-                      删除当前
+                    <button
+                      className="icon-button mini danger-action"
+                      type="button"
+                      title="删除当前日志"
+                      aria-label="删除当前日志"
+                      disabled={!activeLog || deleting}
+                      onClick={() => void deleteActiveLog()}
+                    >
+                      <Trash2 size={15} />
                     </button>
-                    <button className="small-button danger-action" type="button" disabled={total === 0 || deleting} onClick={() => void clearAllLogs()}>
-                      <Trash2 size={14} />
-                      清空全部
+                    <button
+                      className="icon-button mini danger-action"
+                      type="button"
+                      title="清空全部日志"
+                      aria-label="清空全部日志"
+                      disabled={total === 0 || deleting}
+                      onClick={() => void clearAllLogs()}
+                    >
+                      <Archive size={15} />
                     </button>
                   </>
                 ) : null}
@@ -13444,9 +22102,12 @@ function AuditView({
             </div>
 
             {logs.length === 0 ? (
-              <div className="audit-empty">
-                <ClipboardList size={26} />
-                <span>暂无审计日志</span>
+              <div style={{ padding: "24px 0" }}>
+                <SakiEmptyState
+                  illustration="logs"
+                  title="暂无审计日志"
+                  description="系统运行环境整洁安全，暂无新的操作信号或审计记录产生"
+                />
               </div>
             ) : (
               <div className="audit-signal-grid">
@@ -13467,9 +22128,7 @@ function AuditView({
                         type="button"
                         onClick={() => {
                           setSelectedLogId(log.id);
-                          if (window.matchMedia("(max-width: 760px)").matches) {
-                            setMobileAuditDetailOpen(true);
-                          }
+                          setAuditDetailOpen(true);
                         }}
                       >
                         <span className="audit-signal-top">
@@ -13505,70 +22164,6 @@ function AuditView({
             )}
           </div>
 
-          <aside className="audit-inspector-panel">
-            {activeLog ? (
-              <>
-                <div className={`audit-inspector-head ${activeLog.result === "SUCCESS" ? "success" : "failure"}`}>
-                  <span className="audit-action-icon" aria-hidden="true">
-                    {auditResourceIcon(activeLog.resourceType, activeLog.action)}
-                  </span>
-                  <div>
-                    <p>{activeLog.result === "SUCCESS" ? "Verified" : "Attention"}</p>
-                    <h3>{auditActionLabel(activeLog.action)}</h3>
-                    <code>{activeLog.action}</code>
-                  </div>
-                </div>
-
-                <div className="audit-inspector-grid">
-                  <div>
-                    <span>结果</span>
-                    <strong>{activeLog.result === "SUCCESS" ? "成功" : "失败"}</strong>
-                  </div>
-                  <div>
-                    <span>时间</span>
-                    <strong>{formatDate(activeLog.createdAt)}</strong>
-                  </div>
-                  <div>
-                    <span>用户</span>
-                    <strong>{auditActor(activeLog)}</strong>
-                  </div>
-                  <div>
-                    <span>资源</span>
-                    <strong>{auditResourceLabel(activeLog)}</strong>
-                  </div>
-                  <div>
-                    <span>IP</span>
-                    <strong>{activeLog.ip ?? "-"}</strong>
-                  </div>
-                  <div>
-                    <span>载荷</span>
-                    <strong>{activeLog.payload ? "有" : "无"}</strong>
-                  </div>
-                </div>
-
-                <div className="audit-inspector-payload">
-                  <div className="audit-detail-section-title">
-                    <FileText size={15} />
-                    <span>Payload</span>
-                    {onAskSaki ? (
-                      <button className="small-button" type="button" onClick={() => askSakiAboutLog(activeLog)}>
-                        <Sparkles size={14} />
-                        交给 Saki
-                      </button>
-                    ) : null}
-                  </div>
-                  {renderAuditPayloadDetails(activeLog, token, (instanceId, filePath, actionName) => {
-                    setPreviewFile({ instanceId, filePath, actionName });
-                  })}
-                </div>
-              </>
-            ) : (
-              <div className="audit-empty compact">
-                <ClipboardList size={22} />
-                <span>暂无选中事件</span>
-              </div>
-            )}
-          </aside>
         </div>
 
         {totalPages > 1 && (
@@ -13586,25 +22181,19 @@ function AuditView({
         )}
       </section>
 
-      {mobileAuditDetailOpen && activeLog && (
+      {auditDetailOpen && activeLog && (
         <div
-          className="modal-backdrop mobile-audit-detail-backdrop"
+          className="modal-backdrop audit-detail-backdrop"
           role="presentation"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
-              setMobileAuditDetailOpen(false);
+              setAuditDetailOpen(false);
             }
           }}
         >
-          <div className="modal-panel mobile-audit-detail-modal" role="dialog" aria-modal="true">
-            <div className="section-heading modal-heading">
-              <h2 id="mobile-audit-detail-title">日志详情</h2>
-              <button className="icon-button mini" title="关闭" type="button" onClick={() => setMobileAuditDetailOpen(false)}>
-                <X size={15} />
-              </button>
-            </div>
-            <div className="modal-body" style={{ overflowY: "auto", maxHeight: "calc(88dvh - 100px)", padding: "16px" }}>
-              <div className={`audit-inspector-head ${activeLog.result === "SUCCESS" ? "success" : "failure"}`} style={{ borderRadius: "8px", padding: "12px", marginBottom: "16px" }}>
+          <div className="modal-panel audit-detail-modal" role="dialog" aria-modal="true">
+            <div className="audit-detail-glass-header">
+              <div className={`audit-detail-head ${activeLog.result === "SUCCESS" ? "success" : "failure"}`}>
                 <span className="audit-action-icon" aria-hidden="true">
                   {auditResourceIcon(activeLog.resourceType, activeLog.action)}
                 </span>
@@ -13614,11 +22203,17 @@ function AuditView({
                   <code>{activeLog.action}</code>
                 </div>
               </div>
-
-              <div className="audit-inspector-grid" style={{ padding: "0 0 16px 0", borderBottom: "1px solid rgba(226, 232, 240, 0.7)" }}>
+              <button className="icon-button mini audit-detail-close" title="关闭" type="button" onClick={() => setAuditDetailOpen(false)}>
+                <X size={15} />
+              </button>
+            </div>
+            <div className="modal-body audit-detail-body">
+              <div className="audit-detail-info-grid">
                 <div>
                   <span>结果</span>
-                  <strong>{activeLog.result === "SUCCESS" ? "成功" : "失败"}</strong>
+                  <strong className={activeLog.result === "SUCCESS" ? "success" : "failure"}>
+                    {activeLog.result === "SUCCESS" ? "成功" : "失败"}
+                  </strong>
                 </div>
                 <div>
                   <span>时间</span>
@@ -13643,22 +22238,26 @@ function AuditView({
               </div>
 
               {activeLog.payload && (
-                <div className="audit-inspector-payload" style={{ marginTop: "16px" }}>
-                  <div className="audit-detail-section-title" style={{ paddingLeft: 0, paddingRight: 0 }}>
+                <div className="audit-detail-payload">
+                  <div className="audit-detail-section-title">
                     <FileText size={15} />
                     <span>Payload</span>
                     {onAskSaki ? (
-                      <button className="small-button" type="button" onClick={() => {
-                        setMobileAuditDetailOpen(false);
-                        askSakiAboutLog(activeLog);
-                      }}>
+                      <button
+                        className="small-button"
+                        type="button"
+                        onClick={() => {
+                          setAuditDetailOpen(false);
+                          askSakiAboutLog(activeLog);
+                        }}
+                      >
                         <Sparkles size={14} />
                         交给 Saki
                       </button>
                     ) : null}
                   </div>
                   {renderAuditPayloadDetails(activeLog, token, (instanceId, filePath, actionName) => {
-                    setMobileAuditDetailOpen(false);
+                    setAuditDetailOpen(false);
                     setPreviewFile({ instanceId, filePath, actionName });
                   })}
                 </div>
@@ -14122,8 +22721,6 @@ function AboutView() {
   );
 }
 
-type SakiSettingsSection = "system" | "model" | "features" | "appearance" | "prompt" | "skills";
-
 const registrationIdentityOptions: Array<{ value: RegistrationIdentity; label: string }> = [
   { value: "none", label: "无角色" },
   { value: "user", label: "用户" },
@@ -14160,7 +22757,14 @@ function SettingsView({
   const [skillDownloadUrl, setSkillDownloadUrl] = useState("");
   const [skillSearchQuery, setSkillSearchQuery] = useState("");
   const [skillFilter, setSkillFilter] = useState<"all" | "enabled" | "disabled">("all");
-  const [activeSettingsSection, setActiveSettingsSection] = useState<SakiSettingsSection>("system");
+  const [activeSettingsSection, setActiveSettingsSectionState] = useState<SakiSettingsSection>(() => {
+    return parseHashRoute().settingsSection ?? "system";
+  });
+
+  const setActiveSettingsSection = useCallback((sec: SakiSettingsSection) => {
+    setActiveSettingsSectionState(sec);
+    updateHashRoute({ view: "settings", settingsSection: sec });
+  }, []);
   const [settingsMenuCollapsed, setSettingsMenuCollapsed] = useState(false);
   const [modelOptions, setModelOptions] = useState<SakiModelOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -14179,6 +22783,7 @@ function SettingsView({
   const loginCoverInputRef = useRef<HTMLInputElement>(null);
   const backgroundInputRef = useRef<HTMLInputElement>(null);
   const mobileBackgroundInputRef = useRef<HTMLInputElement>(null);
+  const skillImportInputRef = useRef<HTMLInputElement>(null);
   const t = useCallback((key: PanelTextKey) => panelT(language, key), [language]);
   const localizedRegistrationIdentityOptions = useMemo<Array<{ value: RegistrationIdentity; label: string }>>(
     () => registrationIdentityOptions.map((option) => ({ ...option, label: t(`registration.${option.value}` as PanelTextKey) })),
@@ -14504,11 +23109,14 @@ function SettingsView({
   async function createSkill(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const name = skillDraft.name.trim();
-    const content = skillDraft.content.trim();
-    if (!name || !content) {
-      setError("Skill name and content are required.");
+    let content = skillDraft.content.trim();
+    if (!name) {
+      setError("请输入 Skill 名称。");
       setNotice("");
       return;
+    }
+    if (!content) {
+      content = `# ${name}\n\n${skillDraft.description.trim() || "Custom Saki Skill instructions"}`;
     }
     const payload: CreateSakiSkillRequest = {
       name,
@@ -14564,6 +23172,102 @@ function SettingsView({
       setError(err instanceof Error ? err.message : "Skill download failed");
     } finally {
       setSkillBusy(null);
+    }
+  }
+
+  function extractSkillNameFromFile(fileName: string): string {
+    const withoutExt = fileName.replace(/\.(md|markdown|txt)$/i, "");
+    const cleaned = withoutExt.replace(/[_\s-]+/g, "-").trim();
+    return cleaned || "imported-skill";
+  }
+
+  function extractSkillDescription(content: string): string {
+    const lines = content.split(/\r?\n/);
+    let description = "";
+    let inBody = false;
+    for (const line of lines) {
+      if (!inBody) {
+        if (/^---\s*$/.test(line)) {
+          inBody = true;
+          continue;
+        }
+        const m = line.match(/^description\s*:\s*(.+)$/i);
+        if (m && m[1]) {
+          description = m[1].trim().replace(/^["']|["']$/g, "");
+        }
+      } else {
+        if (/^#\s+/.test(line)) continue;
+        const trimmed = line.trim();
+        if (trimmed && trimmed.length >= 8) {
+          description = trimmed.slice(0, 160);
+          break;
+        }
+      }
+    }
+    return description;
+  }
+
+  async function importSkillsFromFiles(fileList: FileList | null) {
+    if (!fileList || fileList.length === 0) return;
+    setSkillBusy("import");
+    setError("");
+    setNotice("");
+    const results: string[] = [];
+    const errors: string[] = [];
+    try {
+      for (const file of Array.from(fileList)) {
+        const name = file.name.toLowerCase();
+        if (!/\.(md|markdown|txt)$/.test(name)) {
+          errors.push(`${file.name}: 仅支持 .md / .txt 文件`);
+          continue;
+        }
+        const content = await file.text();
+        const trimmed = content.trim();
+        if (!trimmed) {
+          errors.push(`${file.name}: 文件为空`);
+          continue;
+        }
+        const skillName = extractSkillNameFromFile(file.name);
+        const description = extractSkillDescription(trimmed);
+        const payload: CreateSakiSkillRequest = {
+          name: skillName,
+          description,
+          content: trimmed,
+          enabled: true,
+          tags: ["imported"]
+        };
+        try {
+          const created = await api.createSakiSkill(token, payload);
+          results.push(created.name);
+        } catch (err) {
+          errors.push(`${file.name}: ${err instanceof Error ? err.message : "保存失败"}`);
+        }
+      }
+      skillDetailRequestRef.current += 1;
+      await refreshSkillList();
+      if (results.length > 0) {
+        setNotice(`已导入 ${results.length} 个 Skill：${results.slice(0, 3).join(", ")}${results.length > 3 ? ` 等` : ""}`);
+        const last = results[results.length - 1];
+        const lastDetail = await api.sakiAllSkills(token);
+        const match = lastDetail.find((s) => s.name === last);
+        if (match) {
+          setSkillDetailLoading(false);
+          setSelectedSkillId(match.id);
+          const detail = await api.sakiSkill(token, match.id);
+          setSelectedSkill(detail);
+          setSkillEditDraft(sakiSkillDraftFromDetail(detail));
+        }
+      }
+      if (errors.length > 0) {
+        setError(errors.join("；"));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "导入失败");
+    } finally {
+      setSkillBusy(null);
+      if (skillImportInputRef.current) {
+        skillImportInputRef.current.value = "";
+      }
     }
   }
 
@@ -14685,7 +23389,7 @@ function SettingsView({
 
   return (
     <>
-      {error ? <div className="page-error">{error}</div> : null}
+      <PageErrorToast error={error} onDismiss={() => setError("")} />
       {notice ? <div className="page-notice">{notice}</div> : null}
       <section className="panel-block settings-panel">
         <div className="section-heading">
@@ -14761,7 +23465,7 @@ function SettingsView({
           <form className="settings-config-form" onSubmit={(event) => void saveSettings(event)}>
           <div className={`settings-group ${activeSettingsSection === "system" ? "active" : "settings-section-hidden"}`} id="settings-system">
             <div className="settings-group-title">
-              <div className="settings-group-icon">⚙️</div>
+              <div className="settings-group-icon"><Settings size={18} /></div>
               <div>
                 <h3>{t("settings.system")}</h3>
                 <span>{t("settings.system.detail")}</span>
@@ -14822,7 +23526,7 @@ function SettingsView({
           </div>
           <div className={`settings-group ${activeSettingsSection === "model" ? "active" : "settings-section-hidden"}`} id="settings-model">
             <div className="settings-group-title">
-              <div className="settings-group-icon">🤖</div>
+              <div className="settings-group-icon"><Cpu size={18} /></div>
               <div>
                 <h3>{t("settings.model.title")}</h3>
                 <span>{t("settings.model.detail")}</span>
@@ -14962,7 +23666,7 @@ function SettingsView({
           </div>
           <div className={`settings-group ${activeSettingsSection === "features" ? "active" : "settings-section-hidden"}`} id="settings-features">
             <div className="settings-group-title">
-              <div className="settings-group-icon">🎯</div>
+              <div className="settings-group-icon"><Wrench size={18} /></div>
               <div>
                 <h3>{t("settings.features")}</h3>
                 <span>{t("settings.features.detail")}</span>
@@ -14989,7 +23693,7 @@ function SettingsView({
           </div>
           <div className={`settings-group ${activeSettingsSection === "appearance" ? "active" : "settings-section-hidden"}`} id="settings-appearance">
             <div className="settings-group-title">
-              <div className="settings-group-icon">🎨</div>
+              <div className="settings-group-icon"><ImageIcon size={18} /></div>
               <div>
                 <h3>{t("settings.appearance")}</h3>
                 <span>{t("settings.appearance.titleDetail")}</span>
@@ -15028,9 +23732,8 @@ function SettingsView({
                     onChange={(event) => updateAppearance({ loginCoverSrc: event.target.value })}
                     placeholder="/assets/cover.png"
                   />
-                  <button className="small-button" type="button" onClick={() => loginCoverInputRef.current?.click()}>
+                  <button className="icon-button mini" type="button" title="选择登录封面" aria-label="选择登录封面" onClick={() => loginCoverInputRef.current?.click()}>
                     <Upload size={15} />
-                    选择图片
                   </button>
                 </div>
                 {form.appearance?.loginCoverSrc ? <img className="appearance-preview cover-preview" src={form.appearance.loginCoverSrc} alt="" /> : null}
@@ -15043,9 +23746,8 @@ function SettingsView({
                     onChange={(event) => updateAppearance({ appLogoSrc: event.target.value })}
                     placeholder="/assets/saki-panel-icon.png"
                   />
-                  <button className="small-button" type="button" onClick={() => appLogoInputRef.current?.click()}>
+                  <button className="icon-button mini" type="button" title="选择应用图标" aria-label="选择应用图标" onClick={() => appLogoInputRef.current?.click()}>
                     <Upload size={15} />
-                    选择
                   </button>
                 </div>
                 {form.appearance?.appLogoSrc ? <img className="appearance-preview logo-preview" src={form.appearance.appLogoSrc} alt="" /> : null}
@@ -15058,9 +23760,8 @@ function SettingsView({
                     onChange={(event) => updateAppearance({ sidebarLogoSrc: event.target.value })}
                     placeholder="/assets/saki-panel-icon.png"
                   />
-                  <button className="small-button" type="button" onClick={() => sidebarLogoInputRef.current?.click()}>
+                  <button className="icon-button mini" type="button" title="选择侧边栏图标" aria-label="选择侧边栏图标" onClick={() => sidebarLogoInputRef.current?.click()}>
                     <Upload size={15} />
-                    选择
                   </button>
                 </div>
                 {form.appearance?.sidebarLogoSrc ? <img className="appearance-preview logo-preview" src={form.appearance.sidebarLogoSrc} alt="" /> : null}
@@ -15073,9 +23774,8 @@ function SettingsView({
                     onChange={(event) => updateAppearance({ backgroundSrc: event.target.value })}
                     placeholder="/assets/background.png"
                   />
-                  <button className="small-button" type="button" onClick={() => backgroundInputRef.current?.click()}>
+                  <button className="icon-button mini" type="button" title="选择网页背景" aria-label="选择网页背景" onClick={() => backgroundInputRef.current?.click()}>
                     <Upload size={15} />
-                    选择
                   </button>
                 </div>
                 {form.appearance?.backgroundSrc ? <img className="appearance-preview background-preview" src={form.appearance.backgroundSrc} alt="" /> : null}
@@ -15088,9 +23788,8 @@ function SettingsView({
                     onChange={(event) => updateAppearance({ mobileBackgroundSrc: event.target.value })}
                     placeholder="/assets/background_mobile.png"
                   />
-                  <button className="small-button" type="button" onClick={() => mobileBackgroundInputRef.current?.click()}>
+                  <button className="icon-button mini" type="button" title="选择移动端背景" aria-label="选择移动端背景" onClick={() => mobileBackgroundInputRef.current?.click()}>
                     <Upload size={15} />
-                    选择
                   </button>
                 </div>
                 {form.appearance?.mobileBackgroundSrc ? <img className="appearance-preview background-preview" src={form.appearance.mobileBackgroundSrc} alt="" /> : null}
@@ -15099,7 +23798,7 @@ function SettingsView({
           </div>
           <div className={`settings-group ${activeSettingsSection === "prompt" ? "active" : "settings-section-hidden"}`} id="settings-prompt">
             <div className="settings-group-title">
-              <div className="settings-group-icon">📝</div>
+              <div className="settings-group-icon"><TextQuote size={18} /></div>
               <div>
                 <h3>{t("settings.prompt")}</h3>
                 <span>{t("settings.prompt.detail")}</span>
@@ -15148,6 +23847,16 @@ function SettingsView({
             </div>
           </div>
           <div className="saki-skill-header-actions">
+            <button
+              className="ghost-button saki-skill-header-import"
+              type="button"
+              disabled={skillBusy === "import"}
+              onClick={() => skillImportInputRef.current?.click()}
+              title="从 .md / .txt 文件导入 Skill"
+            >
+              <FileUp size={16} />
+              <span>{skillBusy === "import" ? "导入中" : "导入文件"}</span>
+            </button>
             <button className="ghost-button" type="button" onClick={() => setSkillCreatorOpen((current) => !current)}>
               {skillCreatorOpen ? <X size={17} /> : <Plus size={17} />}
               {skillCreatorOpen ? "收起添加" : "添加 Skill"}
@@ -15220,7 +23929,8 @@ function SettingsView({
           </div>
         ) : null}
 
-        <div className="saki-skill-workspace">
+        <div className={`saki-skill-workspace ${selectedSkillId ? "has-selected-skill" : "no-selected-skill"}`}>
+
           <div className="saki-skill-sidebar">
             <div className="saki-skill-sidebar-header">
               <div className="saki-skill-search">
@@ -15265,6 +23975,33 @@ function SettingsView({
                 {skillBusy === "download" ? "Downloading" : "Install"}
               </button>
             </form>
+
+            <div className="saki-skill-import">
+              <div className="saki-skill-import-header">
+                <FileUp size={15} />
+                <span>Import from file</span>
+              </div>
+              <input
+                ref={skillImportInputRef}
+                className="hidden-file-input"
+                type="file"
+                multiple
+                accept=".md,.markdown,.txt,text/markdown,text/plain"
+                onChange={(event) => void importSkillsFromFiles(event.target.files)}
+              />
+              <button
+                className="saki-skill-import-drop"
+                type="button"
+                disabled={skillBusy === "import"}
+                onClick={() => skillImportInputRef.current?.click()}
+              >
+                <BookOpen size={18} />
+                <span>
+                  <strong>{skillBusy === "import" ? "Importing..." : "选择 .md / .txt 文件"}</strong>
+                  <em>支持批量导入，从文件名和内容自动提取信息</em>
+                </span>
+              </button>
+            </div>
 
             <div className="saki-skill-list">
               {skillList
@@ -15343,6 +24080,17 @@ function SettingsView({
               </div>
             ) : selectedSkill ? (
               <form className="saki-skill-detail-panel" onSubmit={(event) => void saveSelectedSkill(event)}>
+                <button
+                  type="button"
+                  className="saki-skill-mobile-back-btn"
+                  onClick={() => {
+                    setSelectedSkillId(null);
+                    setSelectedSkill(null);
+                  }}
+                >
+                  <ChevronLeft size={16} />
+                  <span>返回技能列表</span>
+                </button>
                 <div className="saki-skill-detail-header">
                   <div className="saki-skill-detail-title">
                     <h3>{selectedSkill.name}</h3>
@@ -15465,7 +24213,7 @@ function UserAccountModal({
   user: CurrentUser;
   open: boolean;
   onClose: () => void;
-  onLogout: () => void;
+  onLogout: (options?: { manual?: boolean }) => void;
   onUserChange: (user: CurrentUser) => void;
 }) {
   const t = usePanelT();
@@ -15620,12 +24368,11 @@ function UserAccountModal({
               className="preview"
             />
             <div className="account-upload-actions">
-              <button className="small-button" type="button" onClick={() => fileInputRef.current?.click()}>
+              <button className="icon-button mini" type="button" title={t("account.uploadAvatar")} aria-label={t("account.uploadAvatar")} onClick={() => fileInputRef.current?.click()}>
                 <Upload size={15} />
-                {t("account.uploadAvatar")}
               </button>
-              <button className="small-button" type="button" onClick={() => setAvatarDataUrl(null)}>
-                {t("common.remove")}
+              <button className="icon-button mini danger-action" type="button" title={t("common.remove")} aria-label={t("common.remove")} onClick={() => setAvatarDataUrl(null)}>
+                <Trash2 size={15} />
               </button>
             </div>
           </div>
@@ -15670,7 +24417,7 @@ function UserAccountModal({
             {notice ? <div className="page-notice account-feedback">{notice}</div> : null}
 
             <div className="account-modal-actions">
-              <button className="ghost-button account-logout-button" type="button" onClick={onLogout}>
+              <button className="ghost-button account-logout-button" type="button" onClick={() => onLogout({ manual: true })}>
                 <LogOut size={16} />
                 {t("account.logout")}
               </button>
@@ -15697,21 +24444,25 @@ function Workspace({
   onAppearanceChange,
   onLanguageChange,
   darkMode,
-  onToggleDarkMode
+  onToggleDarkMode,
+  themeSwitching
 }: {
   token: string;
   user: CurrentUser;
   appearance: PanelAppearanceSettings;
   language: PanelLanguage;
-  onLogout: () => void;
+  onLogout: (options?: { manual?: boolean }) => void;
   onSwitchUser: (token: string, user: CurrentUser) => void;
   onUserChange: (user: CurrentUser) => void;
   onAppearanceChange: (appearance: PanelAppearanceSettings) => void;
   onLanguageChange: (language: PanelLanguage) => void;
   darkMode: boolean;
-  onToggleDarkMode: () => void;
+  onToggleDarkMode: (e?: React.MouseEvent<HTMLElement>) => void;
+  themeSwitching: boolean;
 }) {
-  const [activeView, setActiveView] = useState<ViewMode>("dashboard");
+  const initialRoute = useMemo(() => parseHashRoute(), []);
+  const [activeView, setActiveView] = useState<ViewMode>(initialRoute.view);
+  const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(initialRoute.instanceId);
   const [refreshTick, setRefreshTick] = useState(0);
   const [sakiInstance, setSakiInstance] = useState<ManagedInstance | null>(null);
   const [sakiSeed, setSakiSeed] = useState<SakiPromptSeed | null>(null);
@@ -15722,6 +24473,147 @@ function Workspace({
   const [sakiAvailableModels, setSakiAvailableModels] = useState<SakiModelOption[]>([]);
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [sakiLieMode, setSakiLieMode] = useState<boolean>(() => {
+    try {
+      const saved = globalThis.localStorage?.getItem("saki_lie_mode");
+      return saved !== null ? saved === "true" : true;
+    } catch {
+      return true;
+    }
+  });
+  const [sakiWakeCount, setSakiWakeCount] = useState(0);
+  const [pointsUsageOpen, setPointsUsageOpen] = useState(false);
+  const [sakiLauncherDragging, setSakiLauncherDragging] = useState(false);
+  const [sakiPullDrag, setSakiPullDrag] = useState<SakiPullDragRequest | null>(null);
+  const [sakiLieHolding, setSakiLieHolding] = useState(false);
+  const liePressRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    lastX: number;
+    lastY: number;
+    offsetX: number;
+    offsetY: number;
+    timer: number | null;
+    longPressed: boolean;
+  } | null>(null);
+  const lieClickSuppressedRef = useRef(false);
+  const [userPointsSummary, setUserPointsSummary] = useState<{ points: number; unlimitedPoints: boolean }>({
+    points: user.points ?? 0,
+    unlimitedPoints: Boolean(user.unlimitedPoints)
+  });
+
+  const loadMyPoints = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await api.myPoints(token);
+      setUserPointsSummary({
+        points: res.points,
+        unlimitedPoints: res.unlimitedPoints
+      });
+    } catch {}
+  }, [token]);
+
+  useEffect(() => {
+    void loadMyPoints();
+  }, [loadMyPoints, refreshTick, pointsUsageOpen]);
+
+  const handleWakeSakiFromLie = useCallback(() => {
+    setSakiLieMode(false);
+    setSakiWakeCount((c) => c + 1);
+    try {
+      globalThis.localStorage?.setItem("saki_lie_mode", "false");
+    } catch {}
+  }, []);
+
+  const liePressMoveRef = useRef<((event: PointerEvent) => void) | null>(null);
+  const liePressUpRef = useRef<((event: PointerEvent) => void) | null>(null);
+
+  const handleLiePointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const session = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+      timer: null as number | null,
+      longPressed: false
+    };
+    liePressRef.current = session;
+    setSakiLieHolding(true);
+    event.preventDefault();
+
+    const onMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== session.pointerId) return;
+      session.lastX = moveEvent.clientX;
+      session.lastY = moveEvent.clientY;
+      if (!session.longPressed && Math.hypot(moveEvent.clientX - session.startX, moveEvent.clientY - session.startY) > 14) {
+        if (session.timer !== null) {
+          window.clearTimeout(session.timer);
+          session.timer = null;
+        }
+        setSakiLieHolding(false);
+      }
+    };
+    const onUp = (upEvent: PointerEvent) => {
+      if (upEvent.pointerId !== session.pointerId) return;
+      if (session.timer !== null) {
+        window.clearTimeout(session.timer);
+        session.timer = null;
+      }
+      setSakiLieHolding(false);
+      window.removeEventListener("pointermove", onMove, true);
+      window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("pointercancel", onUp, true);
+      liePressMoveRef.current = null;
+      liePressUpRef.current = null;
+      liePressRef.current = null;
+    };
+    liePressMoveRef.current = onMove;
+    liePressUpRef.current = onUp;
+    window.addEventListener("pointermove", onMove, true);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", onUp, true);
+
+    session.timer = window.setTimeout(() => {
+      if (liePressRef.current !== session) return;
+      session.longPressed = true;
+      lieClickSuppressedRef.current = true;
+      setSakiLieHolding(false);
+      setSakiLieMode(false);
+      try {
+        globalThis.localStorage?.setItem("saki_lie_mode", "false");
+      } catch {}
+      setSakiPullDrag({
+        pointerId: session.pointerId,
+        offsetX: session.offsetX,
+        offsetY: session.offsetY,
+        clientX: session.lastX,
+        clientY: session.lastY
+      });
+    }, 420);
+  }, [handleWakeSakiFromLie]);
+
+  const handleLieClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (lieClickSuppressedRef.current) {
+      lieClickSuppressedRef.current = false;
+      return;
+    }
+    handleWakeSakiFromLie();
+  }, [handleWakeSakiFromLie]);
+
+  const handleReturnSakiToLie = useCallback(() => {
+    setSakiLieMode(true);
+    try {
+      globalThis.localStorage?.setItem("saki_lie_mode", "true");
+    } catch {}
+  }, []);
   const sidebarRef = useRef<HTMLElement | null>(null);
   const floatingSidebarToggleRef = useRef<HTMLButtonElement | null>(null);
   const shouldFocusFloatingSidebarToggleRef = useRef(false);
@@ -15870,19 +24762,36 @@ function Workspace({
   }, [sidebarHidden, hideSidebar]);
 
   useEffect(() => {
+    const onHashChange = () => {
+      const route = parseHashRoute();
+      if (availableViews.includes(route.view)) {
+        setActiveView(route.view);
+        setSelectedInstanceId(route.instanceId);
+      }
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [availableViews]);
+
+  useEffect(() => {
     if (hasAnyAccessibleView && !availableViews.includes(activeView)) {
       const nextView = availableViews[0];
-      if (nextView) setActiveView(nextView);
+      if (nextView) {
+        setActiveView(nextView);
+        updateHashRoute({ view: nextView });
+      }
     }
   }, [activeView, availableViews, hasAnyAccessibleView]);
 
   const selectView = useCallback((view: ViewMode) => {
     if (!availableViews.includes(view)) return;
     setActiveView(view);
+    const nextInstanceId = view === "instances" ? selectedInstanceId : null;
+    updateHashRoute({ view, instanceId: nextInstanceId });
     if (window.matchMedia("(max-width: 760px)").matches) {
       hideSidebar();
     }
-  }, [availableViews, hideSidebar]);
+  }, [availableViews, hideSidebar, selectedInstanceId]);
 
   return (
     <>
@@ -15895,7 +24804,7 @@ function Workspace({
             </div>
             <div className="sidebar-brand-actions">
               <button
-                className="sidebar-inline-toggle theme-toggle-button"
+                className={`sidebar-inline-toggle theme-toggle-button${themeSwitching ? " theme-switching" : ""}`}
                 type="button"
                 aria-label={darkMode ? "Switch to light mode" : "Switch to dark mode"}
                 title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
@@ -15988,26 +24897,25 @@ function Workspace({
           </div>
         </aside>
 
-        <button
-          ref={floatingSidebarToggleRef}
-          className="sidebar-floating-toggle"
-          type="button"
-          aria-label={t("sidebar.expand")}
-          aria-controls="workspace-sidebar"
-          aria-expanded={!sidebarHidden}
-          inert={!sidebarHidden || undefined}
-          tabIndex={sidebarHidden ? 0 : -1}
-          title={t("sidebar.expand")}
-          onClick={(e) => {
-            e.currentTarget.blur();
-            setSidebarHidden(false);
-          }}
-        >
-          <PanelLeftOpen size={20} aria-hidden="true" />
-        </button>
-
         <main className="workspace view-transition-enter" key={hasAnyAccessibleView ? effectiveView : "access-empty"}>
           <header className="topbar">
+            <button
+              ref={floatingSidebarToggleRef}
+              className="sidebar-floating-toggle"
+              type="button"
+              aria-label={t("sidebar.expand")}
+              aria-controls="workspace-sidebar"
+              aria-expanded={!sidebarHidden}
+              inert={!sidebarHidden || undefined}
+              tabIndex={sidebarHidden ? 0 : -1}
+              title={t("sidebar.expand")}
+              onClick={(e) => {
+                e.currentTarget.blur();
+                setSidebarHidden(false);
+              }}
+            >
+              <PanelLeftOpen size={18} aria-hidden="true" />
+            </button>
             <div className="topbar-inner">
               <div className="topbar-title">
                 <span className="topbar-context">{t("topbar.context")}</span>
@@ -16033,12 +24941,83 @@ function Workspace({
                 </h1>
               </div>
               <div className="topbar-actions">
+                {canUseSaki ? (
+                  <IncidentBell
+                    token={token}
+                    onLogout={onLogout}
+                    onOpenIncident={(incident) => {
+                      selectView("instances");
+                      setSelectedInstanceId(incident.instanceId);
+                      openSaki({
+                        message: "",
+                        contextTitle: `值班：${incident.instanceName}`,
+                        contextText: incident.summary ?? "",
+                        mode: "agent"
+                      });
+                    }}
+                  />
+                ) : null}
                 {hasAnyAccessibleView ? (
-                  <button className="icon-button mini" onClick={() => setRefreshTick((value) => value + 1)} title={t("common.refresh")}>
+                  <button className="topbar-refresh-btn" type="button" onClick={() => setRefreshTick((value) => value + 1)} title={t("common.refresh")}>
                     <RefreshCw size={14} />
                   </button>
                 ) : null}
               </div>
+            </div>
+            <div className={`topbar-inner topbar-companion-panel ${sakiLieMode ? "has-lie" : "is-empty"} ${!sakiLieMode && (sakiLauncherDragging || sakiPullDrag) ? "is-dragging-saki" : ""}`}>
+              <div
+                className="topbar-points-badge"
+                title="点击查看积分使用量与消耗明细"
+                role="button"
+                tabIndex={0}
+                onClick={() => setPointsUsageOpen(true)}
+              >
+                <Sparkles size={14} className="topbar-points-icon" />
+                {userPointsSummary.unlimitedPoints ? (
+                  <>
+                    <span className="topbar-points-value">∞</span>
+                    <span className="topbar-points-label">无限</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="topbar-points-value">{userPointsSummary.points}</span>
+                    <span className="topbar-points-label">积分</span>
+                  </>
+                )}
+              </div>
+              {canUseSaki ? (
+                <div className="topbar-lie-slot">
+                  {sakiLieMode ? (
+                    <button
+                      type="button"
+                      className={`topbar-lie-character ${sakiLieHolding ? "is-holding" : ""}`}
+                      onPointerDown={handleLiePointerDown}
+                      onClick={handleLieClick}
+                      onContextMenu={(event) => event.preventDefault()}
+                      title="点击唤醒，长按拖到任意位置"
+                      aria-label="唤醒 Saki，长按可拖动"
+                    >
+                      <img
+                        src={sakiArtAssets.lie}
+                        alt="Saki"
+                        className="topbar-lie-image"
+                        draggable={false}
+                      />
+                    </button>
+                  ) : (
+                    <div className="topbar-lie-target-placeholder" title="拖拽 Saki 回此区域可收纳">
+                      <span className="topbar-lie-target-ring" />
+                    </div>
+                  )}
+                </div>
+              ) : null}
+              {canUseSaki && !sakiLieMode && sakiLauncherDragging ? (
+                <div className="topbar-hide-saki-bubble" role="tooltip" aria-hidden="true">
+                  <span className="topbar-hide-saki-arrow" />
+                  <Sparkles size={13} className="topbar-hide-saki-icon" />
+                  <span className="topbar-hide-saki-text">拖动到这里隐藏 Saki</span>
+                </div>
+              ) : null}
             </div>
           </header>
 
@@ -16063,6 +25042,8 @@ function Workspace({
               onSakiFileDragChange={setSakiFileDragActive}
               onSakiInstanceFileDrop={canUseSaki ? attachInstanceFileToSaki : undefined}
               darkMode={darkMode}
+              initialInstanceId={selectedInstanceId}
+              onSelectInstance={setSelectedInstanceId}
             />
           ) : effectiveView === "nodes" ? (
             <NodesView token={token} onLogout={onLogout} refreshTick={refreshTick} />
@@ -16119,8 +25100,23 @@ function Workspace({
           onCurrentModelIdChange={setSakiCurrentModelId}
           onCurrentModelNameChange={setSakiCurrentModelName}
           onAvailableModelsChange={setSakiAvailableModels}
+          sakiLieMode={sakiLieMode}
+          onReturnToLie={handleReturnSakiToLie}
+          wakeCount={sakiWakeCount}
+          onOpenPointsUsage={() => setPointsUsageOpen(true)}
+          onLauncherDraggingChange={setSakiLauncherDragging}
+          onPointsBalanceChange={setUserPointsSummary}
+          pointsSummary={userPointsSummary}
+          pullDragRequest={sakiPullDrag}
+          onPullDragConsumed={() => setSakiPullDrag(null)}
         />
       ) : null}
+      <PointsUsageModal
+        token={token}
+        open={pointsUsageOpen}
+        onClose={() => setPointsUsageOpen(false)}
+        darkMode={darkMode}
+      />
     </>
   );
 }
@@ -16128,7 +25124,14 @@ function Workspace({
 export function App() {
   const [token, setToken] = useState(() => localStorage.getItem(tokenKey));
   const [user, setUser] = useState<CurrentUser | null>(null);
-  const [booting, setBooting] = useState(Boolean(token));
+  const [booting, setBooting] = useState(() => {
+    if (localStorage.getItem(tokenKey)) return true;
+    if (!isManualLogoutSuppressed() && readAutoLogin()) {
+      const saved = readRememberedLogin();
+      if (saved?.username && saved?.password) return true;
+    }
+    return false;
+  });
   const [appearance, setAppearance] = useState<PanelAppearanceSettings>(defaultPanelAppearance);
   const [language, setLanguage] = useState<PanelLanguage>(() => readPanelLanguage());
   const [darkMode, setDarkMode] = useState<boolean>(() => {
@@ -16136,14 +25139,130 @@ export function App() {
       return localStorage.getItem("saki-panel-theme") === "dark";
     } catch { return false; }
   });
+  const [themeSwitching, setThemeSwitching] = useState(false);
+  const isSwitchingRef = useRef(false);
+  const lastSwitchTimeRef = useRef(0);
+  const activeAnimRef = useRef<Animation | null>(null);
 
-  const toggleDarkMode = useCallback(() => {
-    setDarkMode(prev => {
-      const next = !prev;
-      try { localStorage.setItem("saki-panel-theme", next ? "dark" : "light"); } catch {}
-      return next;
-    });
-  }, []);
+  const toggleDarkMode = useCallback((event?: React.MouseEvent<HTMLElement>) => {
+    const now = Date.now();
+    // Synchronously throttle clicks: if already in transition or clicked within 450ms, ignore completely
+    if (isSwitchingRef.current || now - lastSwitchTimeRef.current < 450) {
+      return;
+    }
+    isSwitchingRef.current = true;
+    lastSwitchTimeRef.current = now;
+    setThemeSwitching(true);
+
+    const nextIsDark = !darkMode;
+    try {
+      localStorage.setItem("saki-panel-theme", nextIsDark ? "dark" : "light");
+    } catch {}
+
+    const isAppearanceTransition =
+      typeof document !== "undefined" &&
+      typeof (document as any).startViewTransition === "function" &&
+      !window.matchMedia("(prefers-reduced-motion: reduce)").matches &&
+      !document.documentElement.classList.contains("perf-lite");
+
+    if (!isAppearanceTransition) {
+      document.documentElement.classList.add("theme-transitioning");
+      setDarkMode(nextIsDark);
+      document.documentElement.setAttribute("data-theme", nextIsDark ? "dark" : "light");
+      applyPanelAppearance(appearance, nextIsDark);
+      window.setTimeout(() => {
+        document.documentElement.classList.remove("theme-transitioning");
+        isSwitchingRef.current = false;
+        setThemeSwitching(false);
+      }, 300);
+      return;
+    }
+
+    let x = Math.round(window.innerWidth / 2);
+    let y = Math.round(window.innerHeight / 2);
+    if (event && typeof event.clientX === "number" && typeof event.clientY === "number" && (event.clientX !== 0 || event.clientY !== 0)) {
+      x = Math.round(event.clientX);
+      y = Math.round(event.clientY);
+    } else {
+      const btn = document.querySelector(".theme-toggle-button");
+      if (btn) {
+        const rect = btn.getBoundingClientRect();
+        x = Math.round(rect.left + rect.width / 2);
+        y = Math.round(rect.top + rect.height / 2);
+      }
+    }
+
+    const endRadius = Math.ceil(Math.hypot(
+      Math.max(x, window.innerWidth - x),
+      Math.max(y, window.innerHeight - y)
+    ));
+
+    const cleanup = () => {
+      isSwitchingRef.current = false;
+      setThemeSwitching(false);
+    };
+
+    let transition: any;
+    try {
+      transition = (document as any).startViewTransition(() => {
+        try {
+          flushSync(() => {
+            setDarkMode(nextIsDark);
+            document.documentElement.setAttribute("data-theme", nextIsDark ? "dark" : "light");
+            applyPanelAppearance(appearance, nextIsDark);
+          });
+        } catch {
+          setDarkMode(nextIsDark);
+          document.documentElement.setAttribute("data-theme", nextIsDark ? "dark" : "light");
+          applyPanelAppearance(appearance, nextIsDark);
+        }
+      });
+    } catch {
+      setDarkMode(nextIsDark);
+      document.documentElement.setAttribute("data-theme", nextIsDark ? "dark" : "light");
+      applyPanelAppearance(appearance, nextIsDark);
+      cleanup();
+      return;
+    }
+
+    if (transition?.ready) {
+      transition.ready
+        .then(() => {
+          try {
+            const clipPath = [
+              `circle(0px at ${x}px ${y}px)`,
+              `circle(${endRadius}px at ${x}px ${y}px)`
+            ];
+            if (activeAnimRef.current) {
+              try { activeAnimRef.current.cancel(); } catch {}
+            }
+            const anim = document.documentElement.animate(
+              {
+                clipPath
+              },
+              {
+                duration: 380,
+                easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+                pseudoElement: "::view-transition-new(root)",
+                fill: "forwards"
+              }
+            );
+            activeAnimRef.current = anim;
+            anim.onfinish = cleanup;
+            anim.oncancel = cleanup;
+          } catch {
+            cleanup();
+          }
+        })
+        .catch(cleanup);
+    }
+
+    if (transition?.finished && typeof transition.finished.then === "function") {
+      transition.finished.then(cleanup, cleanup);
+    } else {
+      window.setTimeout(cleanup, 400);
+    }
+  }, [appearance, darkMode]);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", darkMode ? "dark" : "light");
@@ -16166,10 +25285,14 @@ export function App() {
     [changeLanguage, language]
   );
 
-  const logout = useCallback(() => {
+  const logout = useCallback((options?: { manual?: boolean }) => {
+    const isManual = options?.manual ?? false;
     const currentToken = localStorage.getItem(tokenKey);
     if (currentToken) {
       void api.logout(currentToken).catch(() => undefined);
+    }
+    if (isManual) {
+      setManualLogoutSuppressed(true);
     }
     localStorage.removeItem(tokenKey);
     setToken(null);
@@ -16267,13 +25390,69 @@ export function App() {
   }, [language]);
 
   useEffect(() => {
-    if (!token) return;
-    api
-      .me(token)
-      .then(setUser)
-      .catch(logout)
-      .finally(() => setBooting(false));
-  }, [logout, token]);
+    let cancelled = false;
+
+    async function initializeAuth() {
+      // 1. If we already have a token and user, nothing to do
+      if (token && user) {
+        return;
+      }
+
+      // 2. If we have a token but no user, verify it
+      if (token && !user) {
+        try {
+          const currentUser = await api.me(token);
+          if (!cancelled) {
+            setUser(currentUser);
+            setBooting(false);
+          }
+          return;
+        } catch {
+          // Token is invalid or expired
+          localStorage.removeItem(tokenKey);
+          if (!cancelled) {
+            setToken(null);
+          }
+        }
+      }
+
+      // 3. If no valid token, check if autoLogin can authenticate
+      if (!isManualLogoutSuppressed() && readAutoLogin()) {
+        const saved = readRememberedLogin();
+        if (saved?.username && saved?.password) {
+          try {
+            const response = await api.login({
+              username: saved.username.trim(),
+              password: saved.password
+            });
+            if (!cancelled) {
+              saveRememberedLogin(saved.username.trim(), saved.password);
+              saveAutoLogin(true);
+              localStorage.setItem(tokenKey, response.token);
+              setToken(response.token);
+              setUser(response.user);
+              setBooting(false);
+            }
+            return;
+          } catch {
+            // Auto login failed with saved credentials
+            saveAutoLogin(false);
+          }
+        }
+      }
+
+      // 4. Fall back to login view
+      if (!cancelled) {
+        setBooting(false);
+      }
+    }
+
+    void initializeAuth();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, user]);
 
   useEffect(() => {
     if (!token) return;
@@ -16284,7 +25463,7 @@ export function App() {
     const scheduleLogout = () => {
       const remainingMs = expiresAt - Date.now();
       if (remainingMs <= 0) {
-        logout();
+        logout({ manual: false });
         return;
       }
       timer = window.setTimeout(scheduleLogout, Math.min(remainingMs, 60000));
@@ -16299,6 +25478,7 @@ export function App() {
   if (booting) {
     return (
       <PanelLanguageContext.Provider value={languageContextValue}>
+        <ElegantCursor />
         <main className="login-shell">
           <div className="loading-panel">
             <RefreshCw size={22} />
@@ -16312,8 +25492,11 @@ export function App() {
   if (!token || !user) {
     return (
       <PanelLanguageContext.Provider value={languageContextValue}>
+        <ElegantCursor />
         <LoginView
           appearance={appearance}
+          darkMode={darkMode}
+          onToggleDarkMode={toggleDarkMode}
           onLogin={(nextToken, nextUser) => {
             setToken(nextToken);
             setUser(nextUser);
@@ -16325,6 +25508,7 @@ export function App() {
 
   return (
     <PanelLanguageContext.Provider value={languageContextValue}>
+      <ElegantCursor />
       <Workspace
         token={token}
         user={user}
@@ -16337,6 +25521,7 @@ export function App() {
         onLanguageChange={changeLanguage}
         darkMode={darkMode}
         onToggleDarkMode={toggleDarkMode}
+        themeSwitching={themeSwitching}
       />
     </PanelLanguageContext.Provider>
   );

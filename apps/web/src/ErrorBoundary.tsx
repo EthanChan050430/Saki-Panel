@@ -40,20 +40,21 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          minHeight: "200px",
-          padding: "32px",
+          minHeight: "220px",
+          padding: "32px 24px",
           textAlign: "center",
-          color: "#ef4444",
-          gap: "12px"
+          color: "#e11d48",
+          gap: "10px"
         }}>
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="8" x2="12" y2="12" />
-            <line x1="12" y1="16" x2="12.01" y2="16" />
-          </svg>
-          <h3 style={{ margin: 0, fontSize: "16px" }}>组件出现错误</h3>
-          <p style={{ margin: 0, fontSize: "13px", color: "#6b7280", maxWidth: "400px" }}>
-            {this.state.error?.message || "未知错误"}
+          <img
+            src="/assets/expression/daemon_offline.png"
+            alt="Error"
+            style={{ width: "96px", height: "96px", objectFit: "contain", marginBottom: "4px" }}
+            draggable={false}
+          />
+          <h3 style={{ margin: 0, fontSize: "16px", color: "var(--text-main, #1e293b)" }}>组件出现异常</h3>
+          <p style={{ margin: 0, fontSize: "13px", color: "var(--text-muted, #64748b)", maxWidth: "420px", lineHeight: "1.5" }}>
+            {this.state.error?.message || "发生未知错误，Saki 正在协助排查"}
           </p>
           <button
             onClick={this.handleReset}

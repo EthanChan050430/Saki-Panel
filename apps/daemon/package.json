@@ -1,11 +1,12 @@
 {
   "name": "@webops/daemon",
-  "version": "0.1.0",
+  "version": "2.0.1",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "key": "tsx src/cli-key.ts",
     "prebuild": "node ../../scripts/ensure-shared-built.mjs",
     "pretypecheck": "node ../../scripts/ensure-shared-built.mjs",
     "build": "tsc -p tsconfig.json",
@@ -20,7 +21,13 @@
     "7zip-bin": "^5.2.0",
     "dotenv": "^16.5.0",
     "fastify": "^5.3.2",
+    "ioredis": "^6.0.0",
+    "mysql2": "^3.14.0",
     "node-unrar-js": "^2.0.2",
+    "pg": "^8.23.0",
     "systeminformation": "^5.25.11"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
   }
 }

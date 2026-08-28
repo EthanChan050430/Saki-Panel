@@ -1,8 +1,9 @@
 import fs from "node:fs/promises";
 import { daemonConfig, daemonPaths } from "./config.js";
 import { createDaemonServer } from "./server.js";
-import { sendHeartbeat } from "./panel-client.js";
-import { instanceManager } from "./instance-manager.js";
+import { sendHeartbeat, sendInstanceStatusEvent } from "./panel-client.js";
+import { instanceManager, setInstanceStatusPushHandler } from "./instance-manager.js";
+import { getOrCreateDaemonNodeKey } from "./identity.js";
 
 function startHeartbeatLoop(): NodeJS.Timeout {
   const run = async () => {
@@ -22,6 +23,15 @@ function startHeartbeatLoop(): NodeJS.Timeout {
 async function main(): Promise<void> {
   await fs.mkdir(daemonPaths.dataDir, { recursive: true });
 
+  setInstanceStatusPushHandler(async (event) => {
+    try {
+      return await sendInstanceStatusEvent(event);
+    } catch (error) {
+      console.error("Failed to push instance status to panel:", error instanceof Error ? error.message : error);
+      return undefined;
+    }
+  });
+
   await instanceManager.restorePersistedState();
 
   const app = await createDaemonServer();
@@ -29,6 +39,10 @@ async function main(): Promise<void> {
     host: daemonConfig.host,
     port: daemonConfig.port
   });
+
+  const { key: nodeKey } = await getOrCreateDaemonNodeKey();
+  console.log(`[+] Saki-Daemon listening at ${daemonConfig.protocol}://${daemonConfig.host}:${daemonConfig.port}`);
+  console.log(`[+] 机器专属接入密钥 (Node Key): ${nodeKey}`);
 
   const heartbeatTimer = startHeartbeatLoop();
 

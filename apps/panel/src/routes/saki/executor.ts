@@ -19,6 +19,7 @@ import {
   makeDaemonInstanceDirectory,
   readDaemonInstanceFile,
   readDaemonInstanceLogs,
+  statDaemonInstancePath,
   renameDaemonInstancePath,
   restartDaemonInstance,
   runDaemonInstanceCommand,
@@ -40,6 +41,10 @@ import {
 } from "../../tasks.js";
 import {
   completedSakiActions,
+  getCachedInstanceFile,
+  invalidateInstanceFileCache,
+  recordInstanceFileRead,
+  recordWorkingFileAccess,
   saveCheckpoint,
   savePendingSakiAction
 } from "./state.js";
@@ -50,6 +55,8 @@ import {
   checkpointId,
   checkpointPathSegment,
   defaultAgentReadFileLineCount,
+  largeFileLineThreshold,
+  maxAgentReadFileLineCount,
   formatInstanceSummary,
   formatLineNumberedContent,
   formatRunCommandObservation,
@@ -62,15 +69,18 @@ import {
   normalizeCommandRelativeCwd,
   nullableStringArg,
   numericArg,
+  objectValue,
   optionalCommandInputArg,
   parseLineNumber,
   rawStringArg,
   redactSensitiveText,
   replaceLineRange,
+  replacementToLines,
   requireUserPermission,
   RouteError,
   safeRelativePath,
   sanitizeAgentTextContent,
+  splitEditableLines,
   stringArg,
   truncateDiff,
   truncateText,
@@ -79,11 +89,14 @@ import {
 } from "./types.js";
 import {
   assertSakiPermissionModeAllowsTool,
+  assertToolProfileAllowsTool,
+  assertWatchToolAllowed,
   buildInstanceSettingsPatch,
   instanceSettingsSnapshot,
   shouldRequestSakiApproval,
   toolArgs
 } from "./tools.js";
+import { attachIncidentCheckpoint } from "../../watch/incidents.js";
 
 export interface SakiExecutorHost {
   buildAuditSearchContext(query: string, canViewAudit: boolean): Promise<string>;
@@ -199,6 +212,85 @@ function activeInstance(runtime: SakiAgentRuntime): InstanceWithNode {
   return runtime.context.instance;
 }
 
+const workspaceRootNamesCache = new Map<string, { names: Set<string>; at: number }>();
+const environmentInfoCache = new Map<string, { text: string; at: number }>();
+const workspaceCacheTtlMs = 60_000;
+const environmentInfoCacheTtlMs = 10 * 60_000;
+
+async function workspaceRootNames(instance: InstanceWithNode): Promise<Set<string>> {
+  const cached = workspaceRootNamesCache.get(instance.id);
+  if (cached && Date.now() - cached.at < workspaceCacheTtlMs) return cached.names;
+  const files = await listDaemonInstanceFiles(instance.node, instance.id, instance.workingDirectory, "", { limit: 80 });
+  const names = new Set(files.entries.map((entry) => entry.name));
+  workspaceRootNamesCache.set(instance.id, { names, at: Date.now() });
+  return names;
+}
+
+function diagnoseCommandForPath(targetPath: string): string | null {
+  const ext = path.extname(targetPath).toLowerCase();
+  if (ext === ".py") return `python -m py_compile "${targetPath}"`;
+  if (ext === ".js" || ext === ".mjs" || ext === ".cjs") return `node --check "${targetPath}"`;
+  if (ext === ".json") return `node -e "JSON.parse(require('fs').readFileSync(${JSON.stringify(targetPath)}, 'utf8'))"`;
+  return null;
+}
+
+async function detectDiagnoseCommand(instance: InstanceWithNode, targetPath: string): Promise<string> {
+  const pathCommand = targetPath ? diagnoseCommandForPath(targetPath) : null;
+  if (pathCommand && ![".ts", ".tsx", ".mts", ".cts"].includes(path.extname(targetPath).toLowerCase())) {
+    return pathCommand;
+  }
+  try {
+    const names = await workspaceRootNames(instance);
+    if (names.has("tsconfig.json") || names.has("jsconfig.json")) return "npx tsc --noEmit --pretty false --incremental false";
+    if (names.has("pyproject.toml") || names.has("requirements.txt") || names.has("setup.py")) {
+      return targetPath ? `python -m py_compile "${targetPath}"` : "python -m compileall -q .";
+    }
+    if (names.has("Cargo.toml")) return "cargo check --quiet";
+    if (names.has("go.mod")) return "go vet ./...";
+  } catch {
+    // Fall through to a cheap single-file check.
+  }
+  return pathCommand || "";
+}
+
+function replaceUniqueOccurrence(content: string, oldText: string, newText: string, relativePath: string): string {
+  let matched = oldText;
+  let count = content.split(matched).length - 1;
+  if (count === 0 && content.includes("\r\n") && !oldText.includes("\r\n")) {
+    const crlfCandidate = oldText.replace(/\n/g, "\r\n");
+    if (content.includes(crlfCandidate)) {
+      matched = crlfCandidate;
+      count = content.split(matched).length - 1;
+    }
+  } else if (count === 0 && !content.includes("\r\n") && oldText.includes("\r\n")) {
+    const lfCandidate = oldText.replace(/\r\n/g, "\n");
+    if (content.includes(lfCandidate)) {
+      matched = lfCandidate;
+      count = content.split(matched).length - 1;
+    }
+  }
+  if (count === 0) throw new RouteError(`${relativePath}: oldText was not found in file.`, 400);
+  if (count > 1) throw new RouteError(`${relativePath}: oldText matched ${count} times. Use editLines with exact line numbers.`, 400);
+  return content.replace(matched, () => newText);
+}
+
+function coerceEditsArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string") return [];
+  const text = value.trim();
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function nodeLooksWindows(instance: InstanceWithNode): boolean {
+  return /win/i.test(instance.node.os ?? "");
+}
+
 async function updateInstanceFromDaemonState(instance: InstanceWithNode, state: { status: string; exitCode?: number | null | undefined }) {
   const now = new Date();
   return prisma.instance.update({
@@ -247,33 +339,52 @@ function unifiedDiff(label: string, before: string, after: string): string {
   return truncateDiff(filteredLines.join("\n"));
 }
 
+function withRelatedCheckpointIds(
+  approval: NonNullable<SakiAgentAction["approval"]>,
+  relatedCheckpointIds?: string[]
+): NonNullable<SakiAgentAction["approval"]> {
+  if (!relatedCheckpointIds?.length) return approval;
+  return { ...approval, relatedCheckpointIds };
+}
+
 function buildCompletedFileEditApproval(
   checkpoint: SakiCheckpoint,
   afterContent: string,
-  preview?: string
+  preview?: string,
+  relatedCheckpointIds?: string[]
 ): NonNullable<SakiAgentAction["approval"]> {
   const pathLabel = checkpoint.type === "file" ? checkpoint.path : checkpoint.type === "softDelete" ? checkpoint.path : "change";
   const beforeContent = checkpoint.type === "file" ? checkpoint.content : checkpoint.type === "softDelete" ? "(file removed)" : "";
-  return {
-    required: false,
-    reason: "已保存检查点，可随时从操作面板回滚此次改动。",
-    risk: "medium",
-    preview: preview ?? pathLabel,
-    diff: unifiedDiff(pathLabel, beforeContent, afterContent),
-    checkpointId: checkpoint.id,
-    rollbackAvailable: true
-  };
+  return withRelatedCheckpointIds(
+    {
+      required: false,
+      reason: "已保存检查点，可随时从操作面板回滚此次改动。",
+      risk: "medium",
+      preview: preview ?? pathLabel,
+      diff: unifiedDiff(pathLabel, beforeContent, afterContent),
+      checkpointId: checkpoint.id,
+      rollbackAvailable: true
+    },
+    relatedCheckpointIds
+  );
 }
 
-function buildCheckpointApproval(checkpoint: SakiCheckpoint, preview?: string): NonNullable<SakiAgentAction["approval"]> {
-  return {
-    required: false,
-    reason: "已保存检查点，可随时从操作面板回滚此次改动。",
-    risk: checkpoint.type === "softDelete" ? "high" : "medium",
-    ...(preview ? { preview } : {}),
-    checkpointId: checkpoint.id,
-    rollbackAvailable: true
-  };
+function buildCheckpointApproval(
+  checkpoint: SakiCheckpoint,
+  preview?: string,
+  relatedCheckpointIds?: string[]
+): NonNullable<SakiAgentAction["approval"]> {
+  return withRelatedCheckpointIds(
+    {
+      required: false,
+      reason: "已保存检查点，可随时从操作面板回滚此次改动。",
+      risk: checkpoint.type === "softDelete" ? "high" : "medium",
+      ...(preview ? { preview } : {}),
+      checkpointId: checkpoint.id,
+      rollbackAvailable: true
+    },
+    relatedCheckpointIds
+  );
 }
 
 function fileDiffSnapshotFromCheckpoint(checkpoint: SakiCheckpoint, beforeContent: string): Extract<SakiCheckpoint, { type: "file" }> {
@@ -330,7 +441,12 @@ async function readFileForCheckpoint(instance: InstanceWithNode, relativePath: s
   }
 }
 
-async function createFileCheckpoint(actionIdValue: string, instance: InstanceWithNode, relativePath: string): Promise<SakiCheckpoint> {
+async function createFileCheckpoint(
+  actionIdValue: string,
+  instance: InstanceWithNode,
+  relativePath: string,
+  runtime?: SakiAgentRuntime | null
+): Promise<SakiCheckpoint> {
   const snapshot = await readFileForCheckpoint(instance, relativePath);
   const checkpoint: SakiCheckpoint = {
     id: checkpointId(),
@@ -342,8 +458,15 @@ async function createFileCheckpoint(actionIdValue: string, instance: InstanceWit
     actionId: actionIdValue,
     createdAt: new Date().toISOString()
   };
-  await saveCheckpoint(checkpoint);
+  await persistCheckpoint(runtime ?? null, checkpoint);
   return checkpoint;
+}
+
+async function persistCheckpoint(runtime: SakiAgentRuntime | null, checkpoint: SakiCheckpoint): Promise<void> {
+  await saveCheckpoint(checkpoint);
+  if (runtime?.incidentId) {
+    await attachIncidentCheckpoint(runtime.incidentId, checkpoint.id);
+  }
 }
 
 export async function rollbackCheckpoint(userId: string, checkpoint: SakiCheckpoint): Promise<string> {
@@ -555,7 +678,12 @@ async function createPendingApprovalAction(
     contextInstanceId: runtime.context.instance?.id ?? null,
     createdAt: new Date().toISOString(),
     approval,
-    ...(resume ? { resume } : {})
+    ...(resume ? { resume } : {}),
+    ...(runtime.incidentId ? { incidentId: runtime.incidentId } : {}),
+    ...(runtime.kind ? { kind: runtime.kind } : {}),
+    ...(runtime.watchMode ? { watchMode: runtime.watchMode } : {}),
+    ...(runtime.maxLoops ? { maxLoops: runtime.maxLoops } : {}),
+    ...(runtime.systemPromptOverride ? { systemPromptOverride: runtime.systemPromptOverride } : {})
   };
   await savePendingSakiAction(pending);
   return {
@@ -572,7 +700,7 @@ async function createPendingApprovalAction(
 
 export async function auditAgentTool(runtime: SakiAgentRuntime, action: SakiAgentAction): Promise<void> {
   await writeAuditLog({
-    request: runtime.request,
+    ...(runtime.request ? { request: runtime.request } : {}),
     userId: runtime.userId,
     action: "saki.agent.tool",
     resourceType: "saki",
@@ -603,12 +731,15 @@ export async function executeSakiAgentTool(
     const args = toolArgs(call);
     const currentActionId = options.actionId || call.id || actionId();
     let checkpoint: SakiCheckpoint | null = null;
+    let relatedCheckpointIds: string[] | undefined;
     let fileEditAfterContent: string | null = null;
     let fileEditBeforeContent: string | null = null;
     let fileEditPreview: string | undefined;
 
     try {
       assertSakiPermissionModeAllowsTool(runtime, toolName, args);
+      assertToolProfileAllowsTool(runtime, toolName);
+      assertWatchToolAllowed(runtime, toolName, args);
       if (!options.approved && shouldRequestSakiApproval(runtime, toolName, args)) {
         const pending = await createPendingApprovalAction(runtime, { ...call, id: currentActionId }, options.pendingResume);
         await auditAgentTool(runtime, pending);
@@ -651,32 +782,99 @@ export async function executeSakiAgentTool(
         const instance = await resolveAgentInstance(runtime, args);
         const relativePath = safeRelativePath(args.path);
         if (!relativePath) throw new RouteError("readFile requires a file path.", 400);
-        const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath);
-        const numbered = formatLineNumberedContent(
-          file.content,
-          stringArg(args, "startLine") || undefined,
-          agentReadFileLineCountInput(args.lineCount)
-        );
-        observation = [
-          `File: ${file.path}`,
-          `Size: ${file.size} bytes`,
-          `Modified: ${file.modifiedAt}`,
-          `Total lines: ${numbered.totalLines}`,
-          numbered.totalLines > 0 ? `Showing lines: ${numbered.startLine}-${numbered.endLine}` : "Showing lines: none",
-          numbered.endLine < numbered.totalLines ? `More lines available. Call readFile with startLine=${numbered.endLine + 1} and lineCount=${defaultAgentReadFileLineCount} if needed.` : null,
-          "",
-          truncateText(numbered.text, 7000)
-        ].filter(Boolean).join("\n");
+        const startLine = numericArg(args.startLine, 0, 0, 1_000_000);
+        const lineCount = numericArg(args.lineCount, defaultAgentReadFileLineCount, 1, maxAgentReadFileLineCount);
+        const isBlindRead = startLine < 1;
+        recordWorkingFileAccess(runtime.userId, instance.id, relativePath);
+
+        if (isBlindRead) {
+          const outline = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath, {
+            outline: true
+          });
+          const totalLines = outline.totalLines ?? 0;
+          if (totalLines > largeFileLineThreshold) {
+            observation = [
+              `LARGE FILE BLOCKED from blind read: ${relativePath}`,
+              `Size: ${outline.size} bytes | Total lines: ${totalLines}`,
+              "",
+              "Do NOT page through this file. Locate first, then read a window:",
+              `- searchFiles({ pattern: "symbolOrError", path: "${relativePath}" })`,
+              `- readSymbol({ path: "${relativePath}", symbol: "Name" })`,
+              `- readFile({ path: "${relativePath}", startLine: N, lineCount: 40 })`,
+              "",
+              "Outline:",
+              outline.content
+            ].join("\n");
+          }
+        }
+
+        if (!observation) {
+          const windowStart = Math.max(1, startLine || 1);
+          const cached = getCachedInstanceFile(instance.id, relativePath);
+          let windowText: string;
+          let fileSize: number;
+          let totalLines: number;
+          let endLine: number;
+          let cacheHit = false;
+
+          if (cached) {
+            const numbered = formatLineNumberedContent(cached.content, String(windowStart), String(lineCount));
+            windowText = numbered.text;
+            fileSize = cached.size;
+            totalLines = numbered.totalLines;
+            endLine = numbered.endLine;
+            cacheHit = true;
+          } else {
+            const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath, {
+              startLine: windowStart,
+              lineCount
+            });
+            const rawLines = file.content.length === 0 ? [] : file.content.split(/\r?\n/);
+            const width = String(windowStart + rawLines.length).length;
+            windowText = rawLines
+              .map((line, index) => `${String(windowStart + index).padStart(width, " ")} | ${line}`)
+              .join("\n");
+            fileSize = file.size;
+            totalLines = file.totalLines ?? rawLines.length;
+            endLine = windowStart + Math.max(rawLines.length - 1, 0);
+          }
+
+          observation = [
+            `File: ${relativePath}${cacheHit ? " [cache]" : ""}`,
+            `Size: ${fileSize} bytes | Total lines: ${totalLines}`,
+            `Showing lines: ${windowStart}-${endLine}`,
+            "",
+            truncateText(windowText, 4000),
+            "",
+            endLine < totalLines
+              ? `Stopped at line ${endLine}/${totalLines}. Do not sequentially page the rest. Use searchFiles or readSymbol to jump.`
+              : null
+          ].filter(Boolean).join("\n");
+        }
       } else if (toolName === "writefile") {
         requireUserPermission(runtime.permissions, "file.write");
         const instance = await resolveAgentInstance(runtime, args);
         const relativePath = safeRelativePath(args.path);
         if (!relativePath) throw new RouteError("writeFile requires a file path.", 400);
-        checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath);
+        try {
+          const existing = await statDaemonInstancePath(instance.node, instance.id, instance.workingDirectory, relativePath);
+          if (existing.isDirectory) {
+            throw new RouteError(`writeFile cannot overwrite directory '${relativePath}'.`, 400);
+          }
+          throw new RouteError(
+            `writeFile is for NEW files only. '${relativePath}' already exists. Use editLines, replaceInFile, or batchEdit.`,
+            400
+          );
+        } catch (error) {
+          if (error instanceof RouteError) throw error;
+        }
+        checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath, runtime);
         fileEditPreview = `${instance.name}:${relativePath}`;
         const sanitized = sanitizeAgentTextContent(rawStringArg(args, "content"));
         fileEditAfterContent = sanitized.content;
         const file = await writeDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, { path: relativePath, content: sanitized.content });
+        recordInstanceFileRead(instance.id, relativePath, { content: sanitized.content, size: file.size, modifiedAt: new Date().toISOString() });
+        recordWorkingFileAccess(runtime.userId, instance.id, relativePath);
         observation = `Success: wrote ${file.path} (${file.size} bytes).${formatSanitizedWriteNote(sanitized.removed)}`;
       } else if (toolName === "replaceinfile") {
         requireUserPermission(runtime.permissions, "file.write");
@@ -687,16 +885,37 @@ export async function executeSakiAgentTool(
         const sanitized = sanitizeAgentTextContent(rawStringArg(args, "newText"));
         if (!relativePath || !oldText) throw new RouteError("replaceInFile requires path and oldText.", 400);
         const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath);
-        const count = file.content.split(oldText).length - 1;
-        if (count === 0) throw new RouteError("oldText was not found in the file.", 400);
-        if (count > 1) throw new RouteError(`oldText matched ${count} times. Use editLines with exact line numbers.`, 400);
-        checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath);
+        let matchedOldText = oldText;
+        let count = file.content.split(matchedOldText).length - 1;
+        if (count === 0 && file.content.includes("\r\n") && !oldText.includes("\r\n")) {
+          const crlfCandidate = oldText.replace(/\n/g, "\r\n");
+          if (file.content.includes(crlfCandidate)) {
+            matchedOldText = crlfCandidate;
+            count = file.content.split(matchedOldText).length - 1;
+          }
+        } else if (count === 0 && !file.content.includes("\r\n") && oldText.includes("\r\n")) {
+          const lfCandidate = oldText.replace(/\r\n/g, "\n");
+          if (file.content.includes(lfCandidate)) {
+            matchedOldText = lfCandidate;
+            count = file.content.split(matchedOldText).length - 1;
+          }
+        }
+        if (count === 0) {
+          throw new RouteError(
+            `oldText was not found in ${relativePath}. Check for exact whitespace/indentation, inspect the file with readFile({ path: "${relativePath}", startLine: ... }), or use editLines({ path: "${relativePath}", startLine, endLine, replacement }) instead.`,
+            400
+          );
+        }
+        if (count > 1) throw new RouteError(`oldText matched ${count} times in ${relativePath}. Use editLines with exact line numbers for precise replacement.`, 400);
+        checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath, runtime);
         fileEditPreview = `${instance.name}:${relativePath}`;
-        fileEditAfterContent = file.content.replace(oldText, () => sanitized.content);
+        fileEditAfterContent = file.content.replace(matchedOldText, () => sanitized.content);
         const updated = await writeDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, {
           path: relativePath,
           content: fileEditAfterContent
         });
+        recordInstanceFileRead(instance.id, relativePath, { content: fileEditAfterContent, size: updated.size, modifiedAt: new Date().toISOString() });
+        recordWorkingFileAccess(runtime.userId, instance.id, relativePath);
         observation = `Success: replaced text in ${updated.path} (${updated.size} bytes).${formatSanitizedWriteNote(sanitized.removed)}`;
       } else if (toolName === "editlines") {
         requireUserPermission(runtime.permissions, "file.write");
@@ -709,10 +928,12 @@ export async function executeSakiAgentTool(
         if (!relativePath) throw new RouteError("editLines requires a file path.", 400);
         const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath);
         const edit = replaceLineRange(file.content, startLine, endLine, sanitized.content);
-        checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath);
+        checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath, runtime);
         fileEditPreview = `${instance.name}:${relativePath}`;
         fileEditAfterContent = edit.content;
         const updated = await writeDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, { path: relativePath, content: edit.content });
+        recordInstanceFileRead(instance.id, relativePath, { content: edit.content, size: updated.size, modifiedAt: new Date().toISOString() });
+        recordWorkingFileAccess(runtime.userId, instance.id, relativePath);
         const previewStart = Math.max(1, startLine - 3);
         const previewCount = Math.max(8, edit.insertedLineCount + 6);
         const preview = formatLineNumberedContent(edit.content, String(previewStart), String(previewCount));
@@ -740,8 +961,9 @@ export async function executeSakiAgentTool(
         const backupPath = `.webops-saki-trash/${trashSegment}/${path.basename(relativePath)}`;
         await makeDaemonInstanceDirectory(instance.node, instance.id, instance.workingDirectory, { path: `.webops-saki-trash/${trashSegment}` });
         await renameDaemonInstancePath(instance.node, instance.id, instance.workingDirectory, { fromPath: relativePath, toPath: backupPath });
+        invalidateInstanceFileCache(instance.id, relativePath);
         checkpoint = { id: checkpointId(), type: "softDelete", instanceId: instance.id, path: relativePath, backupPath, actionId: currentActionId, createdAt: new Date().toISOString() };
-        await saveCheckpoint(checkpoint);
+        await persistCheckpoint(runtime, checkpoint);
         if (beforeDelete.existed) {
           fileEditPreview = `${instance.name}:${relativePath}`;
           fileEditBeforeContent = beforeDelete.content;
@@ -755,6 +977,9 @@ export async function executeSakiAgentTool(
         const toPath = safeRelativePath(args.toPath);
         if (!fromPath || !toPath) throw new RouteError("renamePath requires fromPath and toPath.", 400);
         const entry = await renameDaemonInstancePath(instance.node, instance.id, instance.workingDirectory, { fromPath, toPath });
+        invalidateInstanceFileCache(instance.id, fromPath);
+        invalidateInstanceFileCache(instance.id, toPath);
+        recordWorkingFileAccess(runtime.userId, instance.id, toPath);
         observation = `Success: renamed to ${entry.path}.`;
       } else if (toolName === "uploadbase64") {
         requireUserPermission(runtime.permissions, "file.write");
@@ -762,12 +987,15 @@ export async function executeSakiAgentTool(
         const relativePath = safeRelativePath(args.path);
         const contentBase64 = stringArg(args, "contentBase64");
         if (!relativePath || !contentBase64) throw new RouteError("uploadBase64 requires path and base64 content.", 400);
-        checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath);
+        checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath, runtime);
         fileEditPreview = `${instance.name}:${relativePath}`;
         const entry = await uploadDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, { path: relativePath, contentBase64, overwrite: true });
+        invalidateInstanceFileCache(instance.id, relativePath);
+        recordWorkingFileAccess(runtime.userId, instance.id, relativePath);
         try {
           const uploaded = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath);
           fileEditAfterContent = uploaded.content;
+          recordInstanceFileRead(instance.id, relativePath, { content: uploaded.content, size: uploaded.size, modifiedAt: uploaded.modifiedAt });
         } catch {
           fileEditAfterContent = "(binary upload)";
         }
@@ -811,27 +1039,20 @@ export async function executeSakiAgentTool(
         const commandRisk = classifyCommandRisk(command);
         if (commandRisk.risk === "critical") throw new RouteError(commandRisk.reason, 400);
         const timeoutMs = numericArg(args.timeoutMs, 30000, 1000, 120000);
-        const input = optionalCommandInputArg(args);
         const { daemonWorkingDirectory } = commandWorkingDirectoryForAgent(instance, args);
-
-        // Same logic as the main path: default reuse latest shell (or create if none)
-        let shellId: string;
-        let isNew = false;
-        const existing = await listDaemonInstanceShells(instance.node, instance.id);
-        if (existing.sessions && existing.sessions.length > 0) {
-          shellId = existing.sessions[existing.sessions.length - 1]!;
-        } else {
-          const shellCreate = await createDaemonInstanceShell(instance.node, instance.id, daemonWorkingDirectory);
-          shellId = shellCreate.sessionId;
-          isNew = true;
+        const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
+          command,
+          workingDirectory: daemonWorkingDirectory,
+          timeoutMs
+        });
+        const outputParts: string[] = [];
+        if (runResult.stdout) outputParts.push(`stdout:\n${truncateText(runResult.stdout.trim(), 6000)}`);
+        if (runResult.stderr) outputParts.push(`stderr:\n${truncateText(runResult.stderr.trim(), 4000)}`);
+        outputParts.push(`exit code: ${runResult.exitCode ?? 0} (${runResult.durationMs ?? 0}ms)`);
+        observation = outputParts.join("\n\n") || "(Command completed with no output)";
+        if ((runResult.exitCode ?? 0) !== 0) {
+          ok = false;
         }
-
-        const cdPrefix = daemonWorkingDirectory ? `cd ${JSON.stringify(daemonWorkingDirectory)} && ` : '';
-        const commandToRun = cdPrefix + command;
-        const fullCommand = input ? `${commandToRun}\n${input}\n` : `${commandToRun}\n`;
-        await sendDaemonShellInput(instance.node, instance.id, shellId, fullCommand);
-
-        observation = `Command sent to ${isNew ? 'newly created' : 'reused'} independent shell (shellId=${shellId})${isNew ? ' (like + button)' : ''}${daemonWorkingDirectory ? ` (cwd=${daemonWorkingDirectory})` : ''}:\n${command}${input ? `\n+ stdin: ${input}` : ''}\n\nFull live output streams to the corresponding UI shell tab.`;
       } else if (toolName === "sendinput") {
         requireUserPermission(runtime.permissions, "terminal.input");
         const instance = await resolveAgentInstance(runtime, args);
@@ -853,7 +1074,7 @@ export async function executeSakiAgentTool(
         requireUserPermission(runtime.permissions, `instance.${action}` as PermissionCode);
         if (action === "stop" || action === "kill") {
           checkpoint = { id: checkpointId(), type: "instanceAction", instanceId: instance.id, previousStatus: instance.status, actionId: currentActionId, createdAt: new Date().toISOString() };
-          await saveCheckpoint(checkpoint);
+          await persistCheckpoint(runtime, checkpoint);
         }
         const state =
           action === "start"
@@ -870,7 +1091,7 @@ export async function executeSakiAgentTool(
         const instance = await resolveAgentInstance(runtime, args);
         const { patch } = buildInstanceSettingsPatch(instance, args);
         checkpoint = { id: checkpointId(), type: "instanceSettings", instanceId: instance.id, data: instanceSettingsSnapshot(instance), actionId: currentActionId, createdAt: new Date().toISOString() };
-        await saveCheckpoint(checkpoint);
+        await persistCheckpoint(runtime, checkpoint);
         const updated = await prisma.instance.update({ where: { id: instance.id }, data: patch, include: instanceAccessInclude });
         observation = `Success: updated instance settings.\n${formatInstanceSummary(updated)}`;
       } else if (toolName === "searchaudit") {
@@ -889,7 +1110,7 @@ export async function executeSakiAgentTool(
         if (!taskInput.instanceId && runtime.context.instance?.id) taskInput.instanceId = runtime.context.instance.id;
         const task = await createScheduledTask(taskInput, runtime.userId);
         checkpoint = { id: checkpointId(), type: "createdTask", taskId: task.id, actionId: currentActionId, createdAt: new Date().toISOString() };
-        await saveCheckpoint(checkpoint);
+        await persistCheckpoint(runtime, checkpoint);
         observation = `Success: created task ${task.id} (${task.name}).`;
       } else if (toolName === "updatescheduledtask") {
         requireUserPermission(runtime.permissions, "task.update");
@@ -904,7 +1125,7 @@ export async function executeSakiAgentTool(
           actionId: currentActionId,
           createdAt: new Date().toISOString()
         };
-        await saveCheckpoint(checkpoint);
+        await persistCheckpoint(runtime, checkpoint);
         const task = await updateScheduledTask(taskId, taskUpdateFromArgs(args));
         observation = `Success: updated task ${task.id} (${task.name}).`;
       } else if (toolName === "deletescheduledtask") {
@@ -917,7 +1138,7 @@ export async function executeSakiAgentTool(
         requireUserPermission(runtime.permissions, "task.run");
         const taskId = stringArg(args, "taskId");
         if (!taskId) throw new RouteError("runTask requires a task id.", 400);
-        const run = await executeScheduledTask(taskId, { trigger: "manual", request: runtime.request, userId: runtime.userId });
+        const run = await executeScheduledTask(taskId, { trigger: "manual", ...(runtime.request ? { request: runtime.request } : {}), userId: runtime.userId });
         observation = `Task run ${run.id}: ${run.status}\nOutput: ${run.output ?? "-"}\nError: ${run.error ?? "-"}`;
       } else if (toolName === "taskruns") {
         requireUserPermission(runtime.permissions, "task.view");
@@ -932,20 +1153,40 @@ export async function executeSakiAgentTool(
         if (!pattern) throw new RouteError("searchFiles requires a pattern.", 400);
         const searchPath = safeRelativePath(args.path);
         const include = stringArg(args, "include") || undefined;
-        const maxResults = numericArg(args.maxResults, 100, 1, 500);
+        const maxResults = numericArg(args.maxResults, 40, 1, 80);
         const result = await grepDaemonInstanceFiles(instance.node, instance.id, instance.workingDirectory, {
           workingDirectory: instance.workingDirectory,
           pattern,
           ...(searchPath ? { path: searchPath } : {}),
           ...(include ? { include } : {}),
-          maxResults
+          maxResults,
+          contextLines: 2
         });
+        let formattedMatches = "No matches found.";
+        if (result.matches.length > 0) {
+          const groups = new Map<string, typeof result.matches>();
+          for (const match of result.matches) {
+            const list = groups.get(match.file) ?? [];
+            list.push(match);
+            groups.set(match.file, list);
+          }
+          formattedMatches = [...groups.entries()]
+            .map(([fileRelPath, fileMatches]) => {
+              const parts = [`File: ${fileRelPath}`];
+              for (const match of fileMatches) {
+                parts.push(`  ── L${match.line} ──`);
+                for (const line of match.before ?? []) parts.push(`    ${line}`);
+                parts.push(`  > L${match.line}: ${match.text}`);
+                for (const line of match.after ?? []) parts.push(`    ${line}`);
+              }
+              return parts.join("\n");
+            })
+            .join("\n\n");
+        }
         observation = [
-          result.matches.length > 0
-            ? result.matches.map((match) => `${match.file}:${match.line}${match.column ? `:${match.column}` : ""}: ${match.text}`).join("\n")
-            : "No matches found.",
-          result.truncated ? `\nResults truncated. ${result.totalMatches} total matches found. Narrow your pattern or reduce maxResults.` : null,
-          `\nSearched ${result.filesSearched} files, found ${result.totalMatches} matches.`
+          formattedMatches,
+          result.truncated ? `\nTruncated: ${result.totalMatches} total hits. Narrow the pattern instead of reading files.` : null,
+          `\nSearched ${result.filesSearched} files, ${result.totalMatches} matches. Jump with readFile({ path, startLine }) or editLines using these line numbers. Do not read whole files.`
         ].filter(Boolean).join("\n");
       } else if (toolName === "findfiles" || toolName === "glob" || toolName === "globfiles" || toolName === "findbyname") {
         requireUserPermission(runtime.permissions, "file.view");
@@ -965,6 +1206,46 @@ export async function executeSakiAgentTool(
           result.truncated ? `\nResults truncated. ${result.totalMatches} total matches found.` : null,
           `\nFound ${result.totalMatches} matching files.`
         ].filter(Boolean).join("\n");
+      } else if (toolName === "outlinefile" || toolName === "fileoutline" || toolName === "outline") {
+        requireUserPermission(runtime.permissions, "file.read");
+        const instance = await resolveAgentInstance(runtime, args);
+        const relativePath = safeRelativePath(args.path);
+        if (!relativePath) throw new RouteError("outlineFile requires a file path.", 400);
+        recordWorkingFileAccess(runtime.userId, instance.id, relativePath);
+        const outline = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath, {
+          outline: true
+        });
+        observation = [
+          `File Outline: ${relativePath} (${outline.totalLines ?? "?"} lines)`,
+          "Use these line numbers with readFile({ startLine, lineCount: 40 }) or editLines. Do not read the whole file.",
+          "",
+          outline.content
+        ].join("\n");
+      } else if (toolName === "findsymbols" || toolName === "finddefinition" || toolName === "findsymbol" || toolName === "gotodefinition" || toolName === "symbolsearch") {
+        requireUserPermission(runtime.permissions, "file.view");
+        const instance = await resolveAgentInstance(runtime, args);
+        const rawQuery = stringArg(args, "query");
+        if (!rawQuery) throw new RouteError("findSymbols requires a query (symbol name).", 400);
+        const searchPath = safeRelativePath(args.path);
+        const escaped = rawQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const pattern = `\\b(function|class|interface|type|enum|def|struct|trait)\\s+${escaped}\\b|\\b${escaped}\\s*=\\s*(?:async\\s+)?(?:\\([^)]*\\)|function)`;
+        const result = await grepDaemonInstanceFiles(instance.node, instance.id, instance.workingDirectory, {
+          workingDirectory: instance.workingDirectory,
+          pattern,
+          ...(searchPath ? { path: searchPath } : {}),
+          maxResults: 50
+        });
+
+        if (result.matches.length > 0) {
+          observation = [
+            `Symbol definitions found for "${rawQuery}" (${result.matches.length} matches):`,
+            ...result.matches.map((m) => `${m.file}:${m.line}: ${m.text.trim()}`),
+            "",
+            "Tip: You can use editLines on these line numbers directly or inspect with readFile(startLine)."
+          ].join("\n");
+        } else {
+          observation = `No exact definition found for symbol "${rawQuery}". Try searchFiles({ pattern: "${rawQuery}" }) for general references.`;
+        }
       } else if (toolName === "searchweb") {
         if (!runtime.config.searchEnabled) throw new RouteError("Web search is disabled in Saki settings.", 403);
         observation = await requireExecutorHost().simpleWebSearch(stringArg(args, "query") || runtime.input.message, stringArg(args, "maxResults") || undefined);
@@ -1016,14 +1297,61 @@ export async function executeSakiAgentTool(
         observation = `Success: wrote project memory to SAKI.md (${file.size} bytes).${formatSanitizedWriteNote(sanitized.removed)}`;
       } else if (toolName === "reportprogress") {
         observation = rawStringArg(args, "text");
+      } else if (toolName === "diagnosecode" || toolName === "diagnostics" || toolName === "checktypes" || toolName === "typecheck" || toolName === "lintcode") {
+        requireUserPermission(runtime.permissions, "terminal.input");
+        const instance = await resolveAgentInstance(runtime, args);
+        const customCmd = stringArg(args, "command");
+        const targetPath = safeRelativePath(args.path);
+        const checkCommand = customCmd || (await detectDiagnoseCommand(instance, targetPath));
+        if (checkCommand && /\b(?:npm|pnpm|yarn|bun)\s+(?:test|run\s+test)\b/i.test(checkCommand)) {
+          throw new RouteError("diagnoseCode is a fast syntax/typecheck. Do not pass test-suite commands.", 400);
+        }
+        if (!checkCommand) {
+          observation = "No fast diagnostic command for this workspace (no tsconfig/pyproject/Cargo.toml/go.mod, and no JS/Python/JSON path). Treat diagnostics as clean and continue.";
+        } else {
+          try {
+            const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
+              command: checkCommand,
+              workingDirectory: instance.workingDirectory,
+              timeoutMs: 20000
+            });
+
+            const outputText = [runResult.stdout, runResult.stderr].filter(Boolean).join("\n").trim();
+            if (runResult.exitCode === 0) {
+              observation = `Diagnostics clean: '${checkCommand}' passed with exit code 0. No syntax or type errors detected.`;
+            } else {
+              ok = false;
+              observation = [
+                `Diagnostics found errors (command: '${checkCommand}', exit code ${runResult.exitCode}):`,
+                "",
+                outputText || "(command failed with non-zero exit code without stdout/stderr)",
+                "",
+                "Tip: Use the file paths and line numbers above to fix errors with editLines or replaceInFile."
+              ].join("\n");
+            }
+          } catch (err) {
+            ok = false;
+            observation = `Diagnostics command '${checkCommand}' could not complete: ${err instanceof Error ? err.message : String(err)}`;
+          }
+        }
+      } else if (toolName === "managetodos" || toolName === "settodos" || toolName === "todos" || toolName === "updatetodos") {
+        const todos = rawStringArg(args, "todos") || rawStringArg(args, "list");
+        if (!todos) throw new RouteError("manageTodos requires a todos markdown list (e.g. '- [ ] Step 1\\n- [x] Step 2').", 400);
+        observation = [
+          "Current Task Status / TODO List:",
+          "",
+          todos.trim(),
+          "",
+          "Continue working through the remaining unchecked items."
+        ].join("\n");
       } else if (toolName === "spawntask" || toolName === "subagent" || toolName === "delegate" || toolName === "runsubtask") {
-        if (runtime.input.message?.startsWith("You are a sub-agent")) {
+        if (runtime.toolProfile === "research" || /You are a (?:research-only )?sub-agent/i.test(runtime.input.message ?? "")) {
           throw new RouteError("Sub-agents cannot spawn further sub-agents.", 400);
         }
         const taskDescription = rawStringArg(args, "task");
         if (!taskDescription) throw new RouteError("spawnTask requires a task description.", 400);
-        const maxSteps = numericArg(args.maxSteps, 8, 1, 15);
-        const subPrompt = `You are a sub-agent of Saki, handling a specific sub-task independently.\n\nSub-task: ${taskDescription}\n\nComplete this sub-task efficiently. Use the available tools as needed. When done, call respond with your findings or result. Keep your answer focused on the sub-task.`;
+        const maxSteps = numericArg(args.maxSteps, 5, 1, 10);
+        const subPrompt = `You are a research-only sub-agent. Inspect the workspace; do not edit files, run diagnoseCode, or spawn further agents.\n\nSub-task: ${taskDescription}\n\nUse searchFiles, findFiles, outlineFile, readSymbol, and small readFile windows. When done, respond with file paths, line numbers, and a short summary.`;
         const subInput: SakiChatRequest = {
           ...runtime.input,
           message: subPrompt,
@@ -1035,7 +1363,10 @@ export async function executeSakiAgentTool(
         }
         const subRuntime: SakiAgentRuntime = {
           ...runtime,
-          input: subInput
+          input: subInput,
+          toolProfile: "research",
+          maxLoops: maxSteps,
+          usedToolNames: []
         };
         try {
           const { runSakiAgent } = await import("./loop.js");
@@ -1045,6 +1376,246 @@ export async function executeSakiAgentTool(
           ok = false;
           observation = `Sub-agent failed: ${userFacingError(error)}`;
         }
+      } else if (toolName === "batchedit" || toolName === "applypatches" || toolName === "multifileedit" || toolName === "batch_patch") {
+        requireUserPermission(runtime.permissions, "file.write");
+        const instance = await resolveAgentInstance(runtime, args);
+        const editsRaw = coerceEditsArray(args.edits);
+        if (editsRaw.length === 0) throw new RouteError("batchEdit requires an array of edits.", 400);
+
+        type BatchEditOp =
+          | { path: string; kind: "lines"; startLine: number; endLine: number; replacement: string }
+          | { path: string; kind: "text"; oldText: string; newText: string };
+        const ops: BatchEditOp[] = [];
+        for (const edit of editsRaw) {
+          const editObj = objectValue(edit);
+          if (!editObj) continue;
+          const relativePath = safeRelativePath(editObj.path);
+          if (!relativePath) continue;
+          if (editObj.startLine !== undefined && editObj.endLine !== undefined) {
+            ops.push({
+              path: relativePath,
+              kind: "lines",
+              startLine: parseLineNumber(String(editObj.startLine), "startLine"),
+              endLine: parseLineNumber(String(editObj.endLine), "endLine", 0),
+              replacement: sanitizeAgentTextContent(rawStringArg(editObj, "replacement")).content
+            });
+          } else if (editObj.oldText !== undefined && editObj.newText !== undefined) {
+            ops.push({
+              path: relativePath,
+              kind: "text",
+              oldText: rawStringArg(editObj, "oldText"),
+              newText: sanitizeAgentTextContent(rawStringArg(editObj, "newText")).content
+            });
+          }
+        }
+        if (ops.length === 0) throw new RouteError("batchEdit requires at least one valid line or text edit.", 400);
+
+        const byPath = new Map<string, BatchEditOp[]>();
+        for (const op of ops) {
+          const list = byPath.get(op.path) ?? [];
+          list.push(op);
+          byPath.set(op.path, list);
+        }
+
+        const results: string[] = [];
+        const batchCheckpoints: SakiCheckpoint[] = [];
+        const afterByPath = new Map<string, string>();
+        for (const [relativePath, fileOps] of byPath) {
+          batchCheckpoints.push(await createFileCheckpoint(currentActionId, instance, relativePath, runtime));
+          let current = (await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath)).content;
+          const lineOps = fileOps
+            .filter((op): op is Extract<BatchEditOp, { kind: "lines" }> => op.kind === "lines")
+            .sort((left, right) => right.startLine - left.startLine);
+          for (let i = 1; i < lineOps.length; i += 1) {
+            const higher = lineOps[i - 1]!;
+            const lower = lineOps[i]!;
+            if (lower.endLine >= higher.startLine) {
+              throw new RouteError(
+                `${relativePath}: overlapping line edits ${lower.startLine}-${lower.endLine} and ${higher.startLine}-${higher.endLine}. Split the batch.`,
+                400
+              );
+            }
+          }
+          for (const op of lineOps) {
+            const edit = replaceLineRange(current, op.startLine, op.endLine, op.replacement);
+            current = edit.content;
+            results.push(`✓ ${relativePath}: replaced lines ${op.startLine}-${op.endLine} with ${edit.insertedLineCount} lines`);
+          }
+          for (const op of fileOps) {
+            if (op.kind !== "text") continue;
+            current = replaceUniqueOccurrence(current, op.oldText, op.newText, relativePath);
+            results.push(`✓ ${relativePath}: replaced unique text occurrence`);
+          }
+          await writeDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, { path: relativePath, content: current });
+          afterByPath.set(relativePath, current);
+          invalidateInstanceFileCache(instance.id, relativePath);
+          recordWorkingFileAccess(runtime.userId, instance.id, relativePath);
+        }
+        checkpoint = batchCheckpoints[0] ?? null;
+        relatedCheckpointIds = batchCheckpoints.slice(1).map((item) => item.id);
+        if (checkpoint?.type === "file") {
+          fileEditAfterContent = afterByPath.get(checkpoint.path) ?? null;
+        }
+        fileEditPreview = [...byPath.keys()].join(", ");
+        observation = `Success: batch edit applied across ${results.length} operation(s):\n${results.join("\n")}`;
+      } else if (toolName === "statfile" || toolName === "fileinfo" || toolName === "inspectpath" || toolName === "stat") {
+        requireUserPermission(runtime.permissions, "file.view");
+        const instance = await resolveAgentInstance(runtime, args);
+        const relativePath = safeRelativePath(args.path);
+        if (!relativePath) throw new RouteError("statFile requires a path.", 400);
+        try {
+          const stats = await statDaemonInstancePath(instance.node, instance.id, instance.workingDirectory, relativePath);
+          if (stats.isDirectory) {
+            observation = `Directory: ${relativePath}\nExists: true\nisDirectory: true\nModified: ${stats.modifiedAt || "unknown"}`;
+          } else {
+            observation = [
+              `File: ${relativePath}`,
+              "Exists: true",
+              `Size: ${stats.size} bytes`,
+              `Total Lines: ${stats.totalLines ?? "unknown (file too large to count)"}`,
+              `Modified: ${stats.modifiedAt || "unknown"}`,
+              "isDirectory: false"
+            ].join("\n");
+          }
+        } catch (err) {
+          observation = `Path: ${relativePath}\nExists: false\nError: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      } else if (toolName === "gitstatus" || toolName === "git_status") {
+        requireUserPermission(runtime.permissions, "file.read");
+        const instance = await resolveAgentInstance(runtime, args);
+        const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
+          command: "git status -s -b",
+          workingDirectory: instance.workingDirectory,
+          timeoutMs: 15000
+        });
+        if (runResult.exitCode === 0) {
+          observation = `Git Status:\n${runResult.stdout?.trim() || "Working tree clean"}`;
+        } else {
+          observation = `Git status could not be retrieved (${runResult.stderr || runResult.stdout || "Not a git repository"}).`;
+        }
+      } else if (toolName === "gitdiff" || toolName === "git_diff" || toolName === "diff") {
+        requireUserPermission(runtime.permissions, "file.read");
+        const instance = await resolveAgentInstance(runtime, args);
+        const targetPath = safeRelativePath(args.path);
+        const staged = booleanArg(args, "staged", false) ? " --staged" : "";
+        const command = `git diff${staged}${targetPath ? ` -- "${targetPath}"` : ""}`;
+        const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
+          command,
+          workingDirectory: instance.workingDirectory,
+          timeoutMs: 20000
+        });
+        if (runResult.exitCode === 0) {
+          const diffText = runResult.stdout?.trim();
+          observation = diffText ? truncateText(diffText, 10000) : "No git diff (no changes detected).";
+        } else {
+          observation = `Git diff failed (${runResult.stderr || runResult.stdout || "error"}).`;
+        }
+      } else if (toolName === "getenvironmentinfo" || toolName === "envinfo" || toolName === "systeminfo") {
+        const instance = await resolveAgentInstance(runtime, args);
+        const cachedEnv = environmentInfoCache.get(instance.id);
+        if (cachedEnv && Date.now() - cachedEnv.at < environmentInfoCacheTtlMs) {
+          observation = `${cachedEnv.text}\n\n[cached environment probe]`;
+        } else {
+          const probeCmd = nodeLooksWindows(instance)
+            ? "echo OS=%OS% ARCH=%PROCESSOR_ARCHITECTURE% & node -v & npm -v & git --version"
+            : "uname -srm; node -v; npm -v; git --version";
+          const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
+            command: probeCmd,
+            workingDirectory: instance.workingDirectory,
+            timeoutMs: 8000
+          });
+          observation = [
+            "Environment & Runtime Detection:",
+            `Node OS: ${instance.node.os || "unknown"} (${instance.node.arch || "unknown"})`,
+            `Detected Output:\n${(runResult.stdout || "").trim() || "(None)"}`
+          ].join("\n\n");
+          environmentInfoCache.set(instance.id, { text: observation, at: Date.now() });
+        }
+      } else if (toolName === "readsymbol" || toolName === "viewsymbol" || toolName === "getsymbol" || toolName === "inspectsymbol" || toolName === "viewfunction" || toolName === "read_symbol" || toolName === "extractsymbol") {
+        requireUserPermission(runtime.permissions, "file.read");
+        const instance = await resolveAgentInstance(runtime, args);
+        const relativePath = safeRelativePath(args.path);
+        const targetSymbol = stringArg(args, "symbol");
+        if (!relativePath || !targetSymbol) throw new RouteError("readSymbol requires path and symbol.", 400);
+        recordWorkingFileAccess(runtime.userId, instance.id, relativePath);
+
+        const escaped = targetSymbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const located = await grepDaemonInstanceFiles(instance.node, instance.id, instance.workingDirectory, {
+          workingDirectory: instance.workingDirectory,
+          path: relativePath,
+          pattern: `(function|class|interface|type|enum|def|fn|func|const|let|var)\\s+${escaped}\\b|${escaped}\\s*=\\s*(?:async\\s+)?(?:function|\\()`,
+          maxResults: 8,
+          contextLines: 0
+        });
+        const hit = located.matches[0];
+        if (!hit) {
+          throw new RouteError(`Symbol '${targetSymbol}' not found in ${relativePath}. Try searchFiles({ pattern: "${targetSymbol}", path: "${relativePath}" }).`, 404);
+        }
+
+        const windowStart = Math.max(1, hit.line);
+        const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath, {
+          startLine: windowStart,
+          lineCount: 80
+        });
+        const lines = file.content.length === 0 ? [] : file.content.split(/\r?\n/);
+        const startLineIdx = 0;
+
+        let endLineIdx = startLineIdx;
+        let braceCount = 0;
+        let foundOpenBrace = false;
+
+        for (let i = startLineIdx; i < lines.length; i++) {
+          const line = lines[i]!;
+          for (const char of line) {
+            if (char === "{") {
+              braceCount++;
+              foundOpenBrace = true;
+            } else if (char === "}") {
+              braceCount--;
+            }
+          }
+          if (foundOpenBrace && braceCount <= 0) {
+            endLineIdx = i;
+            break;
+          }
+          if (i - startLineIdx >= 300) {
+            endLineIdx = i;
+            break;
+          }
+        }
+
+        if (!foundOpenBrace) {
+          const initialIndent = lines[startLineIdx]!.match(/^\s*/)?.[0].length ?? 0;
+          for (let i = startLineIdx + 1; i < lines.length; i++) {
+            const line = lines[i]!;
+            if (line.trim().length === 0) continue;
+            const currentIndent = line.match(/^\s*/)?.[0].length ?? 0;
+            if (currentIndent <= initialIndent && !line.trim().startsWith("#") && !line.trim().startsWith("//")) {
+              endLineIdx = i - 1;
+              break;
+            }
+            if (i - startLineIdx >= 150) {
+              endLineIdx = i;
+              break;
+            }
+          }
+        }
+
+        const startLineNum = windowStart;
+        const endLineNum = windowStart + endLineIdx;
+        const snippetLines = lines.slice(startLineIdx, endLineIdx + 1);
+        const formattedSnippet = snippetLines
+          .map((line, idx) => `${String(startLineNum + idx).padStart(5, " ")}: ${line}`)
+          .join("\n");
+
+        observation = [
+          `Symbol: ${targetSymbol}`,
+          `File: ${relativePath} (Lines ${startLineNum} - ${endLineNum}, ${snippetLines.length} lines)`,
+          "",
+          formattedSnippet,
+          "",
+          `Tip: Use editLines({ path: "${relativePath}", startLine: ${startLineNum}, endLine: ${endLineNum}, replacement: "..." }) to modify this symbol directly.`
+        ].join("\n");
       } else if (toolName === "plan") {
         const steps = rawStringArg(args, "steps");
         const summary = rawStringArg(args, "summary");
@@ -1067,9 +1638,10 @@ export async function executeSakiAgentTool(
               ? checkpoint
               : fileDiffSnapshotFromCheckpoint(checkpoint, fileEditBeforeContent ?? ""),
             fileEditAfterContent,
-            fileEditPreview
+            fileEditPreview,
+            relatedCheckpointIds
           )
-        : buildCheckpointApproval(checkpoint, fileEditPreview)
+        : buildCheckpointApproval(checkpoint, fileEditPreview, relatedCheckpointIds)
       : undefined;
     const action: SakiAgentAction = {
       id: currentActionId,
@@ -1148,7 +1720,19 @@ export async function executeSakiAgentTool(
       const relativePath = safeRelativePath(call.args[0]);
       const sanitized = sanitizeAgentTextContent(call.args[1] ?? "");
       if (!relativePath) throw new RouteError("writeFile requires a file path.", 400);
-      checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath);
+      try {
+        const existing = await statDaemonInstancePath(instance.node, instance.id, instance.workingDirectory, relativePath);
+        if (existing.isDirectory) {
+          throw new RouteError(`writeFile cannot overwrite directory '${relativePath}'.`, 400);
+        }
+        throw new RouteError(
+          `writeFile is for NEW files only. '${relativePath}' already exists. Use editLines, replaceInFile, or batchEdit.`,
+          400
+        );
+      } catch (error) {
+        if (error instanceof RouteError) throw error;
+      }
+      checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath, runtime);
       fileEditPreview = `${instance.name}:${relativePath}`;
       fileEditAfterContent = sanitized.content;
       const file = await writeDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, {
@@ -1165,12 +1749,26 @@ export async function executeSakiAgentTool(
       const sanitized = sanitizeAgentTextContent(call.args[2] ?? "");
       if (!relativePath || !oldText) throw new RouteError("replaceInFile requires path and oldText.", 400);
       const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath);
-      const count = file.content.split(oldText).length - 1;
-      if (count === 0) throw new RouteError("oldText was not found in the file.", 400);
-      if (count > 1) throw new RouteError(`oldText matched ${count} times. Use writeFile with the full intended content or a more specific oldText.`, 400);
-      checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath);
+      let matchedOldText = oldText;
+      let count = file.content.split(matchedOldText).length - 1;
+      if (count === 0 && file.content.includes("\r\n") && !oldText.includes("\r\n")) {
+        const crlfCandidate = oldText.replace(/\n/g, "\r\n");
+        if (file.content.includes(crlfCandidate)) {
+          matchedOldText = crlfCandidate;
+          count = file.content.split(matchedOldText).length - 1;
+        }
+      } else if (count === 0 && !file.content.includes("\r\n") && oldText.includes("\r\n")) {
+        const lfCandidate = oldText.replace(/\r\n/g, "\n");
+        if (file.content.includes(lfCandidate)) {
+          matchedOldText = lfCandidate;
+          count = file.content.split(matchedOldText).length - 1;
+        }
+      }
+      if (count === 0) throw new RouteError(`oldText was not found in ${relativePath}. Check indentation/newlines or use editLines.`, 400);
+      if (count > 1) throw new RouteError(`oldText matched ${count} times. Use editLines with exact line numbers for precise replacement.`, 400);
+      checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath, runtime);
       fileEditPreview = `${instance.name}:${relativePath}`;
-      fileEditAfterContent = file.content.replace(oldText, () => sanitized.content);
+      fileEditAfterContent = file.content.replace(matchedOldText, () => sanitized.content);
       const updated = await writeDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, {
         path: relativePath,
         content: fileEditAfterContent
@@ -1187,7 +1785,7 @@ export async function executeSakiAgentTool(
       if (!relativePath) throw new RouteError("editLines requires a file path.", 400);
       const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath);
       const edit = replaceLineRange(file.content, startLine, endLine, sanitized.content);
-      checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath);
+      checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath, runtime);
       fileEditPreview = `${instance.name}:${relativePath}`;
       fileEditAfterContent = edit.content;
       const updated = await writeDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, {
@@ -1222,7 +1820,7 @@ export async function executeSakiAgentTool(
       await makeDaemonInstanceDirectory(instance.node, instance.id, instance.workingDirectory, { path: `.webops-saki-trash/${trashSegment}` });
       await renameDaemonInstancePath(instance.node, instance.id, instance.workingDirectory, { fromPath: relativePath, toPath: backupPath });
       checkpoint = { id: checkpointId(), type: "softDelete", instanceId: instance.id, path: relativePath, backupPath, actionId: currentActionId, createdAt: new Date().toISOString() };
-      await saveCheckpoint(checkpoint);
+      await persistCheckpoint(runtime, checkpoint);
       if (beforeDelete.existed) {
         fileEditPreview = `${instance.name}:${relativePath}`;
         fileEditBeforeContent = beforeDelete.content;
@@ -1243,7 +1841,7 @@ export async function executeSakiAgentTool(
       const relativePath = safeRelativePath(call.args[0]);
       const contentBase64 = trimString(call.args[1]);
       if (!relativePath || !contentBase64) throw new RouteError("uploadBase64 requires path and base64 content.", 400);
-      checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath);
+      checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath, runtime);
       fileEditPreview = `${instance.name}:${relativePath}`;
       const entry = await uploadDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, {
         path: relativePath,
@@ -1265,31 +1863,23 @@ export async function executeSakiAgentTool(
       const blocked = findDangerousCommandReason(command);
       if (blocked) throw new RouteError(blocked, 400);
       const timeoutMs = numericArg(call.args[1], 30000, 1000, 120000);
-      const input = typeof call.args[2] === "string" ? call.args[2] : undefined;
       const { daemonWorkingDirectory } = commandWorkingDirectoryForAgent(instance, {
         ...(typeof call.args[3] === "string" ? { cwd: call.args[3] } : {})
       });
 
-      // Default: reuse the latest existing persistent shell (like having multiple tabs open).
-      // Only creates a new one if none exist. This matches "default reuse" behavior.
-      // (Agent can explicitly use createShell + runInShell for a brand new one if desired.)
-      let shellId: string;
-      let isNew = false;
-      const existing = await listDaemonInstanceShells(instance.node, instance.id);
-      if (existing.sessions && existing.sessions.length > 0) {
-        shellId = existing.sessions[existing.sessions.length - 1]!; // reuse the most recently created
-      } else {
-        const shellCreate = await createDaemonInstanceShell(instance.node, instance.id, daemonWorkingDirectory);
-        shellId = shellCreate.sessionId;
-        isNew = true;
+      const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
+        command,
+        workingDirectory: daemonWorkingDirectory,
+        timeoutMs
+      });
+      const outputParts: string[] = [];
+      if (runResult.stdout) outputParts.push(`stdout:\n${truncateText(runResult.stdout.trim(), 6000)}`);
+      if (runResult.stderr) outputParts.push(`stderr:\n${truncateText(runResult.stderr.trim(), 4000)}`);
+      outputParts.push(`exit code: ${runResult.exitCode ?? 0} (${runResult.durationMs ?? 0}ms)`);
+      observation = outputParts.join("\n\n") || "(Command completed with no output)";
+      if ((runResult.exitCode ?? 0) !== 0) {
+        ok = false;
       }
-
-      const cdPrefix = daemonWorkingDirectory ? `cd ${JSON.stringify(daemonWorkingDirectory)} && ` : '';
-      const commandToRun = cdPrefix + command;
-      const fullCommand = input ? `${commandToRun}\n${input}\n` : `${commandToRun}\n`;
-      await sendDaemonShellInput(instance.node, instance.id, shellId, fullCommand);
-
-      observation = `Command sent to ${isNew ? 'newly created' : 'reused'} independent shell (shellId=${shellId})${isNew ? ' (like + button)' : ''}${daemonWorkingDirectory ? ` (cwd=${daemonWorkingDirectory})` : ''}:\n${command}${input ? `\n+ stdin: ${input}` : ''}\n\nFull live output streams to the corresponding UI shell tab. Use listShells() to see all. These are persistent shells (not the main process console).`;
     } else if (toolName === "sendinput") {
       requireUserPermission(runtime.permissions, "terminal.input");
       const instance = activeInstance(runtime);
@@ -1368,7 +1958,7 @@ export async function executeSakiAgentTool(
       requireUserPermission(runtime.permissions, "task.run");
       const taskId = trimString(call.args[0]);
       if (!taskId) throw new RouteError("runTask requires a task id.", 400);
-      const run = await executeScheduledTask(taskId, { trigger: "manual", request: runtime.request, userId: runtime.userId });
+      const run = await executeScheduledTask(taskId, { trigger: "manual", ...(runtime.request ? { request: runtime.request } : {}), userId: runtime.userId });
       observation = `Task run ${run.id}: ${run.status}\nOutput: ${run.output ?? "-"}\nError: ${run.error ?? "-"}`;
     } else if (toolName === "taskruns") {
       requireUserPermission(runtime.permissions, "task.view");

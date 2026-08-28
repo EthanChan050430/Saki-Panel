@@ -317,21 +317,24 @@ function normalizeSkillTags(value: unknown): string[] {
 }
 
 function sanitizeSkillId(value: string): string {
-  const normalized = value
+  const raw = trimString(value);
+  const normalized = raw
     .normalize("NFKD")
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "")
+    .replace(/[-_]{2,}/g, "-")
     .slice(0, 80);
   return normalized || `skill-${randomUUID().slice(0, 8)}`;
 }
 
 function requireSkillId(value: string): string {
-  const id = trimString(value);
+  const raw = trimString(value).toLowerCase();
+  const id = sanitizeSkillId(raw);
   if (!/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(id)) {
-    throw new RouteError("Skill id must use letters, numbers, hyphens, or underscores.", 400);
+    return `skill-${randomUUID().slice(0, 8)}`;
   }
-  return id.toLowerCase();
+  return id;
 }
 
 export function sakiSkillDirectory(id: string): string {
@@ -720,16 +723,19 @@ export async function readSakiSkillsByIds(skillIds: readonly string[]): Promise<
 }
 
 export function normalizeSkillInput(input: CreateSakiSkillRequest | UpdateSakiSkillRequest, current?: SakiSkillDocument): SakiSkillDetail {
-  const name = trimString(input.name ?? current?.name);
-  if (!name) throw new RouteError("Skill name is required.", 400);
-  const content = input.content !== undefined ? trimString(input.content) : current?.content ?? "";
-  if (!content) throw new RouteError("Skill content is required.", 400);
+  const name = trimString(input.name ?? current?.name) || "Untitled Skill";
+  let content = input.content !== undefined ? trimString(input.content) : current?.content ?? "";
+  if (!content) {
+    const desc = trimString(input.description ?? current?.description);
+    content = `# ${name}\n\n${desc || "Custom Saki Skill instructions"}`;
+  }
   if (content.length > maxSakiSkillContentChars) {
     throw new RouteError(`Skill content is too large; limit is ${maxSakiSkillContentChars} characters.`, 400);
   }
   const description = input.description !== undefined ? trimString(input.description) : current?.description ?? "";
+  const rawId = (input as { id?: string }).id;
   return {
-    id: current?.id ?? sanitizeSkillId(name),
+    id: current?.id ?? sanitizeSkillId(rawId ? trimString(rawId) : name),
     name,
     description,
     content,

@@ -5,6 +5,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" href="/assets/saki-panel-icon.png" />
     <title>Saki Panel</title>
+    <script>
+      (function () {
+        try {
+          var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+          var save = navigator.connection && navigator.connection.saveData;
+          var cores = navigator.hardwareConcurrency;
+          var memory = navigator.deviceMemory;
+          var lite =
+            reduce ||
+            save ||
+            (typeof cores === "number" && cores > 0 && cores <= 2) ||
+            (typeof memory === "number" && memory > 0 && memory <= 2);
+          document.documentElement.classList.add(lite ? "perf-lite" : "perf-full");
+        } catch (e) {
+          document.documentElement.classList.add("perf-full");
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

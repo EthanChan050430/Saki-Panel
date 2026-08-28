@@ -1,5 +1,19 @@
 import type { FastifyInstance } from "fastify";
-import type { CreateNodeRequest, ManagedNode, NodeMetricSnapshot, UpdateNodeRequest } from "@webops/shared";
+import type {
+  ConnectNodeByKeyRequest,
+  ConnectNodeByKeyResponse,
+  CreateEnrollmentTokenRequest,
+  CreateEnrollmentTokenResponse,
+  CreateNodeRequest,
+  DaemonNodeKeyPayload,
+  ManagedNode,
+  NodeEnrollmentTokenInfo,
+  NodeJoinCommandResponse,
+  NodeMetricSnapshot,
+  RotateNodeTokenResponse,
+  UpdateNodeRequest
+} from "@webops/shared";
+import type { Prisma } from "@prisma/client";
 import { panelConfig } from "../config.js";
 import { prisma } from "../db.js";
 import { requirePermission } from "../auth.js";
@@ -63,6 +77,7 @@ export function toManagedNode(node: {
   remarks: string | null;
   groupName: string | null;
   tags: string | null;
+  tokenLast4?: string | null;
   lastSeenAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -82,6 +97,7 @@ export function toManagedNode(node: {
     remarks: node.remarks,
     groupName: node.groupName,
     tags: node.tags,
+    tokenLast4: node.tokenLast4 ?? null,
     lastSeenAt: node.lastSeenAt?.toISOString() ?? null,
     createdAt: node.createdAt.toISOString(),
     updatedAt: node.updatedAt.toISOString(),
@@ -293,5 +309,311 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       });
       return { ok: false, error: error instanceof Error ? error.message : "Unknown error" };
     }
+  });
+
+  // ==========================================
+  // Enrollment Tokens (Join Tokens)
+  // ==========================================
+  app.get("/api/nodes/enrollment-tokens", { preHandler: requirePermission("node.view") }, async (): Promise<NodeEnrollmentTokenInfo[]> => {
+    const tokens = await prisma.nodeEnrollmentToken.findMany({
+      orderBy: { createdAt: "desc" }
+    });
+    const now = Date.now();
+    return tokens.map((t) => ({
+      id: t.id,
+      tokenLast4: t.tokenLast4,
+      namePrefix: t.namePrefix,
+      groupName: t.groupName,
+      tags: t.tags,
+      maxUsage: t.maxUsage,
+      usedCount: t.usedCount,
+      expiresAt: t.expiresAt.toISOString(),
+      createdAt: t.createdAt.toISOString(),
+      isExpired: t.expiresAt.getTime() < now || t.usedCount >= t.maxUsage
+    }));
+  });
+
+  app.post("/api/nodes/enrollment-tokens", { preHandler: requirePermission("node.create") }, async (request): Promise<CreateEnrollmentTokenResponse> => {
+    const body = request.body as Partial<CreateEnrollmentTokenRequest>;
+    const rawToken = generateSecretToken();
+    const expiresInMinutes = body.expiresInMinutes && body.expiresInMinutes > 0 ? body.expiresInMinutes : 60;
+    const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000);
+    const maxUsage = body.maxUsage && body.maxUsage > 0 ? body.maxUsage : 1;
+
+    const created = await prisma.nodeEnrollmentToken.create({
+      data: {
+        tokenHash: hashToken(rawToken),
+        tokenLast4: tokenLast4(rawToken),
+        namePrefix: normalizeOptionalText(body.namePrefix) ?? null,
+        groupName: normalizeOptionalText(body.groupName) ?? null,
+        tags: normalizeOptionalText(body.tags) ?? null,
+        maxUsage,
+        usedCount: 0,
+        expiresAt
+      }
+    });
+
+    await writeAuditLog({
+      request,
+      userId: request.user.sub,
+      action: "node.enrollment_create",
+      resourceType: "node",
+      resourceId: created.id,
+      payload: { maxUsage, expiresInMinutes }
+    });
+
+    return {
+      token: rawToken,
+      tokenInfo: {
+        id: created.id,
+        tokenLast4: created.tokenLast4,
+        namePrefix: created.namePrefix,
+        groupName: created.groupName,
+        tags: created.tags,
+        maxUsage: created.maxUsage,
+        usedCount: created.usedCount,
+        expiresAt: created.expiresAt.toISOString(),
+        createdAt: created.createdAt.toISOString(),
+        isExpired: false
+      }
+    };
+  });
+
+  app.delete("/api/nodes/enrollment-tokens/:id", { preHandler: requirePermission("node.create") }, async (request) => {
+    const { id } = request.params as { id: string };
+    await prisma.nodeEnrollmentToken.deleteMany({ where: { id } });
+    await writeAuditLog({
+      request,
+      userId: request.user.sub,
+      action: "node.enrollment_delete",
+      resourceType: "node",
+      resourceId: id
+    });
+    return { ok: true };
+  });
+
+  // ==========================================
+  // Node Secret Rotation & Join Commands
+  // ==========================================
+  app.post("/api/nodes/:id/token/rotate", { preHandler: requirePermission("node.update") }, async (request, reply): Promise<RotateNodeTokenResponse | void> => {
+    const { id } = request.params as { id: string };
+    const node = await prisma.node.findUnique({ where: { id } });
+    if (!node) {
+      reply.code(404).send({ message: "Node not found" });
+      return;
+    }
+
+    const newToken = generateSecretToken();
+    await prisma.node.update({
+      where: { id },
+      data: {
+        tokenHash: hashToken(newToken),
+        tokenLast4: tokenLast4(newToken)
+      }
+    });
+
+    await writeAuditLog({
+      request,
+      userId: request.user.sub,
+      action: "node.token_rotate",
+      resourceType: "node",
+      resourceId: id,
+      payload: { nodeName: node.name }
+    });
+
+    return {
+      nodeId: node.id,
+      nodeName: node.name,
+      nodeToken: newToken
+    };
+  });
+
+  app.get("/api/nodes/:id/join-command", { preHandler: requirePermission("node.view") }, async (request, reply): Promise<NodeJoinCommandResponse | void> => {
+    const { id } = request.params as { id: string };
+    const node = await prisma.node.findUnique({ where: { id } });
+    if (!node) {
+      reply.code(404).send({ message: "Node not found" });
+      return;
+    }
+
+    const defaultUrl = panelConfig.publicUrl || `http://${request.hostname}:${panelConfig.port}`;
+    const tempToken = generateSecretToken();
+    await prisma.nodeEnrollmentToken.create({
+      data: {
+        tokenHash: hashToken(tempToken),
+        tokenLast4: tokenLast4(tempToken),
+        namePrefix: node.name,
+        groupName: node.groupName,
+        tags: node.tags,
+        maxUsage: 1,
+        usedCount: 0,
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      }
+    });
+
+    const linuxCommand = `curl -fsSL "${defaultUrl}/api/nodes/join.sh?token=${tempToken}&name=${encodeURIComponent(node.name)}&port=${node.port}" | bash`;
+    const windowsCommand = `irm "${defaultUrl}/api/nodes/join.ps1?token=${tempToken}&name=${encodeURIComponent(node.name)}&port=${node.port}" | iex`;
+    const dockerCommand = `docker run -d --name saki-daemon --restart always --net=host -e DAEMON_PANEL_URL="${defaultUrl}" -e DAEMON_REGISTRATION_TOKEN="${tempToken}" -e DAEMON_NAME="${node.name}" -e DAEMON_PORT=${node.port} ghcr.io/saki-panel/daemon:latest`;
+
+    return {
+      nodeId: node.id,
+      panelUrl: defaultUrl,
+      token: tempToken,
+      linuxCommand,
+      windowsCommand,
+      dockerCommand
+    };
+  });
+
+  // ==========================================
+  // Connect Node By Key (Daemon Pairing Key)
+  // ==========================================
+  app.post("/api/nodes/connect-key", { preHandler: requirePermission("node.create") }, async (request, reply): Promise<ConnectNodeByKeyResponse | void> => {
+    const body = request.body as ConnectNodeByKeyRequest;
+    if (!body?.key?.trim()) {
+      reply.code(400).send({ message: "请提供节点机器专属密钥 (Node Key)" });
+      return;
+    }
+
+    let payload: DaemonNodeKeyPayload;
+    try {
+      const rawKey = body.key.trim();
+      let b64 = rawKey;
+      if (b64.startsWith("saki_node_")) {
+        b64 = b64.slice("saki_node_".length);
+      }
+      const jsonStr = Buffer.from(b64, "base64url").toString("utf8");
+      payload = JSON.parse(jsonStr) as DaemonNodeKeyPayload;
+      if (!payload.host || !payload.port || !payload.token) {
+        throw new Error("密钥信息不完整");
+      }
+    } catch {
+      reply.code(400).send({ message: "无效的节点密钥格式，请确保复制了完整的 saki_node_ 密钥" });
+      return;
+    }
+
+    // Allow hostOverride and portOverride in case the machines are on different networks / cross-internet
+    const effectiveHost = body.hostOverride?.trim() || payload.host;
+    const effectivePort = body.portOverride || payload.port;
+
+    // Ping the daemon to ensure it is actually running and credentials match!
+    const daemonUrl = `${payload.protocol || "http"}://${effectiveHost}:${effectivePort}/api/status`;
+    let pingOk = false;
+    let nodeStatusData: { os?: string | undefined; arch?: string | undefined; version?: string | undefined } = {};
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(daemonUrl, {
+        signal: controller.signal,
+        headers: {
+          "x-node-id": payload.nodeId || "",
+          "x-panel-token": hashToken(payload.token)
+        }
+      });
+      clearTimeout(timeoutId);
+      if (res.ok) {
+        pingOk = true;
+        const data = await res.json() as { metrics?: { system?: { platform?: string; arch?: string; version?: string } } };
+        if (data?.metrics?.system) {
+          nodeStatusData = {
+            os: data.metrics.system.platform,
+            arch: data.metrics.system.arch,
+            version: data.metrics.system.version
+          };
+        }
+      }
+    } catch {
+      // Could be unreachable or network error
+    }
+
+    if (!pingOk) {
+      reply.code(400).send({
+        message: `无法连接到该机器的 Daemon 节点 (${effectiveHost}:${effectivePort})。请确认目标机器上已启动 saki-daemon，且网络/防火墙端口已开放。若两台机器跨公网，请在“连接地址/IP”中填写该机器的公网 IP 或域名。`
+      });
+      return;
+    }
+
+    // Connect and persist the node in Panel database
+    const nodeName = body.name?.trim() || payload.name?.trim() || `Node-${effectiveHost}`;
+    const tokenHashValue = hashToken(payload.token);
+    const tokenLast4Value = tokenLast4(payload.token);
+
+    // Check if node already exists for this host:port or nodeId
+    let existingNode = payload.nodeId ? await prisma.node.findUnique({ where: { id: payload.nodeId } }) : null;
+    if (!existingNode) {
+      existingNode = await prisma.node.findFirst({
+        where: { host: effectiveHost, port: effectivePort }
+      });
+    }
+
+    let savedNode;
+    if (existingNode) {
+      savedNode = await prisma.node.update({
+        where: { id: existingNode.id },
+        data: {
+          name: nodeName,
+          host: effectiveHost,
+          port: effectivePort,
+          protocol: payload.protocol,
+          tokenHash: tokenHashValue,
+          tokenLast4: tokenLast4Value,
+          status: "ONLINE",
+          lastSeenAt: new Date(),
+          groupName: normalizeOptionalText(body.groupName) ?? existingNode.groupName,
+          tags: normalizeOptionalText(body.tags) ?? existingNode.tags,
+          os: nodeStatusData.os ?? existingNode.os,
+          arch: nodeStatusData.arch ?? existingNode.arch,
+          version: nodeStatusData.version ?? existingNode.version
+        },
+        include: {
+          metrics: {
+            take: 1,
+            orderBy: { createdAt: "desc" }
+          }
+        }
+      });
+    } else {
+      const createData: Prisma.NodeCreateInput = {
+        name: nodeName,
+        host: effectiveHost,
+        port: effectivePort,
+        protocol: payload.protocol,
+        tokenHash: tokenHashValue,
+        tokenLast4: tokenLast4Value,
+        status: "ONLINE",
+        lastSeenAt: new Date(),
+        groupName: normalizeOptionalText(body.groupName) ?? null,
+        tags: normalizeOptionalText(body.tags) ?? null,
+        os: nodeStatusData.os ?? null,
+        arch: nodeStatusData.arch ?? null,
+        version: nodeStatusData.version ?? null
+      };
+      if (payload.nodeId) {
+        createData.id = payload.nodeId;
+      }
+      savedNode = await prisma.node.create({
+        data: createData,
+        include: {
+          metrics: {
+            take: 1,
+            orderBy: { createdAt: "desc" }
+          }
+        }
+      });
+    }
+
+    await writeAuditLog({
+      request,
+      userId: request.user.sub,
+      action: "node.connect_by_key",
+      resourceType: "node",
+      resourceId: savedNode.id,
+      payload: { nodeName: savedNode.name, host: savedNode.host, port: savedNode.port }
+    });
+
+    return {
+      ok: true,
+      node: toManagedNode(savedNode)
+    };
   });
 }

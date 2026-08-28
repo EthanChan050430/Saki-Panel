@@ -1,6 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { daemonPaths } from "./config.js";
+import { randomBytes } from "node:crypto";
+import os from "node:os";
+import type { DaemonNodeKeyPayload } from "@webops/shared";
+import { daemonConfig, daemonPaths } from "./config.js";
 
 export interface DaemonIdentity {
   nodeId: string;
@@ -8,22 +11,22 @@ export interface DaemonIdentity {
 }
 
 export async function readIdentity(): Promise<DaemonIdentity | null> {
-  try {
-    const raw = await fs.readFile(daemonPaths.identityFile, "utf8");
-    const parsed = JSON.parse(raw) as Partial<DaemonIdentity>;
-    if (parsed.nodeId && parsed.nodeToken) {
-      return {
-        nodeId: parsed.nodeId,
-        nodeToken: parsed.nodeToken
-      };
+  const candidatePaths = Array.from(
+    new Set([
+      daemonPaths.identityFile,
+      path.resolve(daemonPaths.dataDir, `identity-${daemonConfig.port}.json`),
+      path.resolve(daemonPaths.dataDir, "identity.json")
+    ])
+  );
+
+  for (const filePath of candidatePaths) {
+    const identity = await readIdentityFile(filePath);
+    if (identity) {
+      return identity;
     }
-    return null;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return null;
-    }
-    throw error;
   }
+
+  return null;
 }
 
 async function readIdentityFile(filePath: string): Promise<DaemonIdentity | null> {
@@ -44,10 +47,14 @@ async function readIdentityFile(filePath: string): Promise<DaemonIdentity | null
 
 export async function readKnownIdentities(): Promise<DaemonIdentity[]> {
   const identities = new Map<string, DaemonIdentity>();
+  const addIdentity = (identity: DaemonIdentity | null) => {
+    if (identity?.nodeId && identity?.nodeToken) {
+      identities.set(`${identity.nodeId}:${identity.nodeToken}`, identity);
+    }
+  };
+
   const currentIdentity = await readIdentity();
-  if (currentIdentity) {
-    identities.set(currentIdentity.nodeId, currentIdentity);
-  }
+  addIdentity(currentIdentity);
 
   let entries: string[];
   try {
@@ -62,9 +69,7 @@ export async function readKnownIdentities(): Promise<DaemonIdentity[]> {
 
   for (const filePath of identityFiles) {
     const identity = await readIdentityFile(filePath);
-    if (identity) {
-      identities.set(identity.nodeId, identity);
-    }
+    addIdentity(identity);
   }
 
   return Array.from(identities.values());
@@ -76,11 +81,70 @@ export async function writeIdentity(identity: DaemonIdentity): Promise<void> {
 }
 
 export async function clearIdentity(): Promise<void> {
-  try {
-    await fs.unlink(daemonPaths.identityFile);
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-      throw error;
+  const candidatePaths = Array.from(
+    new Set([
+      daemonPaths.identityFile,
+      path.resolve(daemonPaths.dataDir, `identity-${daemonConfig.port}.json`),
+      path.resolve(daemonPaths.dataDir, "identity.json")
+    ])
+  );
+
+  for (const filePath of candidatePaths) {
+    try {
+      await fs.unlink(filePath);
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        throw error;
+      }
     }
   }
 }
+
+function getReachableIp(): string {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] ?? []) {
+      if (iface.family === "IPv4" && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return "127.0.0.1";
+}
+
+export async function getOrCreateDaemonNodeKey(overrideHost?: string, overridePort?: number): Promise<{ key: string; payload: DaemonNodeKeyPayload }> {
+  let identity = await readIdentity();
+  if (!identity) {
+    const randomHex = randomBytes(6).toString("hex");
+    identity = {
+      nodeId: `node_${randomHex}`,
+      nodeToken: randomBytes(24).toString("hex")
+    };
+    await writeIdentity(identity);
+  }
+
+  let host = overrideHost?.trim() || daemonConfig.publicHost;
+  if (!overrideHost && (host === "127.0.0.1" || host === "0.0.0.0" || host === "localhost")) {
+    const detected = getReachableIp();
+    if (detected !== "127.0.0.1") {
+      host = detected;
+    }
+  }
+
+  const port = overridePort || daemonConfig.port;
+
+  const payload: DaemonNodeKeyPayload = {
+    version: 1,
+    host,
+    port,
+    protocol: daemonConfig.protocol === "https" ? "https" : "http",
+    token: identity.nodeToken,
+    nodeId: identity.nodeId,
+    name: daemonConfig.name || os.hostname()
+  };
+
+  const jsonStr = JSON.stringify(payload);
+  const key = `saki_node_${Buffer.from(jsonStr, "utf8").toString("base64url")}`;
+  return { key, payload };
+}
+

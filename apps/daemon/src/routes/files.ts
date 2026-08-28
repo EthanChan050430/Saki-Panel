@@ -35,11 +35,40 @@ import { daemonPaths, daemonConfig } from "../config.js";
 import { authenticatePanelRequest } from "../daemon-auth.js";
 
 const maxEditableFileBytes = 1024 * 1024;
+const outlinePatterns = [
+  /^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+([a-zA-Z0-9_$]+)/,
+  /^\s*(?:export\s+)?class\s+([a-zA-Z0-9_$]+)/,
+  /^\s*(?:export\s+)?interface\s+([a-zA-Z0-9_$]+)/,
+  /^\s*(?:export\s+)?type\s+([a-zA-Z0-9_$]+)\s*=/,
+  /^\s*(?:export\s+)?enum\s+([a-zA-Z0-9_$]+)/,
+  /^\s*(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[a-zA-Z0-9_$]+)\s*=>/,
+  /^\s*(?:async\s+)?def\s+([a-zA-Z0-9_]+)\s*\(/,
+  /^\s*class\s+([a-zA-Z0-9_]+)\s*[:\(]/,
+  /^\s*func\s+(?:\([^)]+\)\s+)?([a-zA-Z0-9_]+)\s*\(/,
+  /^\s*(?:pub\s+)?(?:async\s+)?fn\s+([a-zA-Z0-9_]+)/,
+  /^\s*(?:pub\s+)?(?:struct|enum|trait)\s+([a-zA-Z0-9_]+)/
+];
+
+function extractFileOutline(lines: string[]): string {
+  const symbols: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const lineText = lines[i] ?? "";
+    const trimmed = lineText.trim();
+    if (!trimmed || trimmed.startsWith("//") || trimmed.startsWith("#") || trimmed.startsWith("*")) continue;
+    if (outlinePatterns.some((pattern) => pattern.test(lineText))) {
+      symbols.push(`L${i + 1}: ${trimmed.slice(0, 120)}`);
+    }
+  }
+  if (symbols.length === 0) {
+    return `(${lines.length} lines, no top-level definitions detected)`;
+  }
+  return `${symbols.length} definitions in ${lines.length} lines\n${symbols.join("\n")}`;
+}
 const maxTransferBytes = daemonConfig.maxTransferBytes;
 const maxArchiveEntries = daemonConfig.maxArchiveEntries;
 const maxExtractedBytes = daemonConfig.maxExtractedBytes;
-const maxArchiveOutputBytes = 20 * 1024 * 1024;
-const maxArchiveSources = 200;
+const maxArchiveOutputBytes = 128 * 1024 * 1024;
+const maxArchiveSources = 10000;
 
 const require = createRequire(import.meta.url);
 const { path7za } = require("7zip-bin") as { path7za: string };
@@ -57,6 +86,10 @@ interface FileQuery {
   workingDirectory?: string;
   path?: string;
   limit?: string;
+  startLine?: string;
+  lineCount?: string;
+  outline?: string;
+  stat?: string;
 }
 
 interface FileBody {
@@ -286,6 +319,32 @@ async function mapWithConcurrency<T, TResult>(
   return results;
 }
 
+async function countFileLines(filePath: string, maxBytes: number): Promise<number | undefined> {
+  const stats = await fs.lstat(filePath);
+  if (!stats.isFile()) return undefined;
+  if (stats.size === 0) return 0;
+  if (stats.size > maxBytes) return undefined;
+  const stream = fsSync.createReadStream(filePath);
+  let lines = 0;
+  let endedWithNewline = false;
+  try {
+    for await (const chunk of stream) {
+      const buf = chunk as Buffer;
+      for (let i = 0; i < buf.length; i += 1) {
+        if (buf[i] === 10) {
+          lines += 1;
+          endedWithNewline = true;
+        } else {
+          endedWithNewline = false;
+        }
+      }
+    }
+  } finally {
+    stream.destroy();
+  }
+  return endedWithNewline ? lines : lines + 1;
+}
+
 function assertRegularFile(stats: Stats): void {
   if (!stats.isFile()) {
     throw new Error("Path is not a regular file");
@@ -443,10 +502,10 @@ async function runSevenZip(args: string[], options: { cwd?: string } = {}): Prom
 }
 
 async function extractSevenZipArchive(archivePath: string, targetDirectory: string): Promise<void> {
-  const listing = await runSevenZip(["l", "-slt", archivePath]);
+  const listing = await runSevenZip(["l", "-slt", "-bsp0", archivePath]);
   const entries = parseSevenZipListOutput(listing);
   validateArchiveEntries(entries);
-  await runSevenZip(["x", "-y", `-o${targetDirectory}`, archivePath]);
+  await runSevenZip(["x", "-y", "-bso0", "-bsp0", `-o${targetDirectory}`, archivePath]);
 }
 
 async function extractRarArchive(archivePath: string, targetDirectory: string): Promise<void> {
@@ -814,19 +873,15 @@ async function createTemporaryZipArchive(
     return relative;
   });
 
-  let tempDirectory: string;
-  if (tempParentDirectory) {
-    await ensureRealPathInside(root, tempParentDirectory, true);
-    tempDirectory = await fs.mkdtemp(path.join(tempParentDirectory, "webops-archive-"));
-  } else {
-    tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "webops-archive-"));
-  }
+  const parentDir = tempParentDirectory || root;
+  await ensureRealPathInside(root, parentDir, true);
+  const tempDirectory = await fs.mkdtemp(path.join(parentDir, "webops-archive-"));
   const archivePath = path.join(tempDirectory, "archive.zip");
   const listPath = path.join(tempDirectory, "sources.txt");
 
   try {
     await fs.writeFile(listPath, archiveArguments.join("\n"), "utf8");
-    await runSevenZip(["a", "-tzip", "-mx=5", "-scsUTF-8", archivePath, `@${listPath}`], {
+    await runSevenZip(["a", "-tzip", "-mx=3", "-scsUTF-8", "-bso0", "-bsp0", archivePath, `@${listPath}`], {
       cwd: baseDirectory
     });
     return { tempDirectory, archivePath };
@@ -1009,6 +1064,49 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     const query = request.query as FileQuery;
     const resolved = await resolveTarget(query.workingDirectory, query.path);
     const stats = await fs.lstat(resolved.target);
+    const wantStat = query.stat === "1" || query.stat === "true";
+    if (wantStat) {
+      if (stats.isDirectory()) {
+        return {
+          instanceId: id,
+          path: resolved.relativePath,
+          content: "",
+          encoding: "utf8",
+          size: 0,
+          modifiedAt: stats.mtime.toISOString(),
+          isDirectory: true,
+          stat: true
+        } satisfies InstanceFileContentResponse;
+      }
+      if (stats.isSymbolicLink()) {
+        return {
+          instanceId: id,
+          path: resolved.relativePath,
+          content: "",
+          encoding: "utf8",
+          size: stats.size,
+          modifiedAt: stats.mtime.toISOString(),
+          isDirectory: false,
+          stat: true
+        } satisfies InstanceFileContentResponse;
+      }
+      if (!stats.isFile()) {
+        throw new Error("Path is not a file or directory");
+      }
+      const totalLines = await countFileLines(resolved.target, maxEditableFileBytes);
+      return {
+        instanceId: id,
+        path: resolved.relativePath,
+        content: "",
+        encoding: "utf8",
+        size: stats.size,
+        modifiedAt: stats.mtime.toISOString(),
+        ...(totalLines !== undefined ? { totalLines } : {}),
+        isDirectory: false,
+        stat: true
+      } satisfies InstanceFileContentResponse;
+    }
+
     assertRegularFile(stats);
     if (stats.size > maxEditableFileBytes) {
       throw new Error("File is too large to edit online");
@@ -1016,14 +1114,51 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
 
     const buffer = await fs.readFile(resolved.target);
     assertTextBuffer(buffer);
+    const text = buffer.toString("utf8");
+    const lines = text.length === 0 ? [] : text.split(/\r?\n/);
+    const totalLines = lines.length;
+    const startLine = Math.max(1, Number(query.startLine) || 0);
+    const lineCount = Math.max(0, Number(query.lineCount) || 0);
+    const wantOutline = query.outline === "1" || query.outline === "true";
+
+    if (wantOutline) {
+      return {
+        instanceId: id,
+        path: resolved.relativePath,
+        content: extractFileOutline(lines),
+        encoding: "utf8",
+        size: stats.size,
+        modifiedAt: stats.mtime.toISOString(),
+        totalLines,
+        outline: true
+      } satisfies InstanceFileContentResponse;
+    }
+
+    if (startLine >= 1 && lineCount >= 1) {
+      const slice = lines.slice(startLine - 1, startLine - 1 + lineCount);
+      const endLine = Math.min(totalLines, startLine + slice.length - 1);
+      return {
+        instanceId: id,
+        path: resolved.relativePath,
+        content: slice.join("\n"),
+        encoding: "utf8",
+        size: stats.size,
+        modifiedAt: stats.mtime.toISOString(),
+        totalLines,
+        startLine,
+        endLine,
+        truncated: endLine < totalLines
+      } satisfies InstanceFileContentResponse;
+    }
 
     return {
       instanceId: id,
       path: resolved.relativePath,
-      content: buffer.toString("utf8"),
+      content: text,
       encoding: "utf8",
       size: stats.size,
-      modifiedAt: stats.mtime.toISOString()
+      modifiedAt: stats.mtime.toISOString(),
+      totalLines
     } satisfies InstanceFileContentResponse;
   });
 
@@ -1121,7 +1256,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       reply.header("Content-Type", "application/octet-stream");
       reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
       reply.header("Content-Length", String(stats.size));
-      return fsSync.createReadStream(resolved.target);
+      return reply.send(fsSync.createReadStream(resolved.target));
     }
 
     if (stats.size > maxTransferBytes) {
@@ -1236,7 +1371,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
         };
         stream.on("close", cleanup);
         stream.on("error", cleanup);
-        return stream;
+        return reply.send(stream);
       } catch (err) {
         await fs.rm(temporary.tempDirectory, { force: true, recursive: true });
         throw err;
@@ -1313,7 +1448,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
 
     const root = await resolveInstanceRoot(body.workingDirectory);
     const maxResults = Math.min(Math.max(1, body.maxResults ?? 100), 500);
-    const contextLines = Math.min(Math.max(0, body.contextLines ?? 0), 3);
+    const contextLines = Math.min(Math.max(0, body.contextLines ?? 2), 3);
     const isCaseInsensitive = body.pattern === body.pattern.toLowerCase();
     const regex = new RegExp(body.pattern, isCaseInsensitive ? "i" : "");
 
@@ -1343,11 +1478,17 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
 
           totalMatches++;
           if (matches.length < maxResults) {
+            const before =
+              contextLines > 0 ? lines.slice(Math.max(0, lineIndex - contextLines), lineIndex) : undefined;
+            const after =
+              contextLines > 0 ? lines.slice(lineIndex + 1, lineIndex + 1 + contextLines) : undefined;
             matches.push({
               file: relativePath,
               line: lineIndex + 1,
               column: match.index + 1,
-              text: lineText
+              text: lineText,
+              ...(before && before.length ? { before } : {}),
+              ...(after && after.length ? { after } : {})
             });
           } else {
             truncated = true;

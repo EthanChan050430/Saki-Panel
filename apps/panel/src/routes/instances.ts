@@ -1,3 +1,4 @@
+import net from "node:net";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Prisma } from "@prisma/client";
 import type {
@@ -7,6 +8,7 @@ import type {
   InstanceCommandResponse,
   InstanceFileEntry,
   InstanceLogsResponse,
+  InstanceProxyConfig,
   InstanceStatus,
   InstanceType,
   ManagedInstance,
@@ -33,7 +35,9 @@ import {
 import { writeAuditLog } from "../audit.js";
 import { findDangerousCommandReason } from "../security.js";
 import {
+  applyDaemonClashSubscription,
   createDaemonInstanceShell,
+  fetchDaemonClashSubscription,
   killDaemonInstance,
   listDaemonInstanceFiles,
   listDaemonInstanceShells,
@@ -44,9 +48,79 @@ import {
   runDaemonInstanceCommand,
   sendDaemonShellInput,
   startDaemonInstance,
+  stopDaemonClashSubscription,
   stopDaemonInstance,
   type DaemonInstanceSpec
 } from "../daemon-client.js";
+
+function parseProxyConfig(raw: string | null | undefined): InstanceProxyConfig | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<InstanceProxyConfig>;
+    if (typeof parsed !== "object" || !parsed) return null;
+    const proxies = Array.isArray(parsed.proxies)
+      ? parsed.proxies
+          .map((item) => {
+            if (!item || typeof item !== "object") return null;
+            const name = String(item.name || "").trim();
+            if (!name) return null;
+            const summary: { name: string; type: string; server?: string; port?: number } = {
+              name,
+              type: String(item.type || "unknown")
+            };
+            if (item.server) summary.server = String(item.server);
+            if (Number(item.port)) summary.port = Number(item.port);
+            return summary;
+          })
+          .filter((item): item is NonNullable<typeof item> => Boolean(item))
+      : null;
+    return {
+      enabled: Boolean(parsed.enabled),
+      type: parsed.type === "socks5" ? "socks5" : parsed.type === "https" ? "https" : "http",
+      server: String(parsed.server || "").trim(),
+      port: Number(parsed.port) || 7890,
+      username: parsed.username ? String(parsed.username).trim() : null,
+      password: parsed.password ? String(parsed.password) : null,
+      bypass: parsed.bypass ? String(parsed.bypass).trim() : null,
+      mode: parsed.mode === "subscription" ? "subscription" : "manual",
+      subscriptionUrl: parsed.subscriptionUrl ? String(parsed.subscriptionUrl).trim() : null,
+      selectedProxy: parsed.selectedProxy ? String(parsed.selectedProxy).trim() : null,
+      proxies
+    };
+  } catch {
+    return null;
+  }
+}
+
+function testTcpConnectivity(
+  host: string,
+  port: number,
+  timeoutMs = 2500
+): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    const socket = new net.Socket();
+    socket.setTimeout(timeoutMs);
+
+    socket.on("connect", () => {
+      const latencyMs = Date.now() - startTime;
+      socket.destroy();
+      resolve({ ok: true, latencyMs });
+    });
+
+    socket.on("timeout", () => {
+      socket.destroy();
+      resolve({ ok: false, error: `连接超时 (${timeoutMs}ms)` });
+    });
+
+    socket.on("error", (err) => {
+      socket.destroy();
+      resolve({ ok: false, error: err.message || "连接被拒绝" });
+    });
+
+    socket.connect(port, host);
+  });
+}
 
 function toManagedInstance(instance: InstanceWithAccess): ManagedInstance {
   const assignees = instanceAssignedUserSummaries(instance);
@@ -68,6 +142,7 @@ function toManagedInstance(instance: InstanceWithAccess): ManagedInstance {
     memoryLimit: instance.memoryLimit,
     cpuLimit: instance.cpuLimit,
     description: instance.description,
+    proxyConfig: parseProxyConfig((instance as any).proxyConfig),
     createdByUserId: instance.createdById,
     createdByUsername: instance.createdBy?.username ?? null,
     createdByDisplayName: instance.createdBy?.displayName ?? null,
@@ -98,7 +173,8 @@ function specFromInstance(instance: InstanceWithAccess): DaemonInstanceSpec {
     startCommand: instance.startCommand,
     stopCommand: instance.stopCommand,
     restartPolicy: instance.restartPolicy as RestartPolicy,
-    restartMaxRetries: instance.restartMaxRetries
+    restartMaxRetries: instance.restartMaxRetries,
+    proxy: parseProxyConfig((instance as any).proxyConfig)
   };
 }
 
@@ -794,6 +870,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
         startCommand,
         stopCommand: body.stopCommand?.trim() || null,
         description: body.description?.trim() || null,
+        proxyConfig: body.proxyConfig ? JSON.stringify(body.proxyConfig) : null,
         autoStart: body.autoStart ?? false,
         restartPolicy: normalizeRestartPolicy(body.restartPolicy, "never"),
         restartMaxRetries: normalizeRetryCount(body.restartMaxRetries, 0),
@@ -911,6 +988,9 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       restartPolicy: normalizeRestartPolicy(body.restartPolicy, existing.restartPolicy as RestartPolicy),
       restartMaxRetries: normalizeRetryCount(body.restartMaxRetries, existing.restartMaxRetries)
     };
+    if (body.proxyConfig !== undefined) {
+      updateData.proxyConfig = body.proxyConfig ? JSON.stringify(body.proxyConfig) : null;
+    }
     if (assignedUserIds !== undefined) {
       updateData.assignedTo = assignedUserIds[0] ? { connect: { id: assignedUserIds[0] } } : { disconnect: true };
       updateData.assignedUsers = {
@@ -941,12 +1021,164 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
         ...(nodeChanged ? { previousNodeId: existing.nodeId, nodeId: instance.nodeId } : {}),
         ...(assignedUserIds !== undefined
           ? { previousAssignedUserIds: instanceAssignedUserIds(existing), assignedUserIds }
-          : {})
+          : {}),
+        ...(body.proxyConfig !== undefined ? { proxyConfigUpdated: true } : {})
       }
     });
 
     return toManagedInstance(instance);
   });
+
+  app.put("/api/instances/:id/proxy", { preHandler: requirePermission("instance.update") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const existing = await loadInstance(request, id);
+    if (!existing) {
+      await sendNotFound(reply);
+      return;
+    }
+
+    const proxyConfig = request.body as InstanceProxyConfig | null;
+    if (!proxyConfig?.enabled || proxyConfig.mode !== "subscription") {
+      await stopDaemonClashSubscription(existing.node, id).catch(() => {});
+    }
+    const instance = await prisma.instance.update({
+      where: { id },
+      data: {
+        proxyConfig: proxyConfig ? JSON.stringify(proxyConfig) : null
+      },
+      include: instanceAccessInclude
+    });
+
+    await writeAuditLog({
+      request,
+      userId: request.user.sub,
+      action: "instance.proxy_update",
+      resourceType: "instance",
+      resourceId: id,
+      payload: { proxyConfig }
+    });
+
+    return toManagedInstance(instance);
+  });
+
+  app.post(
+    "/api/instances/:id/proxy/test",
+    { preHandler: requirePermission("instance.view") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const existing = await loadInstance(request, id);
+      if (!existing) {
+        await sendNotFound(reply);
+        return;
+      }
+
+      const body = request.body as Partial<InstanceProxyConfig>;
+      const server = String(body.server || "127.0.0.1").trim();
+      const port = Number(body.port) || 7890;
+
+      if (!server || !port || port <= 0 || port > 65535) {
+        reply.code(400).send({ success: false, message: "无效的代理主机或端口号" });
+        return;
+      }
+
+      const result = await testTcpConnectivity(server, port);
+      if (result.ok) {
+        return {
+          success: true,
+          latencyMs: result.latencyMs,
+          message: `代理端口连通正常 (${server}:${port}, ${result.latencyMs}ms)`
+        };
+      }
+
+      return reply.code(400).send({
+        success: false,
+        message: `无法连接到 ${server}:${port} (${result.error})，请确认 Clash / 代理软件已启动且在监听该端口`
+      });
+    }
+  );
+
+  app.post(
+    "/api/instances/:id/proxy/subscription",
+    { preHandler: requirePermission("instance.update") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const existing = await loadInstance(request, id);
+      if (!existing) {
+        await sendNotFound(reply);
+        return;
+      }
+      const body = request.body as { url?: string };
+      const url = typeof body.url === "string" ? body.url.trim() : "";
+      if (!url) {
+        reply.code(400).send({ message: "请输入机场订阅地址" });
+        return;
+      }
+      return fetchDaemonClashSubscription(existing.node, id, url);
+    }
+  );
+
+  app.post(
+    "/api/instances/:id/proxy/subscription/apply",
+    { preHandler: requirePermission("instance.update") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const existing = await loadInstance(request, id);
+      if (!existing) {
+        await sendNotFound(reply);
+        return;
+      }
+      const body = request.body as { url?: string; selectedProxy?: string; bypass?: string | null };
+      const url = typeof body.url === "string" ? body.url.trim() : "";
+      const selectedProxy = typeof body.selectedProxy === "string" ? body.selectedProxy.trim() : "";
+      if (!url || !selectedProxy) {
+        reply.code(400).send({ message: "请先拉取订阅并选择节点" });
+        return;
+      }
+      const applied = await applyDaemonClashSubscription(existing.node, id, { url, selectedProxy });
+      const proxyConfig: InstanceProxyConfig = {
+        enabled: true,
+        mode: "subscription",
+        type: "http",
+        server: "127.0.0.1",
+        port: applied.port,
+        username: null,
+        password: null,
+        bypass: body.bypass?.trim() || "localhost,127.0.0.1,::1",
+        subscriptionUrl: url,
+        selectedProxy: applied.selectedProxy,
+        proxies: applied.proxies
+      };
+      const instance = await prisma.instance.update({
+        where: { id },
+        data: { proxyConfig: JSON.stringify(proxyConfig) },
+        include: instanceAccessInclude
+      });
+      await writeAuditLog({
+        request,
+        userId: request.user.sub,
+        action: "instance.proxy_subscription_apply",
+        resourceType: "instance",
+        resourceId: id,
+        payload: { selectedProxy: applied.selectedProxy, port: applied.port }
+      });
+      return { instance: toManagedInstance(instance), ...applied };
+    }
+  );
+
+  app.post(
+    "/api/instances/:id/proxy/subscription/stop",
+    { preHandler: requirePermission("instance.update") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const existing = await loadInstance(request, id);
+      if (!existing) {
+        await sendNotFound(reply);
+        return;
+      }
+      await stopDaemonClashSubscription(existing.node, id);
+      return { ok: true };
+    }
+  );
 
   app.delete("/api/instances/:id", { preHandler: requirePermission("instance.delete") }, async (request, reply) => {
     const { id } = request.params as { id: string };
@@ -956,6 +1188,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       return;
     }
 
+    await stopDaemonClashSubscription(existing.node, id).catch(() => {});
     await prisma.instance.delete({ where: { id } });
     await writeAuditLog({
       request,

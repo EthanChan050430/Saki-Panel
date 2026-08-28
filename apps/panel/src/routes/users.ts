@@ -36,6 +36,8 @@ type UserWithRoles = {
   lastLoginAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  points?: number;
+  unlimitedPoints?: boolean;
   roles: Array<{
     role: {
       id: string;
@@ -108,7 +110,9 @@ function toManagedUser(user: UserWithRoles): ManagedUser {
     roleNames: roles.map((item) => item.role.name),
     lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
     createdAt: user.createdAt.toISOString(),
-    updatedAt: user.updatedAt.toISOString()
+    updatedAt: user.updatedAt.toISOString(),
+    points: user.points ?? 0,
+    unlimitedPoints: Boolean(user.unlimitedPoints)
   };
 }
 

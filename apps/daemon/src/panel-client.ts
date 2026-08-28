@@ -1,9 +1,16 @@
 import * as http from "node:http";
 import * as https from "node:https";
-import type { HeartbeatRequest, RegisterDaemonResponse } from "@webops/shared";
+import type {
+  DaemonEventResponse,
+  DaemonInstanceStatusEvent,
+  HeartbeatRequest,
+  HeartbeatResponse,
+  RegisterDaemonResponse
+} from "@webops/shared";
 import { daemonConfig } from "./config.js";
 import { clearIdentity, readIdentity, writeIdentity, type DaemonIdentity } from "./identity.js";
 import { collectMetrics } from "./metrics.js";
+import { applyRestartLeases, instanceManager, type InstanceStatusPush } from "./instance-manager.js";
 
 type DaemonHeartbeatRequest = HeartbeatRequest & {
   host: string;
@@ -104,8 +111,15 @@ async function resolveIdentity(): Promise<DaemonIdentity> {
   return identity ?? registerWithPanel();
 }
 
+async function identityHeaders(): Promise<Record<string, string>> {
+  const identity = await resolveIdentity();
+  return {
+    "x-node-id": identity.nodeId,
+    "x-node-token": identity.nodeToken
+  };
+}
+
 export async function sendHeartbeat(): Promise<void> {
-  let identity = await resolveIdentity();
   const body: DaemonHeartbeatRequest = {
     status: "ONLINE",
     host: daemonConfig.publicHost,
@@ -114,31 +128,63 @@ export async function sendHeartbeat(): Promise<void> {
     os: daemonConfig.osName,
     arch: daemonConfig.arch,
     version: daemonConfig.version,
-    metrics: await collectMetrics()
+    metrics: await collectMetrics(),
+    instances: instanceManager.listSnapshots()
   };
 
+  const postHeartbeat = async (headers: Record<string, string>) =>
+    postJson<HeartbeatResponse>("/api/daemon/heartbeat", body, headers);
+
   try {
-    await postJson(
-      "/api/daemon/heartbeat",
-      body,
-      {
-        "x-node-id": identity.nodeId,
-        "x-node-token": identity.nodeToken
-      }
-    );
+    const response = await postHeartbeat(await identityHeaders());
+    applyRestartLeases(response.restartLeases ?? []);
   } catch (error) {
     if (error instanceof Error && error.message.includes("401")) {
       await clearIdentity();
-      identity = await registerWithPanel();
-      await postJson(
-        "/api/daemon/heartbeat",
-        body,
-        {
-          "x-node-id": identity.nodeId,
-          "x-node-token": identity.nodeToken
-        }
-      );
+      await registerWithPanel();
+      const response = await postHeartbeat(await identityHeaders());
+      applyRestartLeases(response.restartLeases ?? []);
       return;
+    }
+    throw error;
+  }
+}
+
+export async function sendInstanceStatusEvent(
+  push: InstanceStatusPush
+): Promise<{ suppressRestartUntil?: string | null } | void> {
+  const event: DaemonInstanceStatusEvent = {
+    type: "instance.status",
+    instanceId: push.instanceId,
+    status: push.status,
+    exitCode: push.exitCode,
+    occurredAt: new Date().toISOString(),
+    logTail: push.logTail.map((line) => ({ stream: line.stream, text: line.text })),
+    restart: {
+      policy: push.restartPolicy,
+      attempts: push.restartAttempts,
+      willRetry: push.willRetryByPolicy
+    }
+  };
+
+  const postEvent = async (headers: Record<string, string>) =>
+    postJson<DaemonEventResponse>("/api/daemon/events", event, headers);
+
+  try {
+    const response = await postEvent(await identityHeaders());
+    if (response.suppressRestartUntil) {
+      applyRestartLeases([{ instanceId: push.instanceId, suppressUntil: response.suppressRestartUntil }]);
+    }
+    return { suppressRestartUntil: response.suppressRestartUntil ?? null };
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("401")) {
+      await clearIdentity();
+      await registerWithPanel();
+      const response = await postEvent(await identityHeaders());
+      if (response.suppressRestartUntil) {
+        applyRestartLeases([{ instanceId: push.instanceId, suppressUntil: response.suppressRestartUntil }]);
+      }
+      return { suppressRestartUntil: response.suppressRestartUntil ?? null };
     }
     throw error;
   }

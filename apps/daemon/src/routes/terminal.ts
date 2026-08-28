@@ -22,7 +22,20 @@ function parseClientMessage(raw: WebSocket.RawData): TerminalClientMessage | nul
       };
     }
     if (parsed.type === "input" && typeof parsed.data === "string") {
-      return { type: "input", data: parsed.data, echo: parsed.echo !== false };
+      return {
+        type: "input",
+        data: parsed.data,
+        echo: parsed.echo !== false,
+        ...(parsed.sessionId ? { sessionId: parsed.sessionId } : {})
+      };
+    }
+    if (parsed.type === "resize" && typeof parsed.cols === "number" && typeof parsed.rows === "number") {
+      return {
+        type: "resize",
+        cols: parsed.cols,
+        rows: parsed.rows,
+        ...(parsed.sessionId ? { sessionId: parsed.sessionId } : {})
+      };
     }
     if (parsed.type === "ping") {
       return { type: "ping" };
@@ -53,7 +66,12 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
       });
 
       const unsubscribe = instanceManager.subscribe(id, {
-        onLog: (line) => send(socket, { type: "line", line }),
+        onData: (data) => send(socket, { type: "data", data }),
+        onLog: (line) => {
+          if (line.stream === "system") {
+            send(socket, { type: "line", line });
+          }
+        },
         onStatus: (state) =>
           send(socket, {
             type: "status",
@@ -100,14 +118,25 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
         return;
       }
 
+      if (message.type === "resize") {
+        const targetSid = message.sessionId || activeSessionId;
+        if (targetSid) {
+          instanceManager.resizeShell(id, targetSid, message.cols, message.rows);
+        } else {
+          instanceManager.resize(id, message.cols, message.rows);
+        }
+        return;
+      }
+
       if (message.type !== "input") {
         send(socket, { type: "error", message: "Unsupported terminal message" });
         return;
       }
 
-      if (activeSessionId) {
+      const targetSid = message.sessionId || activeSessionId;
+      if (targetSid) {
         try {
-          instanceManager.writeShellInput(id, activeSessionId, message.data);
+          instanceManager.writeShellInput(id, targetSid, message.data);
         } catch (error) {
           send(socket, { type: "error", message: error instanceof Error ? error.message : "Shell input failed" });
         }

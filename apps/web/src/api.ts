@@ -10,6 +10,15 @@ import type {
   AuditLogEntry,
   CreateNodeRequest,
   CreateNodeResponse,
+  ConnectNodeByKeyRequest,
+  ConnectNodeByKeyResponse,
+  UserAccessKeyInfo,
+  CreateUserAccessKeyResponse,
+  CreateEnrollmentTokenRequest,
+  CreateEnrollmentTokenResponse,
+  NodeEnrollmentTokenInfo,
+  NodeJoinCommandResponse,
+  RotateNodeTokenResponse,
   CreateInstanceRequest,
   CreateInstanceFromTemplateRequest,
   SuggestInstanceStartCommandRequest,
@@ -22,6 +31,8 @@ import type {
   InstanceFileListResponse,
   InstanceTemplate,
   InstanceLogsResponse,
+  InstanceProxyConfig,
+  ClashSubscriptionProxy,
   LoginRequest,
   LoginResponse,
   ManagedInstance,
@@ -52,10 +63,39 @@ import type {
   UpdateCurrentUserRequest,
   UpdatePanelSessionSettingsRequest,
   UpdateUserRequest,
+  PointRecordItem,
+  UpdateUserPointsRequest,
+  UserPointsSummary,
   UpdateInstanceRequest,
   UpdateNodeRequest,
   CreateScheduledTaskRequest,
-  UpdateScheduledTaskRequest
+  UpdateScheduledTaskRequest,
+  CreateDatabaseVisualizerRequest,
+  IncidentListResponse,
+  IgnoreIncidentRequest,
+  ManagedIncident,
+  ManagedWatchPolicy,
+  UpdateWatchPolicyRequest,
+  DatabaseCreateTableRequest,
+  DatabaseDeleteRowRequest,
+  DatabaseEngine,
+  DatabaseExecuteQueryRequest,
+  DatabaseExportRequest,
+  DatabaseExportResponse,
+  DatabaseImportRequest,
+  DatabaseImportResponse,
+  DatabaseInsertRowRequest,
+  DatabaseQueryResult,
+  DatabaseRowsRequest,
+  DatabaseRowsResponse,
+  DatabaseTableSchema,
+  DatabaseTableSummary,
+  DatabaseTruncateTableRequest,
+  DatabaseUpdateRowRequest,
+  DatabaseVisualizerConfig,
+  DatabaseVisualizerInstance,
+  DiscoveredDatabase,
+  UpdateDatabaseVisualizerRequest
 } from "@webops/shared";
 
 function isLoopbackHostname(hostname: string): boolean {
@@ -168,12 +208,23 @@ function summarizeSakiStreamEvent(event: SakiChatStreamEvent): Record<string, un
       actionCount: event.response.actions?.length ?? 0
     };
   }
+  if (event.type === "meta") {
+    return {
+      type: event.type,
+      source: event.source,
+      mode: event.mode ?? null,
+      agentPermissionMode: event.agentPermissionMode ?? null,
+      skillCount: event.skills?.length ?? 0
+    };
+  }
+  if (event.type === "error") {
+    return {
+      type: event.type,
+      message: event.message
+    };
+  }
   return {
-    type: event.type,
-    source: event.source,
-    mode: event.mode ?? null,
-    agentPermissionMode: event.agentPermissionMode ?? null,
-    skillCount: event.skills?.length ?? 0
+    type: "unknown"
   };
 }
 
@@ -262,12 +313,30 @@ export type SakiChatStreamEvent =
       agentPermissionMode?: SakiChatRequest["agentPermissionMode"];
       workspace?: SakiChatResponse["workspace"];
       skills?: SakiSkillSummary[];
+      taskId?: string;
+      status?: string;
     }
   | { type: "heartbeat"; ts?: number }
   | ({ type: "workflow" } & SakiChatWorkflowUpdate)
   | { type: "delta"; text: string }
+  | { type: "thinking"; text: string }
   | { type: "action"; action: SakiAgentAction }
-  | { type: "done"; response: SakiChatResponse };
+  | { type: "done"; response: SakiChatResponse }
+  | { type: "error"; message: string };
+
+export interface SakiActiveTaskSummary {
+  id: string;
+  userId: string;
+  instanceId: string | null;
+  status: "running" | "completed" | "failed" | "pending_approval" | "cancelled";
+  startedAt: string;
+  updatedAt: string;
+  message: string;
+  mode?: string;
+  actionCount: number;
+  response?: SakiChatResponse;
+  error?: string;
+}
 
 function parseSakiStreamFrame(frame: string): SakiChatStreamEvent | null {
   const data = frame
@@ -392,6 +461,72 @@ async function requestSakiChatStream(
   return completedResponse;
 }
 
+async function requestSakiTaskReconnectStream(
+  token: string,
+  taskId: string,
+  onEvent: (event: SakiChatStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<SakiChatResponse> {
+  const requestInit: RequestInit = {
+    method: "GET",
+    headers: {
+      authorization: `Bearer ${token}`
+    }
+  };
+  if (signal) {
+    requestInit.signal = signal;
+  }
+  const response = await fetch(new URL(`/api/saki/tasks/${encodeURIComponent(taskId)}/stream`, API_BASE), requestInit);
+  if (!response.ok) {
+    throw new ApiError(await responseErrorMessage(response), response.status);
+  }
+  if (!response.body) {
+    throw new ApiError("Saki task stream is not readable", 0);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalResponse: SakiChatResponse | null = null;
+
+  const dispatch = (frame: string) => {
+    const event = parseSakiStreamFrame(frame);
+    if (!event) return;
+    onEvent(event);
+    if (event.type === "done") {
+      finalResponse = event.response;
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      while (true) {
+        const boundary = buffer.indexOf("\n\n");
+        if (boundary < 0) break;
+        dispatch(buffer.slice(0, boundary));
+        buffer = buffer.slice(boundary + 2);
+      }
+    }
+    const tail = decoder.decode();
+    if (tail) buffer += tail.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    if (buffer.trim()) dispatch(buffer);
+  } catch (error) {
+    if (finalResponse) return finalResponse;
+    throw new ApiError(normalizeStreamError(error), 0);
+  } finally {
+    reader.releaseLock();
+  }
+
+  const completedResponse = finalResponse as SakiChatResponse | null;
+  if (!completedResponse) {
+    throw new ApiError("Saki task stream ended before completion", 0);
+  }
+  return completedResponse;
+}
+
 export interface PaginatedResult<T> {
   data: T[];
   total: number;
@@ -479,13 +614,36 @@ function readFileAsBase64(file: File, onProgress?: (progress: UploadProgressUpda
   });
 }
 
+function parseContentDispositionFileName(cd: string, fallback: string): string {
+  if (!cd) return fallback;
+  const starMatch = /filename\*\s*=\s*(?:UTF-8''|utf-8'')([^;\n]+)/i.exec(cd);
+  if (starMatch && starMatch[1]) {
+    try {
+      return decodeURIComponent(starMatch[1].trim());
+    } catch {}
+  }
+  const match = /filename\s*=\s*((['"])(.*?)\2|[^;\n]*)/i.exec(cd);
+  if (match) {
+    const val = (match[3] !== undefined ? match[3] : match[1] || "").trim();
+    if (val) return val;
+  }
+  return fallback;
+}
+
 function triggerBlobDownload(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
+  link.style.display = "none";
   link.href = url;
   link.download = fileName;
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => {
+    try {
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch {}
+  }, 1000);
 }
 
 export const api = {
@@ -547,6 +705,57 @@ export const api = {
       token
     );
   },
+  enrollmentTokens(token: string) {
+    return requestJson<NodeEnrollmentTokenInfo[]>("/api/nodes/enrollment-tokens", {}, token);
+  },
+  createEnrollmentToken(token: string, input: CreateEnrollmentTokenRequest) {
+    return requestJson<CreateEnrollmentTokenResponse>(
+      "/api/nodes/enrollment-tokens",
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  deleteEnrollmentToken(token: string, id: string) {
+    return requestJson<{ ok: boolean }>(
+      `/api/nodes/enrollment-tokens/${id}`,
+      { method: "DELETE", body: JSON.stringify({}) },
+      token
+    );
+  },
+  rotateNodeToken(token: string, id: string) {
+    return requestJson<RotateNodeTokenResponse>(
+      `/api/nodes/${id}/token/rotate`,
+      { method: "POST", body: JSON.stringify({}) },
+      token
+    );
+  },
+  nodeJoinCommand(token: string, id: string) {
+    return requestJson<NodeJoinCommandResponse>(`/api/nodes/${id}/join-command`, {}, token);
+  },
+  connectNodeByKey(token: string, input: ConnectNodeByKeyRequest) {
+    return requestJson<ConnectNodeByKeyResponse>(
+      "/api/nodes/connect-key",
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  userKeys(token: string) {
+    return requestJson<UserAccessKeyInfo[]>("/api/user/keys", {}, token);
+  },
+  createUserKey(token: string, name?: string) {
+    return requestJson<CreateUserAccessKeyResponse>(
+      "/api/user/keys",
+      { method: "POST", body: JSON.stringify({ name }) },
+      token
+    );
+  },
+  deleteUserKey(token: string, id: string) {
+    return requestJson<{ ok: boolean }>(
+      `/api/user/keys/${id}`,
+      { method: "DELETE", body: JSON.stringify({}) },
+      token
+    );
+  },
   instances(token: string) {
     return requestJson<ManagedInstance[]>("/api/instances", {}, token);
   },
@@ -573,6 +782,39 @@ export const api = {
       { method: "PUT", body: JSON.stringify(input) },
       token
     );
+  },
+  updateInstanceProxy(token: string, id: string, proxyConfig: InstanceProxyConfig | null) {
+    return requestJson<ManagedInstance>(
+      `/api/instances/${id}/proxy`,
+      { method: "PUT", body: JSON.stringify(proxyConfig) },
+      token
+    );
+  },
+  testInstanceProxy(token: string, id: string, input: { server: string; port: number; type?: string }) {
+    return requestJson<{ success: boolean; message: string; latencyMs?: number }>(
+      `/api/instances/${id}/proxy/test`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  fetchInstanceClashSubscription(token: string, id: string, url: string) {
+    return requestJson<{ proxies: ClashSubscriptionProxy[] }>(
+      `/api/instances/${id}/proxy/subscription`,
+      { method: "POST", body: JSON.stringify({ url }) },
+      token
+    );
+  },
+  applyInstanceClashSubscription(
+    token: string,
+    id: string,
+    input: { url: string; selectedProxy: string; bypass?: string | null }
+  ) {
+    return requestJson<{
+      instance: ManagedInstance;
+      port: number;
+      selectedProxy: string;
+      proxies: ClashSubscriptionProxy[];
+    }>(`/api/instances/${id}/proxy/subscription/apply`, { method: "POST", body: JSON.stringify(input) }, token);
   },
   deleteInstance(token: string, id: string) {
     return requestJson<{ ok: boolean }>(
@@ -714,7 +956,7 @@ export const api = {
     return this.uploadInstanceFileMultipart(token, id, path, file, overwrite, onProgress);
   },
   downloadInstanceFile(token: string, id: string, path: string, options: { base64?: boolean } = {}) {
-    const query: Record<string, string | number | undefined> = { path };
+    const query: Record<string, string | undefined> = { path };
     if (options.base64) {
       query.base64 = "1";
     }
@@ -738,11 +980,8 @@ export const api = {
     }
     const blob = await resp.blob();
     const cd = resp.headers.get("content-disposition") || "";
-    let fileName = path.split("/").pop() || "download";
-    const match = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i.exec(cd);
-    if (match && match[1]) {
-      fileName = match[1].replace(/['"]/g, "").trim();
-    }
+    const defaultName = path.split("/").pop() || "download";
+    const fileName = parseContentDispositionFileName(cd, defaultName);
     triggerBlobDownload(blob, fileName);
   },
   async saveInstanceArchiveDownload(token: string, id: string, paths: string[], fileName?: string): Promise<void> {
@@ -764,11 +1003,8 @@ export const api = {
     }
     const blob = await resp.blob();
     const cd = resp.headers.get("content-disposition") || "";
-    let resolvedName = fileName || (paths.length === 1 ? paths[0]!.split("/").pop() || "archive.zip" : "selection.zip");
-    const match = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i.exec(cd);
-    if (match && match[1]) {
-      resolvedName = match[1].replace(/['"]/g, "").trim();
-    }
+    const fallbackName = fileName || (paths.length === 1 ? paths[0]!.split("/").pop() || "archive.zip" : "selection.zip");
+    let resolvedName = parseContentDispositionFileName(cd, fallbackName);
     if (!resolvedName.toLowerCase().endsWith(".zip")) resolvedName += ".zip";
     triggerBlobDownload(blob, resolvedName);
   },
@@ -907,6 +1143,19 @@ export const api = {
   deleteUser(token: string, id: string) {
     return requestJson<{ ok: boolean }>(`/api/users/${id}`, { method: "DELETE" }, token);
   },
+  myPoints(token: string) {
+    return requestJson<UserPointsSummary>("/api/points/me", {}, token);
+  },
+  updateUserPoints(token: string, userId: string, input: UpdateUserPointsRequest) {
+    return requestJson<{ points: number; unlimitedPoints: boolean }>(
+      `/api/users/${userId}/points`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  userPointRecords(token: string, userId: string, limit = 50) {
+    return requestJson<PointRecordItem[]>(`/api/users/${userId}/points/records?limit=${limit}`, {}, token);
+  },
   switchUser(token: string, id: string) {
     return requestJson<LoginResponse>(`/api/users/${id}/switch`, { method: "POST", body: JSON.stringify({}) }, token);
   },
@@ -934,9 +1183,10 @@ export const api = {
     return webSocketUrl("/ws/terminal", {});
   },
   createInstanceShell(token: string, id: string, workingDirectory?: string) {
+    const body = workingDirectory ? JSON.stringify({ workingDirectory }) : undefined;
     return requestJson<{ sessionId: string }>(
       `/api/instances/${id}/shells`,
-      { method: "POST", body: workingDirectory ? JSON.stringify({ workingDirectory }) : undefined },
+      { method: "POST", ...(body !== undefined ? { body } : {}) },
       token
     );
   },
@@ -1015,6 +1265,126 @@ export const api = {
   sakiChatStream(token: string, input: SakiChatRequest, onEvent: (event: SakiChatStreamEvent) => void, signal?: AbortSignal) {
     return requestSakiChatStream(token, input, onEvent, signal);
   },
+  sakiGetActiveTask(token: string, instanceId?: string | null) {
+    const query = instanceId ? `?instanceId=${encodeURIComponent(instanceId)}` : "";
+    return requestJson<{ hasActiveTask: boolean; task?: SakiActiveTaskSummary }>(
+      `/api/saki/active-task${query}`,
+      {},
+      token
+    );
+  },
+  sakiStreamTaskReconnect(token: string, taskId: string, onEvent: (event: SakiChatStreamEvent) => void, signal?: AbortSignal) {
+    return requestSakiTaskReconnectStream(token, taskId, onEvent, signal);
+  },
+  sakiCancelTask(token: string, taskId: string) {
+    return requestJson<{ ok: boolean }>(
+      `/api/saki/tasks/${encodeURIComponent(taskId)}/cancel`,
+      { method: "POST" },
+      token
+    );
+  },
+  incidents(token: string) {
+    return requestJson<IncidentListResponse>("/api/incidents", {}, token);
+  },
+  incident(token: string, id: string) {
+    return requestJson<ManagedIncident>(`/api/incidents/${id}`, {}, token);
+  },
+  diagnoseIncident(token: string, id: string) {
+    return requestJson<{ ok: boolean; incident: ManagedIncident | null }>(
+      `/api/incidents/${id}/diagnose`,
+      { method: "POST", body: JSON.stringify({}) },
+      token
+    );
+  },
+  approveIncident(token: string, id: string) {
+    return requestJson<{ ok: boolean; incident: ManagedIncident | null }>(
+      `/api/incidents/${id}/approve`,
+      { method: "POST", body: JSON.stringify({}) },
+      token
+    );
+  },
+  ignoreIncident(token: string, id: string, input: IgnoreIncidentRequest = {}) {
+    return requestJson<ManagedIncident>(
+      `/api/incidents/${id}/ignore`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  rollbackIncident(token: string, id: string) {
+    return requestJson<ManagedIncident>(
+      `/api/incidents/${id}/rollback`,
+      { method: "POST", body: JSON.stringify({}) },
+      token
+    );
+  },
+  watchPolicy(token: string, instanceId: string) {
+    return requestJson<ManagedWatchPolicy>(`/api/instances/${instanceId}/watch-policy`, {}, token);
+  },
+  updateWatchPolicy(token: string, instanceId: string, input: UpdateWatchPolicyRequest) {
+    return requestJson<ManagedWatchPolicy>(
+      `/api/instances/${instanceId}/watch-policy`,
+      { method: "PUT", body: JSON.stringify(input) },
+      token
+    );
+  },
+  async incidentsStream(
+    token: string,
+    onEvent: (event: { type: string; incident?: ManagedIncident; incidents?: ManagedIncident[]; openCount?: number }) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const response = await fetch(new URL("/api/incidents/stream", API_BASE), {
+      headers: { authorization: `Bearer ${token}` },
+      ...(signal ? { signal } : {})
+    });
+    if (!response.ok) {
+      throw new ApiError(await responseErrorMessage(response), response.status);
+    }
+    if (!response.body) return;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const dispatch = (frame: string) => {
+      const lines = frame.split("\n");
+      let eventType = "message";
+      const dataLines: string[] = [];
+      for (const line of lines) {
+        if (line.startsWith("event:")) eventType = line.slice(6).trim();
+        if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+      }
+      if (!dataLines.length) return;
+      try {
+        const payload = JSON.parse(dataLines.join("\n")) as {
+          type?: string;
+          incident?: ManagedIncident;
+          incidents?: ManagedIncident[];
+          openCount?: number;
+        };
+        onEvent({
+          type: payload.type ?? eventType,
+          ...(payload.incident ? { incident: payload.incident } : {}),
+          ...(payload.incidents ? { incidents: payload.incidents } : {}),
+          ...(typeof payload.openCount === "number" ? { openCount: payload.openCount } : {})
+        });
+      } catch {
+        // ignore malformed frames
+      }
+    };
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+        while (true) {
+          const boundary = buffer.indexOf("\n\n");
+          if (boundary < 0) break;
+          dispatch(buffer.slice(0, boundary));
+          buffer = buffer.slice(boundary + 2);
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  },
   sakiAction(token: string, id: string, decision: "approve" | "reject" | "rollback") {
     return requestJson<SakiActionDecisionResponse>(
       `/api/saki/actions/${id}/${decision}`,
@@ -1061,5 +1431,155 @@ export const api = {
   },
   logout(token: string) {
     return requestJson<{ ok: boolean }>("/api/auth/logout", { method: "POST", body: JSON.stringify({}) }, token);
+  },
+  listDatabases(token: string) {
+    return requestJson<{ ok: boolean; databases: DatabaseVisualizerInstance[] }>("/api/databases", {}, token);
+  },
+  discoverDatabases(token: string, nodeId?: string) {
+    return requestJson<{ ok: boolean; databases: Array<DiscoveredDatabase & { nodeId: string; nodeName: string }> }>(
+      pathWithQuery("/api/databases/discover", { nodeId }),
+      {},
+      token
+    );
+  },
+  createDatabase(token: string, input: CreateDatabaseVisualizerRequest) {
+    return requestJson<{ ok: boolean; database: DatabaseVisualizerInstance }>(
+      "/api/databases",
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  updateDatabase(token: string, id: string, input: UpdateDatabaseVisualizerRequest) {
+    return requestJson<{ ok: boolean; database: DatabaseVisualizerInstance }>(
+      `/api/databases/${id}`,
+      { method: "PUT", body: JSON.stringify(input) },
+      token
+    );
+  },
+  deleteDatabase(token: string, id: string) {
+    return requestJson<{ ok: boolean; deleted: boolean }>(
+      `/api/databases/${id}`,
+      { method: "DELETE" },
+      token
+    );
+  },
+  getDatabaseTables(token: string, id: string) {
+    return requestJson<{ ok: boolean; tables: DatabaseTableSummary[] }>(
+      `/api/databases/${id}/tables`,
+      { method: "POST", body: JSON.stringify({}) },
+      token
+    );
+  },
+  getDatabaseTableSchema(token: string, id: string, tableName: string) {
+    return requestJson<{ ok: boolean; schema: DatabaseTableSchema }>(
+      `/api/databases/${id}/tables/schema`,
+      { method: "POST", body: JSON.stringify({ tableName }) },
+      token
+    );
+  },
+  getDatabaseTableRows(token: string, id: string, input: DatabaseRowsRequest) {
+    return requestJson<{ ok: boolean } & DatabaseRowsResponse>(
+      `/api/databases/${id}/tables/rows`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  insertDatabaseTableRow(token: string, id: string, input: DatabaseInsertRowRequest) {
+    return requestJson<{ ok: boolean; lastInsertRowId?: string; affectedRows?: number }>(
+      `/api/databases/${id}/tables/insert`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  updateDatabaseTableRow(token: string, id: string, input: DatabaseUpdateRowRequest) {
+    return requestJson<{ ok: boolean; affectedRows?: number }>(
+      `/api/databases/${id}/tables/update`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  deleteDatabaseTableRow(token: string, id: string, input: DatabaseDeleteRowRequest) {
+    return requestJson<{ ok: boolean; affectedRows?: number }>(
+      `/api/databases/${id}/tables/delete`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  createDatabaseTable(token: string, id: string, input: DatabaseCreateTableRequest) {
+    return requestJson<{ ok: boolean; ddl?: string }>(
+      `/api/databases/${id}/tables/create`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  dropDatabaseTable(token: string, id: string, tableName: string) {
+    return requestJson<{ ok: boolean }>(
+      `/api/databases/${id}/tables/drop`,
+      { method: "POST", body: JSON.stringify({ tableName }) },
+      token
+    );
+  },
+  truncateDatabaseTable(token: string, id: string, tableName: string) {
+    return requestJson<{ ok: boolean; affectedRows?: number }>(
+      `/api/databases/${id}/tables/truncate`,
+      { method: "POST", body: JSON.stringify({ tableName }) },
+      token
+    );
+  },
+  executeDatabaseQuery(token: string, id: string, input: DatabaseExecuteQueryRequest) {
+    return requestJson<{ ok: boolean; result: DatabaseQueryResult }>(
+      `/api/databases/${id}/query`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  exportDatabaseData(token: string, id: string, input: DatabaseExportRequest) {
+    return requestJson<{ ok: boolean; fileName: string; contentType: string; content: string; totalRows?: number }>(
+      `/api/databases/${id}/export`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  importDatabaseData(token: string, id: string, input: DatabaseImportRequest) {
+    return requestJson<{ ok: boolean; importedRows: number; message?: string }>(
+      `/api/databases/${id}/import`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  getDatabaseStats(token: string, id: string) {
+    return requestJson<{
+      ok: boolean;
+      latencyMs?: number;
+      version?: string;
+      tableCount?: number;
+      sizeBytes?: number;
+      totalKeys?: number;
+      memory?: string;
+      clients?: number;
+      uptimeDays?: number;
+      message?: string;
+    }>(
+      `/api/databases/${id}/stats`,
+      {},
+      token
+    );
+  },
+  testDatabaseConnection(token: string, input: {
+    host?: string | undefined;
+    port?: number | undefined;
+    user?: string | undefined;
+    password?: string | undefined;
+    database?: string | undefined;
+    engine?: DatabaseEngine | undefined;
+    path?: string | undefined;
+    nodeId?: string | undefined;
+  }) {
+    return requestJson<{ ok: boolean; message?: string }>(
+      "/api/databases/test-connection",
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
   }
 };
+

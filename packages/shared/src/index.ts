@@ -77,6 +77,8 @@ export interface CurrentUser {
   roleNames: string[];
   isAdmin: boolean;
   isSuperAdmin: boolean;
+  points?: number;
+  unlimitedPoints?: boolean;
 }
 
 export interface ManagedRole {
@@ -99,6 +101,8 @@ export interface ManagedUser {
   lastLoginAt?: string | null | undefined;
   createdAt: string;
   updatedAt: string;
+  points?: number;
+  unlimitedPoints?: boolean;
 }
 
 export interface CreateUserRequest {
@@ -123,6 +127,37 @@ export interface UpdateCurrentUserRequest {
   avatarDataUrl?: string | null;
   currentPassword?: string;
   newPassword?: string;
+}
+
+export interface PointRecordItem {
+  id: string;
+  userId: string;
+  delta: number;
+  balanceAfter: number | null;
+  type: string;
+  tokensUsed?: number | null;
+  description?: string | null;
+  createdAt: string;
+}
+
+export interface UserPointsSummary {
+  points: number;
+  unlimitedPoints: boolean;
+  totalTokensUsed: number;
+  totalPointsConsumed: number;
+  dailyUsage: Array<{
+    date: string;
+    tokens: number;
+    points: number;
+  }>;
+  recentRecords: PointRecordItem[];
+}
+
+export interface UpdateUserPointsRequest {
+  action: "adjust" | "set" | "set_unlimited";
+  amount?: number;
+  unlimited?: boolean;
+  note?: string;
 }
 
 export interface UpdateRolePermissionsRequest {
@@ -193,6 +228,7 @@ export interface ManagedNode {
   remarks?: string | null;
   groupName?: string | null;
   tags?: string | null;
+  tokenLast4?: string | null | undefined;
   lastSeenAt?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -215,6 +251,12 @@ export interface RegisterDaemonResponse {
   heartbeatSeconds: number;
 }
 
+export interface DaemonInstanceSnapshot {
+  instanceId: string;
+  status: InstanceStatus;
+  exitCode?: number | null;
+}
+
 export interface HeartbeatRequest {
   status: "ONLINE";
   metrics: Omit<NodeMetricSnapshot, "createdAt">;
@@ -224,6 +266,125 @@ export interface HeartbeatRequest {
   os?: string;
   arch?: string;
   version?: string;
+  instances?: DaemonInstanceSnapshot[];
+}
+
+export interface DaemonRestartLease {
+  instanceId: string;
+  suppressUntil: string;
+}
+
+export interface HeartbeatResponse {
+  ok: true;
+  heartbeatSeconds: number;
+  restartLeases?: DaemonRestartLease[];
+}
+
+export interface DaemonInstanceStatusEvent {
+  type: "instance.status";
+  instanceId: string;
+  status: InstanceStatus;
+  exitCode?: number | null;
+  occurredAt: string;
+  logTail?: Array<{ stream: string; text: string }>;
+  restart?: {
+    policy: RestartPolicy;
+    attempts: number;
+    willRetry: boolean;
+  };
+}
+
+export interface DaemonEventResponse {
+  ok: true;
+  suppressRestartUntil?: string | null;
+}
+
+export const watchPolicyModes = ["off", "diagnose_only", "diagnose_and_patch"] as const;
+export type WatchPolicyMode = (typeof watchPolicyModes)[number];
+
+export const incidentTriggers = ["crash", "crash_loop", "disk", "memory"] as const;
+export type IncidentTrigger = (typeof incidentTriggers)[number];
+
+export const incidentStatuses = [
+  "open",
+  "diagnosing",
+  "diagnosed",
+  "awaiting_approval",
+  "applying",
+  "verifying",
+  "resolved",
+  "rolled_back",
+  "failed",
+  "ignored",
+  "rate_limited"
+] as const;
+export type IncidentStatus = (typeof incidentStatuses)[number];
+
+export interface WatchProposedChange {
+  path: string;
+  intent: string;
+}
+
+export interface WatchDiagnosis {
+  summary: string;
+  rootCause?: string;
+  changes?: WatchProposedChange[];
+  risk?: SakiAgentRiskLevel;
+  needRestart?: boolean;
+  confidence?: number;
+}
+
+export interface ManagedWatchPolicy {
+  instanceId: string;
+  enabled: boolean;
+  mode: WatchPolicyMode;
+  cooldownSeconds: number;
+  maxRunsPerHour: number;
+  verifyWaitSeconds: number;
+  approverUserId?: string | null;
+}
+
+export interface UpdateWatchPolicyRequest {
+  enabled?: boolean;
+  mode?: WatchPolicyMode;
+  cooldownSeconds?: number;
+  maxRunsPerHour?: number;
+  verifyWaitSeconds?: number;
+  approverUserId?: string | null;
+}
+
+export interface ManagedIncident {
+  id: string;
+  instanceId: string;
+  instanceName: string;
+  nodeId: string;
+  nodeName?: string | null;
+  fingerprint: string;
+  trigger: IncidentTrigger;
+  status: IncidentStatus;
+  exitCode?: number | null;
+  summary?: string | null;
+  rootCause?: string | null;
+  diagnosis?: WatchDiagnosis | null;
+  logTail: string;
+  rollbackSet: string[];
+  taskId?: string | null;
+  assigneeUserId?: string | null;
+  occurrenceCount: number;
+  lastOccurredAt: string;
+  resolvedAt?: string | null;
+  ignoredUntil?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IncidentListResponse {
+  incidents: ManagedIncident[];
+  openCount: number;
+}
+
+export interface IgnoreIncidentRequest {
+  minutes?: number;
 }
 
 export interface DashboardOverview {
@@ -288,6 +449,86 @@ export interface CreateNodeResponse {
   nodeToken: string;
 }
 
+export interface NodeEnrollmentTokenInfo {
+  id: string;
+  tokenLast4: string;
+  namePrefix?: string | null | undefined;
+  groupName?: string | null | undefined;
+  tags?: string | null | undefined;
+  maxUsage: number;
+  usedCount: number;
+  expiresAt: string;
+  createdAt: string;
+  isExpired: boolean;
+}
+
+export interface CreateEnrollmentTokenRequest {
+  namePrefix?: string | undefined;
+  groupName?: string | undefined;
+  tags?: string | undefined;
+  expiresInMinutes?: number | undefined;
+  maxUsage?: number | undefined;
+}
+
+export interface CreateEnrollmentTokenResponse {
+  tokenInfo: NodeEnrollmentTokenInfo;
+  token: string;
+}
+
+export interface RotateNodeTokenResponse {
+  nodeId: string;
+  nodeName: string;
+  nodeToken: string;
+}
+
+export interface NodeJoinCommandResponse {
+  nodeId?: string | undefined;
+  panelUrl: string;
+  token: string;
+  linuxCommand: string;
+  windowsCommand: string;
+  dockerCommand: string;
+}
+
+export interface DaemonNodeKeyPayload {
+  version: number;
+  host: string;
+  port: number;
+  protocol: "http" | "https";
+  token: string;
+  nodeId?: string | undefined;
+  name?: string | undefined;
+}
+
+export interface ConnectNodeByKeyRequest {
+  key: string;
+  name?: string | undefined;
+  groupName?: string | undefined;
+  tags?: string | undefined;
+  hostOverride?: string | undefined;
+  portOverride?: number | undefined;
+}
+
+export interface ConnectNodeByKeyResponse {
+  ok: boolean;
+  node?: ManagedNode | undefined;
+  error?: string | undefined;
+}
+
+export interface UserAccessKeyInfo {
+  id: string;
+  name: string;
+  keyLast4: string;
+  createdAt: string;
+  lastUsedAt?: string | null | undefined;
+  expiresAt?: string | null | undefined;
+}
+
+export interface CreateUserAccessKeyResponse {
+  keyInfo: UserAccessKeyInfo;
+  rawKey: string;
+}
+
 export interface InstanceAssignee {
   id: string;
   username: string;
@@ -300,6 +541,27 @@ export interface InstanceAssignedUser {
   username: string;
   displayName: string;
   role: InstanceOwnerRole;
+}
+
+export interface ClashSubscriptionProxy {
+  name: string;
+  type: string;
+  server?: string;
+  port?: number;
+}
+
+export interface InstanceProxyConfig {
+  enabled: boolean;
+  type: "http" | "https" | "socks5";
+  server: string;
+  port: number;
+  username?: string | null | undefined;
+  password?: string | null | undefined;
+  bypass?: string | null | undefined;
+  mode?: "manual" | "subscription" | undefined;
+  subscriptionUrl?: string | null | undefined;
+  selectedProxy?: string | null | undefined;
+  proxies?: ClashSubscriptionProxy[] | null | undefined;
 }
 
 export interface ManagedInstance {
@@ -319,6 +581,7 @@ export interface ManagedInstance {
   memoryLimit?: number | null | undefined;
   cpuLimit?: number | null | undefined;
   description?: string | null | undefined;
+  proxyConfig?: InstanceProxyConfig | null | undefined;
   createdByUserId?: string | null | undefined;
   createdByUsername?: string | null | undefined;
   createdByDisplayName?: string | null | undefined;
@@ -343,6 +606,7 @@ export interface CreateInstanceRequest {
   startCommand: string;
   stopCommand?: string;
   description?: string;
+  proxyConfig?: InstanceProxyConfig | null;
   autoStart?: boolean;
   restartPolicy?: RestartPolicy;
   restartMaxRetries?: number;
@@ -407,6 +671,7 @@ export interface UpdateInstanceRequest {
   restartMaxRetries?: number;
   assignedToUserId?: string | null;
   assignedToUserIds?: string[] | null;
+  proxyConfig?: InstanceProxyConfig | null;
 }
 
 export interface InstanceLogLine {
@@ -470,6 +735,13 @@ export interface InstanceFileContentResponse {
   encoding: "utf8";
   size: number;
   modifiedAt: string;
+  totalLines?: number;
+  startLine?: number;
+  endLine?: number;
+  truncated?: boolean;
+  outline?: boolean;
+  isDirectory?: boolean;
+  stat?: boolean;
 }
 
 export interface WriteInstanceFileRequest {
@@ -564,6 +836,8 @@ export interface GrepMatchLine {
   line: number;
   column?: number;
   text: string;
+  before?: string[];
+  after?: string[];
 }
 
 export interface GrepInstanceFilesRequest {
@@ -683,6 +957,13 @@ export type TerminalClientMessage =
       type: "input";
       data: string;
       echo?: boolean;
+      sessionId?: string;
+    }
+  | {
+      type: "resize";
+      cols: number;
+      rows: number;
+      sessionId?: string;
     }
   | {
       type: "ping";
@@ -801,6 +1082,7 @@ export interface SakiAgentActionApproval {
   preview?: string;
   diff?: string;
   checkpointId?: string;
+  relatedCheckpointIds?: string[];
   rollbackAvailable?: boolean;
 }
 
@@ -837,12 +1119,19 @@ export interface SakiChatRequest {
 
 export interface SakiChatResponse {
   message: string;
+  thinking?: string;
   source: "direct-model" | "local-fallback";
   workspace?: SakiWorkspaceContext | null;
   agentPermissionMode?: SakiAgentPermissionMode;
   skills?: SakiSkillSummary[];
   diagnostics?: string[];
   actions?: SakiAgentAction[];
+  usage?: {
+    tokensUsed: number;
+    pointsUsed: number;
+    isUnlimited: boolean;
+    remainingPoints?: number;
+  } | undefined;
 }
 
 export interface SakiStatusResponse {
@@ -930,3 +1219,183 @@ export interface SakiCopilotLoginResponse {
   message?: string;
   output?: string;
 }
+
+export type DatabaseEngine = "sqlite" | "mysql" | "postgres" | "redis" | "mariadb" | "generic";
+
+export interface DiscoveredDatabase {
+  engine: DatabaseEngine;
+  name: string;
+  path?: string;
+  host?: string;
+  port?: number;
+  sizeBytes?: number;
+  tableCount?: number | undefined;
+  modifiedAt?: string | undefined;
+  source: string;
+  status?: "online" | "available" | "ready" | undefined;
+  isSystem?: boolean | undefined;
+}
+
+export interface DatabaseVisualizerConfig {
+  path?: string | undefined;
+  host?: string | undefined;
+  port?: number | undefined;
+  user?: string | undefined;
+  password?: string | undefined;
+  database?: string | undefined;
+  isReadOnly?: boolean | undefined;
+}
+
+export interface DatabaseVisualizerInstance {
+  id: string;
+  nodeId: string;
+  nodeName?: string | null | undefined;
+  name: string;
+  engine: DatabaseEngine;
+  description?: string | null | undefined;
+  config: DatabaseVisualizerConfig;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateDatabaseVisualizerRequest {
+  nodeId: string;
+  name: string;
+  engine?: DatabaseEngine | undefined;
+  description?: string | null | undefined;
+  config: DatabaseVisualizerConfig;
+}
+
+export interface UpdateDatabaseVisualizerRequest {
+  nodeId?: string | undefined;
+  name?: string | undefined;
+  engine?: DatabaseEngine | undefined;
+  description?: string | null | undefined;
+  config?: DatabaseVisualizerConfig | undefined;
+}
+
+export interface DatabaseTableSummary {
+  name: string;
+  type: "table" | "view";
+  rowCount?: number | undefined;
+  columnCount?: number | undefined;
+  sizeBytes?: number | undefined;
+}
+
+export interface DatabaseColumnInfo {
+  name: string;
+  type: string;
+  notNull: boolean;
+  defaultValue?: string | null | undefined;
+  primaryKey: boolean;
+  autoIncrement?: boolean | undefined;
+}
+
+export interface DatabaseTableSchema {
+  tableName: string;
+  columns: DatabaseColumnInfo[];
+  primaryKeys: string[];
+  foreignKeys?: Array<{
+    column: string;
+    targetTable: string;
+    targetColumn: string;
+  }> | undefined;
+  indexes?: Array<{
+    name: string;
+    unique: boolean;
+    columns: string[];
+  }> | undefined;
+  ddl?: string | null | undefined;
+}
+
+export interface DatabaseRowsRequest {
+  tableName: string;
+  page?: number | undefined;
+  pageSize?: number | undefined;
+  search?: string | undefined;
+  sortBy?: string | undefined;
+  sortOrder?: "asc" | "desc" | undefined;
+  filterColumn?: string | undefined;
+  filterValue?: string | undefined;
+}
+
+export interface DatabaseRowsResponse {
+  tableName: string;
+  columns: DatabaseColumnInfo[];
+  rows: Record<string, unknown>[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export interface DatabaseInsertRowRequest {
+  tableName: string;
+  row: Record<string, unknown>;
+}
+
+export interface DatabaseUpdateRowRequest {
+  tableName: string;
+  primaryKeys: Record<string, unknown>;
+  values: Record<string, unknown>;
+}
+
+export interface DatabaseDeleteRowRequest {
+  tableName: string;
+  primaryKeys: Record<string, unknown>;
+}
+
+export interface DatabaseCreateTableRequest {
+  tableName: string;
+  columns: DatabaseColumnInfo[];
+}
+
+export interface DatabaseDropTableRequest {
+  tableName: string;
+}
+
+export interface DatabaseTruncateTableRequest {
+  tableName: string;
+}
+
+export interface DatabaseExecuteQueryRequest {
+  sql: string;
+  maxRows?: number | undefined;
+}
+
+export interface DatabaseQueryResult {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  totalRows?: number | undefined;
+  executionTimeMs: number;
+  affectedRows?: number | undefined;
+  lastInsertRowId?: number | string | undefined;
+  error?: string | undefined;
+}
+
+export interface DatabaseExportRequest {
+  tableName?: string | undefined;
+  format: "csv" | "json" | "sql";
+}
+
+export interface DatabaseExportResponse {
+  ok?: boolean | undefined;
+  fileName: string;
+  contentType: string;
+  content: string;
+  totalRows?: number | undefined;
+}
+
+export interface DatabaseImportRequest {
+  tableName?: string | undefined;
+  format: "csv" | "json" | "sql";
+  content: string;
+  mode?: "append" | "replace" | undefined;
+}
+
+export interface DatabaseImportResponse {
+  success: boolean;
+  importedRows: number;
+  message?: string | undefined;
+}
+

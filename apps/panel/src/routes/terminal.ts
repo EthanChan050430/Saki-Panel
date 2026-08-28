@@ -35,16 +35,31 @@ function parseClientMessage(raw: WebSocket.RawData): TerminalClientMessage | nul
   try {
     const parsed: any = JSON.parse(raw.toString());
     if (parsed?.type === "auth" && typeof parsed.token === "string" && typeof parsed.instanceId === "string") {
-      const msg: any = {
+      const msg: TerminalClientMessage = {
         type: "auth",
         token: parsed.token,
         instanceId: parsed.instanceId
       };
-      if (parsed.sessionId != null) msg.sessionId = parsed.sessionId;
+      if (parsed.sessionId != null) (msg as { sessionId?: string }).sessionId = parsed.sessionId;
       return msg;
     }
     if (parsed?.type === "input" && typeof parsed.data === "string") {
-      return { type: "input", data: parsed.data, echo: parsed.echo !== false };
+      const msg: TerminalClientMessage = {
+        type: "input",
+        data: parsed.data,
+        echo: parsed.echo !== false
+      };
+      if (parsed.sessionId != null) (msg as { sessionId?: string }).sessionId = parsed.sessionId;
+      return msg;
+    }
+    if (parsed?.type === "resize" && typeof parsed.cols === "number" && typeof parsed.rows === "number") {
+      const msg: TerminalClientMessage = {
+        type: "resize",
+        cols: Math.max(10, Math.min(parsed.cols, 500)),
+        rows: Math.max(5, Math.min(parsed.rows, 200))
+      };
+      if (parsed.sessionId != null) (msg as { sessionId?: string }).sessionId = parsed.sessionId;
+      return msg;
     }
     if (parsed?.type === "ping") {
       return { type: "ping" };
@@ -160,104 +175,122 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
     let user: CurrentUser | null = null;
     let instanceId: string | null = null;
     let authInProgress = false;
+    const pendingMessages: TerminalClientMessage[] = [];
+
+    const flushPending = () => {
+      if (!user) return;
+      while (pendingMessages.length > 0) {
+        const msg = pendingMessages.shift()!;
+        processClientMessage(msg);
+      }
+    };
+
+    const connectDaemonSocket = (protocolOverride?: string, hostOverride?: string, sid?: string, instance?: any) => {
+      if (!instance) return;
+      const activeProtocol = protocolOverride ?? instance.node.protocol;
+      const activeHost = hostOverride ?? instance.node.host;
+      let daemonPath = `/ws/instances/${instance.id}/terminal`;
+      if (sid) {
+        daemonPath += `?sessionId=${encodeURIComponent(sid)}`;
+      }
+      const socket = new WebSocket(
+        toWebSocketUrl(instance.node, daemonPath, protocolOverride, hostOverride),
+        {
+          rejectUnauthorized: false,
+          headers: {
+            "x-node-id": instance.node.id,
+            "x-panel-token": instance.node.tokenHash
+          }
+        }
+      );
+      daemonSocket = socket;
+      let opened = false;
+
+      socket.on("open", () => {
+        opened = true;
+        flushPending();
+      });
+
+      socket.on("message", (raw) => {
+        if (browserSocket.readyState === WebSocket.OPEN) {
+          browserSocket.send(raw.toString());
+        }
+      });
+
+      socket.on("close", () => {
+        if (daemonSocket === socket) {
+          closeWithError(browserSocket, "Daemon terminal disconnected", 1011);
+        }
+      });
+
+      socket.on("error", (error) => {
+        if (!opened && shouldRetryWebSocketAsHttp(error, activeProtocol)) {
+          socket.removeAllListeners("close");
+          connectDaemonSocket("http", hostOverride, sid, instance);
+          return;
+        }
+        if (!opened && shouldRetryWebSocketAsHttps(error, activeProtocol)) {
+          socket.removeAllListeners("close");
+          connectDaemonSocket("https", hostOverride, sid, instance);
+          return;
+        }
+        if (!opened && shouldRetryWebSocketOnLoopback(error, activeHost)) {
+          socket.removeAllListeners("close");
+          connectDaemonSocket(protocolOverride, "127.0.0.1", sid, instance);
+          return;
+        }
+        request.log.error(error);
+        closeWithError(browserSocket, error instanceof Error ? error.message : "Daemon terminal error", 1011);
+      });
+    };
 
     const connectDaemon = async (token: string, requestedInstanceId: string, sessionId?: string) => {
       if (authInProgress || user) return;
       authInProgress = true;
-      user = await authenticateTerminalUser(app, browserSocket, token);
-      if (!user) return;
-
-      const instance = await loadVisibleInstance(user.id, requestedInstanceId);
-      if (!instance) {
-        closeWithError(browserSocket, "Instance not found", 1008);
-        return;
-      }
-
-      instanceId = instance.id;
-      const connectDaemonSocket = (protocolOverride?: string, hostOverride?: string, sid?: string) => {
-        const activeProtocol = protocolOverride ?? instance.node.protocol;
-        const activeHost = hostOverride ?? instance.node.host;
-        let daemonPath = `/ws/instances/${instance.id}/terminal`;
-        if (sid) {
-          daemonPath += `?sessionId=${encodeURIComponent(sid)}`;
+      try {
+        const authenticatedUser = await authenticateTerminalUser(app, browserSocket, token);
+        if (!authenticatedUser) {
+          authInProgress = false;
+          pendingMessages.length = 0;
+          return;
         }
-        const socket = new WebSocket(
-          toWebSocketUrl(instance.node, daemonPath, protocolOverride, hostOverride),
-          {
-            rejectUnauthorized: false,
-            headers: {
-              "x-node-id": instance.node.id,
-              "x-panel-token": instance.node.tokenHash
-            }
-          }
-        );
-        daemonSocket = socket;
-        let opened = false;
 
-        socket.on("open", () => {
-          opened = true;
-        });
+        const instance = await loadVisibleInstance(authenticatedUser.id, requestedInstanceId);
+        if (!instance) {
+          authInProgress = false;
+          pendingMessages.length = 0;
+          closeWithError(browserSocket, "Instance not found", 1008);
+          return;
+        }
 
-        socket.on("message", (raw) => {
-          if (browserSocket.readyState === WebSocket.OPEN) {
-            browserSocket.send(raw.toString());
-          }
-        });
-
-        socket.on("close", () => {
-          if (daemonSocket === socket) {
-            closeWithError(browserSocket, "Daemon terminal disconnected", 1011);
-          }
-        });
-
-        socket.on("error", (error) => {
-          if (!opened && shouldRetryWebSocketAsHttp(error, activeProtocol)) {
-            socket.removeAllListeners("close");
-            connectDaemonSocket("http", hostOverride, sid);
-            return;
-          }
-          if (!opened && shouldRetryWebSocketAsHttps(error, activeProtocol)) {
-            socket.removeAllListeners("close");
-            connectDaemonSocket("https", hostOverride, sid);
-            return;
-          }
-          if (!opened && shouldRetryWebSocketOnLoopback(error, activeHost)) {
-            socket.removeAllListeners("close");
-            connectDaemonSocket(protocolOverride, "127.0.0.1", sid);
-            return;
-          }
-          request.log.error(error);
-          closeWithError(browserSocket, error instanceof Error ? error.message : "Daemon terminal error", 1011);
-        });
-      };
-
-      const sessionIdForDaemon = sessionId;
-      connectDaemonSocket(undefined, undefined, sessionIdForDaemon);
+        user = authenticatedUser;
+        instanceId = instance.id;
+        authInProgress = false;
+        connectDaemonSocket(undefined, undefined, sessionId, instance);
+      } catch (e) {
+        authInProgress = false;
+        pendingMessages.length = 0;
+        throw e;
+      }
     };
 
-    browserSocket.on("message", (raw) => {
-      const message = parseClientMessage(raw);
-      if (!message) {
-        send(browserSocket, { type: "error", message: "Unsupported terminal message" });
-        return;
-      }
-
-      if (message.type === "auth") {
-        const sid = (message as any).sessionId as string | undefined;
-        void connectDaemon(message.token, message.instanceId, sid).catch((error: unknown) => {
-          request.log.error(error);
-          closeWithError(browserSocket, error instanceof Error ? error.message : "Terminal bridge failed", 1011);
-        });
-        return;
-      }
-
+    const processClientMessage = (message: TerminalClientMessage) => {
       if (!user) {
         send(browserSocket, { type: "error", message: "Terminal session is not authenticated" });
         return;
       }
 
+      if (message.type === "resize") {
+        if (daemonSocket && daemonSocket.readyState === WebSocket.OPEN) {
+          daemonSocket.send(JSON.stringify(message));
+        } else {
+          pendingMessages.push(message);
+        }
+        return;
+      }
+
       if (message.type === "input") {
-        if (!user?.permissions.includes("terminal.input")) {
+        if (!user.permissions.includes("terminal.input")) {
           send(browserSocket, { type: "error", message: "Terminal input permission denied" });
           return;
         }
@@ -287,24 +320,26 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
           return;
         }
         if (!daemonSocket || daemonSocket.readyState !== WebSocket.OPEN || !instanceId) {
-          send(browserSocket, { type: "error", message: "Terminal is not connected" });
+          pendingMessages.push(message);
           return;
         }
 
         daemonSocket.send(JSON.stringify(message));
-        void writeAuditLog({
-          request,
-          userId: user.id,
-          action: "terminal.input",
-          resourceType: "instance",
-          resourceId: instanceId,
-          payload: {
-            inputPreview: inputPreview(message.data),
-            inputLength: message.data.length
-          }
-        }).catch((error: unknown) => {
-          request.log.error(error);
-        });
+        if (message.data.includes("\n") || message.data.includes("\r") || message.data.length > 8) {
+          void writeAuditLog({
+            request,
+            userId: user.id,
+            action: "terminal.input",
+            resourceType: "instance",
+            resourceId: instanceId,
+            payload: {
+              inputPreview: inputPreview(message.data),
+              inputLength: message.data.length
+            }
+          }).catch((error: unknown) => {
+            request.log.error(error);
+          });
+        }
         return;
       }
 
@@ -313,6 +348,30 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
       } else {
         send(browserSocket, { type: "pong", time: new Date().toISOString() });
       }
+    };
+
+    browserSocket.on("message", (raw) => {
+      const message = parseClientMessage(raw);
+      if (!message) {
+        send(browserSocket, { type: "error", message: "Unsupported terminal message" });
+        return;
+      }
+
+      if (message.type === "auth") {
+        const sid = (message as any).sessionId as string | undefined;
+        void connectDaemon(message.token, message.instanceId, sid).catch((error: unknown) => {
+          request.log.error(error);
+          closeWithError(browserSocket, error instanceof Error ? error.message : "Terminal bridge failed", 1011);
+        });
+        return;
+      }
+
+      if (authInProgress) {
+        pendingMessages.push(message);
+        return;
+      }
+
+      processClientMessage(message);
     });
 
     browserSocket.on("close", () => {

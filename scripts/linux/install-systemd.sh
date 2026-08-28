@@ -32,6 +32,13 @@ need_command node
 need_command npm
 need_command npx
 
+# apps/daemon uses the built-in node:sqlite module (Node >= 22.13).
+if ! node -e 'const s = require("node:sqlite"); if (!s.DatabaseSync) process.exit(1)' >/dev/null 2>&1; then
+  echo "Node.js >= 22.13 is required (apps/daemon uses the built-in node:sqlite module)." >&2
+  echo "Current version: $(node -v). Install Node 22 LTS from https://github.com/nodesource/distributions and re-run." >&2
+  exit 1
+fi
+
 NODE_BIN="$(command -v node)"
 NPM_BIN="$(command -v npm)"
 NPX_BIN="$(command -v npx)"

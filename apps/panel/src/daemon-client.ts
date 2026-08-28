@@ -3,7 +3,18 @@ import * as https from "node:https";
 import type {
   ArchiveInstancePathsRequest,
   ArchiveInstancePathsResponse,
+  DatabaseCreateTableRequest,
+  DatabaseDeleteRowRequest,
+  DatabaseInsertRowRequest,
+  DatabaseQueryResult,
+  DatabaseRowsRequest,
+  DatabaseRowsResponse,
+  DatabaseTableSchema,
+  DatabaseTableSummary,
+  DatabaseTruncateTableRequest,
+  DatabaseUpdateRowRequest,
   DeleteInstanceFileRequest,
+  DiscoveredDatabase,
   DownloadInstanceArchiveRequest,
   DownloadInstanceFileResponse,
   ExtractInstanceArchiveRequest,
@@ -20,6 +31,8 @@ import type {
   InstanceFileListResponse,
   InstanceLogsResponse,
   InstanceStatus,
+  InstanceProxyConfig,
+  ClashSubscriptionProxy,
   MakeInstanceDirectoryRequest,
   RenameInstanceFileRequest,
   UploadInstanceFileRequest,
@@ -46,6 +59,7 @@ export interface DaemonInstanceSpec {
   stopCommand?: string | null;
   restartPolicy?: RestartPolicy;
   restartMaxRetries?: number;
+  proxy?: InstanceProxyConfig | null;
 }
 
 export interface DaemonInstanceState {
@@ -274,7 +288,7 @@ async function requestDaemonRawBinaryWithFallback(
   }
 }
 
-async function requestDaemon<T>(
+export async function requestDaemon<T>(
   node: DaemonNodeCredentials,
   path: string,
   options: RequestInit = {},
@@ -309,6 +323,36 @@ function pathWithQuery(pathname: string, query: Record<string, string | number |
   }
   const queryString = search.toString();
   return queryString ? `${pathname}?${queryString}` : pathname;
+}
+
+export function fetchDaemonClashSubscription(node: DaemonNodeCredentials, instanceId: string, url: string) {
+  return requestDaemon<{ proxies: ClashSubscriptionProxy[] }>(
+    node,
+    `/api/instances/${instanceId}/proxy/subscription`,
+    { method: "POST", body: JSON.stringify({ url }) },
+    45000
+  );
+}
+
+export function applyDaemonClashSubscription(
+  node: DaemonNodeCredentials,
+  instanceId: string,
+  input: { url: string; selectedProxy: string }
+) {
+  return requestDaemon<{ port: number; selectedProxy: string; proxies: ClashSubscriptionProxy[] }>(
+    node,
+    `/api/instances/${instanceId}/proxy/subscription/apply`,
+    { method: "POST", body: JSON.stringify(input) },
+    90000
+  );
+}
+
+export function stopDaemonClashSubscription(node: DaemonNodeCredentials, instanceId: string) {
+  return requestDaemon<{ ok: boolean }>(
+    node,
+    `/api/instances/${instanceId}/proxy/subscription/stop`,
+    { method: "POST", body: JSON.stringify({}) }
+  );
 }
 
 export function startDaemonInstance(node: DaemonNodeCredentials, spec: DaemonInstanceSpec) {
@@ -395,15 +439,29 @@ export function readDaemonInstanceFile(
   node: DaemonNodeCredentials,
   instanceId: string,
   workingDirectory: string,
-  relativePath: string
+  relativePath: string,
+  options: { startLine?: number; lineCount?: number; outline?: boolean; stat?: boolean } = {}
 ) {
   return requestDaemon<InstanceFileContentResponse>(
     node,
     pathWithQuery(`/api/instances/${instanceId}/files/content`, {
       workingDirectory,
-      path: relativePath
+      path: relativePath,
+      ...(options.startLine ? { startLine: options.startLine } : {}),
+      ...(options.lineCount ? { lineCount: options.lineCount } : {}),
+      ...(options.outline ? { outline: 1 } : {}),
+      ...(options.stat ? { stat: 1 } : {})
     })
   );
+}
+
+export function statDaemonInstancePath(
+  node: DaemonNodeCredentials,
+  instanceId: string,
+  workingDirectory: string,
+  relativePath: string
+) {
+  return readDaemonInstanceFile(node, instanceId, workingDirectory, relativePath, { stat: true });
 }
 
 export function writeDaemonInstanceFile(
@@ -527,7 +585,7 @@ export function extractDaemonInstanceArchive(
         ...input
       })
     },
-    300000
+    900000
   );
 }
 
@@ -547,7 +605,7 @@ export function archiveDaemonInstancePaths(
         ...input
       })
     },
-    300000
+    900000
   );
 }
 
@@ -567,7 +625,7 @@ export function downloadDaemonInstanceArchive(
         ...input
       })
     },
-    300000
+    900000
   );
 }
 
@@ -653,3 +711,138 @@ export function sendDaemonShellInput(node: DaemonNodeCredentials, instanceId: st
     body: JSON.stringify({ data, echo: options.echo })
   });
 }
+
+export function discoverDaemonDatabases(node: DaemonNodeCredentials) {
+  return requestDaemon<{ ok: boolean; databases: DiscoveredDatabase[] }>(
+    node,
+    "/api/databases/discover",
+    { method: "GET" }
+  );
+}
+
+// Common connection payload for both SQLite and MySQL
+export interface DaemonDatabaseConnPayload {
+  path?: string | null | undefined;
+  host?: string | null | undefined;
+  port?: number | null | undefined;
+  engine?: string | null | undefined;
+  user?: string | null | undefined;
+  password?: string | null | undefined;
+  database?: string | null | undefined;
+}
+
+export function listDaemonDatabaseTables(node: DaemonNodeCredentials, payload: DaemonDatabaseConnPayload) {
+  return requestDaemon<{ ok: boolean; tables: DatabaseTableSummary[] }>(
+    node,
+    "/api/databases/tables",
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+
+export function getDaemonDatabaseTableSchema(node: DaemonNodeCredentials, payload: DaemonDatabaseConnPayload & { tableName: string }) {
+  return requestDaemon<{ ok: boolean; schema: DatabaseTableSchema }>(
+    node,
+    "/api/databases/tables/schema",
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+
+export function queryDaemonDatabaseTableRows(node: DaemonNodeCredentials, payload: DaemonDatabaseConnPayload & DatabaseRowsRequest) {
+  return requestDaemon<{ ok: boolean } & DatabaseRowsResponse>(
+    node,
+    "/api/databases/tables/rows",
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+
+export function insertDaemonDatabaseTableRow(node: DaemonNodeCredentials, payload: DaemonDatabaseConnPayload & DatabaseInsertRowRequest) {
+  return requestDaemon<{ ok: boolean; lastInsertRowId?: string | undefined; affectedRows?: number | undefined }>(
+    node,
+    "/api/databases/tables/insert",
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+
+export function updateDaemonDatabaseTableRow(node: DaemonNodeCredentials, payload: DaemonDatabaseConnPayload & DatabaseUpdateRowRequest) {
+  return requestDaemon<{ ok: boolean; affectedRows?: number | undefined }>(
+    node,
+    "/api/databases/tables/update",
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+
+export function deleteDaemonDatabaseTableRow(node: DaemonNodeCredentials, payload: DaemonDatabaseConnPayload & DatabaseDeleteRowRequest) {
+  return requestDaemon<{ ok: boolean; affectedRows?: number | undefined }>(
+    node,
+    "/api/databases/tables/delete",
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+
+export function createDaemonDatabaseTable(node: DaemonNodeCredentials, payload: DaemonDatabaseConnPayload & DatabaseCreateTableRequest) {
+  return requestDaemon<{ ok: boolean; ddl?: string | undefined }>(
+    node,
+    "/api/databases/tables/create",
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+
+export function dropDaemonDatabaseTable(node: DaemonNodeCredentials, payload: DaemonDatabaseConnPayload & { tableName: string }) {
+  return requestDaemon<{ ok: boolean }>(
+    node,
+    "/api/databases/tables/drop",
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+
+export function truncateDaemonDatabaseTable(node: DaemonNodeCredentials, payload: DaemonDatabaseConnPayload & DatabaseTruncateTableRequest) {
+  return requestDaemon<{ ok: boolean; affectedRows?: number | undefined }>(
+    node,
+    "/api/databases/tables/truncate",
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+
+export function executeDaemonDatabaseQuery(node: DaemonNodeCredentials, payload: DaemonDatabaseConnPayload & { sql: string; maxRows?: number | undefined }) {
+  return requestDaemon<{ ok: boolean; result: DatabaseQueryResult }>(
+    node,
+    "/api/databases/query",
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+
+export function exportDaemonDatabaseData(node: DaemonNodeCredentials, payload: DaemonDatabaseConnPayload & { tableName?: string | null | undefined; format: "csv" | "json" | "sql" }) {
+  return requestDaemon<{ ok: boolean; fileName: string; contentType: string; content: string; totalRows?: number | undefined }>(
+    node,
+    "/api/databases/export",
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+
+export function importDaemonDatabaseData(node: DaemonNodeCredentials, payload: DaemonDatabaseConnPayload & { tableName?: string | null | undefined; format: "csv" | "json" | "sql"; content: string; mode?: "append" | "replace" | undefined }) {
+  return requestDaemon<{ ok: boolean; importedRows: number; message?: string | undefined }>(
+    node,
+    "/api/databases/import",
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+
+export function getDaemonDatabaseStats(node: DaemonNodeCredentials, payload: DaemonDatabaseConnPayload) {
+  return requestDaemon<{
+    ok: boolean;
+    latencyMs?: number;
+    version?: string;
+    tableCount?: number;
+    sizeBytes?: number;
+    totalKeys?: number;
+    memory?: string;
+    clients?: number;
+    uptimeDays?: number;
+    message?: string;
+  }>(
+    node,
+    "/api/databases/stats",
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+

@@ -1,0 +1,940 @@
+/* ==========================================================================
+   Database Visualizer — iOS 26 Liquid Glass System (Instance Parity)
+   ========================================================================== */
+
+/* Fullscreen / Embed container */
+.database-view-layout {
+  width: 100%;
+  min-height: calc(100vh - 120px);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.database-view-content {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+}
+
+.database-master-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 16px;
+  align-items: stretch;
+  width: 100%;
+  height: calc(100vh - 120px);
+  min-height: 580px;
+  position: relative;
+}
+
+@media (max-width: 1100px) {
+  .database-master-layout {
+    grid-template-columns: 1fr;
+    height: auto;
+    min-height: 0;
+  }
+  .database-main-col {
+    height: auto;
+    min-height: 0;
+  }
+  .database-main-box {
+    height: clamp(480px, 60vh, 700px);
+  }
+  .database-sidebar-col {
+    height: auto;
+    overflow: visible;
+  }
+}
+
+/* Left Column: Main Box */
+.database-main-col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.database-main-box {
+  display: flex;
+  flex-direction: column;
+  border-radius: 24px;
+  overflow: hidden;
+  flex: 1 1 0;
+  height: 100%;
+  min-height: 0;
+  background: rgba(255, 255, 255, 0.68);
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  position: relative;
+}
+
+[data-theme="dark"] .database-main-box {
+  background: rgba(24, 25, 34, 0.75) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.14) !important;
+}
+
+/* Engine Chip Badges */
+.db-engine-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.db-engine-chip.sqlite {
+  background: rgba(14, 165, 233, 0.12);
+  color: #0284c7;
+  border-color: rgba(14, 165, 233, 0.28);
+}
+[data-theme="dark"] .db-engine-chip.sqlite {
+  background: rgba(14, 165, 233, 0.2);
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+.db-engine-chip.mysql,
+.db-engine-chip.mariadb {
+  background: rgba(245, 158, 11, 0.12);
+  color: #d97706;
+  border-color: rgba(245, 158, 11, 0.28);
+}
+[data-theme="dark"] .db-engine-chip.mysql,
+[data-theme="dark"] .db-engine-chip.mariadb {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.35);
+}
+
+.db-engine-chip.postgres {
+  background: rgba(99, 102, 241, 0.12);
+  color: #4f46e5;
+  border-color: rgba(99, 102, 241, 0.28);
+}
+[data-theme="dark"] .db-engine-chip.postgres {
+  background: rgba(99, 102, 241, 0.2);
+  color: #818cf8;
+  border-color: rgba(129, 140, 248, 0.35);
+}
+
+.db-engine-chip.redis {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+  border-color: rgba(239, 68, 68, 0.28);
+}
+[data-theme="dark"] .db-engine-chip.redis {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+.database-title-label {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-dark, #1d1d1f);
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+[data-theme="dark"] .database-title-label {
+  color: #f5f5f7;
+}
+
+.db-ready-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+}
+[data-theme="dark"] .db-ready-pill {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+}
+
+.database-header-switcher {
+  padding: 4px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  color: var(--text-dark, #1d1d1f);
+  cursor: pointer;
+  outline: none;
+  transition: all 0.2s ease;
+}
+[data-theme="dark"] .database-header-switcher {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #f5f5f7;
+}
+
+.tab-count-tag {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.08);
+  color: inherit;
+}
+[data-theme="dark"] .tab-count-tag {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* Tab Workspace Content Container */
+.db-tab-content-container {
+  flex: 1 1 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Sub-toolbar (Table selector pills + search bar) */
+.db-sub-action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 18px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+[data-theme="dark"] .db-sub-action-bar {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.db-sub-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.db-sub-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.db-table-select-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  padding: 4px 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+}
+[data-theme="dark"] .db-table-select-wrapper {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.db-table-dropdown {
+  background: transparent;
+  border: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dark, #1d1d1f);
+  outline: none;
+  cursor: pointer;
+}
+[data-theme="dark"] .db-table-dropdown {
+  color: #f5f5f7;
+}
+
+.db-search-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  padding: 4px 10px;
+  min-width: 170px;
+  max-width: 260px;
+  flex: 1;
+}
+[data-theme="dark"] .db-search-field {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.db-search-field input {
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 12px;
+  color: var(--text-dark, #1d1d1f);
+  width: 100%;
+}
+[data-theme="dark"] .db-search-field input {
+  color: #f5f5f7;
+}
+
+/* Glass Data Grid Table */
+.db-grid-scroll-area {
+  flex: 1 1 0;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  position: relative;
+}
+
+.db-glass-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  text-align: left;
+}
+
+.db-glass-table th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: rgba(248, 250, 252, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  padding: 10px 14px;
+  font-weight: 700;
+  color: #475569;
+  white-space: nowrap;
+  user-select: none;
+}
+
+[data-theme="dark"] .db-glass-table th {
+  background: rgba(20, 21, 28, 0.95);
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+}
+
+.th-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.col-type-tag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.05);
+  color: #64748b;
+}
+[data-theme="dark"] .col-type-tag {
+  background: rgba(255, 255, 255, 0.08);
+  color: #94a3b8;
+}
+
+.pk-icon {
+  color: #eab308;
+  flex-shrink: 0;
+}
+
+.db-glass-table td {
+  padding: 9px 14px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  color: var(--text-dark, #1d1d1f);
+  white-space: nowrap;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+[data-theme="dark"] .db-glass-table td {
+  border-bottom-color: rgba(255, 255, 255, 0.05);
+  color: #e2e8f0;
+}
+
+.db-glass-table tbody tr {
+  transition: background 0.15s ease;
+}
+
+.db-glass-table tbody tr:hover {
+  background: rgba(99, 102, 241, 0.06);
+}
+[data-theme="dark"] .db-glass-table tbody tr:hover {
+  background: rgba(99, 102, 241, 0.12);
+}
+
+.table-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+/* Pagination Footer */
+.db-pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 18px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.45);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  font-size: 12px;
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+[data-theme="dark"] .db-pagination-bar {
+  border-top-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: #94a3b8;
+}
+
+.db-page-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.page-chip {
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-weight: 600;
+  background: rgba(0, 0, 0, 0.05);
+}
+[data-theme="dark"] .page-chip {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Schema View */
+.db-schema-scroll-area {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.schema-section-card {
+  border-radius: 16px;
+  padding: 16px 18px;
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+[data-theme="dark"] .schema-section-card {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.schema-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: var(--text-dark, #1d1d1f);
+}
+[data-theme="dark"] .schema-section-title {
+  color: #f5f5f7;
+}
+
+.ddl-code-box {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  max-height: 240px;
+}
+
+/* SQL / CLI Interactive Console */
+.db-console-wrapper {
+  flex: 1 1 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #162c4b !important;
+}
+
+[data-theme="dark"] .db-console-wrapper {
+  background: #0e0f17 !important;
+}
+
+.db-console-results-area {
+  flex: 1 1 0;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  padding: 14px 18px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: #e2e8f0;
+}
+
+.console-meta-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 12px;
+  color: #94a3b8;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.console-snippets-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: rgba(0, 0, 0, 0.15);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.snippet-chip {
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.snippet-chip:hover {
+  background: rgba(56, 189, 248, 0.2);
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+/* Transfer (Import / Export) View */
+.db-transfer-container {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 20px;
+}
+
+.transfer-card {
+  border-radius: 20px;
+  padding: 20px 22px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+[data-theme="dark"] .transfer-card {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3);
+}
+
+.transfer-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.transfer-icon-badge {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(99, 102, 241, 0.12);
+  color: #6366f1;
+}
+
+.transfer-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-dark, #1d1d1f);
+}
+[data-theme="dark"] .transfer-header h3 {
+  color: #f5f5f7;
+}
+
+.transfer-format-selector {
+  display: flex;
+  gap: 8px;
+}
+
+.format-pill {
+  flex: 1;
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.2s ease;
+}
+
+.format-pill.active {
+  background: #6366f1;
+  color: #ffffff;
+  border-color: #6366f1;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+}
+
+/* Modals & Dialogs */
+.db-engine-segmented {
+  display: flex;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.04);
+  padding: 4px;
+  border-radius: 14px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+[data-theme="dark"] .db-engine-segmented {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.engine-segment-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  white-space: nowrap;
+}
+
+.engine-segment-btn.active {
+  background: #ffffff;
+  color: #1e293b;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="dark"] .engine-segment-btn.active {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.connection-test-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.connection-test-alert.success {
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.connection-test-alert.error {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+/* =========================================================
+   Add / Edit Database Modal — 布局与呼吸空间修复
+   ========================================================= */
+
+/* 弹窗容器：明确尺寸，避免高度被压扁 */
+.add-db-modal.glass-modal-container {
+  width: 680px;
+  max-width: 94vw;
+  min-width: 520px;
+  min-height: 560px;
+  max-height: 90vh;
+  height: auto;
+}
+
+/* 弹窗容器内的分段Tab栏：增加外层间距与内边距 */
+.add-db-modal .db-engine-segmented-wrapper {
+  padding: 18px 26px 6px;
+  flex-shrink: 0;
+}
+
+/* 分段Tab整体：加大 padding 与 gap，允许换行时保持间距 */
+.add-db-modal .db-engine-segmented {
+  gap: 10px;
+  padding: 6px;
+  border-radius: 16px;
+  margin-bottom: 4px;
+}
+
+/* 单个分段按钮：增加上下 padding，避免过扁，图标文字间距拉开 */
+.add-db-modal .engine-segment-btn {
+  padding: 10px 14px;
+  min-width: 104px;
+  border-radius: 12px;
+  font-size: 12.5px;
+  gap: 8px;
+}
+
+/* discover Tab 内容区：增加内边距，避免内容贴边 */
+.add-db-modal .discover-tab-body.glass-modal-body {
+  padding: 8px 26px 22px;
+}
+
+/* discover Tab 顶部标题 + 扫描按钮行：增加与Tab栏/列表的垂直间距 */
+.add-db-modal .discover-header-row {
+  margin: 8px 0 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+[data-theme="dark"] .add-db-modal .discover-header-row {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+/* discover Tab 标题文字 */
+.add-db-modal .discover-header-title {
+  font-size: 14px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.15px;
+}
+
+/* discover Tab 扫描结果列表容器 */
+.add-db-modal .discover-results-list {
+  gap: 12px !important;
+}
+
+/* discover Tab 单个发现结果卡片：加大 padding 与圆角 */
+.add-db-modal .discover-result-card {
+  padding: 14px 18px !important;
+  border-radius: 16px !important;
+  gap: 12px !important;
+}
+
+/* 手动配置 Tab 的 body：增加与顶部 Tab 栏间距 */
+.add-db-modal .manual-tab-body.glass-modal-body {
+  padding: 10px 26px 6px;
+}
+
+/* 手动配置 Tab 底部 footer：与表单内容拉开距离，并强制左右分布（绕过 glass-modal-footer 的 !important） */
+.add-db-modal .manual-tab-footer.glass-modal-footer {
+  justify-content: space-between !important;
+  padding: 16px 26px 18px !important;
+}
+
+/* =========================================================
+   Add / Edit Modal — 通用表单元素样式（解决控件"扁扁挤在一起"）
+   ========================================================= */
+
+.add-db-modal .glass-modal-body label,
+.edit-db-modal .glass-modal-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+[data-theme="dark"] .add-db-modal .glass-modal-body label,
+[data-theme="dark"] .edit-db-modal .glass-modal-body label {
+  color: #e5e7eb;
+}
+
+/* checkbox 行：切换回横向 */
+.add-db-modal .glass-modal-body label:has(input[type="checkbox"]),
+.edit-db-modal .glass-modal-body label:has(input[type="checkbox"]) {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.add-db-modal .glass-modal-body input:not([type="checkbox"]),
+.add-db-modal .glass-modal-body select,
+.add-db-modal .glass-modal-body textarea,
+.edit-db-modal .glass-modal-body input:not([type="checkbox"]),
+.edit-db-modal .glass-modal-body select,
+.edit-db-modal .glass-modal-body textarea {
+  width: 100%;
+  box-sizing: border-box;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.65);
+  color: #1d1d1f;
+  font-size: 13px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.add-db-modal .glass-modal-body textarea,
+.edit-db-modal .glass-modal-body textarea {
+  height: auto;
+  min-height: 80px;
+  padding: 10px 12px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.add-db-modal .glass-modal-body input[type="checkbox"],
+.edit-db-modal .glass-modal-body input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #ff75ac;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+[data-theme="dark"] .add-db-modal .glass-modal-body input:not([type="checkbox"]),
+[data-theme="dark"] .add-db-modal .glass-modal-body select,
+[data-theme="dark"] .add-db-modal .glass-modal-body textarea,
+[data-theme="dark"] .edit-db-modal .glass-modal-body input:not([type="checkbox"]),
+[data-theme="dark"] .edit-db-modal .glass-modal-body select,
+[data-theme="dark"] .edit-db-modal .glass-modal-body textarea {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #f5f5f7;
+  box-shadow: none;
+}
+
+.add-db-modal .glass-modal-body input:not([type="checkbox"]):focus,
+.add-db-modal .glass-modal-body select:focus,
+.add-db-modal .glass-modal-body textarea:focus,
+.edit-db-modal .glass-modal-body input:not([type="checkbox"]):focus,
+.edit-db-modal .glass-modal-body select:focus,
+.edit-db-modal .glass-modal-body textarea:focus {
+  outline: none;
+  border-color: #ff75ac;
+  box-shadow: 0 0 0 3px rgba(255, 117, 172, 0.2);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+[data-theme="dark"] .add-db-modal .glass-modal-body input:not([type="checkbox"]):focus,
+[data-theme="dark"] .add-db-modal .glass-modal-body select:focus,
+[data-theme="dark"] .add-db-modal .glass-modal-body textarea:focus,
+[data-theme="dark"] .edit-db-modal .glass-modal-body input:not([type="checkbox"]):focus,
+[data-theme="dark"] .edit-db-modal .glass-modal-body select:focus,
+[data-theme="dark"] .edit-db-modal .glass-modal-body textarea:focus {
+  background: rgba(28, 30, 44, 0.95);
+  border-color: #ff75ac;
+  box-shadow: 0 0 0 3px rgba(255, 117, 172, 0.25);
+}
+
+/* =========================================================
+   Edit Database Modal — 同步布局与尺寸
+   ========================================================= */
+.edit-db-modal.glass-modal-container {
+  width: 620px;
+  max-width: 94vw;
+  min-width: 460px;
+  min-height: 520px;
+  max-height: 90vh;
+  height: auto;
+}
+
+.edit-db-modal .glass-modal-body {
+  padding: 14px 26px 6px;
+}
+
+.edit-db-modal .glass-modal-footer {
+  padding-top: 16px;
+  padding-bottom: 18px;
+}
+
+/* =========================================================
+   Embed Mode（创建标准实例中嵌入）— 脱壳后布局
+   ========================================================= */
+.add-db-modal.add-db-modal-embed {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  overflow: hidden;
+}
+
+/* embed 时，外层统一弹窗已经占了 .modal-body，所以内部 discover/manual body 不再限高 */
+.add-db-modal.add-db-modal-embed .discover-tab-body.glass-modal-body,
+.add-db-modal.add-db-modal-embed .manual-tab-body.glass-modal-body {
+  max-height: none;
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 外层统一弹窗给 database 分支的 wrapper：占剩余空间、可滚动 */
+.unified-create-database-wrapper {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}

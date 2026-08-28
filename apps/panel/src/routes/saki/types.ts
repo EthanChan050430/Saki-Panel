@@ -9,6 +9,7 @@ import type {
   SakiAgentPermissionMode,
   SakiChatMode,
   SakiChatRequest,
+  SakiChatResponse,
   SakiConfigResponse,
   SakiInputAttachment,
   SakiModelOption,
@@ -71,23 +72,25 @@ export class BrowseHttpError extends RouteError {
   }
 }
 
-export const maxAgentLoops = 20;
+export const maxAgentLoops = 80;
 export const maxAgentProgressOnlyRetries = 2;
 export const maxAgentVerificationRetries = 2;
-export const maxAgentObservationTokens = 1200;
-export const maxAgentPromptObservationTokens = 600;
-export const maxAgentScratchpadTokens = 4000;
-export const maxAgentContinuationContextTokens = 3500;
-export const maxAgentRecentScratchpadEntries = 8;
-export const maxAgentCompactedScratchpadTokens = 1000;
-export const maxParallelReadOnlyTools = 6;
-export const defaultAgentReadFileLineCount = 200;
+export const maxAgentObservationTokens = 1500;
+export const maxAgentPromptObservationTokens = 800;
+export const maxAgentScratchpadTokens = 6000;
+export const maxAgentContinuationContextTokens = 5000;
+export const maxAgentRecentScratchpadEntries = 10;
+export const maxAgentCompactedScratchpadTokens = 1200;
+export const maxParallelReadOnlyTools = 8;
+export const defaultAgentReadFileLineCount = 40;
+export const maxAgentReadFileLineCount = 80;
+export const largeFileLineThreshold = 120;
 export const minAgentModelRequestTimeoutMs = 120000;
-export const maxAgentObservationChars = 16000;
-export const maxAgentPromptObservationChars = 9000;
-export const maxAgentScratchpadChars = 50000;
-export const maxAgentContinuationContextChars = 42000;
-export const maxAgentCompactedScratchpadChars = 14000;
+export const maxAgentObservationChars = 20000;
+export const maxAgentPromptObservationChars = 8000;
+export const maxAgentScratchpadChars = 48000;
+export const maxAgentContinuationContextChars = 40000;
+export const maxAgentCompactedScratchpadChars = 12000;
 export const maxHistoryMessages = 12;
 export const sakiUsePermissions = ["saki.chat", "saki.agent"] as const satisfies readonly PermissionCode[];
 
@@ -230,6 +233,15 @@ export function safeRelativePath(value: unknown): string {
 export function sanitizeAgentTextContent(value: string): { content: string; removed: string[] } {
   const removed = new Set<string>();
   let content = value.normalize("NFC");
+
+  // Strip enclosing markdown code block fences if the model wrapped the code in ```language ... ```
+  const trimmed = content.trim();
+  const fenceMatch = trimmed.match(/^```(?:[a-zA-Z0-9_#+.-]+)?\r?\n([\s\S]*?)\r?\n```$/);
+  if (fenceMatch && fenceMatch[1] !== undefined) {
+    content = fenceMatch[1];
+    removed.add("enclosing markdown code block fences");
+  }
+
   const strip = (pattern: RegExp, label: string) => {
     if (!pattern.test(content)) return;
     removed.add(label);
@@ -302,7 +314,8 @@ export function formatLineNumberedContent(content: string, startLineInput?: stri
 
 export function agentReadFileLineCountInput(value: unknown): string {
   const explicit = stringArg({ lineCount: value }, "lineCount");
-  return explicit || String(defaultAgentReadFileLineCount);
+  if (!explicit) return String(defaultAgentReadFileLineCount);
+  return String(numericArg(explicit, defaultAgentReadFileLineCount, 1, maxAgentReadFileLineCount));
 }
 
 export function replaceLineRange(content: string, startLine: number, endLine: number, replacement: string): {
@@ -489,6 +502,7 @@ export interface SakiModelToolTurn {
   toolCalls: ParsedToolCall[];
   forwardedDeltaText?: boolean;
   forwardedDeltaContent?: string;
+  usageTokens?: number;
 }
 
 export interface ParsedToolCall {
@@ -499,13 +513,21 @@ export interface ParsedToolCall {
 }
 
 export interface SakiAgentRuntime {
-  request: FastifyRequest;
+  request?: FastifyRequest;
   input: SakiChatRequest;
   context: ResolvedSakiContext;
   skills: SakiSkillSummary[];
   userId: string;
   permissions: PermissionCode[];
   config: SakiConfigResponse;
+  kind?: "chat" | "watch";
+  incidentId?: string;
+  watchMode?: "diagnose_only" | "diagnose_and_patch";
+  maxLoops?: number;
+  systemPromptOverride?: string;
+  abortController?: AbortController;
+  usedToolNames?: string[];
+  toolProfile?: "full" | "research";
 }
 
 export interface SakiAgentResumeState {
@@ -514,6 +536,59 @@ export interface SakiAgentResumeState {
   actions: SakiAgentAction[];
   scratchpadEntries: string[];
   toolExecutions: number;
+}
+
+export interface SakiSessionAgentMemory {
+  userId: string;
+  instanceId: string | null;
+  resumeState: SakiAgentResumeState;
+  workingFiles: string[];
+  lastGoal: string;
+  lastSummary?: string;
+  todos?: string[];
+  updatedAt: number;
+}
+
+export function isSakiContinuationMessage(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+  return /^(继续|接着|接着做|接着改|接着修|接着处理|继续执行|继续处理|继续做|继续修|continue|go on|keep going|proceed|next|resume)$/i.test(normalized) ||
+    /^(请?继续|请?接着|go ahead|keep working)/i.test(normalized);
+}
+
+export interface SakiActiveTaskEvent {
+  type: "workflow" | "action" | "delta" | "thinking" | "done" | "error";
+  payload: Record<string, unknown>;
+  ts: number;
+}
+
+export interface SakiActiveTask {
+  id: string;
+  userId: string;
+  instanceId: string | null;
+  input: SakiChatRequest;
+  status: "running" | "completed" | "failed" | "pending_approval" | "cancelled";
+  startedAt: string;
+  updatedAt: string;
+  eventsBuffer: SakiActiveTaskEvent[];
+  response?: SakiChatResponse;
+  error?: string;
+  abortController?: AbortController;
+  subscribers: Set<(event: SakiActiveTaskEvent) => void>;
+}
+
+export interface SakiActiveTaskSummary {
+  id: string;
+  userId: string;
+  instanceId: string | null;
+  status: SakiActiveTask["status"];
+  startedAt: string;
+  updatedAt: string;
+  message: string;
+  mode?: string;
+  actionCount: number;
+  response?: SakiChatResponse;
+  error?: string;
 }
 
 export type SakiWorkflowStatus = "running" | "completed" | "failed" | "pending";
@@ -596,6 +671,11 @@ export interface PendingSakiAction {
   createdAt: string;
   approval: NonNullable<SakiAgentAction["approval"]>;
   resume?: SakiAgentResumeState;
+  incidentId?: string;
+  kind?: SakiAgentRuntime["kind"];
+  watchMode?: SakiAgentRuntime["watchMode"];
+  maxLoops?: number;
+  systemPromptOverride?: string;
 }
 
 export type DirectChatMessage = {

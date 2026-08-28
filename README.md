@@ -66,6 +66,9 @@ Saki Agent:           You speak → it thinks → it executes → asks for sign-
 | 📎 **Multimodal Input** | Paste error screenshots, dump log files, ramble about what's wrong. Saki parses it all. |
 | 🔌 **MCP Support** | Model Context Protocol = plug in external tools as needed. Limitless expansion, your rules. |
 | 🎭 **Live2D Interaction** | Mix drinks, dance, greet—productivity meets personality. Ops work doesn't have to be boring. |
+| 🚨 **Watch / On-call** | Crashes open an incident automatically. Saki reads logs, proposes a minimal patch, asks before writing, then verifies and rolls back if the service still dies. |
+| ⚡ **Fast tool harness** | Each model turn only advertises core coding tools. Instance/shell/schedule/crawl tools unlock when the task needs them. `statFile` is metadata-only, `diagnoseCode` never runs `npm test`, and environment probes are cached. |
+| 🧯 **Stuck-loop guards** | Stops repeated identical output, duplicate tool calls, and no-progress turns. Parses XML, Qwen, Hermes, and JSON tool calls. Small local models get a compact prompt and fewer tools. |
 
 
 ### Ultra-Simple Configuration (Totally Free Locally)
@@ -77,6 +80,18 @@ SAKI_OLLAMA_URL=http://localhost:11434
 ```
 
 That's literally it. Spin up [Ollama](https://ollama.com/) on your machine—**completely free**. Also works with OpenAI, DeepSeek, Alibaba Qwen, Gemini, or any compatible LLM interface. **Zero lock-in**, pick whatever model you want. Weak hardware? No sweat, just throw an API key at it.
+
+### Saki Watch (crash → diagnose → patch → verify)
+
+When an instance process exits non-zero, the daemon pushes an `instance.status` event to the panel. Saki Watch then:
+
+1. Opens an **Incident** (deduped by log fingerprint). **No model call yet** — agent quota is not spent automatically.
+2. You confirm **确认诊断** (bell, instance banner, or API). That is the first spend of model quota.
+3. A **restricted agent** runs (no shell, no deletes, no start-command edits).
+4. File writes still need a second approval. Approve from the banner, the bell, or the Saki action card.
+5. After an approved patch, Watch restarts and **verifies**. If it crashes the same way, file checkpoints roll back automatically.
+
+Per-instance policy lives in instance settings: **diagnose and patch** (default), **diagnose only**, or **off**. Hourly diagnosis budget still applies after you confirm.
 
 ---
 
@@ -128,14 +143,28 @@ Cron scheduling · Manual triggers · Run history · Auto-start + crash recovery
 <tr>
 <td width="50%">
 
-### 🖥️ Node Management
-Auto daemon registration · Heartbeat keep-alive · Connectivity testing · System metrics collection
+### 🚨 Saki Watch
+Crash → incident → you confirm (quota) → diagnose → approval → verify / rollback. Never auto-spends tokens.
 
 </td>
 <td width="50%">
 
+### 🖥️ Node Management
+Auto daemon registration · Heartbeat keep-alive · Connectivity testing · System metrics collection
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
 ### 🔒 Security & Access Control
-RBAC (41 permission codes) · Audit logs · Login rate limits · Dangerous command blocks
+RBAC (41 permission codes) · Audit logs · Login rate limits · Dangerous command blocks · Watch agents cannot use a shell
+
+</td>
+<td width="50%">
+
+### 🗄️ Database Visualizer
+Inspect MySQL schemas · Edit rows · Run SQL without leaving the instance page
 
 </td>
 </tr>
@@ -270,6 +299,7 @@ npm run dev
 | Rate Limiting | Account lockout after 5 failed login attempts in 10 minutes |
 | Command Interception | 4-tier risk levels (low → critical), critical operations blocked automatically |
 | Agent Approval | High-risk operations require manual approval, with reject and rollback support |
+| Saki Watch | Crash opens an incident only. Starting diagnosis requires your confirmation (model quota). File writes need a second approval. Watch agents cannot use a shell. |
 | Audit | Comprehensive operation logs (user/IP/action/result) |
 | Path Isolation | File operations restricted to workspace, preventing path traversal |
 | Extraction Protection | Max 5,000 items, max extraction size 512MB |

@@ -1,9 +1,10 @@
 import type { FastifyInstance } from "fastify";
-import type { HeartbeatRequest, RegisterDaemonRequest } from "@webops/shared";
+import type { DaemonInstanceStatusEvent, HeartbeatRequest, RegisterDaemonRequest } from "@webops/shared";
 import { panelConfig } from "../config.js";
 import { prisma } from "../db.js";
 import { generateSecretToken, hashToken, safeEqual, tokenLast4, verifyToken } from "../security.js";
 import { writeAuditLog } from "../audit.js";
+import { handleDaemonInstanceEvent, ingestHeartbeatSnapshots } from "../watch/events.js";
 
 type HeartbeatNodeUpdate = HeartbeatRequest & {
   host?: string;
@@ -43,7 +44,49 @@ async function findRegistrationNode(name: string, host: string, port: number) {
 export async function registerDaemonRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/daemon/register", async (request, reply) => {
     const registrationToken = request.headers["x-registration-token"];
-    if (typeof registrationToken !== "string" || !safeEqual(registrationToken, panelConfig.daemonRegistrationToken)) {
+    if (typeof registrationToken !== "string" || !registrationToken.trim()) {
+      await writeAuditLog({
+        request,
+        action: "daemon.register",
+        resourceType: "node",
+        result: "FAILURE"
+      });
+      reply.code(401).send({ message: "Missing registration token" });
+      return;
+    }
+
+    const trimmedToken = registrationToken.trim();
+    let isGlobalToken = false;
+    let enrollmentRecord: {
+      id: string;
+      groupName: string | null;
+      tags: string | null;
+      maxUsage: number;
+      usedCount: number;
+      expiresAt: Date;
+    } | null = null;
+
+    if (safeEqual(trimmedToken, panelConfig.daemonRegistrationToken)) {
+      isGlobalToken = true;
+    } else {
+      const hashed = hashToken(trimmedToken);
+      const found = await prisma.nodeEnrollmentToken.findUnique({
+        where: { tokenHash: hashed }
+      });
+      if (found) {
+        if (found.expiresAt.getTime() < Date.now()) {
+          reply.code(401).send({ message: "Registration token has expired" });
+          return;
+        }
+        if (found.usedCount >= found.maxUsage) {
+          reply.code(401).send({ message: "Registration token usage limit reached" });
+          return;
+        }
+        enrollmentRecord = found;
+      }
+    }
+
+    if (!isGlobalToken && !enrollmentRecord) {
       await writeAuditLog({
         request,
         action: "daemon.register",
@@ -88,12 +131,21 @@ export async function registerDaemonRoutes(app: FastifyInstance): Promise<void> 
             os: body.os ?? null,
             arch: body.arch ?? null,
             version: body.version ?? null,
+            groupName: enrollmentRecord?.groupName ?? null,
+            tags: enrollmentRecord?.tags ?? null,
             tokenHash: hashToken(nodeToken),
             tokenLast4: tokenLast4(nodeToken),
             status: "ONLINE",
             lastSeenAt: new Date()
           }
         });
+
+    if (enrollmentRecord) {
+      await prisma.nodeEnrollmentToken.update({
+        where: { id: enrollmentRecord.id },
+        data: { usedCount: { increment: 1 } }
+      });
+    }
 
     await writeAuditLog({
       request,
@@ -169,9 +221,66 @@ export async function registerDaemonRoutes(app: FastifyInstance): Promise<void> 
       })
     ]);
 
+    let restartLeases: Array<{ instanceId: string; suppressUntil: string }> = [];
+    try {
+      restartLeases = await ingestHeartbeatSnapshots(node.id, body.instances, {
+        diskUsage: metrics.diskUsage,
+        memoryUsage: metrics.memoryUsage
+      });
+    } catch (error) {
+      request.log.warn({ err: error }, "heartbeat watch ingest failed");
+    }
+
     return {
       ok: true,
-      heartbeatSeconds: panelConfig.daemonHeartbeatSeconds
+      heartbeatSeconds: panelConfig.daemonHeartbeatSeconds,
+      restartLeases
     };
+  });
+
+  app.post("/api/daemon/events", async (request, reply) => {
+    const nodeId = request.headers["x-node-id"];
+    const nodeToken = request.headers["x-node-token"];
+    if (typeof nodeId !== "string" || typeof nodeToken !== "string") {
+      reply.code(401).send({ message: "Missing node credentials" });
+      return;
+    }
+
+    const node = await prisma.node.findUnique({ where: { id: nodeId } });
+    if (!node || !verifyToken(nodeToken, node.tokenHash)) {
+      reply.code(401).send({ message: "Invalid node credentials" });
+      return;
+    }
+
+    const body = request.body as Partial<DaemonInstanceStatusEvent>;
+    if (body.type !== "instance.status" || typeof body.instanceId !== "string" || typeof body.status !== "string") {
+      reply.code(400).send({ message: "instance.status event is required" });
+      return;
+    }
+
+    const instance = await prisma.instance.findFirst({
+      where: { id: body.instanceId, nodeId: node.id },
+      select: { id: true }
+    });
+    if (!instance) {
+      reply.code(404).send({ message: "Instance not found on this node" });
+      return;
+    }
+
+    const statuses = new Set(["CREATED", "STARTING", "RUNNING", "STOPPING", "STOPPED", "CRASHED", "UNKNOWN"]);
+    if (!statuses.has(body.status)) {
+      reply.code(400).send({ message: "invalid instance status" });
+      return;
+    }
+
+    return handleDaemonInstanceEvent({
+      type: "instance.status",
+      instanceId: body.instanceId,
+      status: body.status as DaemonInstanceStatusEvent["status"],
+      occurredAt: typeof body.occurredAt === "string" ? body.occurredAt : new Date().toISOString(),
+      ...(typeof body.exitCode === "number" || body.exitCode === null ? { exitCode: body.exitCode } : {}),
+      ...(Array.isArray(body.logTail) ? { logTail: body.logTail } : {}),
+      ...(body.restart ? { restart: body.restart } : {})
+    });
   });
 }

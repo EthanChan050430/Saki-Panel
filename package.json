@@ -1,6 +1,6 @@
 {
   "name": "saki-panel",
-  "version": "0.1.0",
+  "version": "2.0.1",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -15,7 +15,8 @@
     "dev": "npm run build -w @webops/shared && concurrently -n panel,daemon,web -c cyan,green,magenta \"npm run dev -w @webops/panel\" \"npm run dev -w @webops/daemon\" \"npm run dev -w @webops/web\"",
     "dev:panel": "npm run dev -w @webops/panel",
     "dev:daemon": "npm run dev -w @webops/daemon",
-    "dev:web": "npm run dev -w @webops/web"
+    "dev:web": "npm run dev -w @webops/web",
+    "daemon:key": "npm run key -w @webops/daemon"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

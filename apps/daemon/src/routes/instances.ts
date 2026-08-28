@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { InstanceCommandRequest, InstanceLogsResponse, InstanceType } from "@webops/shared";
 import { authenticatePanelRequest } from "../daemon-auth.js";
 import { instanceManager, type DaemonInstanceSpec } from "../instance-manager.js";
+import { applyInstanceClash, fetchClashSubscription, stopInstanceClash, summarizeClashProxies } from "../clash-core.js";
 
 function parseSpec(body: unknown): DaemonInstanceSpec {
   const input = body as Partial<DaemonInstanceSpec>;
@@ -17,7 +18,8 @@ function parseSpec(body: unknown): DaemonInstanceSpec {
     startCommand: input.startCommand,
     stopCommand: input.stopCommand ?? null,
     restartPolicy: input.restartPolicy ?? "never",
-    restartMaxRetries: input.restartMaxRetries ?? 0
+    restartMaxRetries: input.restartMaxRetries ?? 0,
+    proxy: input.proxy ?? null
   };
 }
 
@@ -122,6 +124,30 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       throw new Error("data is required");
     }
     instanceManager.writeShellInput(id, sid, body.data);
+    return { ok: true };
+  });
+
+  app.post("/api/instances/:id/proxy/subscription", { preHandler: authenticatePanelRequest }, async (request) => {
+    const body = request.body as { url?: string };
+    const url = typeof body.url === "string" ? body.url.trim() : "";
+    if (!url) throw new Error("url is required");
+    const proxies = await fetchClashSubscription(url);
+    return { proxies: summarizeClashProxies(proxies) };
+  });
+
+  app.post("/api/instances/:id/proxy/subscription/apply", { preHandler: authenticatePanelRequest }, async (request) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { url?: string; selectedProxy?: string };
+    const url = typeof body.url === "string" ? body.url.trim() : "";
+    const selectedProxy = typeof body.selectedProxy === "string" ? body.selectedProxy.trim() : "";
+    if (!url) throw new Error("url is required");
+    if (!selectedProxy) throw new Error("selectedProxy is required");
+    return applyInstanceClash({ instanceId: id, subscriptionUrl: url, selectedProxy });
+  });
+
+  app.post("/api/instances/:id/proxy/subscription/stop", { preHandler: authenticatePanelRequest }, async (request) => {
+    const { id } = request.params as { id: string };
+    await stopInstanceClash(id);
     return { ok: true };
   });
 }

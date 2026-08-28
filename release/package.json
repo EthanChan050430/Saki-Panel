@@ -1,6 +1,6 @@
 {
   "name": "saki-panel-linux",
-  "version": "0.1.0",
+  "version": "2.0.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -23,6 +23,7 @@
     "diff": "^9.0.0",
     "dotenv": "^16.5.0",
     "fastify": "^5.3.2",
+    "mysql2": "^3.14.0",
     "node-unrar-js": "^2.0.2",
     "systeminformation": "^5.25.11",
     "tiktoken": "^1.0.22",

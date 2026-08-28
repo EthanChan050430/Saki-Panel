@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { SakiAgentAction, SakiAgentRiskLevel, SakiChatRequest, SakiChatResponse, PermissionCode } from "@webops/shared";
-import { countTokens } from "../../tokenizer.js";
+import { countTokens, estimateModelCallTokens } from "../../tokenizer.js";
+import { recordAgentTokenUsage } from "../../points.js";
 import type { ParsedToolCall, SakiAgentResumeState, SakiAgentRunEvents, SakiAgentRuntime, SakiCheckpoint, SakiModelToolTurn, PendingSakiAction } from "./types.js";
 import {
   actionId,
@@ -29,13 +30,33 @@ import {
   trimString,
   combinedSakiContextText,
 } from "./types.js";
-import { isSakiReadOnlyAgentTool, normalizedAgentToolName, shouldRequestSakiApproval, assertSakiPermissionModeAllowsTool, toolArgs } from "./tools.js";
+import { advertisedSakiToolSchemas, isSakiReadOnlyAgentTool, normalizedAgentToolName, shouldRequestSakiApproval, assertSakiPermissionModeAllowsTool, sakiToolSchemas, toolArgs } from "./tools.js";
 import { callConfiguredAgentTurn } from "./providers.js";
 import { buildAgentPrompt, buildAgentContinuationPrompt } from "./prompt.js";
+import { sakiModelProfile, xmlToolFormatReminder } from "./model-profile.js";
+import {
+  fingerprintAgentText,
+  isDegenerateRepetition,
+  maxConsecutiveFailedTools,
+  maxDegenerateRetries,
+  maxIdenticalOutputTurns,
+  maxIdenticalToolExecutions,
+  maxNoProgressTurns,
+  stuckFailuresMessage,
+  stuckNoProgressMessage,
+  stuckOutputMessage
+} from "./agent-guard.js";
 import { bootstrapAgentSkills } from "./skills.js";
-import { completedSakiActions, pendingSakiActions, sakiCheckpoints } from "./state.js";
+import {
+  completedSakiActions,
+  extractTodosFromScratchpad,
+  getRecentWorkingFiles,
+  pendingSakiActions,
+  sakiCheckpoints,
+  saveSessionAgentMemory
+} from "./state.js";
 
-export { completedSakiActions, pendingSakiActions, sakiCheckpoints } from "./state.js";
+export { completedSakiActions, pendingSakiActions, sakiCheckpoints, saveSessionAgentMemory } from "./state.js";
 
 export function emitSakiWorkflow(events: SakiAgentRunEvents | undefined, update: { id: string; stage: string; message: string; status: string; tool?: string; call?: string; actionId?: string; detail?: string }): void {
   events?.workflow?.(update as any);
@@ -102,9 +123,11 @@ function toolDisplayArgs(call: ParsedToolCall): string {
 
 export function renderToolCall(call: ParsedToolCall): string {
   const args = toolCallArgsForDisplay(call);
-  const OT = String.fromCharCode(60) + 'tool_call' + String.fromCharCode(62);
-  const CT = String.fromCharCode(60) + '/tool_call' + String.fromCharCode(62);
-  return OT + '\n' + JSON.stringify({ name: call.name, arguments: args }) + '\n' + CT;
+  const paramTags = Object.entries(args)
+    .filter(([_, v]) => v !== undefined && v !== null)
+    .map(([k, v]) => `<${k}>${typeof v === "object" ? JSON.stringify(v) : String(v)}</${k}>`)
+    .join("\n");
+  return `<tool_call name="${call.name}">\n${paramTags}\n</tool_call>`;
 }
 
 function toolTargetPath(call: ParsedToolCall): string {
@@ -216,17 +239,22 @@ export async function emitAgentFinalText(events: SakiAgentRunEvents | undefined,
   events.delta(emitText);
 }
 
+const sakiToolNameAlternation = sakiToolSchemas
+  .flatMap((schema) => [schema.name, ...(schema.aliases ?? [])])
+  .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+  .join("|");
+
 function looksLikeToolCallPayload(text: string): boolean {
-  if (/<tool_call>/i.test(text)) return true;
+  if (/<tool_call\b/i.test(text)) return true;
   if (/"?tool_calls"?\s*:/i.test(text) || /"?toolCalls"?\s*:/i.test(text)) return true;
-  if (/"(?:listInstances|describeInstance|instanceLogs|listFiles|readFile|writeFile|replaceInFile|editLines|mkdir|deletePath|renamePath|uploadBase64|runCommand|sendInput|sendCommand|listShells|createShell|sendShellInput|runInShell|instanceAction|updateInstanceSettings|searchAudit|listTasks|createScheduledTask|updateScheduledTask|deleteScheduledTask|runTask|taskRuns|searchWeb|browse|crawl|researchWeb|listSkills|searchSkills|readSkill|reportProgress|respond)"\s*:/i.test(text)) return true;
-  return /"name"\s*:\s*"(?:listInstances|describeInstance|instanceLogs|listFiles|readFile|writeFile|replaceInFile|editLines|mkdir|deletePath|renamePath|uploadBase64|runCommand|sendInput|sendCommand|listShells|createShell|sendShellInput|runInShell|instanceAction|updateInstanceSettings|searchAudit|listTasks|createScheduledTask|updateScheduledTask|deleteScheduledTask|runTask|taskRuns|searchWeb|browse|crawl|researchWeb|listSkills|searchSkills|readSkill|reportProgress|respond)"/i.test(text);
+  if (new RegExp(`"(?:${sakiToolNameAlternation})"\\s*:`, "i").test(text)) return true;
+  return new RegExp(`"name"\\s*:\\s*"(?:${sakiToolNameAlternation})"`, "i").test(text);
 }
 
 function looksLikeProgressOnlyToolIntent(text: string): boolean {
   const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
   if (!normalized) return false;
-  if (/\b(?:listInstances|describeInstance|instanceLogs|listFiles|readFile|writeFile|replaceInFile|editLines|mkdir|deletePath|renamePath|uploadBase64|runCommand|sendInput|sendCommand|listShells|createShell|sendShellInput|runInShell|instanceAction|updateInstanceSettings|searchAudit|listTasks|createScheduledTask|updateScheduledTask|deleteScheduledTask|runTask|taskRuns|searchWeb|browse|crawl|researchWeb|listSkills|searchSkills|readSkill|reportProgress|respond)\b/i.test(normalized)) {
+  if (new RegExp(`\\b(?:${sakiToolNameAlternation})\\b`, "i").test(normalized)) {
     return true;
   }
   const actionVerb = /(?:read|inspect|search|run|execute|call|list|check|open|edit|modify|fix|write|create|delete|verify|test|look at)/i;
@@ -301,6 +329,10 @@ export const cacheableReadOnlyAgentToolNames = new Set([
   "listtasks",
   "findfiles",
   "searchfiles",
+  "outlinefile",
+  "readsymbol",
+  "findsymbols",
+  "statfile",
   "searchweb",
   "browse",
   "crawl",
@@ -314,7 +346,11 @@ export const cacheableReadOnlyAgentToolNames = new Set([
   "useskill",
   "getskill",
   "applyskill",
-  "readmemory"
+  "readmemory",
+  "getenvironmentinfo",
+  "diagnosecode",
+  "gitstatus",
+  "gitdiff"
 ]);
 
 function stableCacheValue(value: unknown): unknown {
@@ -381,26 +417,40 @@ function shouldInvalidateAgentToolCache(call: ParsedToolCall): boolean {
 
 export function compactAgentScratchpadEntry(entry: string, index: number): string {
   const cleaned = redactSensitiveText(entry).trim();
-  let label = `entry ${index + 1}`;
-  const toolMatch = cleaned.match(/Assistant:\s*({[^}]+})/);
-  if (toolMatch?.[1]) {
-    try {
-      const parsed = JSON.parse(toolMatch[1]) as { name?: string; arguments?: Record<string, unknown> };
-      const name = trimString(parsed.name) || "tool";
-      const argsObj = parsed.arguments || {};
-      const importantKeys = ["path", "fromPath", "toPath", "query", "url", "skillId", "taskId", "command", "startLine", "lineCount"];
-      const args = importantKeys
-        .map(key => {
-          const val = argsObj[key];
-          if (val === undefined || val === null) return null;
-          const str = String(val).replace(/\s+/g, " ").slice(0, 80);
-          return `${key}=${str}`;
-        })
-        .filter(Boolean)
-        .join(", ");
-      label = args ? `${name}(${args})` : name;
-    } catch {
-      label = "tool";
+  let label = `step ${index + 1}`;
+
+  const xmlMatch = cleaned.match(/Assistant:\s*<tool_call(?:\s+name=["']([^"']+)["'])?>([\s\S]*?)<\/tool_call>/i);
+  if (xmlMatch) {
+    let name = xmlMatch[1] || "";
+    const inner = xmlMatch[2] || "";
+    if (!name) {
+      const nameMatch = inner.match(/<name>([^<]+)<\/name>/i);
+      if (nameMatch) name = nameMatch[1]!.trim();
+    }
+    const pathMatch = inner.match(/<(?:path|fromPath|toPath|command|query|url|taskId|skillId)>([^<]+)<\//i);
+    const keyVal = pathMatch ? pathMatch[1]!.trim().slice(0, 60) : "";
+    label = name ? (keyVal ? `${name}(${keyVal})` : name) : `tool`;
+  } else {
+    const toolMatch = cleaned.match(/Assistant:\s*({[^}]+})/);
+    if (toolMatch?.[1]) {
+      try {
+        const parsed = JSON.parse(toolMatch[1]) as { name?: string; arguments?: Record<string, unknown> };
+        const name = trimString(parsed.name) || "tool";
+        const argsObj = parsed.arguments || {};
+        const importantKeys = ["path", "fromPath", "toPath", "query", "url", "skillId", "taskId", "command", "startLine", "lineCount"];
+        const args = importantKeys
+          .map(key => {
+            const val = argsObj[key];
+            if (val === undefined || val === null) return null;
+            const str = String(val).replace(/\s+/g, " ").slice(0, 60);
+            return `${key}=${str}`;
+          })
+          .filter(Boolean)
+          .join(", ");
+        label = args ? `${name}(${args})` : name;
+      } catch {
+        label = "tool";
+      }
     }
   }
 
@@ -410,12 +460,41 @@ export function compactAgentScratchpadEntry(entry: string, index: number): strin
   const okMatch = observation.match(/^ok=([^\n]+)/m);
   const status = statusMatch ? statusMatch[1] : "";
   const ok = okMatch ? okMatch[1] : "";
-  const body = observation
-    .replace(/^status=[^\n]+\n?/m, "")
-    .replace(/^ok=[^\n]+\n?/m, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  const snippet = truncateText(body, 520);
+
+  let snippet = "";
+  if (label.toLowerCase().startsWith("readfile")) {
+    const fileMatch = observation.match(/^File:\s*([^\n]+)/m);
+    const linesMatch = observation.match(/^Showing lines:\s*([^\n]+)/m);
+    const totalLinesMatch = observation.match(/^Total lines:\s*([^\n]+)/m);
+    const file = fileMatch ? fileMatch[1]!.trim() : "";
+    const lines = linesMatch ? linesMatch[1]!.trim() : "";
+    const total = totalLinesMatch ? totalLinesMatch[1]!.trim() : "";
+    snippet = `[Read ${file || "file"} (lines ${lines || "all"} / total ${total || "?"} lines) - inspect completed]`;
+  } else if (label.toLowerCase().startsWith("listfiles")) {
+    const fileCount = (observation.match(/\[(?:FILE|DIR)\]/g) || []).length;
+    snippet = `[Listed directory: ${fileCount} entries inspected]`;
+  } else if (label.toLowerCase().startsWith("outlinefile") || label.toLowerCase().startsWith("fileoutline")) {
+    const symbolCount = (observation.match(/^L\d+:/gm) || []).length;
+    snippet = `[File outline: ${symbolCount} definitions extracted]`;
+  } else if (label.toLowerCase().startsWith("findsymbols") || label.toLowerCase().startsWith("finddefinition")) {
+    const matchCount = (observation.match(/^\S+:\d+:/gm) || []).length;
+    snippet = `[Symbol search: ${matchCount} definitions located]`;
+  } else if (label.toLowerCase().startsWith("diagnosecode") || label.toLowerCase().startsWith("diagnostics") || label.toLowerCase().startsWith("typecheck")) {
+    const isClean = observation.includes("clean");
+    snippet = isClean ? "[Diagnostics: clean (0 errors)]" : `[Diagnostics: ${truncateText(observation.replace(/\n+/g, " "), 150)}]`;
+  } else if (label.toLowerCase().startsWith("managetodos") || label.toLowerCase().startsWith("todos")) {
+    snippet = `[TODOs: updated task list]`;
+  } else if (label.toLowerCase().startsWith("spawntask") || label.toLowerCase().startsWith("subagent")) {
+    snippet = `[Sub-agent task completed: ${truncateText(observation.replace(/\n+/g, " "), 180)}]`;
+  } else {
+    const body = observation
+      .replace(/^status=[^\n]+\n?/m, "")
+      .replace(/^ok=[^\n]+\n?/m, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    snippet = truncateText(body, 320);
+  }
+
   const parts = [`[older ${index + 1}] ${label}`];
   if (status || ok) parts.push(`status=${status || "unknown"} ok=${ok || "unknown"}`);
   if (snippet) parts.push(snippet);
@@ -466,6 +545,17 @@ function isParallelizableReadOnlyCall(call: ParsedToolCall): boolean {
   return toolName !== "reportprogress" && toolName !== "respond" && isSakiReadOnlyAgentTool(toolName);
 }
 
+function billedAgentTurnTokens(modelId: string, prompt: string, turn: SakiModelToolTurn): number {
+  if (turn.usageTokens && turn.usageTokens > 0) return turn.usageTokens;
+  return estimateModelCallTokens(
+    prompt,
+    turn.content,
+    turn.toolCalls,
+    modelId,
+    JSON.stringify(advertisedSakiToolSchemas())
+  );
+}
+
 export type ExecuteToolFn = (runtime: SakiAgentRuntime, call: ParsedToolCall, options: { approved?: boolean; actionId?: string; pendingResume?: SakiAgentResumeState }) => Promise<SakiAgentAction>;
 
 export async function runSakiAgent(
@@ -479,12 +569,21 @@ export async function runSakiAgent(
   });
   const actions: SakiAgentAction[] = [...(resume?.actions ?? [])];
   const basePrompt = buildAgentPrompt(runtime);
-  const continuationPrompt = buildAgentContinuationPrompt(runtime);
+  const resumeGoal = resume?.input?.message;
+  const continuationPrompt = buildAgentContinuationPrompt(runtime, resumeGoal || runtime.input.message);
   const agentScratchpadEntries: string[] = [...(resume?.scratchpadEntries ?? [])];
   const readOnlyToolCache = new Map<string, SakiAgentAction>();
   let currentPrompt = basePrompt;
+  const modelProfile = sakiModelProfile(runtime.config.provider, runtime.config.model);
   let invalidReplies = 0;
   let progressOnlyReplies = 0;
+  let degenerateRetries = 0;
+  let identicalOutputStreak = 0;
+  let noProgressStreak = 0;
+  let consecutiveFailedTools = 0;
+  let lastTurnFingerprint = "";
+  let turnMadeProgress = false;
+  const toolExecutionCounts = new Map<string, number>();
   const agentPermissionMode = effectiveSakiAgentPermissionMode(runtime.input);
   const runStartedAt = Date.now();
   let loopsUsed = 0;
@@ -492,6 +591,7 @@ export async function runSakiAgent(
   let toolCacheHits = 0;
   let toolCacheMisses = 0;
   let toolCacheInvalidations = 0;
+  let totalTokensUsed = 0;
 
   const rebuildCurrentPrompt = (): void => {
     const agentScratchpad = renderAgentScratchpad(agentScratchpadEntries);
@@ -534,10 +634,22 @@ export async function runSakiAgent(
     }
   }
 
+  logSakiModelEvent("agent.start", {
+    userId: runtime.userId,
+    mode: runtime.input.mode ?? "agent",
+    permissionMode: agentPermissionMode,
+    model: runtime.config.model,
+    provider: runtime.config.provider,
+    resuming: Boolean(resume),
+    skillCount: runtime.skills.length
+  });
+
+  const loopLimit = Math.max(1, Math.min(runtime.maxLoops ?? maxAgentLoops, maxAgentLoops));
   logSakiModelEvent("agent.run.start", {
     mode: runtime.input.mode ?? "agent",
     permissionMode: agentPermissionMode,
-    maxLoops: maxAgentLoops,
+    maxLoops: loopLimit,
+    kind: runtime.kind ?? "chat",
     resumed: Boolean(resume),
     messageChars: runtime.input.message.length,
     historyCount: runtime.input.history?.length ?? 0,
@@ -547,6 +659,37 @@ export async function runSakiAgent(
   let lastForwardedDeltaContent: string | undefined;
 
   const finishAgentResponse = async (reason: string, message: string): Promise<SakiChatResponse> => {
+    try {
+      const currentResumeState = createResumeState();
+      const workingFiles = getRecentWorkingFiles(runtime.userId, runtime.context.workspace?.instanceId ?? null);
+      const todos = extractTodosFromScratchpad(agentScratchpadEntries);
+      saveSessionAgentMemory({
+        userId: runtime.userId,
+        instanceId: runtime.context.workspace?.instanceId ?? null,
+        resumeState: currentResumeState,
+        workingFiles,
+        lastGoal: resumeGoal || runtime.input.message,
+        lastSummary: message,
+        todos,
+        updatedAt: Date.now()
+      });
+    } catch {
+      // ignore memory persistence errors
+    }
+
+    let usageResult: { tokensUsed: number; pointsUsed: number; isUnlimited: boolean; remainingPoints: number } | undefined;
+    try {
+      if (runtime.userId && totalTokensUsed > 0) {
+        usageResult = await recordAgentTokenUsage(
+          runtime.userId,
+          totalTokensUsed,
+          `Agent: ${String(runtime.input.message || "任务执行").slice(0, 50)}`
+        );
+      }
+    } catch {
+      // ignore points record failure
+    }
+
     await emitAgentFinalText(events, message, lastForwardedDeltaContent);
     return {
       source: "direct-model",
@@ -554,7 +697,8 @@ export async function runSakiAgent(
       workspace: runtime.context.workspace,
       agentPermissionMode,
       skills: runtime.skills,
-      actions
+      actions,
+      usage: usageResult
     };
   };
 
@@ -579,6 +723,28 @@ export async function runSakiAgent(
       toolCacheMisses += 1;
     }
 
+    runtime.usedToolNames ??= [];
+    runtime.usedToolNames.push(normalizedAgentToolName(call.name));
+    const signature = agentReadOnlyToolCacheKey(runtime, call) ?? `${normalizedAgentToolName(call.name)}::${JSON.stringify(toolCallArgsForDisplay(call))}`;
+    const previousCount = toolExecutionCounts.get(signature) ?? 0;
+    if (previousCount >= maxIdenticalToolExecutions) {
+      return {
+        call,
+        toolStepId,
+        action: {
+          id: actionId(),
+          tool: call.name,
+          args: toolCallArgsForDisplay(call),
+          observation: `Skipped duplicate '${call.name}' — already ran ${previousCount} times with the same arguments. Do not repeat. Edit, diagnoseCode, or respond.`,
+          ok: true,
+          status: "completed",
+          createdAt: new Date().toISOString()
+        },
+        durationMs: Date.now() - toolStartedAt,
+        cacheHit: true
+      };
+    }
+    toolExecutionCounts.set(signature, previousCount + 1);
     const action = await executeToolFn(runtime, call, { pendingResume: createResumeState() });
     if (cacheKey && shouldCacheAgentToolResult(call, action)) {
       readOnlyToolCache.set(cacheKey, action);
@@ -590,6 +756,12 @@ export async function runSakiAgent(
     return { call, toolStepId, action, durationMs: Date.now() - toolStartedAt };
   };
 
+  const recentToolSignatures: Array<{ name: string; argsStr: string; ok: boolean }> = [];
+  const failedAttemptsByTarget = new Map<string, number>();
+  const sequentialReadPages = new Map<string, { start: number; count: number }>();
+  const fileEditTools = new Set(["writefile", "replaceinfile", "editlines", "batchedit"]);
+  const verifyTools = new Set(["diagnosecode", "gitdiff", "gitstatus"]);
+
   const handleToolResult = async (result: {
     call: ParsedToolCall;
     toolStepId: string;
@@ -600,6 +772,20 @@ export async function runSakiAgent(
     const { call, toolStepId, action, cacheHit } = result;
     toolExecutions += 1;
     if (call.name.toLowerCase() === "respond") {
+      const edited = actions.some((item) => item.ok && fileEditTools.has(normalizedAgentToolName(item.tool)));
+      const verified = actions.some((item) => item.ok && verifyTools.has(normalizedAgentToolName(item.tool)));
+      if (edited && !verified && runtime.kind !== "watch") {
+        appendAgentScratchpad(
+          "\n[Blocked respond]: You edited files but did not verify. Call diagnoseCode now. Do not respond until diagnostics are clean.\n"
+        );
+        emitSakiWorkflow(events, {
+          id: toolStepId,
+          stage: "retry",
+          message: "改完代码后需要先跑诊断，再给出结论。",
+          status: "running"
+        });
+        return null;
+      }
       emitSakiWorkflow(events, {
         id: toolStepId,
         stage: "tool",
@@ -629,17 +815,83 @@ export async function runSakiAgent(
       return finishAgentResponse("pending_approval", finalMessage);
     }
     appendAgentScratchpad(`\nAssistant: ${renderToolCall(call)}\nObservation:\n${observationForAgentPrompt(action)}\n`);
-    if (!action.ok) {
-      appendAgentScratchpad("If the error is caused by missing permission, blocked safety policy, or missing active instance, stop and respond with a concise explanation. Otherwise adjust your plan and continue.\n");
+
+    // Deadlock / repetition detection and error self-healing
+    const toolName = normalizedAgentToolName(call.name);
+    const args = toolArgs(call);
+    const argsStr = JSON.stringify(args);
+    const targetFile = String(args.path || args.filePath || "");
+
+    // Check for duplicate consecutive tool calls
+    const isDuplicate = recentToolSignatures.length > 0 &&
+      recentToolSignatures[recentToolSignatures.length - 1]?.name === toolName &&
+      recentToolSignatures[recentToolSignatures.length - 1]?.argsStr === argsStr;
+
+    recentToolSignatures.push({ name: toolName, argsStr, ok: action.ok });
+    if (recentToolSignatures.length > 10) recentToolSignatures.shift();
+
+    if (isDuplicate && isSakiReadOnlyAgentTool(toolName)) {
+      appendAgentScratchpad(`\n[Self-Correction & Loop Breaker]: You called '${call.name}' with identical parameters twice in a row. The observation is already above in your memory. DO NOT re-read or re-search the same query. Proceed to editing with editLines/replaceInFile, or formulate your final response.\n`);
     }
+
+    if (toolName === "readfile") {
+      const readPath = String(args.path || "");
+      const start = Math.max(1, Number(args.startLine) || 1);
+      const count = Math.max(1, Number(args.lineCount) || defaultAgentReadFileLineCount);
+      const prev = sequentialReadPages.get(readPath);
+      if (prev && start > prev.start && start <= prev.start + prev.count + 8) {
+        appendAgentScratchpad(
+          `\n[Paging blocked]: '${readPath}' was already read at lines ${prev.start}-${prev.start + prev.count - 1}. Do not sequential-page. Use searchFiles or readSymbol to jump, then edit.\n`
+        );
+      }
+      sequentialReadPages.set(readPath, { start, count });
+    } else if (fileEditTools.has(toolName) || verifyTools.has(toolName)) {
+      sequentialReadPages.clear();
+    }
+
+    if (!action.ok) {
+      if (targetFile) {
+        const currentFailures = (failedAttemptsByTarget.get(targetFile) ?? 0) + 1;
+        failedAttemptsByTarget.set(targetFile, currentFailures);
+        if (currentFailures >= 2) {
+          appendAgentScratchpad(`\n[Self-Healing Alert]: Editing '${targetFile}' failed ${currentFailures} times consecutively. Do not repeat the same failing call. Inspect the surrounding lines with outlineFile({ path: "${targetFile}" }) or readFile({ path: "${targetFile}", startLine: ... }) to verify exact line numbers, then use editLines.\n`);
+        }
+      }
+      const obsLower = action.observation.toLowerCase();
+      if (obsLower.includes("oldtext was not found") || obsLower.includes("oldtext matched")) {
+        appendAgentScratchpad(`\n[Self-Healing Guidance]: The text was not matched in the file. Tip: Use editLines with exact line numbers from outlineFile/readFile to make the change deterministically.\n`);
+      } else if (obsLower.includes("enoent") || obsLower.includes("not found")) {
+        appendAgentScratchpad(`\n[Self-Healing Guidance]: File not found. Use findFiles to locate the exact path before attempting further operations.\n`);
+      } else if (obsLower.includes("permission") || obsLower.includes("safety") || obsLower.includes("instance not found")) {
+        appendAgentScratchpad("If the error is caused by missing permission, blocked safety policy, or missing active instance, stop and respond with a concise explanation. Otherwise adjust your plan and continue.\n");
+      }
+    } else if (targetFile && (toolName === "editlines" || toolName === "replaceinfile" || toolName === "writefile" || toolName === "batchedit")) {
+      failedAttemptsByTarget.delete(targetFile);
+    }
+
+    if (!action.ok) {
+      consecutiveFailedTools += 1;
+      if (consecutiveFailedTools >= maxConsecutiveFailedTools) {
+        return finishAgentResponse("stuck_failures", stuckFailuresMessage());
+      }
+    } else if (action.ok && !cacheHit) {
+      consecutiveFailedTools = 0;
+      turnMadeProgress = true;
+    }
+
     return null;
   };
 
-  for (let loop = 0; loop < maxAgentLoops; loop += 1) {
+  for (let loop = 0; loop < loopLimit; loop += 1) {
+    if (runtime.abortController?.signal.aborted) {
+      return finishAgentResponse("aborted", "Watch diagnosis was cancelled.");
+    }
     loopsUsed = loop + 1;
+    turnMadeProgress = false;
     let turn: SakiModelToolTurn;
     try {
       turn = await callConfiguredAgentTurn(runtime, currentPrompt, events?.delta, events?.thinking);
+      totalTokensUsed += billedAgentTurnTokens(runtime.config.model, currentPrompt, turn);
     } catch (error) {
       if (toolExecutions > 0 || actions.length > 0) {
         const reason = error instanceof Error ? error.message : String(error);
@@ -650,6 +902,34 @@ export async function runSakiAgent(
       }
       throw error;
     }
+    const cleanedTurn = stripThinking(turn.content).trim();
+    if (isDegenerateRepetition(cleanedTurn)) {
+      if (degenerateRetries < maxDegenerateRetries) {
+        degenerateRetries += 1;
+        emitSakiWorkflow(events, {
+          id: randomUUID(),
+          stage: "retry",
+          message: "检测到模型循环重复输出，正在打断并重试。",
+          status: "running"
+        });
+        appendAgentScratchpad(`\n[Loop breaker]: Your previous output repeated the same text. Stop generating filler. ${xmlToolFormatReminder()}\n`);
+        continue;
+      }
+      return finishAgentResponse("stuck_degenerate", stuckOutputMessage());
+    }
+    const turnFingerprint = fingerprintAgentText(cleanedTurn);
+    if (turnFingerprint.length > 40 && turnFingerprint === lastTurnFingerprint) {
+      identicalOutputStreak += 1;
+      if (identicalOutputStreak >= maxIdenticalOutputTurns) {
+        if (toolExecutions > 0 || actions.length > 0) {
+          return finishAgentResponse("stuck_repeat_output", stuckOutputMessage());
+        }
+      }
+    } else {
+      identicalOutputStreak = 0;
+    }
+    lastTurnFingerprint = turnFingerprint;
+
     const toolCalls = turn.toolCalls;
     if (toolCalls.length === 0) {
       if (sakiVerboseModelLogsEnabled()) {
@@ -667,19 +947,20 @@ export async function runSakiAgent(
           message: "\u521A\u624D\u7684\u56DE\u590D\u8FD8\u662F\u8FDB\u5EA6\u8BF4\u660E\uFF0C\u6211\u4F1A\u7EE7\u7EED\u8BA9 Saki \u6267\u884C\u540E\u7EED\u5DE5\u5177\u3002",
           status: "running"
         });
-        appendAgentScratchpad(`\nAssistant visible note: ${redactSensitiveText(cleaned).slice(0, 1200)}\n\nSystem correction: Your previous output was only a progress note about future tool work. Continue the same user task now. If more work is needed, output tool calls using XML tags like this:
-<tool_call>
-{"name": "readFile", "arguments": {"path": "relative/path", "note": "short visible note"}}
+        appendAgentScratchpad(`\nAssistant visible note: ${redactSensitiveText(cleaned).slice(0, 1200)}\n\nSystem correction: Your previous output was only a progress note. Continue the user task now. If more tool work is needed, output clean XML tool calls like this:
+<tool_call name="readFile">
+<path>relative/path</path>
+<note>short visible note</note>
 </tool_call>
 If the task is complete, use:
-<tool_call>
-{"name": "respond", "arguments": {"text": "final answer"}}
+<tool_call name="respond">
+<text>final answer</text>
 </tool_call>
-arguments must be an object. Never use bare JSON like {"tool_calls":[...]}. Never include prose before or after the XML blocks. Never use Markdown fences.\nIMPORTANT: For editing files, use editLines or replaceInFile — NOT writeFile. writeFile is for new files only with \"content\" parameter.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
+Do NOT use JSON inside XML. Put raw text/code directly inside parameter tags. Never use Markdown fences.\nIMPORTANT: For editing files, use editLines or replaceInFile — NOT writeFile. writeFile is for new files only with <content> parameter.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
         continue;
       }
       const shouldRetry = !cleaned || looksLikeToolCallPayload(cleaned);
-      if (shouldRetry && invalidReplies < 1) {
+      if (shouldRetry && invalidReplies < modelProfile.invalidReplyRetries) {
         invalidReplies += 1;
         emitSakiWorkflow(events, {
           id: randomUUID(),
@@ -687,7 +968,9 @@ arguments must be an object. Never use bare JSON like {"tool_calls":[...]}. Neve
           message: cleaned ? "\u521A\u624D\u7684\u5DE5\u5177\u8C03\u7528\u683C\u5F0F\u6CA1\u6709\u901A\u8FC7\u6821\u9A8C\uFF0C\u6211\u4F1A\u7528\u66F4\u660E\u786E\u7684\u683C\u5F0F\u91CD\u8BD5\u3002" : "\u6A21\u578B\u8FD9\u8F6E\u6CA1\u6709\u7ED9\u51FA\u6709\u6548\u5185\u5BB9\uFF0C\u6211\u4F1A\u518D\u8BA9\u5B83\u5224\u65AD\u4E00\u6B21\u3002",
           status: "running"
         });
-        appendAgentScratchpad(`\n\nSystem correction: Your previous output did not produce usable content or valid tool calls. If you need a tool, output tool calls using XML tags like this:\n<tool_call>\n{"name": "toolName", "arguments": {"note": "short visible note"}}\n</tool_call>\narguments must be an object. Never use bare JSON like {"tool_calls":[...]}. Never include prose before or after the XML blocks. Never use Markdown fences. If no tool is needed, answer naturally in the user's language. When writing file content in JSON arguments, escape newlines as \\n and do not place raw line breaks inside a JSON string.\nIMPORTANT: For editing existing files, use editLines({ path, startLine, endLine, replacement }) or replaceInFile({ path, oldText, newText }) — NOT writeFile. writeFile is only for creating NEW files, and the parameter is \"content\" (not \"text\"). If the file content is long, break it into multiple editLines calls of 20-50 lines each. Always readFile first to check current line numbers.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
+        appendAgentScratchpad(`\n\nSystem correction: Your previous output did not produce valid tool calls. ${xmlToolFormatReminder()}
+Do NOT wrap parameters in JSON. Write raw code directly inside parameter tags. If no tool is needed, answer naturally in the user's language.
+IMPORTANT: editLines or replaceInFile for existing files; writeFile only for NEW files.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
         continue;
       }
 
@@ -755,8 +1038,46 @@ arguments must be an object. Never use bare JSON like {"tool_calls":[...]}. Neve
       if (finalResponse) return finalResponse;
       callIndex += 1;
     }
+
+    if (turnMadeProgress) {
+      noProgressStreak = 0;
+    } else {
+      noProgressStreak += 1;
+      if (noProgressStreak >= maxNoProgressTurns) {
+        return finishAgentResponse("stuck_no_progress", stuckNoProgressMessage());
+      }
+      appendAgentScratchpad(
+        `\n[No progress]: The last ${noProgressStreak} turn(s) repeated work or did not change the workspace. Do something new: edit, diagnoseCode, or respond.\n`
+      );
+    }
   }
 
-  const finalMessage = "Saki \u5DF2\u8FBE\u5230\u672C\u8F6E\u667A\u80FD\u4F53\u6267\u884C\u6B65\u6570\u4E0A\u9650\u3002\u5DF2\u5B8C\u6210\u7684\u52A8\u4F5C\u89C1\u4E0B\u65B9\u8BB0\u5F55\uFF1B\u4F60\u53EF\u4EE5\u7EE7\u7EED\u53D1\u4E00\u53E5\u201C\u7EE7\u7EED\u201D\u8BA9 Saki \u63A5\u7740\u5904\u7406\u3002";
-  return finishAgentResponse("loop_limit", finalMessage);
+  const alreadyEdited = actions.some((item) => item.ok && fileEditTools.has(normalizedAgentToolName(item.tool)));
+  if (!alreadyEdited && loopsUsed < 8) {
+    try {
+      const finalWrapPrompt = `${currentPrompt}\n\n[TASK RESOLUTION]: Provide a concise final summary of what was found. Do not re-read files. Output natural text, no tool calls.`;
+      const finalTurn = await callConfiguredAgentTurn(runtime, finalWrapPrompt, events?.delta, events?.thinking);
+      totalTokensUsed += billedAgentTurnTokens(runtime.config.model, finalWrapPrompt, finalTurn);
+      const cleaned = stripThinking(finalTurn.content).trim();
+      if (cleaned && !looksLikeToolCallPayload(cleaned)) {
+        return finishAgentResponse("natural_wrapup", cleaned);
+      }
+    } catch {
+      // Ignore error during wrap-up
+    }
+  }
+
+  // Synthesize a structured engineering outcome if the model did not emit text:
+  const edits = actions.filter((a) => a.ok && fileEditTools.has(normalizedAgentToolName(a.tool)));
+  const searches = actions.filter((a) => a.ok && (a.tool === "searchfiles" || a.tool === "outlinefile" || a.tool === "findsymbols" || a.tool === "readfile"));
+  let finalSummary = "";
+  if (edits.length > 0) {
+    finalSummary = `已完成代码定位与修改。\n\n**修改记录**：\n${edits.map((e) => `- \`${e.tool}\`: ${e.observation.slice(0, 120)}`).join("\n")}\n\n请检查上述修改是否满足预期。`;
+  } else if (searches.length > 0) {
+    finalSummary = `已完成工作区代码排查与分析。\n\n**排查结果**：\n${searches.slice(-5).map((s) => `- \`${s.tool}\`: ${s.observation.slice(0, 120)}`).join("\n")}`;
+  } else {
+    finalSummary = "已完成当前任务的操作与排查。";
+  }
+
+  return finishAgentResponse("completed_summary", finalSummary);
 }

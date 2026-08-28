@@ -43,6 +43,92 @@ export function countTokens(text: string, modelId: string = "gpt-4"): number {
   }
 }
 
+export interface ModelUsage {
+  promptTokens: number;
+  completionTokens: number;
+}
+
+function usageNumber(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+/** Read prompt/completion tokens from OpenAI, Anthropic, or Ollama payloads. */
+export function extractProviderUsage(payload: unknown): ModelUsage | null {
+  const root = asRecord(payload);
+  if (!root) return null;
+  const usage = asRecord(root.usage);
+  if (usage) {
+    const promptTokens =
+      usageNumber(usage.prompt_tokens) ||
+      usageNumber(usage.input_tokens) ||
+      usageNumber(usage.inputTokens) ||
+      usageNumber(usage.prompt_eval_count);
+    let completionTokens =
+      usageNumber(usage.completion_tokens) ||
+      usageNumber(usage.output_tokens) ||
+      usageNumber(usage.outputTokens) ||
+      usageNumber(usage.eval_count);
+    const details = asRecord(usage.completion_tokens_details);
+    const reasoning = usageNumber(details?.reasoning_tokens) || usageNumber(usage.reasoning_tokens);
+    if (reasoning && completionTokens > 0 && reasoning > completionTokens) {
+      completionTokens = reasoning;
+    } else if (reasoning && completionTokens === 0) {
+      completionTokens = reasoning;
+    }
+    const total = usageNumber(usage.total_tokens);
+    if (total > 0 && promptTokens + completionTokens === 0) {
+      return { promptTokens: total, completionTokens: 0 };
+    }
+    if (promptTokens + completionTokens > 0) {
+      return { promptTokens, completionTokens };
+    }
+  }
+  const ollamaPrompt = usageNumber(root.prompt_eval_count);
+  const ollamaCompletion = usageNumber(root.eval_count);
+  if (ollamaPrompt + ollamaCompletion > 0) {
+    return { promptTokens: ollamaPrompt, completionTokens: ollamaCompletion };
+  }
+  return null;
+}
+
+export function mergeModelUsage(current: ModelUsage | null, incoming: ModelUsage | null): ModelUsage | null {
+  if (!current) return incoming;
+  if (!incoming) return current;
+  return {
+    promptTokens: Math.max(current.promptTokens, incoming.promptTokens),
+    completionTokens: Math.max(current.completionTokens, incoming.completionTokens)
+  };
+}
+
+export function modelUsageTotal(usage: ModelUsage | null | undefined): number {
+  if (!usage) return 0;
+  return Math.max(0, usage.promptTokens + usage.completionTokens);
+}
+
+export function estimateModelCallTokens(
+  prompt: string,
+  completion = "",
+  toolCalls?: unknown,
+  modelId = "gpt-4",
+  extraJson?: string
+): number {
+  let total = countTokens(prompt || "", modelId) + countTokens(completion || "", modelId);
+  if (toolCalls && !(Array.isArray(toolCalls) && toolCalls.length === 0)) {
+    try {
+      total += countTokens(JSON.stringify(toolCalls), modelId);
+    } catch {
+      // ignore serialization failures
+    }
+  }
+  if (extraJson) total += countTokens(extraJson, modelId);
+  return total;
+}
+
 export function countMessageTokens(messages: Array<{ role: string; content: string }>, modelId: string = "gpt-4"): number {
   let total = 0;
   for (const message of messages) {

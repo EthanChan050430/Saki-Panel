@@ -35,10 +35,30 @@ import {
   trimString,
   uniqueModels,
 } from "./types.js";
-import { normalizeStructuredToolCall, openAiToolSchemas, parseJsonMaybe, parseStructuredToolCalls, sakiToolSchemas } from "./tools.js";
+import { extractProviderUsage, estimateModelCallTokens, mergeModelUsage, modelUsageTotal, type ModelUsage } from "../../tokenizer.js";
+import { anthropicToolSchemas, normalizeStructuredToolCall, openAiToolSchemas, parseAnyToolCalls, parseJsonMaybe, toolSchemasForRuntime, withAdvertisedSakiToolSchemas } from "./tools.js";
 import { buildDirectMessages, buildDirectSystemPrompt, type DirectChatMessage, type DirectProviderMessage } from "./prompt.js";
 
 const defaultTemperatureOnlyModelKeys = new Set<string>();
+
+function withTurnUsage(
+  turn: SakiModelToolTurn,
+  prompt: string,
+  payload?: unknown,
+  includeToolSchemas = false
+): SakiModelToolTurn {
+  const fromApi = modelUsageTotal(extractProviderUsage(payload));
+  const tokens =
+    fromApi ||
+    estimateModelCallTokens(
+      prompt,
+      turn.content,
+      turn.toolCalls,
+      "gpt-4",
+      includeToolSchemas ? JSON.stringify(openAiToolSchemas()) : undefined
+    );
+  return tokens > 0 ? { ...turn, usageTokens: tokens } : turn;
+}
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
@@ -407,6 +427,11 @@ export async function requestOpenAiCompatibleStreamingPayload<T>(
   try {
     return await request(body);
   } catch (error) {
+    if ("stream_options" in body && /stream_options|include_usage/i.test(error instanceof Error ? error.message : String(error))) {
+      const withoutUsage = { ...body };
+      delete withoutUsage.stream_options;
+      return request(withoutUsage);
+    }
     if (!("temperature" in body) || !isTemperatureRequestError(error)) throw error;
     defaultTemperatureOnlyModelKeys.add(modelTemperatureKey(provider, baseUrl, model));
     logSakiModelEvent("temperature.retry", {
@@ -614,17 +639,13 @@ export function extractOpenAiChatText(payload: unknown): string {
 }
 
 export function parseToolCallsFromText(text: string): ParsedToolCall[] {
-  try {
-    return parseStructuredToolCalls(text);
-  } catch {
-    return [];
-  }
+  return parseAnyToolCalls(text);
 }
 
 export function nativeToolCalls(value: unknown): ParsedToolCall[] {
-  if (!Array.isArray(value)) return [];
+  const list = Array.isArray(value) ? value : value ? [value] : [];
   const calls: ParsedToolCall[] = [];
-  for (const raw of value) {
+  for (const raw of list) {
     try {
       calls.push(normalizeStructuredToolCall(raw));
     } catch {
@@ -634,16 +655,25 @@ export function nativeToolCalls(value: unknown): ParsedToolCall[] {
   return calls;
 }
 
-export function extractOpenAiChatTurn(payload: unknown): SakiModelToolTurn {
+export function extractOpenAiChatTurn(payload: unknown, prompt = ""): SakiModelToolTurn {
   const root = objectValue(payload);
   const choice = Array.isArray(root?.choices) ? objectValue(root.choices[0]) : null;
   const message = objectValue(choice?.message);
   const content = stripThinking(chatTextFromContent(message?.content) || trimString(choice?.text));
-  const toolCalls = nativeToolCalls(message?.tool_calls);
-  return {
+  const toolCalls = nativeToolCalls(message?.tool_calls ?? message?.toolCalls);
+  const legacy = objectValue(message?.function_call) ?? objectValue(message?.functionCall);
+  if (legacy && trimString(legacy.name)) {
+    try {
+      toolCalls.push(normalizeStructuredToolCall({ name: legacy.name, arguments: legacy.arguments ?? legacy.args }));
+    } catch {
+      // Ignore malformed legacy function_call
+    }
+  }
+  const turn: SakiModelToolTurn = {
     content,
     toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content)
   };
+  return withTurnUsage(turn, prompt, payload, true);
 }
 
 export function isToolCallingUnsupportedError(error: unknown): boolean {
@@ -1235,10 +1265,7 @@ export async function callCopilotSdkAgentTurn(
   prompt: string
 ): Promise<SakiModelToolTurn> {
   const content = await callCopilotSdkModel(config, input, prompt);
-  return {
-    content,
-    toolCalls: parseToolCallsFromText(content)
-  };
+  return withTurnUsage({ content, toolCalls: parseToolCallsFromText(content) }, prompt);
 }
 
 // --- OpenAI-compatible provider calls ---
@@ -1309,7 +1336,8 @@ export async function callOpenAiCompatibleModelStream(
       {
         model,
         messages: withOpenAiImageInputs(buildDirectMessages(input, prompt, buildDirectSystemPrompt(config)), input),
-        stream: true
+        stream: true,
+        stream_options: { include_usage: true }
       },
       0.3
     ),
@@ -1357,7 +1385,7 @@ export async function callOpenAiCompatibleAgentTurn(
     ),
     config.requestTimeoutMs
   );
-  return extractOpenAiChatTurn(payload);
+  return extractOpenAiChatTurn(payload, prompt);
 }
 
 export async function callOpenAiCompatiblePromptAgentTurn(
@@ -1388,7 +1416,7 @@ export async function callOpenAiCompatiblePromptAgentTurn(
     config.requestTimeoutMs
   );
   const content = extractOpenAiChatText(payload);
-  return { content, toolCalls: parseToolCallsFromText(content) };
+  return withTurnUsage({ content, toolCalls: parseToolCallsFromText(content) }, prompt, payload, false);
 }
 
 export async function callOpenAiCompatibleAgentTurnWithFallback(
@@ -1513,11 +1541,7 @@ export async function callAnthropicAgentTurn(config: SakiConfigResponse, input: 
         max_tokens: 4096,
         system: buildDirectSystemPrompt(config),
         messages,
-        tools: sakiToolSchemas.map((schema) => ({
-          name: schema.name,
-          description: schema.description,
-          input_schema: schema.parameters
-        }))
+        tools: anthropicToolSchemas()
       })
     },
     config.requestTimeoutMs
@@ -1534,7 +1558,12 @@ export async function callAnthropicAgentTurn(config: SakiConfigResponse, input: 
       .filter(Boolean)
   );
   const content = stripThinking(chatTextFromContent(blocks));
-  return { content, toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content) };
+  return withTurnUsage(
+    { content, toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content) },
+    prompt,
+    payload,
+    true
+  );
 }
 
 // --- Ollama provider calls ---
@@ -1628,7 +1657,12 @@ export async function callOllamaAgentTurn(config: SakiConfigResponse, input: Sak
     const message = objectValue(objectValue(payload)?.message);
     const content = stripThinking(chatTextFromContent(message?.content) || trimString(objectValue(payload)?.response));
     const toolCalls = nativeToolCalls(message?.tool_calls);
-    return { content, toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content) };
+    return withTurnUsage(
+      { content, toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content) },
+      prompt,
+      payload,
+      withTools
+    );
   };
 
   try {
@@ -1690,7 +1724,15 @@ function openAiStreamChunk(payload: unknown): { content: string; toolCalls: unkn
   const choice = Array.isArray(root?.choices) ? objectValue(root.choices[0]) : null;
   const delta = objectValue(choice?.delta);
   const content = chatTextFromContent(delta?.content) || trimString(delta?.text) || trimString(choice?.text);
-  const toolCalls = Array.isArray(delta?.tool_calls) ? delta.tool_calls : [];
+  const toolCalls: unknown[] = Array.isArray(delta?.tool_calls)
+    ? [...delta.tool_calls]
+    : Array.isArray(delta?.toolCalls)
+      ? [...delta.toolCalls]
+      : [];
+  const legacy = objectValue(delta?.function_call) ?? objectValue(delta?.functionCall);
+  if (legacy && (legacy.name || legacy.arguments)) {
+    toolCalls.push({ index: 0, function: legacy });
+  }
   const reasoningContent = delta?.reasoning_content || delta?.reasoning || delta?.thinking;
   return { content, toolCalls, reasoningContent: reasoningContent ? String(reasoningContent) : undefined };
 }
@@ -1809,7 +1851,7 @@ async function streamPromptAgentTurnWithFilteredDelta(
       thinkingEmitted = thinking.length;
     }
   };
-  const stopPatterns = ["```json", '{"tool_calls"', '{"toolcalls"', "<tool_call>"];
+  const stopPatterns = ["```json", '{"tool_calls"', '{"toolcalls"', "<tool_call", "<invoke"];
   const maxPrefixLen = Math.max(...stopPatterns.map((pattern) => pattern.length));
   const filteredDelta = (text: string) => {
     accumulated += text;
@@ -1840,7 +1882,7 @@ async function streamPromptAgentTurnWithFilteredDelta(
     const visible = stripThinking(accumulated);
     if (forwardedIndex < visible.length) {
       const tail = visible.slice(forwardedIndex);
-      if (tail && !/<tool_call>/i.test(tail) && !/"?tool_calls"?\s*:/i.test(tail)) {
+      if (tail && !/<tool_call/i.test(tail) && !/<invoke/i.test(tail) && !/"?tool_calls"?\s*:/i.test(tail)) {
         onDelta(tail);
         forwardedIndex = visible.length;
       }
@@ -1865,6 +1907,7 @@ async function callOpenAiCompatibleAgentTurnStream(
   const { baseUrl, apiKey, model } = requireCloudConfig(config, provider);
   const state = createStreamingTextState();
   const toolAccumulator = new OpenAiStreamToolCallAccumulator();
+  const usageHolder: { current: ModelUsage | null } = { current: null };
   await requestOpenAiCompatibleStreamingPayload(
     provider,
     baseUrl,
@@ -1882,7 +1925,8 @@ async function callOpenAiCompatibleAgentTurnStream(
         messages: withOpenAiImageInputs(buildDirectMessages(input, prompt, buildDirectSystemPrompt(config)), input),
         tools: openAiToolSchemas(),
         tool_choice: "auto",
-        stream: true
+        stream: true,
+        stream_options: { include_usage: true }
       },
       0.2
     ),
@@ -1890,7 +1934,9 @@ async function callOpenAiCompatibleAgentTurnStream(
     async (response) => {
       await readServerSentEventData(response, (data) => {
         if (data === "[DONE]") return;
-        const chunk = openAiStreamChunk(JSON.parse(data) as unknown);
+        const parsed = JSON.parse(data) as unknown;
+        usageHolder.current = mergeModelUsage(usageHolder.current, extractProviderUsage(parsed));
+        const chunk = openAiStreamChunk(parsed);
         toolAccumulator.ingest(chunk.toolCalls);
         pushStreamingTextDelta(state, chunk.content, onDelta, onThinking, chunk.reasoningContent);
       });
@@ -1899,12 +1945,19 @@ async function callOpenAiCompatibleAgentTurnStream(
   flushStreamingTextState(state, onDelta, onThinking);
   const content = stripThinking(state.raw);
   const toolCalls = toolAccumulator.toParsedToolCalls();
-  return {
-    content,
-    toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content),
-    forwardedDeltaText: state.emittedLength > 0,
-    forwardedDeltaContent: state.raw.slice(0, state.emittedLength)
-  };
+  return withTurnUsage(
+    {
+      content,
+      toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content),
+      forwardedDeltaText: state.emittedLength > 0,
+      forwardedDeltaContent: state.raw.slice(0, state.emittedLength)
+    },
+    prompt,
+    usageHolder.current
+      ? { usage: { prompt_tokens: usageHolder.current.promptTokens, completion_tokens: usageHolder.current.completionTokens } }
+      : undefined,
+    true
+  );
 }
 
 async function callOpenAiCompatiblePromptAgentTurnStream(
@@ -1951,6 +2004,7 @@ async function callOllamaAgentTurnStream(
   const baseUrl = normalizeHttpBaseUrl(config.ollamaUrl, localProviderUrls.ollama);
   const state = createStreamingTextState();
   const toolAccumulator = new OpenAiStreamToolCallAccumulator();
+  const usageHolder: { current: ModelUsage | null } = { current: null };
   await requestStreamingPayload(
     `${baseUrl}/api/chat`,
     {
@@ -1968,6 +2022,7 @@ async function callOllamaAgentTurnStream(
     config.requestTimeoutMs,
     async (response) => {
       await readJsonLineData(response, (payload) => {
+        usageHolder.current = mergeModelUsage(usageHolder.current, extractProviderUsage(payload));
         const chunk = ollamaAgentStreamChunk(payload);
         toolAccumulator.ingest(chunk.toolCalls);
         pushStreamingTextDelta(state, chunk.content, onDelta, onThinking, chunk.reasoningContent);
@@ -1978,12 +2033,19 @@ async function callOllamaAgentTurnStream(
   const content = stripThinking(state.raw);
   if (!content && !withTools) throw new RouteError("Ollama returned an empty response.", 502);
   const toolCalls = toolAccumulator.toParsedToolCalls();
-  return {
-    content,
-    toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content),
-    forwardedDeltaText: state.emittedLength > 0,
-    forwardedDeltaContent: state.raw.slice(0, state.emittedLength)
-  };
+  return withTurnUsage(
+    {
+      content,
+      toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content),
+      forwardedDeltaText: state.emittedLength > 0,
+      forwardedDeltaContent: state.raw.slice(0, state.emittedLength)
+    },
+    prompt,
+    usageHolder.current
+      ? { usage: { prompt_tokens: usageHolder.current.promptTokens, completion_tokens: usageHolder.current.completionTokens } }
+      : undefined,
+    withTools
+  );
 }
 
 async function callOllamaAgentTurnStreamWithFallback(
@@ -2038,6 +2100,7 @@ async function callAnthropicAgentTurnStream(
   const messages = withAnthropicImageInputs(buildDirectMessages(input, prompt), input).filter((message) => message.role !== "system");
   const state = createStreamingTextState();
   const toolAccumulator = new AnthropicStreamToolCallAccumulator();
+  const usageHolder: { current: ModelUsage | null } = { current: null };
   await requestStreamingPayload(
     `${baseUrl}/messages`,
     {
@@ -2053,11 +2116,7 @@ async function callAnthropicAgentTurnStream(
         system: buildDirectSystemPrompt(config),
         messages,
         stream: true,
-        tools: sakiToolSchemas.map((schema) => ({
-          name: schema.name,
-          description: schema.description,
-          input_schema: schema.parameters
-        }))
+        tools: anthropicToolSchemas()
       })
     },
     config.requestTimeoutMs,
@@ -2065,6 +2124,7 @@ async function callAnthropicAgentTurnStream(
       await readServerSentEventData(response, (data) => {
         const event = objectValue(JSON.parse(data) as unknown);
         if (!event) return;
+        usageHolder.current = mergeModelUsage(usageHolder.current, extractProviderUsage(event));
         toolAccumulator.ingest(event);
         const chunk = anthropicAgentStreamDelta(event);
         pushStreamingTextDelta(state, chunk.content, onDelta, onThinking, chunk.reasoningContent);
@@ -2074,12 +2134,19 @@ async function callAnthropicAgentTurnStream(
   flushStreamingTextState(state, onDelta, onThinking);
   const content = stripThinking(state.raw);
   const toolCalls = toolAccumulator.toParsedToolCalls();
-  return {
-    content,
-    toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content),
-    forwardedDeltaText: state.emittedLength > 0,
-    forwardedDeltaContent: state.raw.slice(0, state.emittedLength)
-  };
+  return withTurnUsage(
+    {
+      content,
+      toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content),
+      forwardedDeltaText: state.emittedLength > 0,
+      forwardedDeltaContent: state.raw.slice(0, state.emittedLength)
+    },
+    prompt,
+    usageHolder.current
+      ? { usage: { input_tokens: usageHolder.current.promptTokens, output_tokens: usageHolder.current.completionTokens } }
+      : undefined,
+    true
+  );
 }
 
 async function callAnthropicAgentTurnStreamWithFallback(
@@ -2141,6 +2208,15 @@ async function callConfiguredAgentTurnStream(
 }
 
 export async function callConfiguredAgentTurn(
+  runtime: SakiAgentRuntime,
+  prompt: string,
+  onDelta?: (text: string) => void,
+  onThinking?: (text: string) => void
+): Promise<SakiModelToolTurn> {
+  return withAdvertisedSakiToolSchemas(toolSchemasForRuntime(runtime), () => callConfiguredAgentTurnUnfiltered(runtime, prompt, onDelta, onThinking));
+}
+
+async function callConfiguredAgentTurnUnfiltered(
   runtime: SakiAgentRuntime,
   prompt: string,
   onDelta?: (text: string) => void,
