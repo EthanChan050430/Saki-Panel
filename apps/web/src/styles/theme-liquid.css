@@ -3846,6 +3846,58 @@
   color: #ffffff;
 }
 
+[data-theme="dark"] .saki-skill-import {
+  background: transparent !important;
+  border-bottom-color: rgba(51, 65, 85, 0.5) !important;
+}
+
+[data-theme="dark"] .saki-skill-import-header {
+  color: var(--sidebar-accent) !important;
+}
+
+[data-theme="dark"] .saki-skill-import-drop {
+  border-color: rgba(255, 117, 172, 0.3) !important;
+  background: rgba(30, 41, 59, 0.8) !important;
+  color: #e2e8f0 !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
+}
+
+[data-theme="dark"] .saki-skill-import-drop:hover:not(:disabled) {
+  border-color: var(--sidebar-accent) !important;
+  background: rgba(255, 117, 172, 0.12) !important;
+  box-shadow: 0 6px 20px rgba(255, 117, 172, 0.15) !important;
+}
+
+[data-theme="dark"] .saki-skill-import-drop:disabled {
+  background: rgba(30, 41, 59, 0.4) !important;
+  border-color: rgba(51, 65, 85, 0.3) !important;
+  opacity: 0.5 !important;
+}
+
+[data-theme="dark"] .saki-skill-import-drop svg {
+  color: var(--sidebar-accent) !important;
+}
+
+[data-theme="dark"] .saki-skill-import-drop > span strong {
+  color: #f1f5f9 !important;
+}
+
+[data-theme="dark"] .saki-skill-import-drop > span em {
+  color: #94a3b8 !important;
+}
+
+[data-theme="dark"] .saki-skill-header-import {
+  border-color: rgba(14, 165, 233, 0.3) !important;
+  color: #38bdf8 !important;
+  background: rgba(14, 165, 233, 0.12) !important;
+}
+
+[data-theme="dark"] .saki-skill-header-import:hover:not(:disabled) {
+  background: #0ea5e9 !important;
+  color: #ffffff !important;
+  box-shadow: 0 6px 16px rgba(14, 165, 233, 0.4) !important;
+}
+
 [data-theme="dark"] .saki-skill-card {
   border-color: rgba(51, 65, 85, 0.4) !important;
   background: rgba(30, 41, 59, 0.9) !important;

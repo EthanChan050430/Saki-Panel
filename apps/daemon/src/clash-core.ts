@@ -382,15 +382,22 @@ export async function fetchClashSubscription(url: string): Promise<ClashProxyRec
   const cached = subscriptionCache.get(trimmed);
   if (cached && Date.now() - cached.fetchedAt < cacheTtlMs) return cached.proxies;
 
-  const headers = {
-    "User-Agent": "clash.meta/v1.19.0 clash-verge/1.7.7 ClashMetaForAndroid/2.11.0",
-    Accept: "*/*"
-  };
+  const userAgents = ["clash.meta", "Clash", "FlClash/v0.8.96", "clash-verge/v2.2.3"];
   let body = "";
-  try {
-    body = await fetchText(trimmed, headers, 25000);
-  } catch (error) {
-    throw new Error(`拉取订阅失败: ${error instanceof Error ? error.message : "网络错误"}`);
+  let lastError = "拉取订阅失败";
+  for (const userAgent of userAgents) {
+    try {
+      body = await fetchText(trimmed, { "User-Agent": userAgent, Accept: "*/*" }, 25000);
+      if (body.trim() && !/^(network is good|hello world|ok)$/i.test(body.trim())) break;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "网络错误";
+    }
+  }
+  if (!body) {
+    throw new Error(`拉取订阅失败: ${lastError}`);
+  }
+  if (/^(network is good|hello world|ok)$/i.test(body.trim())) {
+    throw new Error("机场没有下发节点，只返回了探测页。请先让本机 Clash 连上节点后再试。");
   }
   const proxies = parseSubscriptionBody(body);
   if (proxies.length === 0) {

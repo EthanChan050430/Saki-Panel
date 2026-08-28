@@ -1,3 +1,5 @@
+import http from "node:http";
+import tls from "node:tls";
 import type { ClashSubscriptionProxy } from "@webops/shared";
 
 interface ClashProxyRecord {
@@ -61,7 +63,7 @@ function parseFlowMap(text: string): Record<string, unknown> {
 }
 
 function parseYamlProxyList(yaml: string): ClashProxyRecord[] {
-  const start = yaml.search(/^proxies:\s*$/m);
+  const start = yaml.search(/^proxies:\s*(?:#.*)?\r?$/m);
   const sliced = start >= 0 ? yaml.slice(yaml.indexOf("\n", start) + 1) : yaml;
   const lines: string[] = [];
   for (const line of sliced.split(/\r?\n/)) {
@@ -275,16 +277,133 @@ function parseSubscriptionBody(raw: string): ClashProxyRecord[] {
   return [];
 }
 
-async function fetchText(url: string, headers: Record<string, string>, timeoutMs: number): Promise<string> {
+const subscriptionUserAgents = [
+  "clash.meta",
+  "Clash",
+  "FlClash/v0.8.96",
+  "clash-verge/v2.2.3",
+  "ClashMetaForAndroid/2.11.0"
+];
+
+const localProxyPorts = [7890, 7891, 7897, 10809, 20171, 33210, 1080];
+
+function isPlaceholderSubscriptionBody(body: string): boolean {
+  const text = body.trim();
+  if (!text) return true;
+  if (/proxies\s*:|(vmess|ss|trojan|vless|hysteria2|hy2):\/\//i.test(text)) return false;
+  return text.length < 64 && /^(network is good|hello world|ok|success|pong|good)$/i.test(text);
+}
+
+function fetchTextDirect(url: string, headers: Record<string, string>, timeoutMs: number): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { headers, signal: controller.signal, redirect: "follow" });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return await response.text();
-  } finally {
-    clearTimeout(timer);
+  return fetch(url, { headers, signal: controller.signal, redirect: "follow" })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.text();
+    })
+    .finally(() => clearTimeout(timer));
+}
+
+function fetchTextViaHttpProxy(url: string, headers: Record<string, string>, proxyPort: number, timeoutMs: number): Promise<string> {
+  const target = new URL(url);
+  const isHttps = target.protocol === "https:";
+  const connectPath = `${target.hostname}:${target.port || (isHttps ? 443 : 80)}`;
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      host: "127.0.0.1",
+      port: proxyPort,
+      method: isHttps ? "CONNECT" : "GET",
+      path: isHttps ? connectPath : url,
+      timeout: timeoutMs,
+      headers: isHttps ? { Host: connectPath } : { ...headers, Host: target.host }
+    });
+    const finish = (error: Error) => {
+      req.destroy();
+      reject(error);
+    };
+    req.on("timeout", () => finish(new Error(`代理 ${proxyPort} 超时`)));
+    req.on("error", reject);
+    if (!isHttps) {
+      req.on("response", (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          if ((res.statusCode ?? 0) >= 400) {
+            reject(new Error(`HTTP ${res.statusCode}`));
+            return;
+          }
+          resolve(Buffer.concat(chunks).toString("utf8"));
+        });
+      });
+      req.end();
+      return;
+    }
+    req.on("connect", (res, socket) => {
+      if ((res.statusCode ?? 0) !== 200) {
+        socket.destroy();
+        finish(new Error(`CONNECT ${res.statusCode}`));
+        return;
+      }
+      const tlsSocket = tls.connect({ socket, servername: target.hostname, ALPNProtocols: ["http/1.1"] }, () => {
+        const headerLines = Object.entries({
+          Host: target.host,
+          Connection: "close",
+          ...headers
+        })
+          .map(([key, value]) => `${key}: ${value}`)
+          .join("\r\n");
+        tlsSocket.write(`GET ${target.pathname}${target.search} HTTP/1.1\r\n${headerLines}\r\n\r\n`);
+      });
+      const chunks: Buffer[] = [];
+      tlsSocket.on("data", (chunk) => chunks.push(chunk));
+      tlsSocket.on("error", reject);
+      tlsSocket.on("end", () => {
+        const raw = Buffer.concat(chunks).toString("utf8");
+        const split = raw.indexOf("\r\n\r\n");
+        const head = split >= 0 ? raw.slice(0, split) : "";
+        const body = split >= 0 ? raw.slice(split + 4) : raw;
+        const status = Number(head.match(/^HTTP\/\d(?:\.\d)?\s+(\d+)/)?.[1] ?? 0);
+        if (status >= 400) {
+          reject(new Error(`HTTP ${status}`));
+          return;
+        }
+        resolve(body);
+      });
+    });
+    req.end();
+  });
+}
+
+async function fetchSubscriptionBodies(url: string): Promise<string[]> {
+  const headerSets = subscriptionUserAgents.map((userAgent) => ({
+    "User-Agent": userAgent,
+    Accept: "*/*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"
+  }));
+  const attempts: Array<() => Promise<string>> = [];
+  for (const headers of headerSets) {
+    attempts.push(() => fetchTextDirect(url, headers, 20000));
   }
+  for (const port of localProxyPorts) {
+    attempts.push(() => fetchTextViaHttpProxy(url, headerSets[0]!, port, 2500));
+  }
+  const bodies: string[] = [];
+  for (const attempt of attempts) {
+    try {
+      const body = await attempt();
+      if (!body?.trim()) continue;
+      bodies.push(body);
+      if (!isPlaceholderSubscriptionBody(body)) return bodies;
+    } catch {
+      // Try the next UA / local Clash mixed-port.
+    }
+  }
+  return bodies;
+}
+
+export function parseClashSubscriptionProxies(raw: string): ClashSubscriptionProxy[] {
+  return parseSubscriptionBody(raw).map(summarizeProxy);
 }
 
 export async function fetchClashSubscriptionProxies(url: string): Promise<ClashSubscriptionProxy[]> {
@@ -297,20 +416,29 @@ export async function fetchClashSubscriptionProxies(url: string): Promise<ClashS
     return cached.proxies.map(summarizeProxy);
   }
 
-  const headers = {
-    "User-Agent": "clash.meta/v1.19.0 clash-verge/1.7.7 ClashMetaForAndroid/2.11.0",
-    Accept: "*/*"
-  };
-  let body = "";
-  try {
-    body = await fetchText(trimmed, headers, 25000);
-  } catch (error) {
-    throw new Error(`拉取订阅失败: ${error instanceof Error ? error.message : "网络错误"}`);
+  const urls = [trimmed];
+  if (!/[?&](flag|clash|target)=/i.test(trimmed)) {
+    urls.push(`${trimmed}${trimmed.includes("?") ? "&" : "?"}flag=clash`);
   }
-  const proxies = parseSubscriptionBody(body);
-  if (proxies.length === 0) {
-    throw new Error("订阅内容里没有可用节点。请确认是 Clash / Clash Meta 订阅，或机场支持该格式。");
+
+  let lastBody = "";
+  for (const candidate of urls) {
+    const bodies = await fetchSubscriptionBodies(candidate);
+    for (const body of bodies) {
+      lastBody = body;
+      if (isPlaceholderSubscriptionBody(body)) continue;
+      const proxies = parseSubscriptionBody(body);
+      if (proxies.length > 0) {
+        subscriptionCache.set(trimmed, { fetchedAt: Date.now(), proxies });
+        return proxies.map(summarizeProxy);
+      }
+    }
   }
-  subscriptionCache.set(trimmed, { fetchedAt: Date.now(), proxies });
-  return proxies.map(summarizeProxy);
+
+  if (isPlaceholderSubscriptionBody(lastBody)) {
+    throw new Error(
+      "机场没有下发节点，只返回了探测页。Clash 能更新通常是因为走了已连接的代理。请先让本机 Clash / FlClash 连上节点，再点获取节点。"
+    );
+  }
+  throw new Error("订阅内容里没有可用节点。请确认是 Clash / Clash Meta 订阅，或机场支持该格式。");
 }

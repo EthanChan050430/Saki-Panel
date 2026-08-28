@@ -921,46 +921,47 @@ export function SettingsView({
       <PageErrorToast error={error} onDismiss={() => setError("")} />
       {notice ? <div className="page-notice">{notice}</div> : null}
       <section className="panel-block settings-panel">
+        {/* Hidden file inputs placed outside the grid to avoid becoming unintended grid items */}
+        <input
+          ref={appLogoInputRef}
+          className="hidden-file-input"
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          onChange={(event) => void chooseAppearanceImage("appLogoSrc", event)}
+        />
+        <input
+          ref={sidebarLogoInputRef}
+          className="hidden-file-input"
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          onChange={(event) => void chooseAppearanceImage("sidebarLogoSrc", event)}
+        />
+        <input
+          ref={loginCoverInputRef}
+          className="hidden-file-input"
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          onChange={(event) => void chooseAppearanceImage("loginCoverSrc", event)}
+        />
+        <input
+          ref={backgroundInputRef}
+          className="hidden-file-input"
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          onChange={(event) => void chooseAppearanceImage("backgroundSrc", event)}
+        />
+        <input
+          ref={mobileBackgroundInputRef}
+          className="hidden-file-input"
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          onChange={(event) => void chooseAppearanceImage("mobileBackgroundSrc", event)}
+        />
         <div className="section-heading">
           <h2>{t("settings.title")}</h2>
           <span>{loading ? t("settings.loading") : t("settings.runtime")}</span>
         </div>
         <div className={`settings-grid settings-wiki ${settingsMenuCollapsed ? "toc-collapsed" : ""}`}>
-          <input
-            ref={appLogoInputRef}
-            className="hidden-file-input"
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif"
-            onChange={(event) => void chooseAppearanceImage("appLogoSrc", event)}
-          />
-          <input
-            ref={sidebarLogoInputRef}
-            className="hidden-file-input"
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif"
-            onChange={(event) => void chooseAppearanceImage("sidebarLogoSrc", event)}
-          />
-          <input
-            ref={loginCoverInputRef}
-            className="hidden-file-input"
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif"
-            onChange={(event) => void chooseAppearanceImage("loginCoverSrc", event)}
-          />
-          <input
-            ref={backgroundInputRef}
-            className="hidden-file-input"
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif"
-            onChange={(event) => void chooseAppearanceImage("backgroundSrc", event)}
-          />
-          <input
-            ref={mobileBackgroundInputRef}
-            className="hidden-file-input"
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif"
-            onChange={(event) => void chooseAppearanceImage("mobileBackgroundSrc", event)}
-          />
           <nav className="settings-toc" aria-label={t("settings.toc")}>
             <button
               className="settings-toc-toggle"
