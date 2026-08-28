@@ -38,6 +38,8 @@ import {
   requireSakiModePermission,
   requireUserPermission,
   sanitizeSakiInputAttachments,
+  sanitizeRequestedSakiModel,
+  withRequestedSakiModel,
   trimContextText,
   objectValue,
   trimString,
@@ -104,13 +106,14 @@ function estimateChatTokens(input: SakiChatRequest, prompt: string, reply: strin
 }
 
 export async function callConfiguredModel(input: SakiChatRequest, context: ResolvedSakiContext, skills: SakiSkillSummary[]) {
-  const config = await readEffectiveSakiConfig();
+  const config = withRequestedSakiModel(await readEffectiveSakiConfig(), input);
   const prompt = buildPrompt(input, context, skills);
   const startedAt = Date.now();
   try {
     const text = await callConfiguredPrompt(input, prompt, config);
     logSakiModelEvent("chat.response", {
       mode: input.mode ?? "chat",
+      model: config.model,
       promptChars: prompt.length,
       messageChars: text.length,
       durationMs: Date.now() - startedAt
@@ -134,13 +137,14 @@ export async function callConfiguredModelStream(
   onDelta: (text: string) => void,
   onThinking?: (text: string) => void
 ) {
-  const config = await readEffectiveSakiConfig();
+  const config = withRequestedSakiModel(await readEffectiveSakiConfig(), input);
   const prompt = buildPrompt(input, context, skills);
   const startedAt = Date.now();
   try {
     const text = await callConfiguredPromptStream(input, prompt, onDelta, config, onThinking);
     logSakiModelEvent("chat.stream.response", {
       mode: input.mode ?? "chat",
+      model: config.model,
       promptChars: prompt.length,
       messageChars: text.length,
       durationMs: Date.now() - startedAt
@@ -234,7 +238,8 @@ export async function prepareSakiChatInvocation(
     throw new Error("message is required");
   }
 
-  const config = await readEffectiveSakiConfig();
+  const requestedModel = sanitizeRequestedSakiModel(body.model);
+  const config = withRequestedSakiModel(await readEffectiveSakiConfig(), { model: requestedModel || null });
   const attachments = await hydrateSakiAttachmentsForModel(
     sanitizeSakiInputAttachments(body.attachments),
     message,
@@ -252,7 +257,8 @@ export async function prepareSakiChatInvocation(
     mode: body.mode === "agent" ? "agent" : "chat",
     agentPermissionMode: normalizeSakiAgentPermissionMode(body.agentPermissionMode),
     selectedSkillIds: Array.isArray(body.selectedSkillIds) ? body.selectedSkillIds.map(trimString).filter(Boolean) : [],
-    attachments
+    attachments,
+    ...(requestedModel ? { model: requestedModel } : {})
   };
   requireSakiModePermission(request.user.permissions, input.mode ?? "chat");
   const auditSearchContext = input.auditSearch

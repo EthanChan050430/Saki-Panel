@@ -2270,7 +2270,8 @@ export function SakiFloatingChat({
       mode: requestMode,
       ...(requestMode === "agent" ? { agentPermissionMode: permissionMode } : {}),
       selectedSkillIds,
-      attachments: submittedAttachments
+      attachments: submittedAttachments,
+      ...(currentModelId.trim() ? { model: currentModelId.trim() } : {})
     };
     let streamSawDelta = false;
     let streamSawUnsafeAction = false;
@@ -3793,11 +3794,8 @@ export function SakiFloatingChat({
               className={`saki-model-option ${model.id === currentModelId ? "active" : ""}`}
               type="button"
               onClick={() => {
-                const modelName = model.label || model.name || model.id;
-                onCurrentModelIdChange(model.id);
-                onCurrentModelNameChange(modelName);
                 setModelDropdownOpen(false);
-                void api.updateSakiConfig(token, { model: model.id });
+                void selectModel(model.id);
               }}
             >
               <span className="saki-model-option-name">{model.label || model.id}</span>

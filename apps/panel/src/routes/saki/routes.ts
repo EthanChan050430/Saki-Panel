@@ -66,6 +66,7 @@ import {
   RouteError,
   sakiUsePermissions,
   trimString,
+  withRequestedSakiModel,
   type SakiActiveTaskEvent,
   type SakiAgentResumeState,
   type SakiAgentRunEvents
@@ -324,7 +325,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
         taskId: isAgent ? taskId : undefined
       });
 
-      const config = await readEffectiveSakiConfig();
+      const config = withRequestedSakiModel(await readEffectiveSakiConfig(), modelInput);
       let response: SakiChatResponse;
       if (isAgent) {
         const isContinuation = isSakiContinuationMessage(modelInput.message);
@@ -495,7 +496,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     await assertUserHasSpendablePoints(request.user.sub);
 
     try {
-      const config = await readEffectiveSakiConfig();
+      const config = withRequestedSakiModel(await readEffectiveSakiConfig(), modelInput);
       if (modelInput.mode === "agent") {
         const instanceKeyId = context.workspace?.instanceId ?? null;
         const isContinuation = isSakiContinuationMessage(modelInput.message);

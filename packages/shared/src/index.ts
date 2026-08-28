@@ -1251,6 +1251,7 @@ export interface SakiChatRequest {
   agentPermissionMode?: SakiAgentPermissionMode;
   selectedSkillIds?: string[];
   attachments?: SakiInputAttachment[];
+  model?: string | null;
 }
 
 export interface SakiChatResponse {

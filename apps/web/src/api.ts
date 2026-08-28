@@ -172,7 +172,8 @@ function summarizeSakiRequest(input: SakiChatRequest): Record<string, unknown> {
     messagePreview: compactDebugText(input.message),
     historyCount: input.history?.length ?? 0,
     attachmentCount: input.attachments?.length ?? 0,
-    selectedSkillCount: input.selectedSkillIds?.length ?? 0
+    selectedSkillCount: input.selectedSkillIds?.length ?? 0,
+    model: input.model ?? null
   };
 }
 

@@ -54,6 +54,8 @@ export {
   providerBaseUrl,
   sanitizePanelAppearance,
   sanitizeSakiInputAttachments,
+  sanitizeRequestedSakiModel,
+  withRequestedSakiModel,
   combinedSakiContextText,
   imageAttachments,
   isLikelyChatModel,

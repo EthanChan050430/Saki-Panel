@@ -5714,6 +5714,25 @@ button,
     margin-top: -6px !important;
   }
 
+  .saki-panel.mobile-tab-video .saki-video-bubble,
+  .saki-panel.fullscreen.mobile-tab-video .saki-video-bubble {
+    bottom: calc(100% + 20px) !important;
+    max-width: min(92vw, 360px);
+    padding: 12px 18px;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  .saki-panel.mobile-tab-video .saki-video-bubble.streaming-reply,
+  .saki-panel.fullscreen.mobile-tab-video .saki-video-bubble.streaming-reply {
+    width: min(90vw, 360px);
+    max-width: min(92vw, 380px);
+    max-height: clamp(160px, 36vh, 280px);
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 14px 18px;
+  }
+
   .saki-video-controls {
     margin-bottom: 8px;
     padding: 6px 12px;

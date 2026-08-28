@@ -7,7 +7,7 @@ import { auditAgentTool, executeSakiAgentTool, rollbackCheckpoint } from "./exec
 import { completedSakiActions, pendingSakiActions, removeCheckpoint, removePendingSakiAction, sakiCheckpoints } from "./state.js";
 import { toolArgs } from "./tools.js";
 import type { PendingSakiAction, SakiAgentResumeState, SakiAgentRuntime } from "./types.js";
-import { effectiveSakiAgentPermissionMode, RouteError } from "./types.js";
+import { effectiveSakiAgentPermissionMode, RouteError, withRequestedSakiModel } from "./types.js";
 import { readEffectiveSakiConfig } from "./config.js";
 import { resolveSakiContext } from "./chat.js";
 import { maybeFinishWatchIncident } from "../../watch/runner.js";
@@ -21,15 +21,16 @@ function assertPendingSakiActionOwner(request: FastifyRequest, pending: PendingS
 
 async function runtimeForSakiActionDecision(request: FastifyRequest, pending: PendingSakiAction): Promise<SakiAgentRuntime> {
   const context = await resolveSakiContext(request.user.sub, pending.contextInstanceId, false);
-  const config = await readEffectiveSakiConfig();
+  const input = pending.resume?.input ?? {
+    message: "approved Saki action",
+    history: [],
+    instanceId: pending.contextInstanceId,
+    mode: "agent" as const
+  };
+  const config = withRequestedSakiModel(await readEffectiveSakiConfig(), input);
   return {
     request,
-    input: pending.resume?.input ?? {
-      message: "approved Saki action",
-      history: [],
-      instanceId: pending.contextInstanceId,
-      mode: "agent"
-    },
+    input,
     context,
     skills: pending.resume?.skills ?? [],
     userId: request.user.sub,

@@ -1085,6 +1085,18 @@ export function agentModelConfig(config: any): any {
   };
 }
 
+export function sanitizeRequestedSakiModel(value: unknown): string {
+  return trimString(value).slice(0, 200);
+}
+
+export function withRequestedSakiModel(
+  config: SakiConfigResponse,
+  input: Pick<SakiChatRequest, "model"> | null | undefined
+): SakiConfigResponse {
+  const model = sanitizeRequestedSakiModel(input?.model);
+  return model && model !== config.model ? { ...config, model } : config;
+}
+
 export function sakiPermissionModeLabel(mode: SakiAgentPermissionMode): string {
   if (mode === "ask") return "Ask permissions";
   if (mode === "plan") return "Plan mode";
