@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Activity,
   AlertTriangle,
   Archive,
   ArrowRight,
+  Bell,
   BookMarked,
   BookOpen,
   Bot,
@@ -14,11 +16,13 @@ import {
   ChevronRight,
   ClipboardList,
   Code2,
+  Coins,
   Copy,
   Cpu,
   Download,
   DownloadCloud,
   Edit3,
+  ExternalLink,
   Eye,
   EyeOff,
   FileArchive,
@@ -38,6 +42,7 @@ import {
   Heart,
   History,
   Image as ImageIcon,
+  Info,
   KeyRound,
   Layers,
   LayoutGrid,
@@ -61,9 +66,11 @@ import {
   Power,
   PowerOff,
   RefreshCw,
+  RotateCcw,
   RotateCw,
   Save,
   Search,
+  Send,
   Server,
   Settings,
   Shield,
@@ -79,6 +86,8 @@ import {
   UserCog,
   UserPlus,
   UserRound,
+  UserX,
+  Video,
   Wifi,
   WifiOff,
   Wrench,
@@ -88,9 +97,20 @@ import {
 import type {
   CreateSakiSkillRequest,
   CurrentUser,
+  ManagedIngestToken,
+  ManagedInstance,
+  ManagedNotificationChannel,
+  ManagedNotificationDelivery,
+  NotificationChannelType,
+  NotificationEventKind,
   PanelAppearanceSettings,
   RegistrationIdentity,
   SakiAntigravityAuthStatusResponse,
+  SakiAntigravityExchangeRequest,
+  SakiAntigravityLoginRequest,
+  SakiAntigravityLoginUrlResponse,
+  SakiAntigravityLogoutRequest,
+  SakiAntigravitySwitchAccountRequest,
   SakiConfigResponse,
   SakiCopilotAuthStatusResponse,
   SakiCopilotLoginResponse,
@@ -105,14 +125,21 @@ import type { SakiSettingsSection } from "../types/app.js";
 import { api, ApiError } from "../api.js";
 import { panelLanguageOptions, type PanelLanguage, panelT, type PanelTextKey, usePanelT } from "../i18n/index.js";
 import { defaultPanelAppearance, defaultSakiRequestTimeoutMs, sakiArtAssets } from "../constants.js";
-import { appearanceFileToDataUrl } from "../components/common/AccountAvatar.js";
+import { appearanceFileToDataUrl, appearanceMediaFileToDataUrl } from "../components/common/AccountAvatar.js";
 import { PageErrorToast } from "../components/common/CommonUI.js";
 import { SakiEmptyState } from "../components/saki/SakiEmptyState.js";
 import { formatDate } from "../utils/path.js";
-import { normalizePanelAppearance } from "../utils/appearance.js";
+import { isVideoSource, normalizePanelAppearance } from "../utils/appearance.js";
 import { parseHashRoute, updateHashRoute } from "../utils/route.js";
 import { PointsUsageModal } from "../PointsUsageModal.js";
 import { AdminUserPointsModal } from "../AdminUserPointsModal.js";
+import {
+  getSakiVoiceEchoEngine,
+  setSakiVoiceEchoEngine,
+  checkWebGPUSupport,
+  type SakiVoiceEchoEngineType,
+  type WebGPUDetectionResult
+} from "../components/saki/sakiVoiceEngine.js";
 
 const emptySakiConfig: SakiConfigResponse = {
   requestTimeoutMs: defaultSakiRequestTimeoutMs,
@@ -127,6 +154,7 @@ const emptySakiConfig: SakiConfigResponse = {
       ollamaUrl: "http://localhost:11434"
     }
   },
+  modelPointsMultipliers: {},
   searchEnabled: true,
   mcpEnabled: false,
   systemPrompt: "",
@@ -177,6 +205,17 @@ function isLocalProvider(provider: string): boolean {
 
 function needsCloudApiFields(provider: string): boolean {
   return !isLocalProvider(provider) && provider !== "copilot" && provider !== "antigravity";
+}
+
+type AntigravityMode = "proxy" | "direct";
+
+/**
+ * Effective antigravity connection scheme: explicit `mode` wins; for legacy
+ * configs without a mode, an AIzaSy-prefixed key implies "direct".
+ */
+function antigravityModeOf(config?: SakiProviderConfig): AntigravityMode {
+  if (config?.mode === "proxy" || config?.mode === "direct") return config.mode;
+  return (config?.apiKey ?? "").trim().startsWith("AIzaSy") ? "direct" : "proxy";
 }
 
 function defaultProviderConfig(provider: string): SakiProviderConfig {
@@ -259,6 +298,572 @@ const registrationIdentityOptions: Array<{ value: RegistrationIdentity; label: s
   { value: "super_admin", label: "超级管理员" }
 ];
 
+const watchChannelTypeLabels: Record<NotificationChannelType, string> = {
+  webhook: "通用 Webhook",
+  dingtalk: "钉钉",
+  wecom: "企业微信",
+  telegram: "Telegram"
+};
+
+const watchEventKindOptions: Array<{ value: NotificationEventKind; label: string }> = [
+  { value: "opened", label: "新事件" },
+  { value: "awaiting", label: "等待批准" },
+  { value: "resolved", label: "已恢复" },
+  { value: "failed", label: "失败/回滚" },
+  { value: "escalation", label: "升级提醒" }
+];
+
+function watchEventKindLabel(kind: string): string {
+  return watchEventKindOptions.find((option) => option.value === kind)?.label ?? kind;
+}
+
+function watchChannelSecretHint(type: NotificationChannelType): string {
+  if (type === "dingtalk") return "钉钉机器人加签 Secret，未开启加签可留空";
+  if (type === "telegram") return "Telegram Bot 的 chat_id";
+  return "一般可留空";
+}
+
+function maskIngestToken(token: string): string {
+  if (token.length <= 8) return "••••••••";
+  return `${token.slice(0, 6)}••••${token.slice(-4)}`;
+}
+
+interface WatchChannelDraft {
+  name: string;
+  type: NotificationChannelType;
+  url: string;
+  secret: string;
+  events: NotificationEventKind[];
+}
+
+const emptyWatchChannelDraft: WatchChannelDraft = {
+  name: "",
+  type: "webhook",
+  url: "",
+  secret: "",
+  events: ["opened", "awaiting", "resolved", "failed", "escalation"]
+};
+
+function WatchNotifyPanel({
+  token,
+  onLogout,
+  refreshTick
+}: {
+  token: string;
+  onLogout: () => void;
+  refreshTick: number;
+}) {
+  const [channels, setChannels] = useState<ManagedNotificationChannel[]>([]);
+  const [deliveries, setDeliveries] = useState<ManagedNotificationDelivery[]>([]);
+  const [ingestTokenList, setIngestTokenList] = useState<ManagedIngestToken[]>([]);
+  const [watchInstances, setWatchInstances] = useState<ManagedInstance[]>([]);
+  const [watchLoading, setWatchLoading] = useState(true);
+  const [watchError, setWatchError] = useState("");
+  const [watchNotice, setWatchNotice] = useState("");
+  const [watchBusy, setWatchBusy] = useState<string | null>(null);
+  const [channelDraft, setChannelDraft] = useState<WatchChannelDraft>(emptyWatchChannelDraft);
+  const [ingestDraft, setIngestDraft] = useState({ instanceId: "", label: "" });
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; error?: string }>>({});
+
+  const refreshWatch = useCallback(async () => {
+    setWatchError("");
+    setWatchLoading(true);
+    try {
+      const [channelResult, deliveryResult, ingestResult, instanceList] = await Promise.all([
+        api.notificationChannels(token),
+        api.notificationDeliveries(token, 20),
+        api.ingestTokens(token),
+        api.instances(token)
+      ]);
+      setChannels(channelResult.channels);
+      setDeliveries(deliveryResult.deliveries);
+      setIngestTokenList(ingestResult.tokens);
+      setWatchInstances(instanceList);
+      setIngestDraft((current) => ({
+        ...current,
+        instanceId: current.instanceId || instanceList[0]?.id || ""
+      }));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onLogout();
+        return;
+      }
+      setWatchError(err instanceof Error ? err.message : "值班通知配置加载失败");
+    } finally {
+      setWatchLoading(false);
+    }
+  }, [onLogout, token]);
+
+  useEffect(() => {
+    void refreshWatch();
+  }, [refreshWatch, refreshTick]);
+
+  async function toggleChannelEnabled(channel: ManagedNotificationChannel) {
+    setWatchError("");
+    setWatchBusy(`toggle-${channel.id}`);
+    try {
+      const updated = await api.updateNotificationChannel(token, channel.id, { enabled: !channel.enabled });
+      setChannels((current) => current.map((item) => (item.id === channel.id ? updated : item)));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onLogout();
+        return;
+      }
+      setWatchError(err instanceof Error ? err.message : "渠道状态更新失败");
+    } finally {
+      setWatchBusy(null);
+    }
+  }
+
+  async function testChannel(channel: ManagedNotificationChannel) {
+    setWatchError("");
+    setWatchBusy(`test-${channel.id}`);
+    try {
+      const result = await api.testNotificationChannel(token, channel.id);
+      setTestResults((current) => ({
+        ...current,
+        [channel.id]: result.error ? { ok: result.ok, error: result.error } : { ok: result.ok }
+      }));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onLogout();
+        return;
+      }
+      setTestResults((current) => ({
+        ...current,
+        [channel.id]: { ok: false, error: err instanceof Error ? err.message : "测试发送失败" }
+      }));
+    } finally {
+      setWatchBusy(null);
+    }
+  }
+
+  async function deleteChannel(channel: ManagedNotificationChannel) {
+    if (!window.confirm(`确定删除通知渠道「${channel.name}」吗？订阅了该渠道的实例将不再收到推送。`)) return;
+    setWatchError("");
+    setWatchBusy(`delete-${channel.id}`);
+    try {
+      await api.deleteNotificationChannel(token, channel.id);
+      setChannels((current) => current.filter((item) => item.id !== channel.id));
+      setWatchNotice(`通知渠道「${channel.name}」已删除`);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onLogout();
+        return;
+      }
+      setWatchError(err instanceof Error ? err.message : "删除通知渠道失败");
+    } finally {
+      setWatchBusy(null);
+    }
+  }
+
+  async function createChannel() {
+    const name = channelDraft.name.trim();
+    const url = channelDraft.url.trim();
+    if (!name || !url) {
+      setWatchError("请填写渠道名称与 Webhook 地址");
+      return;
+    }
+    if (channelDraft.events.length === 0) {
+      setWatchError("请至少选择一个通知事件");
+      return;
+    }
+    setWatchError("");
+    setWatchNotice("");
+    setWatchBusy("create-channel");
+    try {
+      const secret = channelDraft.secret.trim();
+      const created = await api.createNotificationChannel(token, {
+        name,
+        type: channelDraft.type,
+        url,
+        secret: secret || null,
+        enabled: true,
+        events: channelDraft.events
+      });
+      setChannels((current) => [...current, created]);
+      setChannelDraft(emptyWatchChannelDraft);
+      setWatchNotice(`通知渠道「${created.name}」已创建`);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onLogout();
+        return;
+      }
+      setWatchError(err instanceof Error ? err.message : "创建通知渠道失败");
+    } finally {
+      setWatchBusy(null);
+    }
+  }
+
+  async function createIngest() {
+    if (!ingestDraft.instanceId) {
+      setWatchError("请选择要接入告警的实例");
+      return;
+    }
+    setWatchError("");
+    setWatchNotice("");
+    setWatchBusy("create-ingest");
+    try {
+      const label = ingestDraft.label.trim();
+      const created = await api.createIngestToken(token, {
+        instanceId: ingestDraft.instanceId,
+        ...(label ? { label } : {})
+      });
+      setIngestTokenList((current) => [...current, created]);
+      setIngestDraft((current) => ({ ...current, label: "" }));
+      setWatchNotice(`接入口令「${created.label}」已创建`);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onLogout();
+        return;
+      }
+      setWatchError(err instanceof Error ? err.message : "创建接入口令失败");
+    } finally {
+      setWatchBusy(null);
+    }
+  }
+
+  async function deleteIngest(item: ManagedIngestToken) {
+    if (!window.confirm(`确定删除接入口令「${item.label}」吗？使用该口令的告警推送将立即失效。`)) return;
+    setWatchError("");
+    setWatchBusy(`delete-ingest-${item.id}`);
+    try {
+      await api.deleteIngestToken(token, item.id);
+      setIngestTokenList((current) => current.filter((entry) => entry.id !== item.id));
+      setWatchNotice(`接入口令「${item.label}」已删除`);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onLogout();
+        return;
+      }
+      setWatchError(err instanceof Error ? err.message : "删除接入口令失败");
+    } finally {
+      setWatchBusy(null);
+    }
+  }
+
+  async function copyWatchText(text: string, okMessage: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setWatchNotice(okMessage);
+    } catch {
+      setWatchError("复制失败，请手动选择复制");
+    }
+  }
+
+  function truncateWatchUrl(url: string, maxLength = 48): string {
+    return url.length > maxLength ? `${url.slice(0, maxLength)}…` : url;
+  }
+
+  return (
+    <div className="settings-watch-page">
+      {watchNotice ? <div className="page-notice">{watchNotice}</div> : null}
+      {watchError ? (
+        <div className="proxy-sub-error-badge" style={{ marginBottom: "1rem" }}>
+          <AlertTriangle size={14} />
+          <span>{watchError}</span>
+        </div>
+      ) : null}
+
+      {/* 通知渠道 */}
+      <div className="panel-block watch-notify-block">
+        <div className="section-heading">
+          <h2>通知渠道</h2>
+          <span>{watchLoading ? "载入中" : `${channels.length} 个渠道`}</span>
+        </div>
+
+        <div className="watch-channel-list">
+          {channels.map((channel) => {
+            const testResult = testResults[channel.id];
+            return (
+              <div className={`watch-channel-row ${channel.enabled ? "" : "disabled"}`} key={channel.id}>
+                <div className="watch-channel-main">
+                  <div className="watch-channel-title">
+                    <strong>{channel.name}</strong>
+                    <span className="watch-channel-type-badge">{watchChannelTypeLabels[channel.type]}</span>
+                    {!channel.enabled ? <span className="watch-channel-off-badge">已停用</span> : null}
+                  </div>
+                  <span className="watch-channel-url" title={channel.url}>
+                    {truncateWatchUrl(channel.url)}
+                  </span>
+                  <div className="watch-channel-events">
+                    {channel.events.map((eventKind) => (
+                      <span className="watch-event-chip" key={eventKind}>
+                        {watchEventKindLabel(eventKind)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div className="watch-channel-actions">
+                  {testResult ? (
+                    <span
+                      className={`watch-test-result ${testResult.ok ? "ok" : "fail"}`}
+                      title={testResult.error || undefined}
+                    >
+                      {testResult.ok ? "测试成功" : `测试失败${testResult.error ? `：${testResult.error}` : ""}`}
+                    </span>
+                  ) : null}
+                  <button
+                    className="ghost-button mini"
+                    type="button"
+                    disabled={watchBusy === `toggle-${channel.id}`}
+                    title={channel.enabled ? "停用该渠道" : "启用该渠道"}
+                    onClick={() => void toggleChannelEnabled(channel)}
+                  >
+                    {channel.enabled ? <PowerOff size={14} /> : <Power size={14} />}
+                    <span>{channel.enabled ? "停用" : "启用"}</span>
+                  </button>
+                  <button
+                    className="ghost-button mini"
+                    type="button"
+                    disabled={watchBusy === `test-${channel.id}`}
+                    title="发送一条测试通知"
+                    onClick={() => void testChannel(channel)}
+                  >
+                    {watchBusy === `test-${channel.id}` ? <Loader2 size={14} className="spinner" /> : <Send size={14} />}
+                    <span>测试</span>
+                  </button>
+                  <button
+                    className="icon-button action-delete"
+                    type="button"
+                    disabled={watchBusy === `delete-${channel.id}`}
+                    title="删除渠道"
+                    onClick={() => void deleteChannel(channel)}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          {!watchLoading && channels.length === 0 ? (
+            <div className="watch-empty-hint">暂无通知渠道，添加后可在实例值班策略中订阅事件推送</div>
+          ) : null}
+        </div>
+
+        <div className="watch-channel-form">
+          <div className="watch-form-title">
+            <Plus size={15} />
+            <span>添加通知渠道</span>
+          </div>
+          <div className="watch-form-grid">
+            <label>
+              <span>名称</span>
+              <input
+                value={channelDraft.name}
+                onChange={(e) => setChannelDraft((current) => ({ ...current, name: e.target.value }))}
+                placeholder="例如：运维群钉钉机器人"
+              />
+            </label>
+            <label>
+              <span>类型</span>
+              <select
+                value={channelDraft.type}
+                onChange={(e) =>
+                  setChannelDraft((current) => ({ ...current, type: e.target.value as NotificationChannelType }))
+                }
+              >
+                <option value="webhook">通用 Webhook</option>
+                <option value="dingtalk">钉钉</option>
+                <option value="wecom">企业微信</option>
+                <option value="telegram">Telegram</option>
+              </select>
+            </label>
+            <label className="watch-form-wide">
+              <span>Webhook 地址</span>
+              <input
+                value={channelDraft.url}
+                onChange={(e) => setChannelDraft((current) => ({ ...current, url: e.target.value }))}
+                placeholder="https://…"
+              />
+            </label>
+            <label className="watch-form-wide">
+              <span>Secret (可选)</span>
+              <input
+                type="password"
+                value={channelDraft.secret}
+                onChange={(e) => setChannelDraft((current) => ({ ...current, secret: e.target.value }))}
+                placeholder={watchChannelSecretHint(channelDraft.type)}
+              />
+              <small className="watch-field-hint">{watchChannelSecretHint(channelDraft.type)}</small>
+            </label>
+            <div className="watch-form-wide">
+              <span className="watch-events-label">订阅事件</span>
+              <div className="watch-events-options">
+                {watchEventKindOptions.map((option) => (
+                  <label className="watch-event-option" key={option.value}>
+                    <input
+                      type="checkbox"
+                      checked={channelDraft.events.includes(option.value)}
+                      onChange={(e) =>
+                        setChannelDraft((current) => ({
+                          ...current,
+                          events: e.target.checked
+                            ? [...current.events, option.value]
+                            : current.events.filter((kind) => kind !== option.value)
+                        }))
+                      }
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="watch-form-actions">
+            <button
+              className="primary-button"
+              type="button"
+              disabled={watchBusy === "create-channel"}
+              onClick={() => void createChannel()}
+            >
+              {watchBusy === "create-channel" ? <Loader2 size={15} className="spinner" /> : <Plus size={15} />}
+              <span>添加渠道</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="watch-deliveries">
+          <div className="watch-form-title">
+            <History size={15} />
+            <span>最近发送记录</span>
+          </div>
+          {deliveries.length > 0 ? (
+            <div className="watch-delivery-list">
+              {deliveries.map((delivery) => {
+                const delivered = ["success", "delivered", "ok"].includes(delivery.status);
+                return (
+                  <div className="watch-delivery-row" key={delivery.id}>
+                    <time>{formatDate(delivery.createdAt)}</time>
+                    <span className="watch-delivery-channel">{delivery.channelName || delivery.channelId}</span>
+                    <span className="watch-event-chip">{watchEventKindLabel(delivery.kind)}</span>
+                    <span
+                      className={`watch-delivery-status ${delivered ? "ok" : "fail"}`}
+                      title={delivery.error || undefined}
+                    >
+                      {delivered ? "成功" : "失败"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="watch-empty-hint">暂无发送记录</div>
+          )}
+        </div>
+      </div>
+
+      {/* 告警接入口令 */}
+      <div className="panel-block watch-ingest-block">
+        <div className="section-heading">
+          <h2>告警接入口令</h2>
+          <span>{watchLoading ? "载入中" : `${ingestTokenList.length} 个口令`}</span>
+        </div>
+        <p className="watch-ingest-hint">
+          支持通用 JSON 与 Prometheus Alertmanager 格式，将监控系统告警接入 Saki 值班。
+        </p>
+
+        <div className="watch-ingest-list">
+          {ingestTokenList.map((item) => {
+            const ingestUrl = `${window.location.origin}/api/ingest/incidents/${item.token}`;
+            return (
+              <div className="watch-ingest-row" key={item.id}>
+                <div className="watch-ingest-main">
+                  <div className="watch-ingest-title">
+                    <strong>{item.label}</strong>
+                    <span className="watch-ingest-instance">{item.instanceName || item.instanceId}</span>
+                  </div>
+                  <div className="watch-ingest-token-line">
+                    <code title={item.token}>{maskIngestToken(item.token)}</code>
+                    <button
+                      className="ghost-button mini"
+                      type="button"
+                      title="复制完整口令"
+                      onClick={() => void copyWatchText(item.token, "口令已复制到剪贴板")}
+                    >
+                      <Copy size={13} />
+                      <span>复制</span>
+                    </button>
+                  </div>
+                  <div className="watch-ingest-url-line">
+                    <code title={ingestUrl}>{ingestUrl}</code>
+                    <button
+                      className="ghost-button mini"
+                      type="button"
+                      title="复制完整接入地址"
+                      onClick={() => void copyWatchText(ingestUrl, "接入地址已复制到剪贴板")}
+                    >
+                      <Copy size={13} />
+                      <span>复制地址</span>
+                    </button>
+                  </div>
+                  <span className="watch-ingest-meta">
+                    创建于 {formatDate(item.createdAt)} · 最近使用 {item.lastUsedAt ? formatDate(item.lastUsedAt) : "从未使用"}
+                  </span>
+                </div>
+                <button
+                  className="icon-button action-delete"
+                  type="button"
+                  disabled={watchBusy === `delete-ingest-${item.id}`}
+                  title="删除口令"
+                  onClick={() => void deleteIngest(item)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            );
+          })}
+          {!watchLoading && ingestTokenList.length === 0 ? (
+            <div className="watch-empty-hint">暂无接入口令，创建后将外部监控系统的告警推送到对应实例</div>
+          ) : null}
+        </div>
+
+        <div className="watch-channel-form">
+          <div className="watch-form-title">
+            <KeyRound size={15} />
+            <span>创建接入口令</span>
+          </div>
+          <div className="watch-form-grid">
+            <label>
+              <span>目标实例</span>
+              <select
+                value={ingestDraft.instanceId}
+                onChange={(e) => setIngestDraft((current) => ({ ...current, instanceId: e.target.value }))}
+              >
+                {watchInstances.length === 0 ? <option value="">暂无实例</option> : null}
+                {watchInstances.map((instance) => (
+                  <option key={instance.id} value={instance.id}>
+                    {instance.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>备注名称</span>
+              <input
+                value={ingestDraft.label}
+                onChange={(e) => setIngestDraft((current) => ({ ...current, label: e.target.value }))}
+                placeholder="例如：Prometheus 生产环境"
+              />
+            </label>
+          </div>
+          <div className="watch-form-actions">
+            <button
+              className="primary-button"
+              type="button"
+              disabled={watchBusy === "create-ingest" || watchInstances.length === 0}
+              onClick={() => void createIngest()}
+            >
+              {watchBusy === "create-ingest" ? <Loader2 size={15} className="spinner" /> : <Plus size={15} />}
+              <span>创建口令</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function SettingsView({
   token,
   onLogout,
@@ -306,7 +911,27 @@ export function SettingsView({
   const [copilotLoginState, setCopilotLoginState] = useState<SakiCopilotLoginResponse | null>(null);
   const [copilotBusy, setCopilotBusy] = useState<"status" | "login" | null>(null);
   const [antigravityStatus, setAntigravityStatus] = useState<SakiAntigravityAuthStatusResponse | null>(null);
+  const [antigravityLoginState, setAntigravityLoginState] = useState<SakiAntigravityLoginUrlResponse | null>(() => {
+    try {
+      const saved = sessionStorage.getItem("saki_antigravity_login_state");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [antigravityOAuthActive, setAntigravityOAuthActive] = useState(() => {
+    try {
+      return Boolean(sessionStorage.getItem("saki_antigravity_oauth_active"));
+    } catch {
+      return false;
+    }
+  });
+  const [antigravityAuthCodeInput, setAntigravityAuthCodeInput] = useState("");
   const [antigravityBusy, setAntigravityBusy] = useState(false);
+  const [antigravityLoginModalOpen, setAntigravityLoginModalOpen] = useState(false);
+  const [antigravityTokenInput, setAntigravityTokenInput] = useState("");
+  const [antigravityEmailInput, setAntigravityEmailInput] = useState("");
+  const [antigravityActionBusy, setAntigravityActionBusy] = useState<string | null>(null);
   const [skillBusy, setSkillBusy] = useState<string | null>(null);
   const [skillDetailLoading, setSkillDetailLoading] = useState(false);
   const [error, setError] = useState("");
@@ -317,12 +942,92 @@ export function SettingsView({
   const loginCoverInputRef = useRef<HTMLInputElement>(null);
   const backgroundInputRef = useRef<HTMLInputElement>(null);
   const mobileBackgroundInputRef = useRef<HTMLInputElement>(null);
+  const darkBackgroundInputRef = useRef<HTMLInputElement>(null);
+  const mobileDarkBackgroundInputRef = useRef<HTMLInputElement>(null);
+  const [bgThemeTab, setBgThemeTab] = useState<"light" | "dark" | "all">(() =>
+    typeof document !== "undefined" && document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light"
+  );
   const skillImportInputRef = useRef<HTMLInputElement>(null);
   const t = useCallback((key: PanelTextKey) => panelT(language, key), [language]);
   const localizedRegistrationIdentityOptions = useMemo<Array<{ value: RegistrationIdentity; label: string }>>(
     () => registrationIdentityOptions.map((option) => ({ ...option, label: t(`registration.${option.value}` as PanelTextKey) })),
     [t]
   );
+
+  const [newMultiplierModel, setNewMultiplierModel] = useState("");
+  const [newMultiplierValue, setNewMultiplierValue] = useState("1.0");
+  const [customModelMode, setCustomModelMode] = useState(false);
+  const [voiceEchoEngine, setVoiceEchoEngineState] = useState<SakiVoiceEchoEngineType>(() => getSakiVoiceEchoEngine());
+  const [webGpuInfo, setWebGpuInfo] = useState<WebGPUDetectionResult | null>(null);
+
+  useEffect(() => {
+    void checkWebGPUSupport().then(setWebGpuInfo);
+  }, []);
+
+  const handleVoiceEchoEngineChange = (next: SakiVoiceEchoEngineType) => {
+    setVoiceEchoEngineState(next);
+    setSakiVoiceEchoEngine(next);
+  };
+
+  const defaultKnownModels = useMemo(
+    () => [
+      // 与后端 defaultAntigravityModels 保持一致：仅作为实时同步失败时的兜底，
+      // gemini-3-flash 上游已下线，当前 flash 模型为 gemini-3.8-flash。
+      { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash (最新推荐/快速)" },
+      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+      { id: "claude-3-7-sonnet", label: "Claude 3.7 Sonnet (反代支持)" },
+      { id: "claude-3-5-sonnet", label: "Claude 3.5 Sonnet (反代支持)" }
+    ],
+    []
+  );
+
+  const combinedModelKeys = useMemo(() => {
+    const keys = new Set<string>();
+    if (form.model?.trim()) keys.add(form.model.trim());
+    for (const m of defaultKnownModels) keys.add(m.id);
+    for (const m of modelOptions) {
+      if (m.id?.trim()) keys.add(m.id.trim());
+    }
+    if (form.modelPointsMultipliers) {
+      for (const k of Object.keys(form.modelPointsMultipliers)) {
+        if (k.trim()) keys.add(k.trim());
+      }
+    }
+    return Array.from(keys);
+  }, [defaultKnownModels, form.model, form.modelPointsMultipliers, modelOptions]);
+
+  const handleSetModelMultiplier = useCallback((modelKey: string, value: number) => {
+    const safeRate = Math.max(0, Math.round(value * 100) / 100);
+    setForm((current) => ({
+      ...current,
+      modelPointsMultipliers: {
+        ...(current.modelPointsMultipliers || {}),
+        [modelKey]: safeRate
+      }
+    }));
+  }, []);
+
+  const handleResetModelMultiplier = useCallback((modelKey: string) => {
+    setForm((current) => {
+      const next = { ...(current.modelPointsMultipliers || {}) };
+      delete next[modelKey];
+      return {
+        ...current,
+        modelPointsMultipliers: next
+      };
+    });
+  }, []);
+
+  const handleAddCustomMultiplier = useCallback(() => {
+    const key = newMultiplierModel.trim();
+    if (!key) return;
+    const parsed = parseFloat(newMultiplierValue);
+    const rate = Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed * 100) / 100 : 1.0;
+    handleSetModelMultiplier(key, rate);
+    setNewMultiplierModel("");
+    setNewMultiplierValue("1.0");
+  }, [handleSetModelMultiplier, newMultiplierModel, newMultiplierValue]);
 
   const refresh = useCallback(async () => {
     setError("");
@@ -334,7 +1039,13 @@ export function SettingsView({
         api.sakiAllSkills(token),
         api.sessionSettings(token)
       ]);
-      setForm(nextConfig);
+      // gemini-3-flash 上游已下线：加载时把存量的过期模型名升级为当前 flash 模型，
+      // 避免设置页/聊天继续拿旧 id 请求导致 404。
+      const migratedConfig =
+        nextConfig.provider === "antigravity" && nextConfig.model === "gemini-3-flash"
+          ? { ...nextConfig, model: "gemini-3.8-flash" }
+          : nextConfig;
+      setForm(migratedConfig);
       setSessionTimeoutMinutes(formatSessionTimeoutMinutes(nextSessionSettings.sessionTimeoutMinutes));
       setRegistrationIdentity(nextSessionSettings.registrationIdentity);
       onAppearanceChange(nextConfig.appearance);
@@ -362,6 +1073,7 @@ export function SettingsView({
     if (patch.ollamaUrl !== undefined) nextConfig.ollamaUrl = patch.ollamaUrl;
     if (patch.baseUrl !== undefined) nextConfig.baseUrl = patch.baseUrl;
     if (patch.apiKey !== undefined) nextConfig.apiKey = patch.apiKey;
+    if (patch.mode !== undefined) nextConfig.mode = patch.mode;
 
     const next: SakiConfigResponse = {
       ...current,
@@ -394,19 +1106,93 @@ export function SettingsView({
         apiKey: form.apiKey
       }
     };
+    // Antigravity: persist an explicit, unambiguous mode and never let the two
+    // connection schemes' credentials coexist in the saved config.
+    const antigravityConfig = providerConfigs.antigravity ? { ...providerConfigs.antigravity } : undefined;
+    if (antigravityConfig) {
+      let mode = antigravityModeOf(antigravityConfig);
+      // 用户填入 AIzaSy 开头的 Gemini Key，意图就是官方直连：
+      // 该 Key 绝不会发往反代端点，这里直接提升为直连模式（而不是静默清除）。
+      if (mode === "proxy" && (antigravityConfig.apiKey ?? "").trim().startsWith("AIzaSy")) {
+        mode = "direct";
+      }
+      antigravityConfig.mode = mode;
+      if (mode === "direct") {
+        // 官方直连：不保存反代 Base URL（后端始终使用 Google 官方端点）
+        antigravityConfig.baseUrl = "";
+      } else {
+        if (!(antigravityConfig.baseUrl ?? "").trim()) {
+          antigravityConfig.baseUrl = providerBaseUrlDefaults.antigravity ?? "http://localhost:8080/v1";
+        }
+      }
+      providerConfigs.antigravity = antigravityConfig;
+    }
+    const topLevelBaseUrl = form.provider === "antigravity" && antigravityConfig ? (antigravityConfig.baseUrl ?? "") : form.baseUrl;
+    const topLevelApiKey = form.provider === "antigravity" && antigravityConfig ? (antigravityConfig.apiKey ?? "") : form.apiKey;
     return {
       requestTimeoutMs: Number(form.requestTimeoutMs) || defaultSakiRequestTimeoutMs,
       provider: form.provider,
       model: form.model,
       ollamaUrl: form.ollamaUrl,
-      baseUrl: form.baseUrl,
-      apiKey: form.apiKey,
+      baseUrl: topLevelBaseUrl,
+      apiKey: topLevelApiKey,
       providerConfigs,
+      modelPointsMultipliers: form.modelPointsMultipliers || {},
       searchEnabled: form.searchEnabled,
       mcpEnabled: form.mcpEnabled,
       systemPrompt: form.systemPrompt ?? "",
       appearance: form.appearance
     };
+  }
+
+  function handleAntigravityApiKeyInput(value: string) {
+    const currentMode = antigravityModeOf(providerConfigFromForm(form, "antigravity"));
+    if (value.trim().startsWith("AIzaSy") && currentMode !== "direct") {
+      // 用户意图明显：Gemini Key = 官方直连。自动切换模式并保留 Key，
+      // 而不是把它当反代 token 在保存时静默清掉。
+      setModelOptions([]);
+      setNotice("检测到 Gemini API Key（AIzaSy...），已自动切换为「官方直连」模式，该 Key 只会发往 Google 官方端点。");
+      setForm((current) => {
+        const existing = providerConfigFromForm(current, "antigravity");
+        return {
+          ...current,
+          apiKey: value,
+          baseUrl: "",
+          providerConfigs: {
+            ...current.providerConfigs,
+            antigravity: { ...existing, mode: "direct", apiKey: value, baseUrl: "" }
+          }
+        };
+      });
+      return;
+    }
+    updateActiveProviderConfig({ apiKey: value });
+  }
+
+  function switchAntigravityMode(mode: AntigravityMode) {
+    setModelOptions([]);
+    setForm((current) => {
+      const existing = providerConfigFromForm(current, "antigravity");
+      const nextConfig: SakiProviderConfig = {
+        ...existing,
+        mode,
+        // 切换连接方式时清空 apiKey，两种方案的凭据绝不混用
+        apiKey: ""
+      };
+      if (mode === "proxy" && !(nextConfig.baseUrl ?? "").trim()) {
+        nextConfig.baseUrl = providerBaseUrlDefaults.antigravity ?? "http://localhost:8080/v1";
+      }
+      return {
+        ...current,
+        providerConfigs: {
+          ...current.providerConfigs,
+          antigravity: nextConfig
+        },
+        // antigravity 为当前激活服务商，保持顶层镜像字段同步
+        baseUrl: nextConfig.baseUrl ?? "",
+        apiKey: ""
+      };
+    });
   }
 
   function changeProvider(provider: string) {
@@ -439,9 +1225,10 @@ export function SettingsView({
     }));
   }
 
-  async function chooseAppearanceImage(
-    field: "appLogoSrc" | "sidebarLogoSrc" | "loginCoverSrc" | "backgroundSrc" | "mobileBackgroundSrc",
-    event: React.ChangeEvent<HTMLInputElement>
+  async function chooseAppearanceMedia(
+    field: "appLogoSrc" | "sidebarLogoSrc" | "loginCoverSrc" | "backgroundSrc" | "mobileBackgroundSrc" | "darkBackgroundSrc" | "mobileDarkBackgroundSrc",
+    event: React.ChangeEvent<HTMLInputElement>,
+    allowVideo = false
   ) {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -449,11 +1236,18 @@ export function SettingsView({
     setError("");
     setNotice("");
     try {
-      const dataUrl = await appearanceFileToDataUrl(file);
+      const dataUrl = await appearanceMediaFileToDataUrl(file, allowVideo);
       updateAppearance({ [field]: dataUrl });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "图片读取失败");
+      setError(err instanceof Error ? err.message : (allowVideo ? "文件读取失败" : "图片读取失败"));
     }
+  }
+
+  function chooseAppearanceImage(
+    field: "appLogoSrc" | "sidebarLogoSrc" | "loginCoverSrc",
+    event: React.ChangeEvent<HTMLInputElement>
+  ) {
+    return chooseAppearanceMedia(field, event, false);
   }
 
   const refreshCopilotAuthStatus = useCallback(async (silent = false) => {
@@ -541,6 +1335,185 @@ export function SettingsView({
     }
   }, [onLogout, token]);
 
+  async function startAntigravityOAuthFlow() {
+    setError("");
+    setNotice("");
+    setAntigravityActionBusy("oauth-init");
+    try {
+      const urlInfo = await api.sakiAntigravityLoginUrl(token);
+      setAntigravityLoginState(urlInfo);
+      setAntigravityOAuthActive(true);
+      setAntigravityAuthCodeInput("");
+      try {
+        sessionStorage.setItem("saki_antigravity_login_state", JSON.stringify(urlInfo));
+        sessionStorage.setItem("saki_antigravity_oauth_active", "1");
+      } catch {}
+      const jumpUrl = urlInfo.url || urlInfo.verificationUri;
+      if (jumpUrl) {
+        window.open(jumpUrl, "_blank", "noopener,noreferrer");
+      }
+      setNotice(urlInfo.message || "已在浏览器打开 Google 官方授权页。请在完成授权后，将页面展示的 Authorization Code 粘贴回此处。");
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onLogout();
+        return;
+      }
+      setError(err instanceof Error ? err.message : "获取 Google 官方授权链接失败");
+    } finally {
+      setAntigravityActionBusy(null);
+    }
+  }
+
+  async function handleAntigravityOAuthExchange(e?: React.SyntheticEvent) {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    const code = antigravityAuthCodeInput.trim();
+    if (!code) {
+      setError("请输入 Google 授权后显示的 Authorization Code（或完整回调 URL）。");
+      return;
+    }
+    setError("");
+    setNotice("");
+    setAntigravityActionBusy("exchange");
+    try {
+      let activeSessionId = antigravityLoginState?.sessionId;
+      if (!activeSessionId) {
+        try {
+          const saved = sessionStorage.getItem("saki_antigravity_login_state");
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            activeSessionId = parsed.sessionId;
+          }
+        } catch {}
+      }
+      const updatedStatus = await api.sakiAntigravityExchange(
+        {
+          code,
+          ...(activeSessionId ? { sessionId: activeSessionId } : {})
+        },
+        token
+      );
+      setAntigravityStatus(updatedStatus);
+      setAntigravityOAuthActive(false);
+      setAntigravityAuthCodeInput("");
+      try {
+        sessionStorage.removeItem("saki_antigravity_login_state");
+        sessionStorage.removeItem("saki_antigravity_oauth_active");
+      } catch {}
+      setNotice(
+        updatedStatus.accountEmail
+          ? `Google 账号 (${updatedStatus.accountEmail}) 授权成功，已连接 Antigravity CLI！`
+          : "Google 账号授权成功，已连接 Antigravity CLI！"
+      );
+      void detectModels(true);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onLogout();
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Google 授权码验证失败，请确认授权码未过期且未被重复使用");
+    } finally {
+      setAntigravityActionBusy(null);
+    }
+  }
+
+  async function handleAntigravityLoginSubmit(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    if (!antigravityTokenInput.trim()) {
+      setError("请输入 Google OAuth 访问令牌或凭据 JSON。");
+      return;
+    }
+    if (antigravityTokenInput.trim().startsWith("AIzaSy")) {
+      setError("检测到 Gemini API Key（AIzaSy 开头）。API Key 不属于 OAuth 凭据，请切换到「官方直连 (Gemini API Key)」连接方式，在其专属输入框中填写并保存设置。");
+      return;
+    }
+    setError("");
+    setNotice("");
+    setAntigravityActionBusy("login");
+    try {
+      const updatedStatus = await api.sakiAntigravityLogin(
+        {
+          tokenOrKey: antigravityTokenInput.trim(),
+          ...(antigravityEmailInput.trim() ? { accountEmail: antigravityEmailInput.trim() } : {})
+        },
+        token
+      );
+      setAntigravityStatus(updatedStatus);
+      setAntigravityLoginModalOpen(false);
+      setAntigravityTokenInput("");
+      setAntigravityEmailInput("");
+      setNotice(
+        updatedStatus.accountEmail
+          ? `Google / Antigravity 账号 (${updatedStatus.accountEmail}) 绑定成功！`
+          : "Google / Antigravity 凭据已成功保存！"
+      );
+      void detectModels(true);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onLogout();
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Antigravity 登录绑定失败");
+    } finally {
+      setAntigravityActionBusy(null);
+    }
+  }
+
+  async function handleAntigravitySwitchAccount(targetEmail: string) {
+    if (!targetEmail || targetEmail === antigravityStatus?.accountEmail) return;
+    setError("");
+    setNotice("");
+    setAntigravityActionBusy(`switch-${targetEmail}`);
+    try {
+      const updatedStatus = await api.sakiAntigravitySwitchAccount(
+        { accountEmail: targetEmail },
+        token
+      );
+      setAntigravityStatus(updatedStatus);
+      setNotice(`已成功切换至账号：${targetEmail}`);
+      void detectModels(true);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onLogout();
+        return;
+      }
+      setError(err instanceof Error ? err.message : "切换账号失败");
+    } finally {
+      setAntigravityActionBusy(null);
+    }
+  }
+
+  async function handleAntigravityLogout(emailToRemove?: string) {
+    setError("");
+    setNotice("");
+    setAntigravityActionBusy("logout");
+    try {
+      const updatedStatus = await api.sakiAntigravityLogout(
+        { ...(emailToRemove ? { accountEmail: emailToRemove } : {}) },
+        token
+      );
+      setAntigravityStatus(updatedStatus);
+      setAntigravityOAuthActive(false);
+      setAntigravityLoginModalOpen(false);
+      try {
+        sessionStorage.removeItem("saki_antigravity_login_state");
+        sessionStorage.removeItem("saki_antigravity_oauth_active");
+      } catch {}
+      setNotice(emailToRemove ? `账号 ${emailToRemove} 已移除。` : "当前 Antigravity 账号已退出登录。");
+      void detectModels(true);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onLogout();
+        return;
+      }
+      setError(err instanceof Error ? err.message : "退出登录失败");
+    } finally {
+      setAntigravityActionBusy(null);
+    }
+  }
+
   async function detectModels(silent = false) {
     const provider = form.provider;
     if (needsCloudApiFields(provider) && (!form.baseUrl.trim() || !form.apiKey.trim())) {
@@ -568,17 +1541,22 @@ export function SettingsView({
       setModelOptions(result.models);
       if (result.models.length > 0) {
         setForm((current) => {
-          const hasCurrent = result.models.some((model) => model.id === current.model);
-          const nextModel = result.models[0]?.id ?? current.model;
-          return hasCurrent ? current : withActiveProviderConfig(current, { model: nextModel });
+          const currentInSynced = result.models.some((model) => model.id === current.model);
+          const nextModel = currentInSynced ? current.model : (result.models[0]?.id ?? current.model);
+          return withActiveProviderConfig(current, { model: nextModel });
         });
       }
       if (!silent) {
-        const warningText = result.warnings.length > 0 ? `；警告 ${result.warnings.length} 条` : "";
+        const hasWarnings = Boolean(result.warnings && result.warnings.length > 0);
+        if (hasWarnings) {
+          setError(result.warnings.join("\n\n"));
+        }
         setNotice(
-          result.models.length > 0
-            ? `${result.provider} 模型 API 检测成功，发现 ${result.models.length} 个模型${warningText}。`
-            : `${result.provider} 模型 API 已响应，但没有返回可用模型${warningText}。`
+          hasWarnings
+            ? "未能连接实时模型服务，当前展示的是内置备用列表（可能不是该服务实际支持的模型，请以实时同步结果为准）。"
+            : result.models.length > 0
+              ? `已成功同步 ${result.models.length} 个最新模型（${result.models.slice(0, 3).map((m) => m.id).join(", ")}${result.models.length > 3 ? " 等" : ""}）！`
+              : "未能从服务同步到模型列表。"
         );
       }
     } catch (err) {
@@ -605,6 +1583,11 @@ export function SettingsView({
     if (loading || form.provider !== "copilot") return;
     void refreshCopilotAuthStatus(true);
   }, [form.provider, loading, refreshCopilotAuthStatus]);
+
+  useEffect(() => {
+    if (loading || form.provider !== "antigravity") return;
+    void refreshAntigravityStatus(true);
+  }, [form.provider, loading, refreshAntigravityStatus]);
 
   useEffect(() => {
     if (form.provider !== "copilot" || copilotLoginState?.status !== "running") return;
@@ -950,7 +1933,8 @@ export function SettingsView({
     { id: "features", label: t("settings.features"), detail: t("settings.features.detail"), icon: <Wrench size={17} /> },
     { id: "appearance", label: t("settings.appearance"), detail: t("settings.appearance.detail"), icon: <ImageIcon size={17} /> },
     { id: "prompt", label: t("settings.prompt"), detail: t("settings.prompt.detail"), icon: <TextQuote size={17} /> },
-    { id: "skills", label: "Skills", detail: `${skillList.length} ${t("settings.skills.detail")}`, icon: <Layers size={17} /> }
+    { id: "skills", label: "Skills", detail: `${skillList.length} ${t("settings.skills.detail")}`, icon: <Layers size={17} /> },
+    { id: "watch", label: t("settings.watch"), detail: t("settings.watch.detail"), icon: <Bell size={17} /> }
   ];
 
   return (
@@ -984,15 +1968,29 @@ export function SettingsView({
           ref={backgroundInputRef}
           className="hidden-file-input"
           type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
-          onChange={(event) => void chooseAppearanceImage("backgroundSrc", event)}
+          accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/ogg"
+          onChange={(event) => void chooseAppearanceMedia("backgroundSrc", event, true)}
         />
         <input
           ref={mobileBackgroundInputRef}
           className="hidden-file-input"
           type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
-          onChange={(event) => void chooseAppearanceImage("mobileBackgroundSrc", event)}
+          accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/ogg"
+          onChange={(event) => void chooseAppearanceMedia("mobileBackgroundSrc", event, true)}
+        />
+        <input
+          ref={darkBackgroundInputRef}
+          className="hidden-file-input"
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/ogg"
+          onChange={(event) => void chooseAppearanceMedia("darkBackgroundSrc", event, true)}
+        />
+        <input
+          ref={mobileDarkBackgroundInputRef}
+          className="hidden-file-input"
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/ogg"
+          onChange={(event) => void chooseAppearanceMedia("mobileDarkBackgroundSrc", event, true)}
         />
         <div className="section-heading">
           <h2>{t("settings.title")}</h2>
@@ -1028,7 +2026,9 @@ export function SettingsView({
             </div>
           </nav>
           <div className="settings-wiki-content">
-          {activeSettingsSection !== "skills" ? (
+          {activeSettingsSection === "watch" ? (
+            <WatchNotifyPanel token={token} onLogout={onLogout} refreshTick={refreshTick} />
+          ) : activeSettingsSection !== "skills" ? (
           <form className="settings-config-form" onSubmit={(event) => void saveSettings(event)}>
             {/* System & Security */}
             <div className={`settings-group ${activeSettingsSection === "system" ? "active" : "settings-section-hidden"}`} id="settings-system">
@@ -1134,27 +2134,54 @@ export function SettingsView({
                   </label>
 
                   <label className="settings-field">
-                    <span className="settings-field-label">模型名称 (Model)</span>
-                    {modelOptions.length > 0 ? (
-                      <select
-                        className="settings-select"
-                        value={form.model}
-                        onChange={(event) => updateActiveProviderConfig({ model: event.target.value })}
-                        required
-                      >
-                        {modelOptions.map((model) => (
-                          <option value={model.id} key={`${model.provider}:${model.id}`}>
-                            {model.label}
-                          </option>
-                        ))}
-                      </select>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <span className="settings-field-label" style={{ marginBottom: 0 }}>模型名称 (Model)</span>
+                      {modelOptions.length > 0 ? (
+                        <button
+                          type="button"
+                          className="settings-text-btn"
+                          style={{ fontSize: 12, background: "none", border: "none", color: "var(--accent-color, #3b82f6)", cursor: "pointer", padding: "0 2px" }}
+                          onClick={() => setCustomModelMode((prev) => !prev)}
+                        >
+                          {customModelMode ? "从可用列表选择" : "手动输入自定义 ID"}
+                        </button>
+                      ) : null}
+                    </div>
+                    {modelOptions.length > 0 && !customModelMode ? (
+                      <div className="settings-input-with-action">
+                        <select
+                          className="settings-select"
+                          value={form.model}
+                          onChange={(event) => updateActiveProviderConfig({ model: event.target.value })}
+                          required
+                        >
+                          {modelOptions.map((model) => (
+                            <option value={model.id} key={`${model.provider}:${model.id}`}>
+                              {model.label}
+                            </option>
+                          ))}
+                          {form.model && !modelOptions.some((m) => m.id === form.model) ? (
+                            <option value={form.model}>{form.model} (当前/自定义)</option>
+                          ) : null}
+                        </select>
+                        <button
+                          type="button"
+                          className="settings-inline-action-btn"
+                          disabled={detectingModels || loading}
+                          onClick={() => void detectModels(false)}
+                          title="直接从当前服务同步实时可用模型列表"
+                        >
+                          <RefreshCw size={14} className={detectingModels ? "animate-spin" : ""} />
+                          <span>{detectingModels ? "同步中" : "同步模型"}</span>
+                        </button>
+                      </div>
                     ) : (
                       <div className="settings-input-with-action">
                         <input
                           className="settings-input"
                           value={form.model}
                           onChange={(event) => updateActiveProviderConfig({ model: event.target.value })}
-                          placeholder={form.provider === "ollama" ? "llama3" : "输入模型 ID 或点击检测"}
+                          placeholder={form.provider === "ollama" ? "llama3" : "例如 gemini-3.8-flash、gemini-2.5-pro 等"}
                           required
                         />
                         <button
@@ -1283,74 +2310,764 @@ export function SettingsView({
                   </div>
                 ) : null}
 
-                {form.provider === "antigravity" ? (
-                  <>
-                    <div className="copilot-auth-panel wide-field">
-                      <div className="copilot-auth-status">
-                        <div className={`copilot-auth-badge ${antigravityStatus?.authenticated ? "authenticated" : "pending"}`}>
-                          {antigravityStatus?.authenticated ? <CheckCircle2 size={18} /> : <TerminalIcon size={18} />}
-                          <span>{antigravityStatus?.authenticated ? "已就绪" : "未连接"}</span>
+                {form.provider === "antigravity" ? (() => {
+                  const antigravityMode = antigravityModeOf(form.providerConfigs?.antigravity);
+                  const isDirectMode = antigravityMode === "direct";
+                  const isAntigravityReady = isDirectMode
+                    ? Boolean(form.apiKey.trim() || (antigravityStatus?.available && antigravityStatus?.authenticated))
+                    : Boolean(
+                        antigravityStatus?.isEndpointReachable ||
+                        (antigravityStatus?.available && antigravityStatus?.authenticated)
+                      );
+                  const isPendingProxy = Boolean(
+                    !isDirectMode && antigravityStatus?.authenticated && !isAntigravityReady
+                  );
+
+                  return (
+                    <div className="antigravity-dashboard-card wide-field">
+                      {/* Header: Brand Identity & Status Badge */}
+                      <div className="antigravity-hero-header">
+                        <div className="antigravity-brand-info">
+                          <div className="antigravity-brand-icon">
+                            <Zap size={20} />
+                          </div>
+                          <div>
+                            <div className="antigravity-brand-title">
+                              <strong>Google Antigravity CLI</strong>
+                              <span className="antigravity-version-pill">Official OAuth 2.0</span>
+                            </div>
+                            <span className="antigravity-brand-subtitle">
+                              基于 Google 官方 OAuth 授权直连 Gemini 3.8 / 2.5 系列模型或接入本地代理网关
+                            </span>
+                          </div>
                         </div>
-                        <div className="copilot-auth-copy">
-                          <strong>Antigravity CLI / 代理连接状态</strong>
+
+                        <div className={`antigravity-status-pill ${isAntigravityReady ? "online" : (isPendingProxy ? "warning" : "offline")}`}>
+                          <span className="status-dot" />
                           <span>
-                            {antigravityStatus?.message || "自动检测本地 Antigravity 凭据 (~/.gemini) 或代理网关。"}
+                            {isAntigravityReady
+                              ? (isDirectMode ? "官方直连已就绪" : "反代服务已就绪")
+                              : (isPendingProxy ? "已登录 · 待启动反代" : "尚未连接")}
                           </span>
                         </div>
                       </div>
-                      <div className="copilot-auth-actions">
+
+                    {/* Hero Account Bar */}
+                    <div className="antigravity-account-hero">
+                      <div className="antigravity-account-visual">
+                        <div className={`antigravity-avatar-circle ${antigravityStatus?.authenticated ? "active" : ""}`}>
+                          {antigravityStatus?.authenticated ? (
+                            <UserCheck size={22} className="avatar-icon-success" />
+                          ) : (
+                            <UserX size={22} className="avatar-icon-muted" />
+                          )}
+                        </div>
+                        <div className="antigravity-account-details">
+                          <div className="antigravity-account-row">
+                            <span className="antigravity-account-caption">
+                              {antigravityStatus?.authenticated ? "当前登录 Google 账号" : "账号登录状态"}
+                            </span>
+                            {antigravityStatus?.authenticated ? (
+                              <span className="antigravity-badge-verified">
+                                <ShieldCheck size={12} />
+                                已验证
+                              </span>
+                            ) : null}
+                          </div>
+
+                          <div className="antigravity-account-primary">
+                            {antigravityStatus?.authenticated ? (
+                              <span className="account-email-text">
+                                {antigravityStatus.accountEmail || "已连接官方 / 本地凭据"}
+                              </span>
+                            ) : (
+                              <span className="account-email-text unauthenticated">未登录 Google 账号</span>
+                            )}
+                          </div>
+
+                          <p className="antigravity-account-desc">
+                            {antigravityStatus?.message || (
+                              antigravityStatus?.authenticated
+                                ? "OAuth 2.0 凭据已持久化就绪，所有对话与智能体任务将通过此账号认证调用。"
+                                : "未检测到已授权的 Google 账号。请点击右侧“登录 Google 账号”进行官方授权。"
+                            )}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Main Action Buttons */}
+                      <div className="antigravity-hero-actions">
                         <button
-                          className="ghost-button"
-                          disabled={antigravityBusy || loading}
+                          className="ghost-button antigravity-btn"
+                          disabled={detectingModels || loading}
+                          type="button"
+                          onClick={() => void detectModels(false)}
+                          title="直接从反代服务或 Google API 实时拉取同步最新模型列表"
+                        >
+                          <RefreshCw size={14} className={detectingModels ? "animate-spin" : ""} />
+                          <span>{detectingModels ? "正在同步..." : "同步最新模型"}</span>
+                        </button>
+
+                        <button
+                          className="ghost-button antigravity-btn"
+                          disabled={antigravityBusy || Boolean(antigravityActionBusy) || loading}
                           type="button"
                           onClick={() => void refreshAntigravityStatus(false)}
+                          title="刷新当前连接状态与用量信息"
                         >
-                          <RefreshCw size={15} className={antigravityBusy ? "animate-spin" : ""} />
-                          <span>{antigravityBusy ? "检测中" : "检查状态"}</span>
+                          <RefreshCw size={14} className={antigravityBusy ? "animate-spin" : ""} />
+                          <span>{antigravityBusy ? "检测中..." : "检查状态"}</span>
                         </button>
+
+                        {antigravityStatus?.authenticated || antigravityStatus?.accountEmail ? (
+                          <button
+                            className="danger-button antigravity-btn"
+                            disabled={loading || Boolean(antigravityActionBusy)}
+                            type="button"
+                            onClick={() => {
+                              if (window.confirm(`确定要退出当前 Google 账号 (${antigravityStatus?.accountEmail || "当前账号"}) 吗？`)) {
+                                void handleAntigravityLogout();
+                              }
+                            }}
+                            title="退出当前登录的 Google 账号"
+                          >
+                            {antigravityActionBusy === "logout" ? (
+                              <>
+                                <Loader2 size={14} className="animate-spin" />
+                                <span>正在退出...</span>
+                              </>
+                            ) : (
+                              <>
+                                <LogOut size={14} />
+                                <span>退出账号</span>
+                              </>
+                            )}
+                          </button>
+                        ) : (
+                          <button
+                            className="primary-button antigravity-btn antigravity-login-cta"
+                            disabled={loading || Boolean(antigravityActionBusy)}
+                            type="button"
+                            onClick={() => void startAntigravityOAuthFlow()}
+                            title="前往 Google 官方授权页登录 Antigravity"
+                          >
+                            {antigravityActionBusy === "oauth-init" ? (
+                              <>
+                                <Loader2 size={14} className="animate-spin" />
+                                <span>正在连接...</span>
+                              </>
+                            ) : (
+                              <>
+                                <LogIn size={14} />
+                                <span>登录 Google 账号</span>
+                              </>
+                            )}
+                          </button>
+                        )}
                       </div>
                     </div>
 
-                    <div className="settings-form-row">
-                      <label className="settings-field">
-                        <span className="settings-field-label">Antigravity 代理 Base URL</span>
-                        <input
-                          className="settings-input"
-                          value={form.baseUrl}
-                          onChange={(event) => {
-                            updateActiveProviderConfig({ baseUrl: event.target.value });
-                          }}
-                          placeholder="http://localhost:8080/v1"
-                        />
-                        <span className="settings-field-hint">本地 Antigravity 代理/网关服务地址（默认为 http://localhost:8080/v1）</span>
-                      </label>
-
-                      <label className="settings-field">
-                        <span className="settings-field-label">API Key / Token (可选)</span>
-                        <div className="settings-input-with-action">
-                          <input
-                            className="settings-input"
-                            type={showApiKey ? "text" : "password"}
-                            value={form.apiKey}
-                            onChange={(event) => {
-                              updateActiveProviderConfig({ apiKey: event.target.value });
-                            }}
-                            placeholder="留空自动使用本地 ~/.gemini 凭据"
-                          />
+                    {/* Multi-Account Bar */}
+                    {antigravityStatus?.accounts && antigravityStatus.accounts.length > 1 ? (
+                      <div className="antigravity-multi-accounts-card">
+                        <div className="multi-accounts-head">
+                          <div className="multi-accounts-title">
+                            <UserRound size={14} />
+                            <span>已关联的多账号 ({antigravityStatus.accounts.length})</span>
+                          </div>
                           <button
                             type="button"
-                            className="settings-inline-action-btn icon-only"
-                            onClick={() => setShowApiKey((s) => !s)}
-                            title={showApiKey ? "隐藏 API Key" : "显示 API Key"}
+                            className="ghost-button compact add-account-ghost"
+                            onClick={() => void startAntigravityOAuthFlow()}
+                            title="登录并绑定另一个 Google 账号"
                           >
-                            {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                            <Plus size={13} />
+                            <span>添加新账号</span>
                           </button>
                         </div>
-                        <span className="settings-field-hint">如需覆盖本地 OAuth 凭据，可在此手动填写 Token 或 API Key</span>
-                      </label>
+                        <div className="accounts-pill-list">
+                          {antigravityStatus.accounts.map((acc) => {
+                            const isCurrent = acc.isActive || acc.email === antigravityStatus.accountEmail;
+                            return (
+                              <div
+                                key={acc.email}
+                                className={`account-item-pill ${isCurrent ? "active" : ""}`}
+                                onClick={() => {
+                                  if (!isCurrent && !antigravityActionBusy) {
+                                    void handleAntigravitySwitchAccount(acc.email);
+                                  }
+                                }}
+                              >
+                                <span className="account-pill-email">{acc.email}</span>
+                                {isCurrent ? (
+                                  <span className="account-pill-badge active">活动中</span>
+                                ) : (
+                                  <span className="account-pill-badge switch">点击切换</span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : (antigravityStatus?.authenticated || antigravityStatus?.accountEmail) ? (
+                      <div className="antigravity-single-account-tools">
+                        <span className="tools-caption">
+                          <Info size={13} /> 支持绑定多个 Google 账号以供随时切换
+                        </span>
+                        <button
+                          type="button"
+                          className="antigravity-link-button"
+                          onClick={() => void startAntigravityOAuthFlow()}
+                        >
+                          <Plus size={13} />
+                          <span>绑定其他 Google 账号</span>
+                        </button>
+                      </div>
+                    ) : null}
+
+                    {/* Notice banner when user is logged in with Google OAuth but proxy endpoint (e.g. 8080) is not listening */}
+                    {isPendingProxy ? (
+                      <div className="antigravity-notice-banner warning">
+                        <div className="banner-icon-area">
+                          <AlertTriangle size={20} className="banner-icon-warning" />
+                        </div>
+                        <div className="banner-content">
+                          <div className="banner-title">
+                            Google 账号已成功授权，但反向代理服务尚未运行（端点 <code>{antigravityStatus?.endpoint || "http://localhost:8080/v1"}</code> 离线）
+                          </div>
+                          <div className="banner-desc">
+                            已成功保存 <strong>{antigravityStatus?.accountEmail}</strong> 的 Google 授权。因 Antigravity 需通过本地代理中转模型请求，请选择以下任一方式启用：
+                          </div>
+                          <div className="banner-solutions-grid">
+                            <div className="solution-card">
+                              <div className="solution-header">
+                                <span className="solution-badge primary">推荐方案 1</span>
+                                <strong>免反代直连官方服务（最简便）</strong>
+                              </div>
+                              <p>
+                                展开下方【连接方式与凭据配置】，切换到 <strong>官方直连 (Gemini API Key)</strong>，填入在 Google AI Studio 免费申请的 Key（以 <code>AIzaSy</code> 开头）并保存设置，即可直连官方 API，无需在服务器运行任何反代进程！
+                              </p>
+                            </div>
+                            <div className="solution-card">
+                              <div className="solution-header">
+                                <span className="solution-badge secondary">方案 2</span>
+                                <strong>在服务器启动本地反代进程</strong>
+                              </div>
+                              <p>
+                                若您使用的是 <code>anti-api</code> 或 <code>antigravity-proxy</code>，请在服务器终端启动反代服务并监听 8080 端口（若监听其他端口，请在下方「连接方式与凭据配置」中修改 Base URL）。
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {/* 2-Step OAuth Wizard Box */}
+                    {antigravityOAuthActive ? (
+                      <div className="antigravity-oauth-wizard">
+                        <div className="wizard-header">
+                          <div className="wizard-title-group">
+                            <div className="wizard-icon-chip">
+                              <KeyRound size={16} />
+                            </div>
+                            <div>
+                              <strong>Google 官方授权向导</strong>
+                              <span className="wizard-sub">使用 Antigravity CLI 官方安全通道认证，零泄露风险</span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="wizard-close-btn"
+                            onClick={() => {
+                              setAntigravityOAuthActive(false);
+                              setAntigravityAuthCodeInput("");
+                            }}
+                            title="关闭向导"
+                          >
+                            <X size={15} />
+                          </button>
+                        </div>
+
+                        <div className="wizard-steps-container">
+                          {/* Step 1 */}
+                          <div className="wizard-step-card">
+                            <div className="wizard-step-badge">1</div>
+                            <div className="wizard-step-body">
+                              <div className="step-body-header">
+                                <strong>第一步：打开官方授权页登录并同意权限</strong>
+                                <span className="step-body-hint">
+                                  新标签页若未自动打开，请点击下方快捷按钮直达：
+                                </span>
+                              </div>
+                              <a
+                                href={antigravityLoginState?.url || antigravityLoginState?.verificationUri || "#"}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="wizard-google-link-btn"
+                                onClick={(e) => {
+                                  if (!antigravityLoginState?.url && !antigravityLoginState?.verificationUri) {
+                                    e.preventDefault();
+                                    void startAntigravityOAuthFlow();
+                                  }
+                                }}
+                              >
+                                <span>前往 Google 官方授权页 (accounts.google.com)</span>
+                                <ExternalLink size={14} />
+                              </a>
+                            </div>
+                          </div>
+
+                          {/* Step 2 */}
+                          <div className="wizard-step-card">
+                            <div className="wizard-step-badge">2</div>
+                            <div className="wizard-step-body">
+                              <div className="step-body-header">
+                                <strong>第二步：粘贴 Authorization Code 并连接</strong>
+                                <span className="step-body-hint">
+                                  授权完成后页面将展示授权码。复制后粘贴在下方（亦可直接粘贴地址栏完整 URL）：
+                                </span>
+                              </div>
+                              <div className="wizard-input-group">
+                                <input
+                                  type="text"
+                                  className="wizard-code-input"
+                                  placeholder="在此粘贴授权码 (如 4/0AY0e...) 或回调 URL"
+                                  value={antigravityAuthCodeInput}
+                                  onChange={(e) => setAntigravityAuthCodeInput(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      void handleAntigravityOAuthExchange();
+                                    }
+                                  }}
+                                  disabled={antigravityActionBusy === "exchange"}
+                                  autoFocus
+                                />
+                                <button
+                                  type="button"
+                                  className="primary-button wizard-submit-btn"
+                                  disabled={!antigravityAuthCodeInput.trim() || antigravityActionBusy === "exchange"}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    void handleAntigravityOAuthExchange();
+                                  }}
+                                >
+                                  {antigravityActionBusy === "exchange" ? (
+                                    <>
+                                      <Loader2 size={15} className="animate-spin" />
+                                      <span>正在校验...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Check size={15} />
+                                      <span>完成授权并连接</span>
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {/* Usage & Quota Cards */}
+                    {antigravityStatus?.usage ? (
+                      <div className="antigravity-stats-deck">
+                        <div className="antigravity-stat-card card-today">
+                          <div className="stat-card-icon">
+                            <Activity size={18} />
+                          </div>
+                          <div className="stat-card-content">
+                            <span className="stat-card-label">今日 Tokens 消耗</span>
+                            <div className="stat-card-number highlight">
+                              {(antigravityStatus.usage.todayTokensUsed ?? 0).toLocaleString()}
+                            </div>
+                            <span className="stat-card-footer">今日通过 Saki 对话与智能体产生的消耗</span>
+                          </div>
+                        </div>
+
+                        <div className="antigravity-stat-card card-total">
+                          <div className="stat-card-icon">
+                            <Coins size={18} />
+                          </div>
+                          <div className="stat-card-content">
+                            <span className="stat-card-label">累计 Tokens 消耗</span>
+                            <div className="stat-card-number">
+                              {(antigravityStatus.usage.totalTokensUsed ?? 0).toLocaleString()}
+                            </div>
+                            <span className="stat-card-footer">历史总计调用 {antigravityStatus.usage.totalRequests ?? 0} 次请求</span>
+                          </div>
+                        </div>
+
+                        <div className="antigravity-stat-card card-quota">
+                          <div className="stat-card-icon">
+                            <ShieldCheck size={18} />
+                          </div>
+                          <div className="stat-card-content">
+                            <div className="stat-card-header-row">
+                              <span className="stat-card-label">反代配额与连通性</span>
+                              {antigravityStatus.usage.tier ? (
+                                <span className="stat-tier-badge">{antigravityStatus.usage.tier}</span>
+                              ) : null}
+                            </div>
+                            <div className={`stat-card-number ${isAntigravityReady ? "accent" : (isPendingProxy ? "warning-text" : "")}`}>
+                              {antigravityStatus.usage.proxyQuotaRemaining !== undefined
+                                ? (typeof antigravityStatus.usage.proxyQuotaRemaining === "number"
+                                    ? antigravityStatus.usage.proxyQuotaRemaining.toLocaleString()
+                                    : antigravityStatus.usage.proxyQuotaRemaining)
+                                : (isAntigravityReady
+                                    ? (isDirectMode ? "官方直连" : "正常在线")
+                                    : (isPendingProxy ? "反代离线 (8080)" : "未就绪"))}
+                            </div>
+                            <span className="stat-card-footer">
+                              {antigravityStatus.usage.proxyQuotaLimit !== undefined
+                                ? `配额上限: ${antigravityStatus.usage.proxyQuotaLimit.toLocaleString()}`
+                                : (isAntigravityReady
+                                    ? (isDirectMode ? "端点: Google 官方 API" : `端点: ${antigravityStatus.endpoint || "http://localhost:8080/v1"}`)
+                                    : `未检测到端口 8080 监听服务`)}
+                              {antigravityStatus.usage.expiresAt ? ` · 至 ${antigravityStatus.usage.expiresAt}` : ""}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {/* Collapsible Connection Mode & Credentials Settings */}
+                    <div className="antigravity-advanced-section">
+                      <button
+                        type="button"
+                        className="advanced-toggle-button"
+                        onClick={() => setAntigravityLoginModalOpen((prev) => !prev)}
+                      >
+                        <div className="toggle-label-wrap">
+                          <SlidersHorizontal size={14} />
+                          <span>连接方式与凭据配置</span>
+                          <span className="toggle-sublabel">本地反代网关 与 官方直连 (Gemini API Key) 二选一，两种方案的凭据互不混用</span>
+                        </div>
+                        <ChevronDown
+                          size={15}
+                          className="toggle-chevron"
+                          style={{ transform: antigravityLoginModalOpen ? "rotate(180deg)" : "none" }}
+                        />
+                      </button>
+
+                      {antigravityLoginModalOpen ? (
+                        <div className="advanced-drawer-content">
+                          {/* Mutually exclusive connection scheme selector */}
+                          <div className="proxy-mode-tabs">
+                            <button
+                              type="button"
+                              className={`proxy-mode-tab ${!isDirectMode ? "active" : ""}`}
+                              onClick={() => switchAntigravityMode("proxy")}
+                            >
+                              本地反代网关
+                            </button>
+                            <button
+                              type="button"
+                              className={`proxy-mode-tab ${isDirectMode ? "active" : ""}`}
+                              onClick={() => switchAntigravityMode("direct")}
+                            >
+                              官方直连 (Gemini API Key)
+                            </button>
+                          </div>
+
+                          {!isDirectMode ? (
+                            <>
+                              <div className="settings-form-row">
+                                <label className="settings-field">
+                                  <span className="settings-field-label">反代网关 Base URL</span>
+                                  <input
+                                    className="settings-input"
+                                    value={form.baseUrl}
+                                    onChange={(event) => {
+                                      updateActiveProviderConfig({ baseUrl: event.target.value });
+                                    }}
+                                    placeholder="http://localhost:8080/v1"
+                                  />
+                                  <span className="settings-field-hint">OpenAI 协议反向代理服务地址（默认 http://localhost:8080/v1）</span>
+                                </label>
+
+                                <label className="settings-field">
+                                  <span className="settings-field-label">反代 Bearer Token (可选)</span>
+                                  <div className="settings-input-with-action">
+                                    <input
+                                      className="settings-input"
+                                      type={showApiKey ? "text" : "password"}
+                                      value={form.apiKey}
+                                      onChange={(event) => {
+                                        handleAntigravityApiKeyInput(event.target.value);
+                                      }}
+                                      placeholder="留空则优先使用已登录的 Google OAuth 凭据"
+                                    />
+                                    <button
+                                      type="button"
+                                      className="settings-inline-action-btn icon-only"
+                                      onClick={() => setShowApiKey((s) => !s)}
+                                      title={showApiKey ? "隐藏 Token" : "显示 Token"}
+                                    >
+                                      {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                                    </button>
+                                  </div>
+                                  <span className="settings-field-hint">仅当反代网关要求鉴权时填写自定义 Bearer 令牌；填入 AIzaSy 开头的 Gemini Key 将自动切换为「官方直连」模式</span>
+                                </label>
+                              </div>
+
+                              <div className="manual-token-card">
+                                <div className="manual-token-header">
+                                  <KeyRound size={14} />
+                                  <strong>导入 Google OAuth 凭据（仅反代模式使用）</strong>
+                                </div>
+                                <div className="settings-field">
+                                  <textarea
+                                    id="antigravity-token-input"
+                                    className="settings-input antigravity-token-textarea"
+                                    rows={2}
+                                    placeholder="粘贴 Google OAuth 访问令牌 (ya29...) 或完整凭据 JSON"
+                                    value={antigravityTokenInput}
+                                    onChange={(e) => setAntigravityTokenInput(e.target.value)}
+                                    disabled={Boolean(antigravityActionBusy)}
+                                  />
+                                </div>
+                                <div className="manual-token-actions-row">
+                                  <input
+                                    type="text"
+                                    className="settings-input manual-email-input"
+                                    placeholder="账号邮箱备注（可选，OAuth 令牌将自动解析邮箱）"
+                                    value={antigravityEmailInput}
+                                    onChange={(e) => setAntigravityEmailInput(e.target.value)}
+                                    disabled={Boolean(antigravityActionBusy)}
+                                  />
+                                  <button
+                                    type="button"
+                                    className="primary-button compact-btn"
+                                    disabled={!antigravityTokenInput.trim() || Boolean(antigravityActionBusy)}
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      void handleAntigravityLoginSubmit();
+                                    }}
+                                  >
+                                    {antigravityActionBusy === "login" ? (
+                                      <>
+                                        <Loader2 size={13} className="animate-spin" />
+                                        <span>验证中...</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Check size={13} />
+                                        <span>导入凭据并保存</span>
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="settings-form-row">
+                              <label className="settings-field">
+                                <span className="settings-field-label">Gemini API Key</span>
+                                <div className="settings-input-with-action">
+                                  <input
+                                    className="settings-input"
+                                    type={showApiKey ? "text" : "password"}
+                                    value={form.apiKey}
+                                    onChange={(event) => {
+                                      handleAntigravityApiKeyInput(event.target.value);
+                                    }}
+                                    placeholder="AIzaSy..."
+                                  />
+                                  <button
+                                    type="button"
+                                    className="settings-inline-action-btn icon-only"
+                                    onClick={() => setShowApiKey((s) => !s)}
+                                    title={showApiKey ? "隐藏 API Key" : "显示 API Key"}
+                                  >
+                                    {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                                  </button>
+                                </div>
+                                <span className="settings-field-hint">
+                                  在 Google AI Studio 免费申请（AIzaSy 开头）；保存后 Saki 将直连官方端点 generativelanguage.googleapis.com，无需任何反代进程
+                                </span>
+                              </label>
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
                     </div>
-                  </>
-                ) : null}
+
+                    {/* Integrated 3-Way Architectural Guide Cards */}
+                    <div className="antigravity-guides-deck">
+                      <div className={`guide-card ${!isDirectMode ? "recommended" : ""}`}>
+                        <div className="guide-card-tag">本地反代网关 · OAuth 授权</div>
+                        <div className="guide-card-title">
+                          <Zap size={14} />
+                          <span>Google 官方 OAuth 登录</span>
+                        </div>
+                        <p className="guide-card-text">
+                          选择「本地反代网关」后，点击上方“登录 Google 账号”一键授权，OAuth 凭据将作为反代请求的认证令牌使用。
+                        </p>
+                      </div>
+
+                      <div className={`guide-card ${isDirectMode ? "recommended" : ""}`}>
+                        <div className="guide-card-tag">官方直连 · 免费</div>
+                        <div className="guide-card-title">
+                          <Globe size={14} />
+                          <span>Google AI Studio API Key</span>
+                        </div>
+                        <p className="guide-card-text">
+                          选择「官方直连 (Gemini API Key)」，填入在 <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer">Google AI Studio</a> 申请的 <code>AIzaSy</code> 开头 Key，即可免代理直连 Google 官方 API。
+                        </p>
+                      </div>
+
+                      <div className="guide-card">
+                        <div className="guide-card-tag">本地反代网关 · 自建代理</div>
+                        <div className="guide-card-title">
+                          <Server size={14} />
+                          <span>本地反代网关服务</span>
+                        </div>
+                        <p className="guide-card-text">
+                          在服务器本地启动 OpenAI 兼容反向代理服务（默认监听 <code>http://localhost:8080/v1</code>），在「本地反代网关」中配置 Base URL 与可选 Bearer Token。
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ); })() : null}
+
+                {/* 模型消耗积分乘区设置 */}
+                <div className="model-multipliers-card wide-field">
+                  <div className="model-multipliers-header">
+                    <div className="model-multipliers-title">
+                      <Coins size={18} className="settings-switch-icon" />
+                      <div>
+                        <strong>模型积分消耗乘区</strong>
+                        <span className="model-multipliers-subtitle">
+                          配置每个 AI 模型的积分扣除倍率（换算规则：1000 Tokens = 1 积分 × 模型乘区倍率，向上取整）。
+                        </span>
+                      </div>
+                    </div>
+                    <div className="model-multipliers-hint">
+                      <span>设为 <strong>0x</strong> 则该模型完全免费；未单独配置乘区的模型默认按 <strong>1.0x</strong> 计费。</span>
+                    </div>
+                  </div>
+
+                  <div className="model-multipliers-list">
+                    {combinedModelKeys.map((modelKey) => {
+                      const currentMultiplier = form.modelPointsMultipliers?.[modelKey] ?? 1.0;
+                      const isCustom = form.modelPointsMultipliers?.[modelKey] !== undefined;
+                      const isCurrentActive = form.model === modelKey;
+
+                      return (
+                        <div
+                          key={modelKey}
+                          className={`model-multiplier-item ${isCurrentActive ? "active-model" : ""}`}
+                        >
+                          <div className="model-multiplier-info">
+                            <div className="model-name-row">
+                              <span className="model-identifier">{modelKey}</span>
+                              {isCurrentActive ? (
+                                <span className="model-active-badge">当前生效</span>
+                              ) : null}
+                            </div>
+                            <div className="multiplier-status-row">
+                              {currentMultiplier === 0 ? (
+                                <span className="multiplier-pill free">0x 免费</span>
+                              ) : currentMultiplier === 1 ? (
+                                <span className="multiplier-pill default">1.0x 标准</span>
+                              ) : currentMultiplier > 1 ? (
+                                <span className="multiplier-pill premium">{currentMultiplier}x 乘区</span>
+                              ) : (
+                                <span className="multiplier-pill discount">{currentMultiplier}x 优惠</span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="model-multiplier-controls">
+                            <div className="multiplier-preset-buttons">
+                              {[0, 0.5, 1.0, 2.0, 3.0].map((preset) => (
+                                <button
+                                  key={preset}
+                                  type="button"
+                                  className={`preset-btn ${currentMultiplier === preset ? "selected" : ""}`}
+                                  onClick={() => handleSetModelMultiplier(modelKey, preset)}
+                                >
+                                  {preset === 0 ? "免费(0x)" : `${preset}x`}
+                                </button>
+                              ))}
+                            </div>
+
+                            <div className="multiplier-input-wrapper">
+                              <input
+                                type="number"
+                                step="0.1"
+                                min="0"
+                                max="100"
+                                className="multiplier-number-input"
+                                value={currentMultiplier}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  handleSetModelMultiplier(modelKey, Number.isFinite(val) ? val : 1);
+                                }}
+                              />
+                              <span className="multiplier-unit">x</span>
+                            </div>
+
+                            {isCustom ? (
+                              <button
+                                type="button"
+                                className="multiplier-reset-btn"
+                                onClick={() => handleResetModelMultiplier(modelKey)}
+                                title="恢复为默认 1.0x"
+                              >
+                                重置
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* 添加自定义模型乘区 */}
+                  <div className="add-multiplier-row">
+                    <input
+                      className="settings-input add-model-input"
+                      placeholder="自定义模型名称（如 claude-3-7-sonnet、deepseek-chat 等）"
+                      value={newMultiplierModel}
+                      onChange={(e) => setNewMultiplierModel(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleAddCustomMultiplier();
+                        }
+                      }}
+                    />
+                    <div className="multiplier-input-wrapper">
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        max="100"
+                        className="multiplier-number-input"
+                        value={newMultiplierValue}
+                        onChange={(e) => setNewMultiplierValue(e.target.value)}
+                        placeholder="倍率"
+                      />
+                      <span className="multiplier-unit">x</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="ghost-button add-multiplier-btn"
+                      disabled={!newMultiplierModel.trim()}
+                      onClick={handleAddCustomMultiplier}
+                    >
+                      <Plus size={15} />
+                      <span>添加乘区</span>
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1398,6 +3115,84 @@ export function SettingsView({
                     />
                     <span className="settings-switch-slider" />
                   </label>
+                </div>
+
+                <div className="settings-switch-card" style={{ flexDirection: "column", alignItems: "stretch", gap: 14 }}>
+                  <div className="settings-switch-info" style={{ width: "100%" }}>
+                    <div className="settings-switch-title">
+                      <Sparkles size={18} className="settings-switch-icon" />
+                      <strong>Saki 学说话 (Voice Echo) 变声引擎</strong>
+                    </div>
+                    <span>长按右下角悬浮 Saki 头像时复读语音的变声引擎。完全运行于客户端浏览器，无须占用服务器 GPU 资源。</span>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
+                    {/* Mode 1: DSP */}
+                    <div
+                      onClick={() => handleVoiceEchoEngineChange("dsp")}
+                      style={{
+                        padding: "14px 16px",
+                        borderRadius: "10px",
+                        border: voiceEchoEngine === "dsp" ? "2px solid var(--primary, #3b82f6)" : "1px solid var(--border-color, rgba(140, 140, 140, 0.25))",
+                        background: voiceEchoEngine === "dsp" ? "rgba(59, 130, 246, 0.08)" : "transparent",
+                        cursor: "pointer",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8,
+                        transition: "all 0.15s ease"
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600, fontSize: "0.95rem" }}>
+                          <Zap size={16} style={{ color: "#3b82f6" }} />
+                          <span>轻量 DSP 增强模式 (推荐/默认)</span>
+                        </div>
+                        {voiceEchoEngine === "dsp" && <CheckCircle2 size={16} style={{ color: "#3b82f6" }} />}
+                      </div>
+                      <span style={{ fontSize: "0.82rem", opacity: 0.8, lineHeight: 1.45 }}>
+                        零额外体积占用（0 KB 下载）、&lt;30ms 极速响应。通过目标基频绝对锚定（392Hz）与 6 级共振峰滤波统一音色基准，告别男女声调不齐与破音。
+                      </span>
+                    </div>
+
+                    {/* Mode 2: WebGPU AI */}
+                    <div
+                      onClick={() => handleVoiceEchoEngineChange("ai")}
+                      style={{
+                        padding: "14px 16px",
+                        borderRadius: "10px",
+                        border: voiceEchoEngine === "ai" ? "2px solid var(--primary, #3b82f6)" : "1px solid var(--border-color, rgba(140, 140, 140, 0.25))",
+                        background: voiceEchoEngine === "ai" ? "rgba(59, 130, 246, 0.08)" : "transparent",
+                        cursor: "pointer",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8,
+                        transition: "all 0.15s ease"
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600, fontSize: "0.95rem" }}>
+                          <Cpu size={16} style={{ color: "#8b5cf6" }} />
+                          <span>端侧 WebGPU / WASM AI 引擎</span>
+                        </div>
+                        {voiceEchoEngine === "ai" && <CheckCircle2 size={16} style={{ color: "#8b5cf6" }} />}
+                      </div>
+                      <span style={{ fontSize: "0.82rem", opacity: 0.8, lineHeight: 1.45 }}>
+                        利用客户端本地显卡/CPU 运行轻量模型转换 Saki 专属声线，服务器 0 负载。首次切换时按需加载并缓存，若设备不支持将自动降级回 DSP。
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* WebGPU Status Bar */}
+                  {webGpuInfo && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.8rem", padding: "8px 12px", borderRadius: 8, background: webGpuInfo.supported ? "rgba(16, 185, 129, 0.1)" : "rgba(245, 158, 11, 0.1)", color: webGpuInfo.supported ? "#059669" : "#d97706" }}>
+                      {webGpuInfo.supported ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+                      <span>
+                        {webGpuInfo.supported
+                          ? `客户端状态：已检测到本地 WebGPU 硬件加速 (${webGpuInfo.adapterName})`
+                          : `客户端提示：${webGpuInfo.reason || "当前浏览器未开启 WebGPU，启用 AI 模式将自动降级为 DSP 模式"}`}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1547,72 +3342,320 @@ export function SettingsView({
                     </div>
                   </div>
 
-                  {/* Web Background */}
-                  <div className="settings-asset-card">
-                    <div className="settings-asset-preview-box cover">
-                      {form.appearance?.backgroundSrc ? (
-                        <img src={form.appearance.backgroundSrc} alt="网页背景" />
-                      ) : (
-                        <div className="settings-asset-empty">
-                          <Paintbrush size={24} />
-                          <span>默认壁纸</span>
-                        </div>
-                      )}
+                </div>
+
+                {/* Custom Backgrounds & Live Wallpapers Section */}
+                <div className="settings-bg-section">
+                  <div className="settings-bg-section-header">
+                    <div className="settings-bg-section-info">
+                      <h4>自定义系统壁纸与动态背景</h4>
+                      <span>分别自定义浅色与暗色模式下的桌面端与移动端背景，支持 PNG、JPG、WebP、GIF 图片及 MP4、WebM、OGG 视频动态壁纸（上限 50MB）。</span>
                     </div>
-                    <div className="settings-asset-meta">
-                      <strong>桌面端全局背景壁纸</strong>
-                      <div className="settings-asset-input-wrap">
-                        <input
-                          className="settings-input mini"
-                          value={form.appearance?.backgroundSrc ?? ""}
-                          onChange={(event) => updateAppearance({ backgroundSrc: event.target.value })}
-                          placeholder="/assets/background.png"
-                        />
-                        <button
-                          className="ghost-button mini"
-                          type="button"
-                          onClick={() => backgroundInputRef.current?.click()}
-                          title="选择本地图片"
-                        >
-                          <Upload size={14} />
-                          <span>上传</span>
-                        </button>
-                      </div>
+                    <div className="settings-bg-theme-switcher">
+                      <button
+                        type="button"
+                        className={`settings-bg-tab-btn ${bgThemeTab === "light" ? "active" : ""}`}
+                        onClick={() => setBgThemeTab("light")}
+                      >
+                        <Sun size={14} />
+                        <span>浅色主题背景</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={`settings-bg-tab-btn ${bgThemeTab === "dark" ? "active" : ""}`}
+                        onClick={() => setBgThemeTab("dark")}
+                      >
+                        <Moon size={14} />
+                        <span>暗色主题背景</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={`settings-bg-tab-btn ${bgThemeTab === "all" ? "active" : ""}`}
+                        onClick={() => setBgThemeTab("all")}
+                      >
+                        <span>全部显示</span>
+                      </button>
                     </div>
                   </div>
 
-                  {/* Mobile Background */}
-                  <div className="settings-asset-card">
-                    <div className="settings-asset-preview-box portrait">
-                      {form.appearance?.mobileBackgroundSrc ? (
-                        <img src={form.appearance.mobileBackgroundSrc} alt="移动端背景" />
-                      ) : (
-                        <div className="settings-asset-empty">
-                          <Paintbrush size={24} />
-                          <span>默认竖屏壁纸</span>
+                  <div className="settings-asset-grid">
+                    {/* Light Theme Backgrounds */}
+                    {(bgThemeTab === "light" || bgThemeTab === "all") && (
+                      <>
+                        {/* Light Desktop Background */}
+                        <div className="settings-asset-card">
+                          <div className="settings-asset-preview-box cover">
+                            {form.appearance?.backgroundSrc ? (
+                              isVideoSource(form.appearance.backgroundSrc) ? (
+                                <video
+                                  className="settings-asset-preview-video"
+                                  src={form.appearance.backgroundSrc}
+                                  autoPlay
+                                  loop
+                                  muted
+                                  playsInline
+                                />
+                              ) : (
+                                <img src={form.appearance.backgroundSrc} alt="桌面端浅色背景" />
+                              )
+                            ) : (
+                              <div className="settings-asset-empty">
+                                <Paintbrush size={24} />
+                                <span>默认浅色壁纸</span>
+                              </div>
+                            )}
+                            {form.appearance?.backgroundSrc ? (
+                              <span className="settings-asset-type-badge">
+                                {isVideoSource(form.appearance.backgroundSrc) ? (
+                                  <><Video size={11} /> 动态视频</>
+                                ) : (
+                                  <><ImageIcon size={11} /> 静态图片</>
+                                )}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="settings-asset-meta">
+                            <div className="settings-asset-title-row">
+                              <strong>桌面端背景 (浅色模式)</strong>
+                              <span className="settings-theme-tag light"><Sun size={12} /> 浅色</span>
+                            </div>
+                            <div className="settings-asset-input-wrap">
+                              <input
+                                className="settings-input mini"
+                                value={form.appearance?.backgroundSrc ?? ""}
+                                onChange={(event) => updateAppearance({ backgroundSrc: event.target.value })}
+                                placeholder="/assets/background.png"
+                              />
+                              <button
+                                className="ghost-button mini"
+                                type="button"
+                                onClick={() => backgroundInputRef.current?.click()}
+                                title="选择本地图片或视频 (MP4/WebM/OGG)"
+                              >
+                                <Upload size={14} />
+                                <span>上传</span>
+                              </button>
+                              {form.appearance?.backgroundSrc && form.appearance.backgroundSrc !== defaultPanelAppearance.backgroundSrc ? (
+                                <button
+                                  className="ghost-button mini reset-btn"
+                                  type="button"
+                                  onClick={() => updateAppearance({ backgroundSrc: defaultPanelAppearance.backgroundSrc })}
+                                  title="恢复默认背景"
+                                >
+                                  <RotateCcw size={13} />
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                    <div className="settings-asset-meta">
-                      <strong>移动端竖屏背景壁纸</strong>
-                      <div className="settings-asset-input-wrap">
-                        <input
-                          className="settings-input mini"
-                          value={form.appearance?.mobileBackgroundSrc ?? ""}
-                          onChange={(event) => updateAppearance({ mobileBackgroundSrc: event.target.value })}
-                          placeholder="/assets/background_mobile.png"
-                        />
-                        <button
-                          className="ghost-button mini"
-                          type="button"
-                          onClick={() => mobileBackgroundInputRef.current?.click()}
-                          title="选择本地图片"
-                        >
-                          <Upload size={14} />
-                          <span>上传</span>
-                        </button>
-                      </div>
-                    </div>
+
+                        {/* Light Mobile Background */}
+                        <div className="settings-asset-card">
+                          <div className="settings-asset-preview-box portrait">
+                            {form.appearance?.mobileBackgroundSrc ? (
+                              isVideoSource(form.appearance.mobileBackgroundSrc) ? (
+                                <video
+                                  className="settings-asset-preview-video"
+                                  src={form.appearance.mobileBackgroundSrc}
+                                  autoPlay
+                                  loop
+                                  muted
+                                  playsInline
+                                />
+                              ) : (
+                                <img src={form.appearance.mobileBackgroundSrc} alt="移动端竖屏浅色背景" />
+                              )
+                            ) : (
+                              <div className="settings-asset-empty">
+                                <Paintbrush size={24} />
+                                <span>默认竖屏壁纸</span>
+                              </div>
+                            )}
+                            {form.appearance?.mobileBackgroundSrc ? (
+                              <span className="settings-asset-type-badge">
+                                {isVideoSource(form.appearance.mobileBackgroundSrc) ? (
+                                  <><Video size={11} /> 动态视频</>
+                                ) : (
+                                  <><ImageIcon size={11} /> 静态图片</>
+                                )}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="settings-asset-meta">
+                            <div className="settings-asset-title-row">
+                              <strong>移动端竖屏背景 (浅色模式)</strong>
+                              <span className="settings-theme-tag light"><Sun size={12} /> 浅色</span>
+                            </div>
+                            <div className="settings-asset-input-wrap">
+                              <input
+                                className="settings-input mini"
+                                value={form.appearance?.mobileBackgroundSrc ?? ""}
+                                onChange={(event) => updateAppearance({ mobileBackgroundSrc: event.target.value })}
+                                placeholder="/assets/background_mobile.png"
+                              />
+                              <button
+                                className="ghost-button mini"
+                                type="button"
+                                onClick={() => mobileBackgroundInputRef.current?.click()}
+                                title="选择本地图片或视频 (MP4/WebM/OGG)"
+                              >
+                                <Upload size={14} />
+                                <span>上传</span>
+                              </button>
+                              {form.appearance?.mobileBackgroundSrc && form.appearance.mobileBackgroundSrc !== defaultPanelAppearance.mobileBackgroundSrc ? (
+                                <button
+                                  className="ghost-button mini reset-btn"
+                                  type="button"
+                                  onClick={() => updateAppearance({ mobileBackgroundSrc: defaultPanelAppearance.mobileBackgroundSrc })}
+                                  title="恢复默认背景"
+                                >
+                                  <RotateCcw size={13} />
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {/* Dark Theme Backgrounds */}
+                    {(bgThemeTab === "dark" || bgThemeTab === "all") && (
+                      <>
+                        {/* Dark Desktop Background */}
+                        <div className="settings-asset-card">
+                          <div className="settings-asset-preview-box cover">
+                            {form.appearance?.darkBackgroundSrc ? (
+                              isVideoSource(form.appearance.darkBackgroundSrc) ? (
+                                <video
+                                  className="settings-asset-preview-video"
+                                  src={form.appearance.darkBackgroundSrc}
+                                  autoPlay
+                                  loop
+                                  muted
+                                  playsInline
+                                />
+                              ) : (
+                                <img src={form.appearance.darkBackgroundSrc} alt="桌面端暗色背景" />
+                              )
+                            ) : (
+                              <div className="settings-asset-empty">
+                                <Paintbrush size={24} />
+                                <span>默认暗色壁纸</span>
+                              </div>
+                            )}
+                            {form.appearance?.darkBackgroundSrc ? (
+                              <span className="settings-asset-type-badge">
+                                {isVideoSource(form.appearance.darkBackgroundSrc) ? (
+                                  <><Video size={11} /> 动态视频</>
+                                ) : (
+                                  <><ImageIcon size={11} /> 静态图片</>
+                                )}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="settings-asset-meta">
+                            <div className="settings-asset-title-row">
+                              <strong>桌面端背景 (暗色模式)</strong>
+                              <span className="settings-theme-tag dark"><Moon size={12} /> 暗色</span>
+                            </div>
+                            <div className="settings-asset-input-wrap">
+                              <input
+                                className="settings-input mini"
+                                value={form.appearance?.darkBackgroundSrc ?? ""}
+                                onChange={(event) => updateAppearance({ darkBackgroundSrc: event.target.value })}
+                                placeholder="/assets/background_dark.png"
+                              />
+                              <button
+                                className="ghost-button mini"
+                                type="button"
+                                onClick={() => darkBackgroundInputRef.current?.click()}
+                                title="选择本地图片或视频 (MP4/WebM/OGG)"
+                              >
+                                <Upload size={14} />
+                                <span>上传</span>
+                              </button>
+                              {form.appearance?.darkBackgroundSrc && form.appearance.darkBackgroundSrc !== defaultPanelAppearance.darkBackgroundSrc ? (
+                                <button
+                                  className="ghost-button mini reset-btn"
+                                  type="button"
+                                  onClick={() => updateAppearance({ darkBackgroundSrc: defaultPanelAppearance.darkBackgroundSrc })}
+                                  title="恢复默认背景"
+                                >
+                                  <RotateCcw size={13} />
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Dark Mobile Background */}
+                        <div className="settings-asset-card">
+                          <div className="settings-asset-preview-box portrait">
+                            {form.appearance?.mobileDarkBackgroundSrc ? (
+                              isVideoSource(form.appearance.mobileDarkBackgroundSrc) ? (
+                                <video
+                                  className="settings-asset-preview-video"
+                                  src={form.appearance.mobileDarkBackgroundSrc}
+                                  autoPlay
+                                  loop
+                                  muted
+                                  playsInline
+                                />
+                              ) : (
+                                <img src={form.appearance.mobileDarkBackgroundSrc} alt="移动端竖屏暗色背景" />
+                              )
+                            ) : (
+                              <div className="settings-asset-empty">
+                                <Paintbrush size={24} />
+                                <span>默认竖屏壁纸</span>
+                              </div>
+                            )}
+                            {form.appearance?.mobileDarkBackgroundSrc ? (
+                              <span className="settings-asset-type-badge">
+                                {isVideoSource(form.appearance.mobileDarkBackgroundSrc) ? (
+                                  <><Video size={11} /> 动态视频</>
+                                ) : (
+                                  <><ImageIcon size={11} /> 静态图片</>
+                                )}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="settings-asset-meta">
+                            <div className="settings-asset-title-row">
+                              <strong>移动端竖屏背景 (暗色模式)</strong>
+                              <span className="settings-theme-tag dark"><Moon size={12} /> 暗色</span>
+                            </div>
+                            <div className="settings-asset-input-wrap">
+                              <input
+                                className="settings-input mini"
+                                value={form.appearance?.mobileDarkBackgroundSrc ?? ""}
+                                onChange={(event) => updateAppearance({ mobileDarkBackgroundSrc: event.target.value })}
+                                placeholder="/assets/background_mobile_dark.png"
+                              />
+                              <button
+                                className="ghost-button mini"
+                                type="button"
+                                onClick={() => mobileDarkBackgroundInputRef.current?.click()}
+                                title="选择本地图片或视频 (MP4/WebM/OGG)"
+                              >
+                                <Upload size={14} />
+                                <span>上传</span>
+                              </button>
+                              {form.appearance?.mobileDarkBackgroundSrc && form.appearance.mobileDarkBackgroundSrc !== defaultPanelAppearance.mobileDarkBackgroundSrc ? (
+                                <button
+                                  className="ghost-button mini reset-btn"
+                                  type="button"
+                                  onClick={() => updateAppearance({ mobileDarkBackgroundSrc: defaultPanelAppearance.mobileDarkBackgroundSrc })}
+                                  title="恢复默认背景"
+                                >
+                                  <RotateCcw size={13} />
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>

@@ -19,7 +19,8 @@ export const validViews: readonly ViewMode[] = [
   "users",
   "audit",
   "settings",
-  "about"
+  "about",
+  "reliability"
 ];
 
 export function parseHashRoute(): PanelRoute {
@@ -60,7 +61,7 @@ export function parseHashRoute(): PanelRoute {
   } else if (view === "settings") {
     if (segments.length > 1 && segments[1]) {
       const sec = segments[1] as SakiSettingsSection;
-      if (["system", "model", "features", "appearance", "prompt", "skills"].includes(sec)) {
+      if (["system", "model", "features", "appearance", "prompt", "skills", "watch"].includes(sec)) {
         settingsSection = sec;
       }
     }

@@ -47,7 +47,7 @@ export function requireCloudConfig(config: SakiConfigResponse, provider: string)
   if (!baseUrl) {
     throw new RouteError(`Please configure API Base URL for ${provider}.`, 400);
   }
-  if (provider !== "lmstudio" && !apiKey) {
+  if (provider !== "lmstudio" && provider !== "antigravity" && !apiKey) {
     throw new RouteError(`Please configure API Key for ${provider}.`, 400);
   }
   return { baseUrl, apiKey, model };

@@ -252,6 +252,11 @@ html.theme-transitioning select {
   font-size: 21px;
 }
 
+.account-avatar.large span,
+.account-avatar span {
+  color: #ffffff;
+}
+
 .account-avatar.compact {
   width: 30px;
   height: 30px;
@@ -360,6 +365,11 @@ html.theme-transitioning select {
   color: #ffffff;
   background: #ff75ac;
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.18);
+}
+
+.account-avatar-action svg {
+  color: #ffffff;
+  stroke: #ffffff;
 }
 
 .account-modal-title {
@@ -3172,6 +3182,7 @@ input[type="checkbox"].checkbox-input:focus-visible {
 }
 
 .settings-asset-preview-box {
+  position: relative;
   width: 100%;
   height: 120px;
   border-radius: 12px;
@@ -3183,7 +3194,9 @@ input[type="checkbox"].checkbox-input:focus-visible {
   border: 1px dashed rgba(0, 0, 0, 0.1);
 }
 
-.settings-asset-preview-box img {
+.settings-asset-preview-box img,
+.settings-asset-preview-box video,
+.settings-asset-preview-video {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -3454,4 +3467,179 @@ input[type="checkbox"].checkbox-input:focus-visible {
     border-color: rgba(255, 117, 172, 0.45) !important;
     color: #ff75ac !important;
   }
+}
+
+/* App Global Video Background */
+.app-bg-video-container {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.app-bg-video {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100%;
+  height: 100%;
+  min-width: 100%;
+  min-height: 100%;
+  transform: translate(-50%, -50%);
+  object-fit: cover;
+}
+
+.app-bg-video-desktop {
+  display: block;
+}
+
+.app-bg-video-mobile {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .app-bg-video-desktop {
+    display: none !important;
+  }
+  .app-bg-video-mobile {
+    display: block !important;
+  }
+}
+
+body.has-video-bg {
+  background-color: transparent !important;
+}
+
+body.has-desktop-video-bg {
+  background-image: none !important;
+}
+
+@media (max-width: 768px) {
+  body.has-desktop-video-bg:not(.has-mobile-video-bg) {
+    background-image: var(--mobile-background-image) !important;
+  }
+  body.has-mobile-video-bg {
+    background-image: none !important;
+  }
+}
+
+/* Settings Background Section */
+.settings-bg-section {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.settings-bg-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.settings-bg-section-info h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.settings-bg-section-info span {
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.5;
+  display: block;
+}
+
+.settings-bg-theme-switcher {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.06);
+  gap: 2px;
+}
+
+.settings-bg-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.settings-bg-tab-btn:hover {
+  color: #1e293b;
+}
+
+.settings-bg-tab-btn.active {
+  background: #ffffff;
+  color: #ff75ac;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.settings-asset-type-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(0, 0, 0, 0.65);
+  color: #ffffff;
+  backdrop-filter: blur(4px);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.settings-asset-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-theme-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.settings-theme-tag.light {
+  background: rgba(245, 158, 11, 0.12);
+  color: #d97706;
+}
+
+.settings-theme-tag.dark {
+  background: rgba(99, 102, 241, 0.12);
+  color: #6366f1;
+}
+
+.ghost-button.mini.reset-btn {
+  padding: 0 8px;
+  color: #94a3b8;
+}
+
+.ghost-button.mini.reset-btn:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
 }

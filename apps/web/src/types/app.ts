@@ -9,8 +9,8 @@ import type {
 } from "@webops/shared";
 import type { SakiChatWorkflowStatus } from "../api.js";
 
-export type SakiSettingsSection = "system" | "model" | "features" | "appearance" | "prompt" | "skills";
-export type ViewMode = "dashboard" | "instances" | "nodes" | "templates" | "users" | "audit" | "settings" | "about";
+export type SakiSettingsSection = "system" | "model" | "features" | "appearance" | "prompt" | "skills" | "watch";
+export type ViewMode = "dashboard" | "instances" | "nodes" | "templates" | "users" | "audit" | "settings" | "about" | "reliability";
 export type InstanceDirectoryView = "cards" | "list" | "graph";
 
 export interface PanelRoute {

@@ -64,24 +64,56 @@ export async function avatarFileToDataUrl(file: File): Promise<string> {
   }
 }
 
-export async function appearanceFileToDataUrl(file: File): Promise<string> {
-  if (!file.type.startsWith("image/")) {
-    throw new Error("请选择图片文件");
+export async function appearanceMediaFileToDataUrl(file: File, allowVideo = false): Promise<string> {
+  const fileName = (file.name || "").toLowerCase();
+  const isVideoExt = /\.(mp4|webm|ogg|mov|m4v)$/i.test(fileName);
+  const isImageExt = /\.(png|jpe?g|webp|gif)$/i.test(fileName);
+  const isVideo = file.type.startsWith("video/") || isVideoExt;
+  const isImage = file.type.startsWith("image/") || isImageExt;
+
+  if (!isImage && (!allowVideo || !isVideo)) {
+    throw new Error(allowVideo ? "请选择图片或视频文件" : "请选择图片文件");
   }
-  if (file.size > 10 * 1024 * 1024) {
-    throw new Error("图片不能超过 10MB");
+
+  if (isVideo) {
+    if (file.size > 50 * 1024 * 1024) {
+      throw new Error("视频大小不能超过 50MB");
+    }
+  } else {
+    if (file.size > 10 * 1024 * 1024) {
+      throw new Error("图片大小不能超过 10MB");
+    }
   }
+
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error("图片读取失败"));
+    reader.onerror = () => reject(new Error(isVideo ? "视频读取失败" : "图片读取失败"));
     reader.onload = () => {
-      const result = typeof reader.result === "string" ? reader.result : "";
-      if (!/^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(result)) {
-        reject(new Error("仅支持 PNG、JPG、WebP 或 GIF 图片"));
+      let result = typeof reader.result === "string" ? reader.result : "";
+
+      if (isVideo && /^data:(?:application\/octet-stream|video\/[a-z0-9-]+)?;base64,/i.test(result)) {
+        if (!/^data:video\/(?:mp4|webm|ogg|quicktime);base64,/i.test(result)) {
+          let mime = "video/mp4";
+          if (fileName.endsWith(".webm")) mime = "video/webm";
+          else if (fileName.endsWith(".ogg")) mime = "video/ogg";
+          else if (fileName.endsWith(".mov")) mime = "video/quicktime";
+          result = result.replace(/^data:[^;]*;base64,/, `data:${mime};base64,`);
+        }
+      }
+
+      const validImage = /^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(result);
+      const validVideo = allowVideo && /^data:video\/(?:mp4|webm|ogg|quicktime);base64,/i.test(result);
+
+      if (!validImage && !validVideo) {
+        reject(new Error(allowVideo ? "仅支持 PNG、JPG、WebP、GIF 图片或 MP4、WebM、OGG 视频" : "仅支持 PNG、JPG、WebP 或 GIF 图片"));
         return;
       }
       resolve(result);
     };
     reader.readAsDataURL(file);
   });
+}
+
+export async function appearanceFileToDataUrl(file: File): Promise<string> {
+  return appearanceMediaFileToDataUrl(file, false);
 }

@@ -83,12 +83,69 @@
     padding-left: 8px;
   }
 
+  .metrics-grid {
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 5px !important;
+    margin-bottom: 12px !important;
+  }
+
   .metric-tile {
-    padding: 14px;
+    min-height: 0 !important;
+    height: auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+    padding: 8px 3px 6px !important;
+    gap: 4px !important;
+    border-radius: 10px !important;
+  }
+
+  .metric-tile > div:last-child {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .metric-icon {
+    width: 26px !important;
+    height: 26px !important;
+    min-width: 26px !important;
+    min-height: 26px !important;
+    border-radius: 7px !important;
+  }
+
+  .metric-icon svg {
+    width: 14px !important;
+    height: 14px !important;
+  }
+
+  .metric-tile span {
+    font-size: 10px !important;
+    line-height: 1.2 !important;
+    margin-bottom: 1px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    max-width: 100% !important;
+    letter-spacing: 0 !important;
+    display: block !important;
   }
 
   .metric-tile strong {
-    font-size: 22px;
+    font-size: 14px !important;
+    line-height: 1.2 !important;
+    font-weight: 700 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    max-width: 100% !important;
+    letter-spacing: 0 !important;
+    display: block !important;
   }
 
   .file-toolbar-actions {
@@ -246,6 +303,73 @@
 
   .saki-header-actions {
     right: 44px;
+  }
+}
+
+@media (max-width: 768px) {
+  .metrics-grid {
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+    margin-bottom: 14px !important;
+  }
+
+  .metric-tile {
+    min-height: 0 !important;
+    height: auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+    padding: 10px 4px 8px !important;
+    gap: 5px !important;
+    border-radius: 12px !important;
+  }
+
+  .metric-tile > div:last-child {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .metric-icon {
+    width: 30px !important;
+    height: 30px !important;
+    min-width: 30px !important;
+    min-height: 30px !important;
+    border-radius: 8px !important;
+  }
+
+  .metric-icon svg {
+    width: 16px !important;
+    height: 16px !important;
+  }
+
+  .metric-tile span {
+    font-size: 11px !important;
+    line-height: 1.2 !important;
+    margin-bottom: 2px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    max-width: 100% !important;
+    letter-spacing: 0 !important;
+    display: block !important;
+  }
+
+  .metric-tile strong {
+    font-size: 16px !important;
+    line-height: 1.2 !important;
+    font-weight: 700 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    max-width: 100% !important;
+    letter-spacing: 0 !important;
+    display: block !important;
   }
 }
 

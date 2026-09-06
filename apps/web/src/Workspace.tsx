@@ -28,6 +28,7 @@ import {
   Globe,
   HardDrive,
   Heart,
+  HeartPulse,
   History,
   Infinity as InfinityIcon,
   Info,
@@ -117,6 +118,7 @@ import { UsersView } from "./views/UsersView.js";
 import { AuditView } from "./views/AuditView.js";
 import { AboutView } from "./views/AboutView.js";
 import { SettingsView } from "./views/SettingsView.js";
+import { ReliabilityView } from "./views/ReliabilityView.js";
 import { IncidentBell } from "./IncidentInbox.js";
 import { AgentMonitorBell } from "./AgentMonitorBell.js";
 import { cssImageUrl } from "./utils/appearance.js";
@@ -331,6 +333,7 @@ export function Workspace({
     if (canOpenTemplates) views.push("templates");
     if (canOpenUsers) views.push("users");
     if (canOpenAudit) views.push("audit");
+    if (canUseSaki) views.push("reliability");
     if (canConfigureSaki) views.push("settings");
     if (canOpenAbout) views.push("about");
     return views;
@@ -342,7 +345,8 @@ export function Workspace({
     canOpenInstances,
     canOpenNodes,
     canOpenTemplates,
-    canOpenUsers
+    canOpenUsers,
+    canUseSaki
   ]);
   const hasAnyAccessibleView = availableViews.length > 0;
   const effectiveView = availableViews.includes(activeView) ? activeView : availableViews[0] ?? activeView;
@@ -357,6 +361,7 @@ export function Workspace({
     if (effectiveView === "templates") return { label: t("context.templates.label"), detail: t("context.templates.detail") };
     if (effectiveView === "users") return { label: t("context.users.label"), detail: t("context.users.detail") };
     if (effectiveView === "settings") return { label: t("context.settings.label"), detail: t("context.settings.detail") };
+    if (effectiveView === "reliability") return { label: t("context.reliability.label"), detail: t("context.reliability.detail") };
     return { label: t("context.dashboard.label"), detail: t("context.dashboard.detail") };
   }, [effectiveView, t]);
 
@@ -592,6 +597,12 @@ export function Workspace({
                   {t("nav.audit")}
                 </button>
               ) : null}
+              {canUseSaki ? (
+                <button className={`nav-item-reliability ${effectiveView === "reliability" ? "active" : ""}`} onClick={() => selectView("reliability")}>
+                  <HeartPulse size={18} />
+                  {t("nav.reliability")}
+                </button>
+              ) : null}
               {canConfigureSaki ? (
                 <button className={`nav-item-settings ${effectiveView === "settings" ? "active" : ""}`} onClick={() => selectView("settings")}>
                   <Settings size={18} />
@@ -660,7 +671,9 @@ export function Workspace({
                             ? t("nav.templates")
                             : effectiveView === "settings"
                               ? t("view.settings")
-                              : effectiveView === "users"
+                              : effectiveView === "reliability"
+                                ? t("view.reliability")
+                                : effectiveView === "users"
                                 ? t("view.users")
                                 : effectiveView === "about"
                                   ? t("nav.about")
@@ -793,6 +806,8 @@ export function Workspace({
             <TemplatesView token={token} onLogout={onLogout} refreshTick={refreshTick} />
           ) : effectiveView === "users" ? (
             <UsersView token={token} currentUser={user} onLogout={onLogout} onSwitchUser={onSwitchUser} refreshTick={refreshTick} />
+          ) : effectiveView === "reliability" ? (
+            <ReliabilityView token={token} onLogout={onLogout} refreshTick={refreshTick} />
           ) : effectiveView === "settings" ? (
             <SettingsView
               token={token}

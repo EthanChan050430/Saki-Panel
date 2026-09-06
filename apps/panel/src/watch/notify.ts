@@ -2,6 +2,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { resolvePanelCorsOrigin } from "../cors.js";
 import type { ManagedIncident } from "@webops/shared";
 import { prisma } from "../db.js";
+import { dispatchIncidentNotification, notificationKindForStatus } from "./notify-outbound.js";
 
 interface IncidentStreamWriter {
   userId: string;
@@ -133,6 +134,12 @@ export function publishIncident(incident: ManagedIncident): void {
   const lastPublished = publishThrottle.get(throttleKey) ?? 0;
   if (now - lastPublished < publishThrottleMs) return;
   publishThrottle.set(throttleKey, now);
+  // 出站通知（钉钉/企微/webhook/telegram）与 SSE 同钩触发；
+  // fire-and-forget：dispatch 内部已捕获所有异常，绝不阻塞或打断 SSE 链路。
+  const notificationKind = notificationKindForStatus(incident.status);
+  if (notificationKind) {
+    void dispatchIncidentNotification(incident, notificationKind);
+  }
   // 防御性清理，避免节流表无界增长。
   if (publishThrottle.size > 5000) {
     for (const [key, ts] of publishThrottle) {

@@ -3,10 +3,18 @@ import { readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { existsSync } from "node:fs";
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(scriptDir, "..");
 const schemaPath = path.join(rootDir, "prisma", "schema.prisma");
-const prismaBin = "prisma";
+const localPrismaBin = path.join(
+  rootDir,
+  "node_modules",
+  ".bin",
+  process.platform === "win32" ? "prisma.cmd" : "prisma"
+);
+const prismaBin = existsSync(localPrismaBin) ? localPrismaBin : "prisma";
 const invocationDir = path.resolve(process.cwd());
 
 function isInside(parent, child) {
@@ -40,7 +48,7 @@ if (invocationDir !== rootDir && isInside(rootDir, invocationDir)) {
 const child = spawn(prismaBin, ["generate", "--schema", schemaPath], {
   cwd: rootDir,
   env: process.env,
-  shell: process.platform === "win32",
+  shell: true,
   stdio: ["ignore", "pipe", "pipe"]
 });
 
@@ -94,9 +102,11 @@ async function validateGeneratedClient() {
     process.exit(1);
   }
 
-  if (!generatedTypes.includes("instanceAssignment") || !generatedTypes.includes("assignedUsers")) {
+  const requiredMarkers = ["instanceAssignment", "assignedUsers", "ingestToken", "evidenceJson"];
+  const missing = requiredMarkers.filter((m) => !generatedTypes.includes(m));
+  if (missing.length > 0) {
     console.error(
-      "Generated Prisma client does not include InstanceAssignment. Check that prisma/schema.prisma includes the InstanceAssignment model before building."
+      `Generated Prisma client is out of date (missing: ${missing.join(", ")}). Run 'npx prisma generate' or 'npm run db:push' to regenerate.`
     );
     process.exit(1);
   }

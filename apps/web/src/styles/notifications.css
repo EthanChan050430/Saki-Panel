@@ -1,0 +1,255 @@
+/* ==========================================================================
+   Global Notification Bar
+   --------------------------------------------------------------------------
+   Stacks in top-right, slides in, mirrors .page-error glassmorphism language
+   but supports 4 semantic levels instead of only error.
+   ========================================================================== */
+
+.notification-bar {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 10001;              /* above .page-error (10000) so global wins */
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;       /* so empty bar doesn't block clicks */
+  max-width: min(420px, calc(100vw - 48px));
+}
+
+.notification {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 500;
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid transparent;
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.08),
+    0 4px 12px rgba(0, 0, 0, 0.04),
+    inset 0 1px 1px rgba(255, 255, 255, 0.95);
+  animation: notification-slide-in 0.32s var(--ease-out-expo) both;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.25s ease;
+  word-break: break-word;
+}
+
+.notification:hover {
+  transform: translateY(-1px);
+}
+
+.notification-icon {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  margin-top: 1px;
+}
+
+.notification-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.notification-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.notification-message {
+  font-size: 12.5px;
+  opacity: 0.88;
+}
+
+.notification-action {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.18s ease, transform 0.18s ease;
+  align-self: center;
+}
+
+.notification-action:hover {
+  transform: translateY(-1px);
+}
+
+.notification-close {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+  transition: opacity 0.18s ease, background 0.18s ease, transform 0.18s ease;
+}
+
+.notification-close:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.06);
+  transform: scale(1.08);
+}
+
+/* --------------------------------------------------------------------------
+   Semantic levels — light + dark-aware colors
+   -------------------------------------------------------------------------- */
+
+.notification--info {
+  color: #2563eb;
+  background: rgba(239, 246, 255, 0.82);
+  border-color: rgba(37, 99, 235, 0.18);
+}
+.notification--info .notification-icon {
+  background: rgba(37, 99, 235, 0.12);
+  color: #2563eb;
+}
+
+.notification--success {
+  color: #16a34a;
+  background: rgba(240, 253, 244, 0.82);
+  border-color: rgba(22, 163, 74, 0.18);
+}
+.notification--success .notification-icon {
+  background: rgba(22, 163, 74, 0.12);
+  color: #16a34a;
+}
+
+.notification--warning {
+  color: #b45309;
+  background: rgba(255, 251, 235, 0.85);
+  border-color: rgba(245, 158, 11, 0.25);
+}
+.notification--warning .notification-icon {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+}
+
+.notification--error {
+  color: #b91c1c;
+  background: rgba(254, 242, 242, 0.85);
+  border-color: rgba(239, 68, 68, 0.25);
+}
+.notification--error .notification-icon {
+  background: rgba(239, 68, 68, 0.14);
+  color: #ef4444;
+}
+
+/* --------------------------------------------------------------------------
+   Animation — reuses .page-error motion language for consistency
+   -------------------------------------------------------------------------- */
+
+@keyframes notification-slide-in {
+  from {
+    transform: translate3d(28px, -10px, 0) scale(0.94);
+    opacity: 0;
+  }
+  to {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 1;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Dark mode — matches the project's theme-liquid palette
+   -------------------------------------------------------------------------- */
+
+html[data-theme="dark"] .notification,
+body[data-theme="dark"] .notification {
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.4),
+    0 4px 12px rgba(0, 0, 0, 0.3),
+    inset 0 1px 1px rgba(255, 255, 255, 0.05);
+}
+
+html[data-theme="dark"] .notification--info,
+body[data-theme="dark"] .notification--info {
+  color: #93c5fd;
+  background: rgba(30, 58, 138, 0.55);
+  border-color: rgba(96, 165, 250, 0.25);
+}
+html[data-theme="dark"] .notification--info .notification-icon,
+body[data-theme="dark"] .notification--info .notification-icon {
+  background: rgba(96, 165, 250, 0.18);
+  color: #93c5fd;
+}
+
+html[data-theme="dark"] .notification--success,
+body[data-theme="dark"] .notification--success {
+  color: #86efac;
+  background: rgba(20, 83, 45, 0.55);
+  border-color: rgba(74, 222, 128, 0.25);
+}
+html[data-theme="dark"] .notification--success .notification-icon,
+body[data-theme="dark"] .notification--success .notification-icon {
+  background: rgba(74, 222, 128, 0.18);
+  color: #86efac;
+}
+
+html[data-theme="dark"] .notification--warning,
+body[data-theme="dark"] .notification--warning {
+  color: #fcd34d;
+  background: rgba(120, 53, 15, 0.55);
+  border-color: rgba(251, 191, 36, 0.3);
+}
+html[data-theme="dark"] .notification--warning .notification-icon,
+body[data-theme="dark"] .notification--warning .notification-icon {
+  background: rgba(251, 191, 36, 0.2);
+  color: #fcd34d;
+}
+
+html[data-theme="dark"] .notification--error,
+body[data-theme="dark"] .notification--error {
+  color: #fca5a5;
+  background: rgba(127, 29, 29, 0.55);
+  border-color: rgba(248, 113, 113, 0.3);
+}
+html[data-theme="dark"] .notification--error .notification-icon,
+body[data-theme="dark"] .notification--error .notification-icon {
+  background: rgba(248, 113, 113, 0.2);
+  color: #fca5a5;
+}
+
+html[data-theme="dark"] .notification-close:hover,
+body[data-theme="dark"] .notification-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* --------------------------------------------------------------------------
+   Mobile — collapse stacking gap, fit small screens
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 640px) {
+  .notification-bar {
+    top: 14px;
+    right: 12px;
+    left: 12px;
+    max-width: none;
+  }
+  .notification {
+    padding: 10px 12px;
+    font-size: 12.5px;
+    border-radius: 14px;
+  }
+}

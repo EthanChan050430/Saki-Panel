@@ -47,6 +47,7 @@ import {
   recordInstanceFileRead,
   recordWorkingFileAccess,
   saveCheckpoint,
+  saveCompletedSakiAction,
   savePendingSakiAction
 } from "./state.js";
 import type { InstanceWithNode, ParsedToolCall, PendingSakiAction, SakiAgentResumeState, SakiAgentRuntime, SakiCheckpoint, SakiSkillDocument, SakiSkillSummary } from "./types.js";
@@ -458,6 +459,7 @@ async function createFileCheckpoint(
     existed: snapshot.existed,
     content: snapshot.content,
     actionId: actionIdValue,
+    ...(runtime?.taskId ? { taskId: runtime.taskId } : {}),
     createdAt: new Date().toISOString()
   };
   await persistCheckpoint(runtime ?? null, checkpoint);
@@ -465,6 +467,13 @@ async function createFileCheckpoint(
 }
 
 async function persistCheckpoint(runtime: SakiAgentRuntime | null, checkpoint: SakiCheckpoint): Promise<void> {
+  if (runtime?.taskId) {
+    if ("taskOriginId" in checkpoint) {
+      if (!checkpoint.taskOriginId) checkpoint.taskOriginId = runtime.taskId;
+    } else if ("taskId" in checkpoint) {
+      if (!checkpoint.taskId) checkpoint.taskId = runtime.taskId;
+    }
+  }
   await saveCheckpoint(checkpoint);
   if (runtime?.incidentId) {
     await attachIncidentCheckpoint(runtime.incidentId, checkpoint.id);
@@ -1795,7 +1804,7 @@ export async function executeSakiAgentTool(
       ...(approval ? { approval } : {}),
       createdAt: startedAt
     };
-    completedSakiActions.set(action.id, action);
+    await saveCompletedSakiAction(action);
     await auditAgentTool(runtime, action);
     return action;
   }

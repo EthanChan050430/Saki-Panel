@@ -8,6 +8,8 @@
   margin: 2px 0;
   font-size: 13px;
   line-height: 1.5;
+  min-width: 0;
+  max-width: 100%;
 }
 .saki-action-row.running .saki-action-row-main {
   background: rgba(147, 51, 234, 0.05);
@@ -25,6 +27,9 @@
   cursor: pointer;
   transition: background 0.15s;
   user-select: none;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .saki-action-row-main:hover {
   background: rgba(0, 0, 0, 0.04);
@@ -40,7 +45,8 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  flex: 1;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 .saki-action-label code {
   font-size: 12px;
@@ -51,14 +57,24 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 100%;
+  flex-shrink: 1;
+  display: inline-block;
 }
 .saki-action-label span {
   color: #6b7280;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .saki-action-meta {
   font-size: 11px;
   color: #9ca3af;
   white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: 2px;
 }
 .saki-action-status-dot {
   width: 7px;
@@ -226,6 +242,21 @@
   padding: 0;
   color: inherit;
   font: inherit;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  text-align: left;
+}
+.saki-action-path-link code {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
 }
 .saki-action-path-link:hover code,
 .saki-diff-clickable:hover {
@@ -738,6 +769,39 @@
 }
 .saki-model-option.active .saki-model-vision-icon {
   color: #ff4c92;
+}
+.saki-model-option-meta {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.saki-model-multiplier {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.05);
+  color: #8a8a93;
+  white-space: nowrap;
+}
+.saki-model-multiplier.custom {
+  background: rgba(124, 58, 237, 0.1);
+  color: #7c3aed;
+}
+.saki-model-multiplier.free {
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+}
+.saki-model-option.active .saki-model-multiplier {
+  background: rgba(124, 58, 237, 0.16);
+  color: #6d28d9;
+}
+.saki-model-option.active .saki-model-multiplier.free {
+  background: rgba(16, 185, 129, 0.18);
+  color: #047857;
 }
 .saki-model-vision-badge {
   font-size: 10px;
@@ -2392,7 +2456,6 @@
     margin-bottom: 16px;
   }
 
-  .metrics-grid,
   .content-grid,
   .instance-layout,
   .node-layout,
@@ -3302,4 +3365,119 @@ tbody tr:hover {
   background: var(--primary, #ff75ac);
   color: #ffffff;
   border-color: var(--primary, #ff75ac);
+}
+
+/* ==========================================================================
+   User Message Actions (Rollback & Copy on Hover) & Failed Bubble
+   ========================================================================== */
+.saki-user-message-wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  max-width: 100%;
+}
+
+.saki-user-message-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(3px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.saki-message-user:hover .saki-user-message-actions,
+.saki-user-message-wrapper:focus-within .saki-user-message-actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.saki-user-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(8px);
+  color: #475569;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.saki-user-action-btn:hover:not(:disabled) {
+  background: #ffffff;
+  color: #0f172a;
+  border-color: rgba(0, 0, 0, 0.16);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
+}
+
+.saki-user-action-btn.rollback-btn:hover:not(:disabled) {
+  color: #e11d48;
+  border-color: rgba(225, 29, 72, 0.25);
+  background: #fff1f2;
+}
+
+.saki-user-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+[data-theme="dark"] .saki-user-action-btn {
+  background: rgba(30, 41, 59, 0.85);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #cbd5e1;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="dark"] .saki-user-action-btn:hover:not(:disabled) {
+  background: rgba(51, 65, 85, 0.95);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+[data-theme="dark"] .saki-user-action-btn.rollback-btn:hover:not(:disabled) {
+  color: #fb7185;
+  border-color: rgba(244, 63, 94, 0.35);
+  background: rgba(244, 63, 94, 0.18);
+}
+
+/* Failed / No-Response Assistant Message */
+.saki-message-body-failed {
+  border-color: rgba(244, 63, 94, 0.35) !important;
+  background: rgba(254, 242, 242, 0.85) !important;
+}
+
+[data-theme="dark"] .saki-message-body-failed {
+  border-color: rgba(244, 63, 94, 0.4) !important;
+  background: rgba(136, 19, 55, 0.2) !important;
+}
+
+.saki-message-failed-notice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #e11d48;
+  font-weight: 500;
+}
+
+[data-theme="dark"] .saki-message-failed-notice {
+  color: #fb7185;
+}
+
+.saki-failed-icon {
+  flex-shrink: 0;
 }

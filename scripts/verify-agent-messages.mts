@@ -59,6 +59,14 @@ assert(
   "XML fallback does not force-continue on the first user turn"
 );
 
+import { parseXmlToolCalls, parseAnyToolCalls } from "../apps/panel/src/routes/saki/tools.ts";
+
+const parsedXml1 = parseXmlToolCalls('<tool_calls>\n<command name="runCommand">\n<command>curl -sS http://api.example.com</command>\n</command>\n</tool_calls>');
+assert(parsedXml1?.length === 1 && parsedXml1[0]?.name === "runCommand" && parsedXml1[0]?.args.command === "curl -sS http://api.example.com", "<command name='runCommand'> in <tool_calls> parses properly");
+
+const parsedXml2 = parseAnyToolCalls('API 每次总是返回 404\n<tool_calls>\n<command name="runCommand">\n<command>curl -sS -m 15 -X POST "http://api.tooldelta.top/api/mc" -H "Content-Type: application/json" -d \'');
+assert(parsedXml2?.length === 1 && parsedXml2[0]?.name === "runCommand" && String(parsedXml2[0]?.args.command).includes("curl -sS"), "unclosed <command> tag parses properly");
+
 if (process.exitCode) {
   console.error("agent message protocol tests failed");
   process.exit(1);

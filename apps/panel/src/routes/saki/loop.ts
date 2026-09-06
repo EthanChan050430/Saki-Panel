@@ -8,6 +8,7 @@ import {
   checkpointId,
   defaultAgentReadFileLineCount,
   effectiveSakiAgentPermissionMode,
+  getModelPointsMultiplier,
   maxAgentCompactedScratchpadChars,
   maxAgentCompactedScratchpadTokens,
   maxAgentLoops,
@@ -260,21 +261,42 @@ const sakiToolNameAlternation = sakiToolSchemas
   .join("|");
 
 function looksLikeToolCallPayload(text: string): boolean {
-  if (/<tool_call\b/i.test(text)) return true;
+  if (/<(?:tool_call|tool_calls|command|invoke|function|action|call)\b/i.test(text)) return true;
   if (/"?tool_calls"?\s*:/i.test(text) || /"?toolCalls"?\s*:/i.test(text)) return true;
   if (new RegExp(`"(?:${sakiToolNameAlternation})"\\s*:`, "i").test(text)) return true;
-  return new RegExp(`"name"\\s*:\\s*"(?:${sakiToolNameAlternation})"`, "i").test(text);
+  if (new RegExp(`"name"\\s*:\\s*"(?:${sakiToolNameAlternation})"`, "i").test(text)) return true;
+  return new RegExp(`<(?:command|function|action|call|tool)\\s+name=["'](?:${sakiToolNameAlternation})["']`, "i").test(text);
+}
+
+function extractNarrationBeforeToolCall(text: string): string {
+  const cleaned = stripThinking(text).trim();
+  const xmlIndex = cleaned.search(/<(?:tool_call|tool_calls|command|invoke|function|action|call)\b/i);
+  if (xmlIndex > 0) {
+    return cleaned.slice(0, xmlIndex).trim();
+  }
+  const jsonIndex = cleaned.indexOf("{");
+  if (jsonIndex > 0 && looksLikeToolCallPayload(cleaned.slice(jsonIndex))) {
+    return cleaned.slice(0, jsonIndex).trim();
+  }
+  return looksLikeToolCallPayload(cleaned) ? "" : cleaned;
 }
 
 function safeAgentFinalText(text: string): string {
   const cleaned = stripThinking(text).trim();
   if (!cleaned) return "Saki \u6682\u65F6\u6CA1\u6709\u5F62\u6210\u53EF\u7528\u56DE\u590D\u3002";
   if (looksLikeToolCallPayload(cleaned)) {
+    const narration = extractNarrationBeforeToolCall(cleaned);
+    if (narration) return narration;
     return "\u6211\u521A\u624D\u751F\u6210\u4E86\u5DE5\u5177\u8C03\u7528\u8349\u7A3F\uFF0C\u4F46\u683C\u5F0F\u6CA1\u6709\u901A\u8FC7\u6821\u9A8C\uFF0C\u6240\u4EE5\u6CA1\u6709\u628A\u5B83\u5F53\u4F5C\u56DE\u590D\u5C55\u793A\u3002\u8BF7\u518D\u8BD5\u4E00\u6B21\uFF0C\u6211\u4F1A\u7EE7\u7EED\u7528\u5DE5\u5177\u5904\u7406\u3002";
   }
   const jsonStart = cleaned.indexOf("{");
   if (jsonStart > 0) {
     const textPart = cleaned.slice(0, jsonStart).trim();
+    if (textPart) return textPart;
+  }
+  const xmlStart = cleaned.search(/<[a-zA-Z0-9_-]+(?:\s+[^>]*)?>/);
+  if (xmlStart > 0) {
+    const textPart = cleaned.slice(0, xmlStart).trim();
     if (textPart) return textPart;
   }
   return cleaned;
@@ -757,10 +779,13 @@ ${buildAgentWorkspacePrefix(runtime)}`;
     let usageResult: { tokensUsed: number; pointsUsed: number; isUnlimited: boolean; remainingPoints: number } | undefined;
     try {
       if (runtime.userId && totalTokensUsed > 0) {
+        const effectiveModel = runtime.config.model || "default";
+        const multiplier = getModelPointsMultiplier(runtime.config, effectiveModel, runtime.config.provider);
         usageResult = await recordAgentTokenUsage(
           runtime.userId,
           totalTokensUsed,
-          `Agent: ${String(runtime.input.message || "任务执行").slice(0, 50)}`
+          `Agent [${effectiveModel}]: ${String(runtime.input.message || "任务执行").slice(0, 45)}`,
+          multiplier
         );
       }
     } catch {}
@@ -1200,13 +1225,14 @@ IMPORTANT: applyPatch for existing files; writeFile only for NEW files.\nPreviou
     progressOnlyReplies = 0;
     if (turn.forwardedDeltaContent) lastForwardedDeltaContent = turn.forwardedDeltaContent;
     const visibleAssistantText = stripThinking(turn.content).trim();
-    if (visibleAssistantText && !looksLikeToolCallPayload(visibleAssistantText) && !turn.forwardedDeltaText) {
-      emitAgentNarration(events, visibleAssistantText);
+    const narration = extractNarrationBeforeToolCall(visibleAssistantText);
+    if (narration && !turn.forwardedDeltaText) {
+      emitAgentNarration(events, narration);
     }
     for (const call of toolCalls) ensureToolCallId(call);
     turnMessages.push({
       role: "assistant",
-      content: looksLikeToolCallPayload(visibleAssistantText) ? "" : visibleAssistantText,
+      content: narration,
       toolCalls
     });
     rebuildCurrentPrompt();

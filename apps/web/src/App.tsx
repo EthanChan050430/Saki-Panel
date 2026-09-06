@@ -19,6 +19,7 @@ import {
   type PanelTextKey
 } from "./i18n/index.js";
 import { applyPanelAppearance, normalizePanelAppearance } from "./utils/appearance.js";
+import { AppBackground } from "./components/common/AppBackground.js";
 import {
   isManualLogoutSuppressed,
   readAutoLogin,
@@ -31,6 +32,8 @@ import {
 import { ElegantCursor } from "./ElegantCursor.js";
 import { LoginView } from "./views/LoginView.js";
 import { Workspace } from "./Workspace.js";
+import { GlobalEventProvider } from "./GlobalEventContext.js";
+import { NotificationProvider, NotificationBar } from "./NotificationCenter.js";
 
 export function App() {
   const [token, setToken] = useState(() => localStorage.getItem(tokenKey));
@@ -406,6 +409,7 @@ export function App() {
   if (booting) {
     return (
       <PanelLanguageContext.Provider value={languageContextValue}>
+        <AppBackground appearance={appearance} darkMode={darkMode} />
         <ElegantCursor />
         <main className="login-shell">
           <div className="loading-panel">
@@ -420,6 +424,7 @@ export function App() {
   if (!token || !user) {
     return (
       <PanelLanguageContext.Provider value={languageContextValue}>
+        <AppBackground appearance={appearance} darkMode={darkMode} />
         <ElegantCursor />
         <LoginView
           appearance={appearance}
@@ -435,7 +440,10 @@ export function App() {
   }
 
   return (
+    <GlobalEventProvider>
+    <NotificationProvider>
     <PanelLanguageContext.Provider value={languageContextValue}>
+      <AppBackground appearance={appearance} darkMode={darkMode} />
       <ElegantCursor />
       <Workspace
         token={token}
@@ -451,7 +459,10 @@ export function App() {
         onToggleDarkMode={toggleDarkMode}
         themeSwitching={themeSwitching}
       />
+      <NotificationBar />
     </PanelLanguageContext.Provider>
+    </NotificationProvider>
+    </GlobalEventProvider>
   );
 }
 

@@ -1,11 +1,15 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import type {
+  ConnectLocalNodeResponse,
   ConnectNodeByKeyRequest,
   ConnectNodeByKeyResponse,
   CreateEnrollmentTokenRequest,
   CreateEnrollmentTokenResponse,
   CreateNodeRequest,
   DaemonNodeKeyPayload,
+  LocalDaemonStatusResponse,
   ManagedNode,
   NodeEnrollmentTokenInfo,
   NodeJoinCommandResponse,
@@ -14,7 +18,7 @@ import type {
   UpdateNodeRequest
 } from "@webops/shared";
 import type { Prisma } from "@prisma/client";
-import { panelConfig } from "../config.js";
+import { panelConfig, panelPaths } from "../config.js";
 import { prisma } from "../db.js";
 import { loadCurrentUser, requirePermission } from "../auth.js";
 import { fetchDaemonStatus, testDaemonHealth } from "../daemon-client.js";
@@ -31,6 +35,45 @@ function normalizeOptionalText(value: string | null | undefined): string | null 
   if (value === null) return null;
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+function cleanHostAndPort(
+  rawHost: string,
+  fallbackPort: number
+): { host: string; port: number; protocol?: "http" | "https" | undefined } {
+  let host = rawHost.trim();
+  let port = fallbackPort;
+  let protocol: "http" | "https" | undefined;
+
+  if (/^https?:\/\//i.test(host)) {
+    try {
+      const url = new URL(host);
+      protocol = url.protocol === "https:" ? "https" : "http";
+      host = url.hostname;
+      if (url.port) {
+        const parsedPort = Number(url.port);
+        if (!isNaN(parsedPort) && parsedPort > 0 && parsedPort <= 65535) {
+          port = parsedPort;
+        }
+      }
+    } catch {
+      protocol = host.toLowerCase().startsWith("https://") ? "https" : "http";
+      host = host.replace(/^https?:\/\//i, "").split("/")[0] ?? host;
+    }
+  }
+
+  // Handle host:port pattern when no protocol is supplied, e.g. "example.com:5480"
+  const colonIdx = host.lastIndexOf(":");
+  if (colonIdx > 0 && !host.includes("]")) {
+    const portPart = Number(host.slice(colonIdx + 1));
+    if (!isNaN(portPart) && portPart > 0 && portPart <= 65535) {
+      port = portPart;
+      host = host.slice(0, colonIdx);
+    }
+  }
+
+  host = host.replace(/\/+$/, "").trim();
+  return { host, port, protocol };
 }
 
 function isOffline(lastSeenAt: Date | null): boolean {
@@ -141,9 +184,189 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
     return nodes.map(toManagedNode);
   });
 
+  // Check local daemon running status
+  app.get("/api/nodes/local-status", { preHandler: requirePermission("node.view") }, async (request): Promise<LocalDaemonStatusResponse> => {
+    const user = await loadCurrentUser(request.user.sub);
+    const localPort = Number(process.env.DAEMON_PORT) || 5480;
+    if (!user) {
+      return { running: false, port: localPort, connected: false };
+    }
+
+    const health = await testDaemonHealth({
+      id: "local-check",
+      protocol: "http",
+      host: "127.0.0.1",
+      port: localPort,
+      tokenHash: ""
+    }, 1500);
+
+    if (!health.ok) {
+      return {
+        running: false,
+        port: localPort,
+        connected: false
+      };
+    }
+
+    const existingNode = await prisma.node.findFirst({
+      where: {
+        host: { in: ["127.0.0.1", "localhost", "::1"] },
+        port: localPort
+      }
+    });
+
+    const isConnected = existingNode ? canAccessNode(user, existingNode) : false;
+
+    return {
+      running: true,
+      port: localPort,
+      connected: isConnected,
+      nodeId: existingNode?.id ?? null,
+      nodeName: existingNode?.name ?? "Local Daemon",
+      canConnect: true
+    };
+  });
+
+  // One-click connect local daemon
+  app.post("/api/nodes/connect-local", { preHandler: requirePermission("node.create") }, async (request, reply): Promise<ConnectLocalNodeResponse | void> => {
+    const user = await loadCurrentUser(request.user.sub);
+    if (!user) {
+      reply.code(401).send({ message: "Unauthorized" });
+      return;
+    }
+
+    const localPort = Number(process.env.DAEMON_PORT) || 5480;
+    const health = await testDaemonHealth({
+      id: "local-check",
+      protocol: "http",
+      host: "127.0.0.1",
+      port: localPort,
+      tokenHash: ""
+    }, 2000);
+
+    if (!health.ok) {
+      reply.code(400).send({ message: `本机 Daemon (127.0.0.1:${localPort}) 未运行或响应异常，请确认已启动 daemon 进程。` });
+      return;
+    }
+
+    // Try reading local daemon identity file from data/daemon
+    const daemonDataDir = path.resolve(panelPaths.dataDir, "../daemon");
+    const candidatePaths = [
+      path.resolve(daemonDataDir, `identity-${localPort}.json`),
+      path.resolve(daemonDataDir, "identity.json")
+    ];
+
+    let foundIdentity: { nodeId: string; nodeToken: string } | null = null;
+    for (const filePath of candidatePaths) {
+      try {
+        const raw = await fs.readFile(filePath, "utf8");
+        const parsed = JSON.parse(raw);
+        if (parsed.nodeId && parsed.nodeToken) {
+          foundIdentity = parsed;
+          break;
+        }
+      } catch {}
+    }
+
+    let existingNode = await prisma.node.findFirst({
+      where: {
+        host: { in: ["127.0.0.1", "localhost", "::1"] },
+        port: localPort
+      }
+    });
+
+    let effectiveToken = foundIdentity?.nodeToken;
+    let effectiveNodeId = foundIdentity?.nodeId || existingNode?.id || "local_node";
+
+    let tokenHashValue: string;
+    let tokenLast4Value: string;
+
+    if (effectiveToken) {
+      tokenHashValue = hashToken(effectiveToken);
+      tokenLast4Value = tokenLast4(effectiveToken);
+    } else if (existingNode) {
+      tokenHashValue = existingNode.tokenHash;
+      tokenLast4Value = existingNode.tokenLast4 ?? "0000";
+    } else {
+      const gen = generateSecretToken();
+      tokenHashValue = hashToken(gen);
+      tokenLast4Value = tokenLast4(gen);
+    }
+
+    const testResult = await fetchDaemonStatus({
+      id: effectiveNodeId,
+      protocol: "http",
+      host: "127.0.0.1",
+      port: localPort,
+      tokenHash: tokenHashValue
+    }, 4000);
+
+    const nodeStatusData = testResult.statusData ?? {};
+    const nodeName = existingNode?.name || "Local Daemon";
+
+    let savedNode;
+    if (existingNode) {
+      savedNode = await prisma.node.update({
+        where: { id: existingNode.id },
+        data: {
+          host: "127.0.0.1",
+          port: localPort,
+          protocol: testResult.effectiveProtocol || "http",
+          tokenHash: tokenHashValue,
+          tokenLast4: tokenLast4Value,
+          status: "ONLINE",
+          lastSeenAt: new Date(),
+          createdById: request.user.sub,
+          os: nodeStatusData.os ?? existingNode.os,
+          arch: nodeStatusData.arch ?? existingNode.arch,
+          version: nodeStatusData.version ?? existingNode.version
+        },
+        include: {
+          createdBy: { select: { id: true, username: true, displayName: true } },
+          metrics: { take: 1, orderBy: { createdAt: "desc" } }
+        }
+      });
+    } else {
+      savedNode = await prisma.node.create({
+        data: {
+          name: nodeName,
+          host: "127.0.0.1",
+          port: localPort,
+          protocol: testResult.effectiveProtocol || "http",
+          tokenHash: tokenHashValue,
+          tokenLast4: tokenLast4Value,
+          status: "ONLINE",
+          lastSeenAt: new Date(),
+          createdById: request.user.sub,
+          os: nodeStatusData.os ?? null,
+          arch: nodeStatusData.arch ?? null,
+          version: nodeStatusData.version ?? null
+        },
+        include: {
+          createdBy: { select: { id: true, username: true, displayName: true } },
+          metrics: { take: 1, orderBy: { createdAt: "desc" } }
+        }
+      });
+    }
+
+    await writeAuditLog({
+      request,
+      action: "node.connect_local",
+      resourceType: "node",
+      resourceId: savedNode.id,
+      payload: { name: savedNode.name, host: savedNode.host, port: savedNode.port }
+    });
+
+    return {
+      ok: true,
+      node: toManagedNode(savedNode),
+      message: `已成功接入本机 Daemon 节点 (${savedNode.host}:${savedNode.port}) 并绑定至当前账号！`
+    };
+  });
+
   app.post("/api/nodes", { preHandler: requirePermission("node.create") }, async (request) => {
     const body = request.body as Partial<CreateNodeRequest>;
-    const protocol = normalizeProtocol(body.protocol);
+    const rawProtocol = normalizeProtocol(body.protocol);
     if (
       !body.name?.trim() ||
       !body.host?.trim() ||
@@ -151,17 +374,22 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       !Number.isInteger(body.port) ||
       body.port <= 0 ||
       body.port > 65535 ||
-      !protocol
+      !rawProtocol
     ) {
       throw Object.assign(new Error("name, host, port and protocol are required"), { statusCode: 400 });
     }
+
+    const cleaned = cleanHostAndPort(body.host, body.port);
+    const host = cleaned.host;
+    const port = cleaned.port;
+    const protocol = cleaned.protocol || rawProtocol;
 
     const nodeToken = generateSecretToken();
     const node = await prisma.node.create({
       data: {
         name: body.name.trim(),
-        host: body.host.trim(),
-        port: body.port,
+        host,
+        port,
         protocol,
         remarks: normalizeOptionalText(body.remarks) ?? null,
         groupName: normalizeOptionalText(body.groupName) ?? null,
@@ -567,13 +795,23 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
     }
 
     // Allow hostOverride and portOverride in case the machines are on different networks / cross-internet
-    const effectiveHost = body.hostOverride?.trim() || payload.host;
-    const effectivePort = body.portOverride || payload.port;
+    let effectiveHost = payload.host;
+    let effectivePort = body.portOverride || payload.port;
+    let effectiveProtocol = payload.protocol || "http";
+
+    if (body.hostOverride?.trim()) {
+      const cleaned = cleanHostAndPort(body.hostOverride, effectivePort);
+      effectiveHost = cleaned.host;
+      effectivePort = cleaned.port;
+      if (cleaned.protocol) {
+        effectiveProtocol = cleaned.protocol;
+      }
+    }
 
     // Ping the daemon to ensure it is actually running and credentials match!
     const testResult = await fetchDaemonStatus({
       id: payload.nodeId || "temp",
-      protocol: payload.protocol || "http",
+      protocol: effectiveProtocol,
       host: effectiveHost,
       port: effectivePort,
       tokenHash: hashToken(payload.token)
@@ -595,6 +833,10 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       return;
     }
 
+    if (testResult.effectiveHost && testResult.effectiveHost !== effectiveHost) {
+      effectiveHost = testResult.effectiveHost;
+    }
+
     const nodeStatusData = testResult.statusData ?? {};
     const nodeName = body.name?.trim() || payload.name?.trim() || `Node-${effectiveHost}`;
     const tokenHashValue = hashToken(payload.token);
@@ -608,7 +850,10 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       });
     }
 
-    if (existingNode && existingNode.createdById && existingNode.createdById !== request.user.sub) {
+    const isLoopbackHost = effectiveHost === "127.0.0.1" || effectiveHost === "localhost" || effectiveHost === "::1";
+    const canRebind = user.isSuperAdmin || user.isAdmin || isLoopbackHost || existingNode?.createdById === null;
+
+    if (existingNode && existingNode.createdById && existingNode.createdById !== request.user.sub && !canRebind) {
       reply.code(409).send({
         message: `该节点已由其他账号（${existingNode.name}）连接绑定。每个账号的节点面板完全隔离，如需重新绑定请先在原账号移除该节点。`
       });

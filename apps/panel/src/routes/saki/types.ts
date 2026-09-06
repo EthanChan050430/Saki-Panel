@@ -35,6 +35,7 @@ export interface PanelSakiSettings {
   baseUrl?: string;
   apiKey?: string;
   providerConfigs?: Record<string, SakiProviderConfig>;
+  modelPointsMultipliers?: Record<string, number> | undefined;
   searchEnabled?: boolean;
   mcpEnabled?: boolean;
   systemPrompt?: string | null;
@@ -606,6 +607,7 @@ export interface SakiActiveTaskSummary {
   message: string;
   mode?: string;
   actionCount: number;
+  hasRollback?: boolean;
   progress?: {
     message: string;
     status?: string;
@@ -644,6 +646,7 @@ export type SakiCheckpoint =
       existed: boolean;
       content: string;
       actionId: string;
+      taskId?: string;
       createdAt: string;
     }
   | {
@@ -653,6 +656,7 @@ export type SakiCheckpoint =
       path: string;
       backupPath: string;
       actionId: string;
+      taskId?: string;
       createdAt: string;
     }
   | {
@@ -661,6 +665,7 @@ export type SakiCheckpoint =
       instanceId: string;
       data: Prisma.InstanceUpdateInput;
       actionId: string;
+      taskId?: string;
       createdAt: string;
     }
   | {
@@ -668,6 +673,7 @@ export type SakiCheckpoint =
       type: "createdTask";
       taskId: string;
       actionId: string;
+      taskOriginId?: string;
       createdAt: string;
     }
   | {
@@ -676,6 +682,7 @@ export type SakiCheckpoint =
       taskId: string;
       data: UpdateScheduledTaskRequest;
       actionId: string;
+      taskOriginId?: string;
       createdAt: string;
     }
   | {
@@ -684,6 +691,7 @@ export type SakiCheckpoint =
       instanceId: string;
       previousStatus: string;
       actionId: string;
+      taskId?: string;
       createdAt: string;
     };
 
@@ -935,11 +943,14 @@ export const defaultPanelAppearance: PanelAppearanceSettings = {
   sidebarLogoSrc: "/assets/saki-panel-icon.png",
   loginCoverSrc: "/assets/cover.png",
   backgroundSrc: "/assets/background.png",
-  mobileBackgroundSrc: "/assets/background_mobile.png"
+  mobileBackgroundSrc: "/assets/background_mobile.png",
+  darkBackgroundSrc: "/assets/background_dark.png",
+  mobileDarkBackgroundSrc: "/assets/background_mobile_dark.png"
 };
 
 export const maxAppearanceTextChars = 120;
 export const maxAppearanceImageSrcChars = 15_000_000;
+export const maxAppearanceMediaSrcChars = 100_000_000;
 export const maxSakiInputAttachments = 6;
 export const maxSakiAttachmentTextChars = 18000;
 export const maxSakiAttachmentDataUrlChars = 4_000_000;
@@ -1027,6 +1038,27 @@ export function compactDebugText(value: string, maxLength = 220): string {
 export function sakiVerboseModelLogsEnabled(): boolean {
   const value = (process.env.SAKI_DEBUG ?? process.env.SAKI_MODEL_DEBUG ?? "").trim().toLowerCase();
   return ["1", "true", "yes", "on", "verbose"].includes(value) || ["debug", "trace"].includes((process.env.LOG_LEVEL ?? "").toLowerCase());
+}
+
+export function getModelPointsMultiplier(
+  config: { modelPointsMultipliers?: Record<string, number> | undefined } | null | undefined,
+  model?: string | null,
+  provider?: string | null
+): number {
+  if (!model) return 1;
+  const multipliers = config?.modelPointsMultipliers;
+  if (!multipliers || typeof multipliers !== "object") return 1;
+  const trimmedModel = model.trim();
+  if (provider) {
+    const key = `${provider.trim()}:${trimmedModel}`;
+    if (multipliers[key] !== undefined && Number.isFinite(multipliers[key])) {
+      return Math.max(0, multipliers[key]);
+    }
+  }
+  if (multipliers[trimmedModel] !== undefined && Number.isFinite(multipliers[trimmedModel])) {
+    return Math.max(0, multipliers[trimmedModel]);
+  }
+  return 1;
 }
 
 export function safeModelLogUrl(value: string): string {
@@ -1242,21 +1274,32 @@ export function sanitizeAppearanceText(value: unknown, fallback: string, maxChar
   return value.trim().slice(0, maxChars);
 }
 
-export function sanitizeAppearanceImageSrc(value: unknown, fallback: string): string {
+export function sanitizeAppearanceMediaSrc(value: unknown, fallback: string, allowVideo = false): string {
   if (value === undefined) return fallback;
   const source = trimString(value);
   if (!source) return fallback;
-  if (source.length > maxAppearanceImageSrcChars) {
-    throw new RouteError("Appearance image is too large.", 400);
+  const maxLimit = allowVideo ? maxAppearanceMediaSrcChars : maxAppearanceImageSrcChars;
+  if (source.length > maxLimit) {
+    throw new RouteError(allowVideo ? "Appearance media is too large." : "Appearance image is too large.", 400);
   }
   if (
     /^https?:\/\//i.test(source) ||
     (source.startsWith("/") && !source.startsWith("//")) ||
-    /^data:image\/(?:png|jpe?g|webp|gif);base64,[a-z0-9+/=]+$/i.test(source)
+    /^data:image\/(?:png|jpe?g|webp|gif);base64,[a-z0-9+/=]+$/i.test(source) ||
+    (allowVideo && /^data:video\/(?:mp4|webm|ogg|quicktime);base64,[a-z0-9+/=]+$/i.test(source))
   ) {
     return source;
   }
-  throw new RouteError("Appearance images must be a relative path, http(s) URL, or image data URL.", 400);
+  throw new RouteError(
+    allowVideo
+      ? "Appearance media must be a relative path, http(s) URL, image data URL, or video data URL."
+      : "Appearance images must be a relative path, http(s) URL, or image data URL.",
+    400
+  );
+}
+
+export function sanitizeAppearanceImageSrc(value: unknown, fallback: string): string {
+  return sanitizeAppearanceMediaSrc(value, fallback, false);
 }
 
 export function sanitizePanelAppearance(
@@ -1271,8 +1314,10 @@ export function sanitizePanelAppearance(
     appLogoSrc: sanitizeAppearanceImageSrc(item.appLogoSrc, fallback.appLogoSrc),
     sidebarLogoSrc: sanitizeAppearanceImageSrc(item.sidebarLogoSrc, fallback.sidebarLogoSrc),
     loginCoverSrc: sanitizeAppearanceImageSrc(item.loginCoverSrc, fallback.loginCoverSrc),
-    backgroundSrc: sanitizeAppearanceImageSrc(item.backgroundSrc, fallback.backgroundSrc),
-    mobileBackgroundSrc: sanitizeAppearanceImageSrc(item.mobileBackgroundSrc, fallback.mobileBackgroundSrc)
+    backgroundSrc: sanitizeAppearanceMediaSrc(item.backgroundSrc, fallback.backgroundSrc, true),
+    mobileBackgroundSrc: sanitizeAppearanceMediaSrc(item.mobileBackgroundSrc, fallback.mobileBackgroundSrc, true),
+    darkBackgroundSrc: sanitizeAppearanceMediaSrc(item.darkBackgroundSrc, fallback.darkBackgroundSrc, true),
+    mobileDarkBackgroundSrc: sanitizeAppearanceMediaSrc(item.mobileDarkBackgroundSrc, fallback.mobileDarkBackgroundSrc, true)
   };
 }
 
@@ -1458,6 +1503,14 @@ export function sanitizeProviderConfig(provider: string, value: unknown): SakiPr
   }
   if ("apiKey" in item) {
     next.apiKey = trimString(item.apiKey);
+  }
+  if (providerId === "antigravity" && "mode" in item) {
+    const mode = trimString(item.mode);
+    if (mode === "proxy" || mode === "direct") {
+      next.mode = mode;
+    } else {
+      delete next.mode;
+    }
   }
   return next;
 }

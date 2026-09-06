@@ -2382,24 +2382,56 @@
 /* Terminal Command Input Global Override - Complete Transparency */
 .terminal-input-wrap input.terminal-cmd-input,
 .terminal-input-wrap .terminal-cmd-input,
-.terminal-input-wrap input {
+.terminal-input-wrap input,
+.terminal-cmd-input,
+input.terminal-cmd-input {
   background: transparent !important;
   background-color: transparent !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   border: none !important;
+  border-radius: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.terminal-input-wrap input.terminal-cmd-input:focus,
+.terminal-input-wrap input.terminal-cmd-input:focus-visible,
+.terminal-input-wrap input.terminal-cmd-input:active,
+.terminal-input-wrap .terminal-cmd-input:focus,
+.terminal-input-wrap .terminal-cmd-input:focus-visible,
+.terminal-input-wrap .terminal-cmd-input:active,
+.terminal-input-wrap input:focus,
+.terminal-input-wrap input:focus-visible,
+.terminal-input-wrap input:active,
+.terminal-cmd-input:focus,
+.terminal-cmd-input:focus-visible,
+.terminal-cmd-input:active,
+input.terminal-cmd-input:focus,
+input.terminal-cmd-input:focus-visible,
+input.terminal-cmd-input:active {
+  background: transparent !important;
+  background-color: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: none !important;
+  border-radius: 0 !important;
   outline: none !important;
   box-shadow: none !important;
 }
 
 .terminal-input-wrap input.terminal-cmd-input:disabled,
 .terminal-input-wrap .terminal-cmd-input:disabled,
-.terminal-input-wrap input:disabled {
+.terminal-input-wrap input:disabled,
+.terminal-cmd-input:disabled,
+input.terminal-cmd-input:disabled {
   background: transparent !important;
   background-color: transparent !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   border: none !important;
+  border-radius: 0 !important;
+  outline: none !important;
   box-shadow: none !important;
 }
 

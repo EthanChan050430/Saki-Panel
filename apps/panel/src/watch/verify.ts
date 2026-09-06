@@ -12,6 +12,19 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// 修复后健康检查：2xx/3xx 视为通过，其余状态码、超时或网络错误都算未通过。永不抛出。
+async function runInstanceHealthCheck(url: string, timeoutSeconds: number): Promise<{ ok: boolean; detail: string }> {
+  try {
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(Math.max(1, timeoutSeconds) * 1000),
+      redirect: "follow"
+    });
+    return { ok: response.status >= 200 && response.status < 400, detail: `HTTP ${response.status}` };
+  } catch (error) {
+    return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 function specFromRow(instance: {
   id: string;
   name: string;
@@ -68,6 +81,10 @@ export async function verifyIncident(incidentId: string): Promise<void> {
   }
 
   const policy = await readWatchPolicy(instance.id);
+  // readWatchPolicy 的 DTO 未必带出新增字段，健康检查配置直接读原始行（prisma 默认值兜底）。
+  const policyRow = await prisma.watchPolicy.findUnique({ where: { instanceId: instance.id } }).catch(() => null);
+  const healthCheckUrl = policyRow?.healthCheckUrl ?? null;
+  const healthCheckTimeoutSeconds = policyRow?.healthCheckTimeoutSeconds ?? 5;
   const userId = incident.assigneeUserId ?? instance.createdById ?? "";
   const checkpoints = await incidentRollbackSet(incidentId);
   const shouldStart = checkpoints.length > 0;
@@ -156,21 +173,33 @@ export async function verifyIncident(incidentId: string): Promise<void> {
     const sameFingerprint = strictFingerprint === incident.fingerprint || relaxedFingerprint;
     const fatalBurst = freshLines.length > 0 && /(?:fatal|panic|cannot bind|address already in use|permission denied)/i.test(logText);
 
-    if (crashedAgain && (sameFingerprint || fatalBurst) && checkpoints.length > 0) {
+    // 健康检查：只在进程处于 RUNNING 时有意义（STOPPED 已在上面提前返回），
+    // 进程活着但服务不可用时按"验证失败"处理，与再次崩溃同等对待。
+    const healthCheck =
+      healthCheckUrl && state.status === "RUNNING"
+        ? await runInstanceHealthCheck(healthCheckUrl, healthCheckTimeoutSeconds)
+        : null;
+    const healthFailed = healthCheck !== null && !healthCheck.ok;
+    const crashFailure = crashedAgain && (sameFingerprint || fatalBurst);
+    const failureNote = healthFailed && !crashFailure ? `健康检查未通过（${healthCheck.detail}）` : null;
+
+    if ((crashFailure || healthFailed) && checkpoints.length > 0) {
       if (userId) {
         await rollbackIncidentChanges(incidentId, userId);
         await updateIncident(incidentId, {
           status: "rolled_back",
           summary: incident.diagnosis?.summary
-            ? `${incident.diagnosis.summary}。验证失败，已回滚这次修改。`
-            : "验证失败，已回滚这次修改。实例仍未恢复。",
+            ? `${incident.diagnosis.summary}。验证失败${failureNote ? `（${failureNote}）` : ""}，已回滚这次修改。`
+            : `验证失败${failureNote ? `（${failureNote}）` : ""}，已回滚这次修改。实例仍未恢复。`,
           resolvedAt: new Date()
         });
       } else {
         // 无操作用户时不执行回滚，也不得谎报 rolled_back。
         await updateIncident(incidentId, {
           status: "failed",
-          summary: "验证未通过，实例再次崩溃；未能回滚（无操作用户），改动仍保留在磁盘上，请人工处理。",
+          summary: failureNote
+            ? `验证未通过：${failureNote}；未能回滚（无操作用户），改动仍保留在磁盘上，请人工处理。`
+            : "验证未通过，实例再次崩溃；未能回滚（无操作用户），改动仍保留在磁盘上，请人工处理。",
           resolvedAt: new Date()
         });
       }
@@ -178,10 +207,22 @@ export async function verifyIncident(incidentId: string): Promise<void> {
       return;
     }
 
+    // 健康检查未通过但没有可回滚的改动：进程在跑但服务不可用，判 failed 交人工。
+    if (healthFailed) {
+      await updateIncident(incidentId, {
+        status: "failed",
+        summary: `验证未通过：健康检查未通过（${healthCheck.detail}），实例进程在运行但服务不可用，请人工处理。`,
+        resolvedAt: new Date()
+      });
+      clearRestartLease(instance.id);
+      return;
+    }
+
     if (state.status === "RUNNING" && !fatalBurst) {
+      const baseSummary = incident.diagnosis?.summary ?? incident.summary ?? "Saki 已完成诊断，实例正在运行。";
       await updateIncident(incidentId, {
         status: "resolved",
-        summary: incident.diagnosis?.summary ?? incident.summary ?? "Saki 已完成诊断，实例正在运行。",
+        summary: healthCheck ? `${baseSummary}（健康检查通过：${healthCheck.detail}）` : baseSummary,
         resolvedAt: new Date()
       });
       clearRestartLease(instance.id);

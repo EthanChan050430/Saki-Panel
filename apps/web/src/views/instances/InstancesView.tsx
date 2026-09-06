@@ -132,6 +132,7 @@ import type {
   ManagedInstance,
   ManagedNode,
   ManagedUser,
+  RemoteNodeUserSummary,
   RestartPolicy,
   WatchPolicyMode
 } from "@webops/shared";
@@ -281,6 +282,132 @@ export function InstancesView({
   const [creating, setCreating] = useState(false);
   const [suggestingStartCommand, setSuggestingStartCommand] = useState<"create" | "settings" | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
+
+  const [showSyncModal, setShowSyncModal] = useState(false);
+  const [syncNodeId, setSyncNodeId] = useState("");
+  const [syncUserKey, setSyncUserKey] = useState("");
+  const [syncRemoteUrl, setSyncRemoteUrl] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState("");
+  const [syncSuccess, setSyncSuccess] = useState("");
+  const [nodeRemoteUsers, setNodeRemoteUsers] = useState<RemoteNodeUserSummary[]>([]);
+  const [loadingRemoteUsers, setLoadingRemoteUsers] = useState(false);
+  const [errorAvailableUsers, setErrorAvailableUsers] = useState<RemoteNodeUserSummary[]>([]);
+
+  const loadNodeRemoteUsers = useCallback(async (nId: string) => {
+    if (!nId) {
+      setNodeRemoteUsers([]);
+      return;
+    }
+    setLoadingRemoteUsers(true);
+    try {
+      const res = await api.nodeRemoteUsers(token, nId);
+      if (res.ok && Array.isArray(res.users)) {
+        setNodeRemoteUsers(res.users);
+      } else {
+        setNodeRemoteUsers([]);
+      }
+    } catch {
+      setNodeRemoteUsers([]);
+    } finally {
+      setLoadingRemoteUsers(false);
+    }
+  }, [token]);
+
+  const openSyncModal = () => {
+    setShowSyncModal(true);
+    setSyncError("");
+    setSyncSuccess("");
+    setErrorAvailableUsers([]);
+    let targetNodeId = syncNodeId;
+    if (!targetNodeId && nodes.length > 0) {
+      const preferred = nodes.find((n) => n.status === "ONLINE") || nodes[0];
+      if (preferred) {
+        targetNodeId = preferred.id;
+        setSyncNodeId(preferred.id);
+        setSyncRemoteUrl(`https://${preferred.host}:5479`);
+      }
+    }
+    if (targetNodeId) {
+      void loadNodeRemoteUsers(targetNodeId);
+    }
+  };
+
+  async function handleSyncForUser(targetUser: RemoteNodeUserSummary) {
+    if (!syncNodeId) return;
+    setSyncing(true);
+    setSyncError("");
+    setSyncSuccess("");
+    try {
+      const res = await api.syncInstancesByUserKey(token, {
+        nodeId: syncNodeId,
+        targetUserId: targetUser.id
+      });
+      if (res.ok) {
+        setSyncSuccess(res.message || `成功导入 ${res.syncedCount} 个实例！`);
+        await refresh();
+        setTimeout(() => {
+          setShowSyncModal(false);
+          setSyncSuccess("");
+          setSyncUserKey("");
+          setErrorAvailableUsers([]);
+        }, 1200);
+      } else {
+        setSyncError(res.message || res.error || "导入失败");
+      }
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : "导入失败，请检查网络或节点状态");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function handleSyncInstances(e: React.FormEvent) {
+    e.preventDefault();
+    if (!syncNodeId) {
+      setSyncError("请先选择目标节点");
+      return;
+    }
+    if (!syncUserKey.trim()) {
+      setSyncError("请输入用户专属访问密钥 (saki_usr_...)，或直接点击上方用户一键导入");
+      return;
+    }
+    if (!syncUserKey.trim().startsWith("saki_usr_")) {
+      setSyncError("专属访问密钥格式不正确，必须以 saki_usr_ 开头");
+      return;
+    }
+    setSyncing(true);
+    setSyncError("");
+    setSyncSuccess("");
+    setErrorAvailableUsers([]);
+    try {
+      const res = await api.syncInstancesByUserKey(token, {
+        nodeId: syncNodeId,
+        userKey: syncUserKey.trim(),
+        remotePanelUrl: syncRemoteUrl.trim() || undefined
+      });
+      if (res.ok) {
+        setSyncSuccess(res.message || `成功同步 ${res.syncedCount} 个实例！`);
+        await refresh();
+        setTimeout(() => {
+          setShowSyncModal(false);
+          setSyncSuccess("");
+          setSyncUserKey("");
+          setErrorAvailableUsers([]);
+        }, 1200);
+      } else {
+        setSyncError(res.message || res.error || "同步失败");
+        if (Array.isArray(res.availableUsers) && res.availableUsers.length > 0) {
+          setErrorAvailableUsers(res.availableUsers);
+        }
+      }
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : "同步失败，请检查网络或远程面板状态");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   const [createModalType, setCreateModalType] = useState<"instance" | "database">("instance");
   const [databases, setDatabases] = useState<DatabaseVisualizerInstance[]>([]);
   const [selectedDatabaseId, setSelectedDatabaseId] = useState<string | null>(null);
@@ -785,6 +912,261 @@ export function InstancesView({
     }
   }
 
+
+  const syncDialog = showSyncModal ? (
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !syncing) {
+          setShowSyncModal(false);
+          setSyncError("");
+          setSyncSuccess("");
+          setErrorAvailableUsers([]);
+        }
+      }}
+    >
+      <div className="modal-panel" role="dialog" aria-modal="true" style={{ maxWidth: 560 }}>
+        <div className="modal-header">
+          <div className="modal-title-wrap" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div className="modal-title-icon-badge" style={{ background: "rgba(255, 117, 172, 0.12)", color: "#ff75ac" }}>
+                <KeyRound size={18} />
+              </div>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 16 }}>同步远程节点用户实例</h2>
+                <p style={{ margin: 0, fontSize: 12, opacity: 0.8 }}>
+                  支持输入专属访问密钥自动验证，或通过已连接节点的本地数据库直接免密一键导入
+                </p>
+              </div>
+            </div>
+            <button
+              className="icon-button mini"
+              type="button"
+              disabled={syncing}
+              onClick={() => {
+                setShowSyncModal(false);
+                setSyncError("");
+                setSyncSuccess("");
+                setErrorAvailableUsers([]);
+              }}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+
+        <form onSubmit={handleSyncInstances} style={{ display: "grid", gap: "14px", padding: "16px 20px 20px" }}>
+          {syncError ? (
+            <div style={{
+              padding: "10px 14px",
+              borderRadius: "10px",
+              background: "rgba(239, 68, 68, 0.1)",
+              border: "1px solid rgba(239, 68, 68, 0.25)",
+              color: "#ef4444",
+              fontSize: "12px",
+              lineHeight: 1.5
+            }}>
+              {syncError}
+            </div>
+          ) : null}
+
+          {syncSuccess ? (
+            <div style={{
+              padding: "10px 14px",
+              borderRadius: "10px",
+              background: "rgba(16, 185, 129, 0.1)",
+              border: "1px solid rgba(16, 185, 129, 0.25)",
+              color: "#10b981",
+              fontSize: "12px",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px"
+            }}>
+              <Check size={14} />
+              <span>{syncSuccess}</span>
+            </div>
+          ) : null}
+
+          <label>
+            <span style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "6px" }}>
+              选择所属目标节点机器 <strong style={{ color: "#ef4444" }}>*</strong>
+            </span>
+            <select
+              value={syncNodeId}
+              onChange={(e) => {
+                const nid = e.target.value;
+                setSyncNodeId(nid);
+                setErrorAvailableUsers([]);
+                void loadNodeRemoteUsers(nid);
+                const chosen = nodes.find((n) => n.id === nid);
+                if (chosen) {
+                  setSyncRemoteUrl(`https://${chosen.host}:5479`);
+                }
+              }}
+              required
+              style={{ width: "100%", padding: "8px 12px", borderRadius: "8px" }}
+            >
+              <option value="">请选择节点机器...</option>
+              {nodes.map((n) => (
+                <option key={n.id} value={n.id}>
+                  {n.name} ({n.host}:{n.port}) {n.status === "ONLINE" ? "🟢 在线" : "⚪ 离线"}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {/* Direct Node Database Discovery Banner & 1-Click Import Cards */}
+          {loadingRemoteUsers ? (
+            <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "var(--text-muted, #86868b)", padding: "4px 0" }}>
+              <Loader2 size={13} className="spin" />
+              <span>正在探测节点本地数据库与用户实例...</span>
+            </div>
+          ) : nodeRemoteUsers.length > 0 ? (
+            <div style={{
+              padding: "12px 14px",
+              borderRadius: "10px",
+              background: "rgba(59, 130, 246, 0.08)",
+              border: "1px solid rgba(59, 130, 246, 0.25)",
+              display: "grid",
+              gap: "8px"
+            }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontSize: "12px", fontWeight: 600, color: "#3b82f6", display: "flex", alignItems: "center", gap: "5px" }}>
+                  <Database size={13} />
+                  节点数据库直连可用（可直接一键导入用户实例）：
+                </span>
+              </div>
+              <div style={{ display: "grid", gap: "6px" }}>
+                {nodeRemoteUsers.map((u) => (
+                  <div
+                    key={u.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "8px 10px",
+                      background: "rgba(255, 255, 255, 0.06)",
+                      border: "1px solid rgba(255, 255, 255, 0.1)",
+                      borderRadius: "6px"
+                    }}
+                  >
+                    <div>
+                      <strong style={{ fontSize: "13px" }}>{u.displayName || u.username}</strong>
+                      <span style={{ fontSize: "11px", color: "var(--text-muted, #86868b)", marginLeft: "8px" }}>
+                        @{u.username} · <strong>{u.instanceCount}</strong> 个实例
+                        {u.activeKeyLast4 ? ` · 有效密钥指纹 ...${u.activeKeyLast4}` : ""}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="primary-button mini"
+                      disabled={syncing}
+                      onClick={() => void handleSyncForUser(u)}
+                      style={{ height: "28px", fontSize: "11px", padding: "0 12px" }}
+                    >
+                      一键导入全部
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {/* Diagnostic Fallback Available Users */}
+          {errorAvailableUsers.length > 0 && nodeRemoteUsers.length === 0 ? (
+            <div style={{
+              padding: "10px 12px",
+              borderRadius: "8px",
+              background: "rgba(245, 158, 11, 0.1)",
+              border: "1px solid rgba(245, 158, 11, 0.25)",
+              display: "grid",
+              gap: "6px"
+            }}>
+              <span style={{ fontSize: "12px", fontWeight: 600, color: "#f59e0b" }}>
+                检测到该节点上有以下可用用户，可直接一键导入：
+              </span>
+              {errorAvailableUsers.map((u) => (
+                <div key={u.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: "12px" }}>{u.displayName || u.username} ({u.instanceCount} 个实例)</span>
+                  <button
+                    type="button"
+                    className="primary-button mini"
+                    disabled={syncing}
+                    onClick={() => void handleSyncForUser(u)}
+                  >
+                    导入此用户
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div style={{ position: "relative", textAlign: "center", margin: "4px 0" }}>
+            <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1, background: "rgba(255, 255, 255, 0.1)" }} />
+            <span style={{ position: "relative", padding: "0 10px", background: "var(--card-bg, #1a1b26)", fontSize: "11px", color: "var(--text-muted, #86868b)" }}>
+              或者手动输入专属密钥进行验证
+            </span>
+          </div>
+
+          <label>
+            <span style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "6px" }}>
+              用户专属访问密钥 (User Key)
+            </span>
+            <textarea
+              rows={2}
+              value={syncUserKey}
+              onChange={(e) => setSyncUserKey(e.target.value)}
+              placeholder="粘贴目标机器生成的以 saki_usr_ 开头的整串密钥..."
+              style={{ width: "100%", padding: "8px 12px", borderRadius: "8px", fontFamily: "monospace", fontSize: "12px" }}
+            />
+            <span style={{ fontSize: "11px", color: "var(--text-muted, #86868b)", marginTop: "4px", display: "block" }}>
+              提示：输入密钥后系统将自动优先通过已连接节点的本地数据库快速校验并拉取实例
+            </span>
+          </label>
+
+          <label>
+            <span style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "6px" }}>
+              远程面板地址 (可选备用)
+            </span>
+            <input
+              type="text"
+              value={syncRemoteUrl}
+              onChange={(e) => setSyncRemoteUrl(e.target.value)}
+              placeholder="如 https://dreamstarry.top:5479（留空将自动推断）"
+              style={{ width: "100%", padding: "8px 12px", borderRadius: "8px", fontSize: "12px" }}
+            />
+          </label>
+
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "8px" }}>
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={syncing}
+              onClick={() => {
+                setShowSyncModal(false);
+                setSyncError("");
+                setSyncSuccess("");
+                setErrorAvailableUsers([]);
+              }}
+            >
+              取消
+            </button>
+            <button
+              type="submit"
+              className="primary-button"
+              disabled={syncing}
+              style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 18px" }}
+            >
+              {syncing ? <Loader2 size={14} className="spin" /> : <KeyRound size={14} />}
+              {syncing ? "正在验证同步..." : "通过密钥同步实例"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  ) : null;
+
   const createDialog = showCreateForm ? (
     <div
       className="modal-backdrop"
@@ -1100,6 +1482,7 @@ export function InstancesView({
           }
         />
         {typeof document !== "undefined" && createDialog ? createPortal(createDialog, document.body) : null}
+        {typeof document !== "undefined" && syncDialog ? createPortal(syncDialog, document.body) : null}
         {typeof document !== "undefined" && databaseVisualizerDialog ? createPortal(databaseVisualizerDialog, document.body) : null}
         {typeof document !== "undefined" && showTaskModal && selectedInstance ? createPortal(
           <InstanceTasksPanel
@@ -1714,6 +2097,7 @@ export function InstancesView({
         }
       />
       {typeof document !== "undefined" && createDialog ? createPortal(createDialog, document.body) : null}
+      {typeof document !== "undefined" && syncDialog ? createPortal(syncDialog, document.body) : null}
       {typeof document !== "undefined" && databaseVisualizerDialog ? createPortal(databaseVisualizerDialog, document.body) : null}
       {typeof document !== "undefined" && editDatabaseDialog ? createPortal(editDatabaseDialog, document.body) : null}
 
@@ -1745,6 +2129,16 @@ export function InstancesView({
                 </button>
               ))}
             </div>
+            
+            <button
+              className="icon-button instance-action-btn"
+              title="通过用户专属密钥同步远程实例"
+              aria-label="通过用户专属密钥同步远程实例"
+              type="button"
+              onClick={openSyncModal}
+            >
+              <KeyRound size={17} />
+            </button>
             <button className="icon-button instance-action-btn" title="模板管理" type="button" onClick={onOpenTemplates}>
               <LayoutTemplate size={17} />
             </button>
@@ -1962,6 +2356,17 @@ export function InstancesView({
                     icon: <Sparkles size={14} />
                   }}
                 />
+                <div style={{ display: "flex", justifyContent: "center", marginTop: "14px" }}>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={openSyncModal}
+                    style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontSize: "12px", padding: "8px 18px" }}
+                  >
+                    <KeyRound size={14} style={{ color: "#ff75ac" }} />
+                    <span>通过用户专属密钥同步远程实例</span>
+                  </button>
+                </div>
               </div>
             ) : null}
           </div>

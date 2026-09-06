@@ -1493,7 +1493,10 @@
 
 .terminal-input-wrap:focus-within {
   background: rgba(255, 255, 255, 0.55) !important;
-  border-color: rgba(255, 117, 172, 0.65) !important;
+  border-color: rgba(255, 117, 172, 0.75) !important;
+  border-radius: 14px !important;
+  backdrop-filter: blur(32px) saturate(210%) brightness(108%) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(210%) brightness(108%) !important;
   box-shadow: 0 12px 36px rgba(255, 117, 172, 0.2), 0 0 0 3.5px rgba(255, 117, 172, 0.18), inset 0 1.5px 1px rgba(255, 255, 255, 1) !important;
 }
 
@@ -1513,7 +1516,10 @@
 
 [data-theme="dark"] .terminal-input-wrap:focus-within {
   background: rgba(28, 31, 48, 0.68) !important;
-  border-color: rgba(255, 117, 172, 0.6) !important;
+  border-color: rgba(255, 117, 172, 0.65) !important;
+  border-radius: 14px !important;
+  backdrop-filter: blur(36px) saturate(220%) brightness(110%) !important;
+  -webkit-backdrop-filter: blur(36px) saturate(220%) brightness(110%) !important;
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55), 0 0 0 3.5px rgba(255, 117, 172, 0.22), inset 0 1.5px 0.5px rgba(255, 255, 255, 0.4) !important;
 }
 
@@ -1700,12 +1706,14 @@
 
 .terminal-input-wrap .terminal-cmd-input,
 .terminal-input-wrap input,
+.terminal-cmd-input,
 input.terminal-cmd-input {
   flex: 1 !important;
   min-width: 0 !important;
   height: 100% !important;
   padding: 0 8px !important;
   border: none !important;
+  border-radius: 0 !important;
   outline: none !important;
   background: transparent !important;
   background-color: transparent !important;
@@ -1719,9 +1727,20 @@ input.terminal-cmd-input {
 }
 
 .terminal-input-wrap .terminal-cmd-input:focus,
+.terminal-input-wrap .terminal-cmd-input:focus-visible,
+.terminal-input-wrap .terminal-cmd-input:active,
 .terminal-input-wrap input:focus,
-input.terminal-cmd-input:focus {
+.terminal-input-wrap input:focus-visible,
+.terminal-input-wrap input:active,
+.terminal-cmd-input:focus,
+.terminal-cmd-input:focus-visible,
+.terminal-cmd-input:active,
+input.terminal-cmd-input:focus,
+input.terminal-cmd-input:focus-visible,
+input.terminal-cmd-input:active {
   outline: none !important;
+  border: none !important;
+  border-radius: 0 !important;
   box-shadow: none !important;
   background: transparent !important;
   background-color: transparent !important;
@@ -1751,12 +1770,40 @@ input.terminal-cmd-input::placeholder {
 
 [data-theme="dark"] .terminal-input-wrap .terminal-cmd-input,
 [data-theme="dark"] .terminal-input-wrap input,
+[data-theme="dark"] .terminal-cmd-input,
 [data-theme="dark"] input.terminal-cmd-input {
   color: #f5f5f7 !important;
   background: transparent !important;
   background-color: transparent !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+  border: none !important;
+  border-radius: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+[data-theme="dark"] .terminal-input-wrap .terminal-cmd-input:focus,
+[data-theme="dark"] .terminal-input-wrap .terminal-cmd-input:focus-visible,
+[data-theme="dark"] .terminal-input-wrap .terminal-cmd-input:active,
+[data-theme="dark"] .terminal-input-wrap input:focus,
+[data-theme="dark"] .terminal-input-wrap input:focus-visible,
+[data-theme="dark"] .terminal-input-wrap input:active,
+[data-theme="dark"] .terminal-cmd-input:focus,
+[data-theme="dark"] .terminal-cmd-input:focus-visible,
+[data-theme="dark"] .terminal-cmd-input:active,
+[data-theme="dark"] input.terminal-cmd-input:focus,
+[data-theme="dark"] input.terminal-cmd-input:focus-visible,
+[data-theme="dark"] input.terminal-cmd-input:active {
+  color: #f5f5f7 !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: none !important;
+  border-radius: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 [data-theme="dark"] .terminal-input-wrap .terminal-cmd-input:disabled,
@@ -1991,4 +2038,78 @@ input.terminal-cmd-input::placeholder {
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* ── Template detail panel ── */
+
+.template-detail {
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.template-detail-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 117, 172, 0.3);
+  border-radius: 999px;
+  background: rgba(252, 231, 243, 0.6);
+  color: #ff75ac;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.template-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.template-detail-row {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid #e8edf2;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 13px;
+  color: #334155;
+}
+
+.template-detail-row--wide {
+  grid-column: 1 / -1;
+}
+
+.template-detail-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.template-port-list,
+.template-env-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.template-port-chip,
+.template-env-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid #d1e0f0;
+  border-radius: 6px;
+  background: #eaf2fb;
+  color: #2563eb;
+  font-size: 12px;
+  font-family: Consolas, "SFMono-Regular", monospace;
+  white-space: nowrap;
 }

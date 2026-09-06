@@ -23,6 +23,8 @@ import { registerWatchRoutes } from "./watch/index.js";
 import { registerJoinScriptRoutes } from "./routes/join-scripts.js";
 import { registerUserKeyRoutes } from "./routes/user-keys.js";
 import { registerPointsRoutes } from "./routes/points.js";
+import { registerIngestRoutes } from "./watch/ingest.js";
+import { registerGlobalEventSocket } from "./global-events.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -87,11 +89,15 @@ export async function createPanelServer() {
   await registerSystemRoutes(app);
   await registerSakiRoutes(app);
   await registerWatchRoutes(app);
+  await registerIngestRoutes(app);
   await registerTerminalRoutes(app);
   await registerDatabaseRoutes(app);
   await registerJoinScriptRoutes(app);
   await registerUserKeyRoutes(app);
   await registerPointsRoutes(app);
+
+  // Global event bus — pushes state mutations to all connected browser sessions.
+  registerGlobalEventSocket(app);
 
   app.setErrorHandler((error: unknown, request, reply) => {
     request.log.error(error);

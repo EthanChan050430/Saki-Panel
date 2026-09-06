@@ -40,6 +40,13 @@ async function main(): Promise<void> {
     port: daemonConfig.port
   });
 
+  // Attempt initial panel sync so node token matches panel database
+  try {
+    await sendHeartbeat();
+  } catch {
+    // Panel might not be running yet; heartbeat loop will keep retrying
+  }
+
   const { key: nodeKey } = await getOrCreateDaemonNodeKey();
   console.log(`[+] Saki-Daemon listening at ${daemonConfig.protocol}://${daemonConfig.host}:${daemonConfig.port}`);
   console.log(`[+] 机器专属接入密钥 (Node Key): ${nodeKey}`);

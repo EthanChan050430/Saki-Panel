@@ -12,6 +12,8 @@ import type {
   CreateNodeResponse,
   ConnectNodeByKeyRequest,
   ConnectNodeByKeyResponse,
+  ConnectLocalNodeResponse,
+  LocalDaemonStatusResponse,
   UserAccessKeyInfo,
   CreateUserAccessKeyResponse,
   CreateEnrollmentTokenRequest,
@@ -20,11 +22,17 @@ import type {
   NodeJoinCommandResponse,
   RotateNodeTokenResponse,
   CreateInstanceRequest,
+  SyncInstancesByUserKeyRequest,
+  SyncInstancesByUserKeyResponse,
+  RemoteNodeUserSummary,
   CreateInstanceFromTemplateRequest,
+  DeleteTemplateResponse,
+  SaveTemplateFromInstanceRequest,
   SuggestInstanceStartCommandRequest,
   SuggestInstanceStartCommandResponse,
   CreateUserRequest,
   InstanceAssignee,
+  UpdateTemplateRequest,
   InstanceActionResponse,
   InstanceFileContentResponse,
   InstanceFileEntry,
@@ -47,6 +55,11 @@ import type {
   SakiChatRequest,
   SakiChatResponse,
   SakiAntigravityAuthStatusResponse,
+  SakiAntigravityExchangeRequest,
+  SakiAntigravityLoginRequest,
+  SakiAntigravityLoginUrlResponse,
+  SakiAntigravityLogoutRequest,
+  SakiAntigravitySwitchAccountRequest,
   SakiCopilotAuthStatusResponse,
   SakiCopilotLoginResponse,
   SakiConfigResponse,
@@ -77,6 +90,14 @@ import type {
   ManagedIncident,
   ManagedWatchPolicy,
   UpdateWatchPolicyRequest,
+  ManagedSilenceRule,
+  CreateSilenceRuleRequest,
+  ManagedNotificationChannel,
+  UpsertNotificationChannelRequest,
+  ManagedNotificationDelivery,
+  ManagedIngestToken,
+  CreateIngestTokenRequest,
+  IncidentReport,
   DatabaseCreateTableRequest,
   DatabaseDeleteRowRequest,
   DatabaseEngine,
@@ -340,6 +361,7 @@ export interface SakiActiveTaskSummary {
   message: string;
   mode?: string;
   actionCount: number;
+  hasRollback?: boolean;
   progress?: {
     message: string;
     status?: string;
@@ -716,6 +738,12 @@ export const api = {
   nodes(token: string) {
     return requestJson<ManagedNode[]>("/api/nodes", {}, token);
   },
+  checkLocalDaemonStatus(token: string) {
+    return requestJson<LocalDaemonStatusResponse>("/api/nodes/local-status", {}, token);
+  },
+  connectLocalNode(token: string) {
+    return requestJson<ConnectLocalNodeResponse>("/api/nodes/connect-local", { method: "POST", body: JSON.stringify({}) }, token);
+  },
   createNode(token: string, input: CreateNodeRequest) {
     return requestJson<CreateNodeResponse>(
       "/api/nodes",
@@ -785,6 +813,21 @@ export const api = {
     return requestJson<{ ok: boolean }>(
       `/api/user/keys/${id}`,
       { method: "DELETE", body: JSON.stringify({}) },
+      token
+    );
+  },
+
+  syncInstancesByUserKey(token: string, input: SyncInstancesByUserKeyRequest) {
+    return requestJson<SyncInstancesByUserKeyResponse>(
+      "/api/instances/sync-by-user-key",
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  nodeRemoteUsers(token: string, nodeId: string) {
+    return requestJson<{ ok: boolean; users: RemoteNodeUserSummary[] }>(
+      `/api/instances/node-remote-users/${nodeId}`,
+      {},
       token
     );
   },
@@ -1225,8 +1268,33 @@ export const api = {
       token
     );
   },
+  saveTemplateFromInstance(token: string, instanceId: string, input: SaveTemplateFromInstanceRequest) {
+    return requestJson<InstanceTemplate>(
+      "/api/templates/from-instance",
+      { method: "POST", body: JSON.stringify({ instanceId, data: input }) },
+      token
+    );
+  },
+  updateTemplate(token: string, templateId: string, input: UpdateTemplateRequest) {
+    return requestJson<InstanceTemplate>(
+      `/api/templates/${templateId}`,
+      { method: "PUT", body: JSON.stringify(input) },
+      token
+    );
+  },
+  deleteTemplate(token: string, templateId: string) {
+    return requestJson<DeleteTemplateResponse>(
+      `/api/templates/${templateId}`,
+      { method: "DELETE" },
+      token
+    );
+  },
   terminalUrl() {
     return webSocketUrl("/ws/terminal", {});
+  },
+  eventsUrl() {
+    const token = localStorage.getItem("saki-panel-token") ?? "";
+    return webSocketUrl("/ws/events", token ? { token } : {});
   },
   createInstanceShell(token: string, id: string, workingDirectory?: string, label?: string) {
     const payload: { workingDirectory?: string; label?: string } = {};
@@ -1397,6 +1465,34 @@ export const api = {
       token
     );
   },
+  sakiCancelAllTasks(token: string) {
+    return requestJson<{ ok: boolean; cancelledCount: number }>(
+      "/api/saki/tasks/cancel-all",
+      { method: "POST" },
+      token
+    );
+  },
+  sakiClearFinishedTasks(token: string) {
+    return requestJson<{ ok: boolean; deletedCount: number }>(
+      "/api/saki/tasks/finished",
+      { method: "DELETE" },
+      token
+    );
+  },
+  sakiDeleteTask(token: string, taskId: string) {
+    return requestJson<{ ok: boolean }>(
+      `/api/saki/tasks/${encodeURIComponent(taskId)}`,
+      { method: "DELETE" },
+      token
+    );
+  },
+  sakiRollbackTask(token: string, taskId: string) {
+    return requestJson<{ ok: boolean; rolledBackCount: number; notes: string[]; message?: string }>(
+      `/api/saki/tasks/${encodeURIComponent(taskId)}/rollback`,
+      { method: "POST" },
+      token
+    );
+  },
   sakiSteerTask(token: string, taskId: string, message: string) {
     return requestJson<{ ok: boolean }>(
       `/api/saki/tasks/${encodeURIComponent(taskId)}/steer`,
@@ -1479,6 +1575,84 @@ export const api = {
       { method: "POST", body: JSON.stringify({}) },
       token
     );
+  },
+  silenceIncident(token: string, id: string, input: { minutes?: number; reason?: string } = {}) {
+    return requestJson<{ ok: boolean; rule: ManagedSilenceRule; incident: ManagedIncident | null }>(
+      `/api/incidents/${id}/silence`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  silenceRules(token: string) {
+    return requestJson<{ rules: ManagedSilenceRule[] }>("/api/incidents/silences", {}, token);
+  },
+  createSilenceRule(token: string, input: CreateSilenceRuleRequest) {
+    return requestJson<ManagedSilenceRule>(
+      "/api/incidents/silences",
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  deleteSilenceRule(token: string, id: string) {
+    return requestJson<{ ok: boolean }>(
+      `/api/incidents/silences/${id}`,
+      { method: "DELETE" },
+      token
+    );
+  },
+  notificationChannels(token: string) {
+    return requestJson<{ channels: ManagedNotificationChannel[] }>("/api/incidents/notify/channels", {}, token);
+  },
+  createNotificationChannel(token: string, input: UpsertNotificationChannelRequest) {
+    return requestJson<ManagedNotificationChannel>(
+      "/api/incidents/notify/channels",
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  updateNotificationChannel(token: string, id: string, input: Partial<UpsertNotificationChannelRequest>) {
+    return requestJson<ManagedNotificationChannel>(
+      `/api/incidents/notify/channels/${id}`,
+      { method: "PUT", body: JSON.stringify(input) },
+      token
+    );
+  },
+  deleteNotificationChannel(token: string, id: string) {
+    return requestJson<{ ok: boolean }>(
+      `/api/incidents/notify/channels/${id}`,
+      { method: "DELETE" },
+      token
+    );
+  },
+  testNotificationChannel(token: string, id: string) {
+    return requestJson<{ ok: boolean; error?: string }>(
+      `/api/incidents/notify/channels/${id}/test`,
+      { method: "POST", body: JSON.stringify({}) },
+      token
+    );
+  },
+  notificationDeliveries(token: string, limit = 50) {
+    return requestJson<{ deliveries: ManagedNotificationDelivery[] }>(
+      `/api/incidents/notify/deliveries?limit=${limit}`,
+      {},
+      token
+    );
+  },
+  ingestTokens(token: string) {
+    return requestJson<{ tokens: ManagedIngestToken[] }>("/api/ingest/tokens", {}, token);
+  },
+  createIngestToken(token: string, input: CreateIngestTokenRequest) {
+    return requestJson<ManagedIngestToken>(
+      "/api/ingest/tokens",
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  deleteIngestToken(token: string, id: string) {
+    return requestJson<{ ok: boolean }>(`/api/ingest/tokens/${id}`, { method: "DELETE" }, token);
+  },
+  incidentReport(token: string, days = 7) {
+    return requestJson<IncidentReport>(`/api/incidents/report?days=${days}`, {}, token);
   },
   watchPolicy(token: string, instanceId: string) {
     return requestJson<ManagedWatchPolicy>(`/api/instances/${instanceId}/watch-policy`, {}, token);
@@ -1622,6 +1796,37 @@ export const api = {
   },
   sakiAntigravityStatus(token: string) {
     return requestJson<SakiAntigravityAuthStatusResponse>("/api/saki/antigravity/status", {}, token);
+  },
+  sakiAntigravityLoginUrl(token: string) {
+    return requestJson<SakiAntigravityLoginUrlResponse>("/api/saki/antigravity/login", {}, token);
+  },
+  sakiAntigravityExchange(payload: SakiAntigravityExchangeRequest, token: string) {
+    return requestJson<SakiAntigravityAuthStatusResponse>(
+      "/api/saki/antigravity/exchange",
+      { method: "POST", body: JSON.stringify(payload) },
+      token
+    );
+  },
+  sakiAntigravityLogin(payload: SakiAntigravityLoginRequest, token: string) {
+    return requestJson<SakiAntigravityAuthStatusResponse>(
+      "/api/saki/antigravity/login",
+      { method: "POST", body: JSON.stringify(payload) },
+      token
+    );
+  },
+  sakiAntigravitySwitchAccount(payload: SakiAntigravitySwitchAccountRequest, token: string) {
+    return requestJson<SakiAntigravityAuthStatusResponse>(
+      "/api/saki/antigravity/switch-account",
+      { method: "POST", body: JSON.stringify(payload) },
+      token
+    );
+  },
+  sakiAntigravityLogout(payload: SakiAntigravityLogoutRequest, token: string) {
+    return requestJson<SakiAntigravityAuthStatusResponse>(
+      "/api/saki/antigravity/logout",
+      { method: "POST", body: JSON.stringify(payload) },
+      token
+    );
   },
   testNode(token: string, id: string) {
     return requestJson<{ ok: boolean; statusCode?: number; error?: string }>(

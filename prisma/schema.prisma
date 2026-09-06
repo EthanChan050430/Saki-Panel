@@ -56,6 +56,7 @@ model User {
   favorability        Int                  @default(0)
   pointRecords        PointRecord[]
   sakiConversations   SakiConversation[]
+  createdTemplates    Template[]
 
   @@map("users")
 }
@@ -218,12 +219,40 @@ model Instance {
   tasks             ScheduledTask[]
   watchPolicy       WatchPolicy?
   incidents         Incident[]
+  ingestTokens      IngestToken[]
 
   @@index([nodeId])
   @@index([status])
   @@index([createdById])
   @@index([assignedToId])
   @@map("instances")
+}
+
+model Template {
+  id                            String   @id @default(cuid())
+  name                          String
+  description                   String?
+  type                          String   @default("generic_command")
+  defaultStartCommand           String   @default("")
+  defaultStopCommand            String?
+  defaultWorkingDirectoryPrefix String   @default("instances")
+  portsJson                     String?                                  // JSON: Array<{port, description}>
+  envsJson                      String?                                  // JSON: Array<{key, value}>
+  autoStart                     Boolean  @default(false)
+  restartPolicy                 String   @default("never")
+  restartMaxRetries             Int      @default(0)
+  runAsUser                     String?
+  memoryLimit                   Int?
+  cpuLimit                      Float?
+  fromInstanceId                String?
+  isBuiltin                     Boolean  @default(false)                 // built-in templates ship with the app
+  createdById                   String?
+  createdBy                     User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt                     DateTime @default(now())
+  updatedAt                     DateTime @updatedAt
+
+  @@index([createdById])
+  @@map("templates")
 }
 
 model InstanceAssignment {
@@ -239,15 +268,24 @@ model InstanceAssignment {
 }
 
 model WatchPolicy {
-  instanceId        String   @id
-  enabled           Boolean  @default(true)
-  mode              String   @default("diagnose_and_patch")
-  cooldownSeconds   Int      @default(900)
-  maxRunsPerHour    Int      @default(3)
-  verifyWaitSeconds Int      @default(20)
-  approverUserId    String?
-  updatedAt         DateTime @updatedAt
-  instance          Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  instanceId                String   @id
+  enabled                   Boolean  @default(true)
+  mode                      String   @default("diagnose_and_patch")
+  cooldownSeconds           Int      @default(900)
+  maxRunsPerHour            Int      @default(3)
+  verifyWaitSeconds         Int      @default(20)
+  approverUserId            String?
+  // 风险分级自治：诊断 risk <= autoApproveRisk 且 confidence >= autoApproveMinConfidence 时自动批准执行
+  autoApproveRisk           String   @default("none") // none | low | medium
+  autoApproveMinConfidence  Float    @default(0.85)
+  // 修复后健康检查：verify 阶段除状态/日志外，额外探测该 URL 返回 2xx 才算通过
+  healthCheckUrl            String?
+  healthCheckTimeoutSeconds Int      @default(5)
+  // 通知外送与升级：JSON 数组存渠道 id；awaiting_approval 超过 escalationMinutes 未处理触发升级通知
+  notifyChannelIds          String   @default("[]")
+  escalationMinutes         Int      @default(30)
+  updatedAt                 DateTime @updatedAt
+  instance                  Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
 
   @@map("watch_policies")
 }
@@ -271,6 +309,15 @@ model Incident {
   lastOccurredAt  DateTime  @default(now())
   resolvedAt      DateTime?
   ignoredUntil    DateTime?
+  // 降噪与复发：groupKey 用于跨实例/跨事件分组（如 node:disk:小时桶），recurrenceCount 是同指纹历史复发次数
+  groupKey        String?
+  recurrenceCount Int       @default(0)
+  flapping        Boolean   @default(false)
+  // 诊断证据包（JSON：WatchEvidence）与自治/通知轨迹
+  evidenceJson    String?
+  autoApplied     Boolean   @default(false)
+  escalatedAt     DateTime?
+  lastNotifiedAt  DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   instance        Instance  @relation(fields: [instanceId], references: [id], onDelete: Cascade)
@@ -278,7 +325,67 @@ model Incident {
   @@index([instanceId, fingerprint])
   @@index([status, updatedAt])
   @@index([assigneeUserId, status])
+  @@index([groupKey])
   @@map("incidents")
+}
+
+// 静默规则：匹配的事件直接吞掉（instanceId/fingerprint/trigger 任一组合，expiresAt 为空表示永久）
+model SilenceRule {
+  id          String    @id @default(cuid())
+  instanceId  String?
+  fingerprint String?
+  trigger     String?
+  reason      String?
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([instanceId])
+  @@index([fingerprint])
+  @@map("silence_rules")
+}
+
+// 出站通知渠道：webhook(通用 JSON) / dingtalk / wecom / telegram
+model NotificationChannel {
+  id          String                 @id @default(cuid())
+  name        String
+  type        String
+  url         String
+  secret      String?
+  enabled     Boolean                @default(true)
+  eventsJson  String                 @default("[]") // 订阅的事件类别: ["opened","awaiting","resolved","failed","escalation"]
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  deliveries  NotificationDelivery[]
+
+  @@map("notification_channels")
+}
+
+model NotificationDelivery {
+  id         String              @id @default(cuid())
+  channelId  String
+  incidentId String?
+  kind       String // opened | awaiting | resolved | failed | escalation | test
+  status     String // success | failure
+  error      String?
+  createdAt  DateTime            @default(now())
+  channel    NotificationChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([channelId])
+  @@map("notification_deliveries")
+}
+
+// 外部告警接入口令：Prometheus Alertmanager / Grafana / 任意监控系统 POST 告警进来
+model IngestToken {
+  id         String    @id @default(cuid())
+  instanceId String
+  label      String    @default("")
+  token      String    @unique
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  instance   Instance  @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@map("ingest_tokens")
 }
 
 model ScheduledTask {

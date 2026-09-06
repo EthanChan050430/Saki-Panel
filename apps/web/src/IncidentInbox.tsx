@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, Bell, Check, Clock, Loader2, RotateCcw, Sparkles, X } from "lucide-react";
-import type { IncidentStatus, ManagedIncident } from "@webops/shared";
+import { AlertTriangle, Bell, BellOff, Check, CheckCheck, ChevronDown, Clock, Loader2, RotateCcw, Sparkles, X } from "lucide-react";
+import type { IncidentStatus, IncidentTrigger, ManagedIncident, ManagedSilenceRule } from "@webops/shared";
 import { api, ApiError } from "./api.js";
 
 // 与后端 incidents.ts 的 activeIncidentStatuses 保持同一口径：
@@ -26,6 +26,19 @@ const INCIDENT_LIST_LIMIT = 50;
 const ACTIVE_DISPLAY_LIMIT = 20;
 const RECENT_DISPLAY_LIMIT = 10;
 const DIAGNOSE_CONFIRM_MS = 3000;
+
+// 弹层左侧分类侧栏的筛选项："all" 表示不筛选。
+type TriggerFilter = "all" | IncidentTrigger;
+
+const triggerCategories: Array<{ key: TriggerFilter; label: string }> = [
+  { key: "all", label: "全部" },
+  { key: "crash", label: "进程崩溃" },
+  { key: "crash_loop", label: "崩溃循环" },
+  { key: "disk", label: "磁盘告警" },
+  { key: "memory", label: "内存告警" },
+  { key: "webhook", label: "外部告警" },
+  { key: "health", label: "健康检查" }
+];
 
 function statusLabel(status: IncidentStatus): string {
   switch (status) {
@@ -68,6 +81,10 @@ function triggerLabel(trigger: ManagedIncident["trigger"]): string {
       return "磁盘告警";
     case "memory":
       return "内存告警";
+    case "webhook":
+      return "外部告警";
+    case "health":
+      return "健康检查";
     default:
       return "进程崩溃";
   }
@@ -83,6 +100,45 @@ function formatClockWithSeconds(value: string | number): string {
   const date = new Date(value);
   const pad = (unit: number) => String(unit).padStart(2, "0");
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+// 同一 groupKey 的连续事件折叠成一个分组块；groupKey 缺失时退回事件 id（即自成一组）。
+interface IncidentGroup {
+  key: string;
+  items: ManagedIncident[];
+}
+
+function groupIncidents(list: ManagedIncident[]): IncidentGroup[] {
+  const groups: IncidentGroup[] = [];
+  for (const incident of list) {
+    const key = incident.groupKey ?? incident.id;
+    const last = groups[groups.length - 1];
+    if (last && last.key === key) {
+      last.items.push(incident);
+    } else {
+      groups.push({ key, items: [incident] });
+    }
+  }
+  return groups;
+}
+
+// 静默规则作用域文案：实例名（缺省为全部实例）+ 触发类型或指纹后 8 位。
+function silenceRuleScope(rule: ManagedSilenceRule): string {
+  const scope = rule.instanceName || "全部实例";
+  if (rule.trigger) return `${scope} · ${triggerLabel(rule.trigger)}`;
+  if (rule.fingerprint) return `${scope} · 指纹 ${rule.fingerprint.slice(-8)}`;
+  return scope;
+}
+
+// 静默规则到期文案：null 为永久；当天只显示时刻，跨天带上日期。
+function silenceRuleExpiry(rule: ManagedSilenceRule): string {
+  if (!rule.expiresAt) return "永久";
+  const date = new Date(rule.expiresAt);
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  return sameDay
+    ? `至 ${formatClock(rule.expiresAt)}`
+    : `至 ${date.getMonth() + 1}月${date.getDate()}日 ${formatClock(rule.expiresAt)}`;
 }
 
 interface IncidentInboxState {
@@ -306,10 +362,38 @@ export function IncidentBell({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [triggerFilter, setTriggerFilter] = useState<TriggerFilter>("all");
+  const [ignoreAllBusy, setIgnoreAllBusy] = useState(false);
+  // 分组展开覆盖：key 为 `${section}:${groupKey}`，未覆盖时按默认规则（待处理 ≤3 条展开，其余折叠）。
+  const [groupOverrides, setGroupOverrides] = useState<Record<string, boolean>>({});
+  // 静默规则：首次展开时才拉取，之后缓存在 state；创建/删除后重新加载。
+  const [silenceOpen, setSilenceOpen] = useState(false);
+  const [silenceRules, setSilenceRules] = useState<ManagedSilenceRule[] | null>(null);
+  const [silenceLoading, setSilenceLoading] = useState(false);
+  const [silenceBusyId, setSilenceBusyId] = useState<string | null>(null);
   const { armingId, confirm: confirmDiagnose, disarm: disarmDiagnose } = useDiagnoseConfirm();
   const [popoverPos, setPopoverPos] = useState<{ top: number; right: number } | null>(null);
   const bellContainerRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+
+  // 各分类下的事件数（待处理 + 近期完结），用于侧栏角标。
+  const categoryCounts = useMemo(() => {
+    const counts: Record<TriggerFilter, number> = { all: 0, crash: 0, crash_loop: 0, disk: 0, memory: 0, webhook: 0, health: 0 };
+    for (const incident of [...active, ...recent]) {
+      counts.all += 1;
+      counts[incident.trigger] += 1;
+    }
+    return counts;
+  }, [active, recent]);
+
+  const visibleActive = useMemo(
+    () => (triggerFilter === "all" ? active : active.filter((item) => item.trigger === triggerFilter)),
+    [active, triggerFilter]
+  );
+  const visibleRecent = useMemo(
+    () => (triggerFilter === "all" ? recent : recent.filter((item) => item.trigger === triggerFilter)),
+    [recent, triggerFilter]
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -323,7 +407,7 @@ export function IncidentBell({
       const rect = button.getBoundingClientRect();
       // Align the popover's right edge with the button, but clamp so the
       // popover never slides past the viewport's left or right edge.
-      const width = popoverRef.current?.offsetWidth || 380;
+      const width = popoverRef.current?.offsetWidth || 500;
       const idealRight = window.innerWidth - rect.right;
       const maxRight = Math.max(12, window.innerWidth - width - 12);
       setPopoverPos({
@@ -396,9 +480,92 @@ export function IncidentBell({
     }
   }
 
+  // 全部忽略：逐条调用现有的 ignore 接口（60 分钟），作用于当前筛选分类下的待处理事件。
+  async function ignoreAllVisible() {
+    const targets = visibleActive;
+    if (targets.length === 0 || ignoreAllBusy) return;
+    setIgnoreAllBusy(true);
+    setActionError(null);
+    setNotice(null);
+    let succeeded = 0;
+    let failed = 0;
+    for (const incident of targets) {
+      try {
+        await api.ignoreIncident(token, incident.id, { minutes: 60 });
+        succeeded += 1;
+      } catch (error) {
+        failed += 1;
+        const message = actionErrorMessage(error, onLogout);
+        if (message && !actionError) setActionError(message);
+      }
+    }
+    await refresh();
+    setIgnoreAllBusy(false);
+    if (failed > 0) {
+      setActionError(`${succeeded} 条已忽略，${failed} 条失败，请稍后重试。`);
+    } else {
+      setNotice(`已忽略 ${succeeded} 条事件（1 小时）`);
+    }
+  }
+
+  // 永久静默：以事件的 实例+指纹 生成永久静默规则并忽略该事件；复用二次确认键 `silence:${id}`。
+  async function silenceForever(id: string) {
+    setBusyId(id);
+    setActionError(null);
+    setNotice(null);
+    try {
+      await api.silenceIncident(token, id, {});
+      setNotice("已永久静默该类告警（可在下方规则列表撤销）");
+      await refresh();
+      if (silenceRules !== null) await loadSilenceRules();
+    } catch (error) {
+      const message = actionErrorMessage(error, onLogout);
+      if (message) setActionError(message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function loadSilenceRules() {
+    setSilenceLoading(true);
+    try {
+      const response = await api.silenceRules(token);
+      setSilenceRules(response.rules);
+    } catch (error) {
+      const message = actionErrorMessage(error, onLogout);
+      if (message) setActionError(message);
+    } finally {
+      setSilenceLoading(false);
+    }
+  }
+
+  function toggleSilenceSection() {
+    const next = !silenceOpen;
+    setSilenceOpen(next);
+    if (next && silenceRules === null && !silenceLoading) {
+      void loadSilenceRules();
+    }
+  }
+
+  async function removeSilenceRule(id: string) {
+    if (silenceBusyId) return;
+    setSilenceBusyId(id);
+    setActionError(null);
+    try {
+      await api.deleteSilenceRule(token, id);
+      await loadSilenceRules();
+    } catch (error) {
+      const message = actionErrorMessage(error, onLogout);
+      if (message) setActionError(message);
+    } finally {
+      setSilenceBusyId(null);
+    }
+  }
+
   function renderActions(incident: ManagedIncident) {
     const busy = busyId === incident.id;
     const arming = armingId === incident.id;
+    const silenceArming = armingId === `silence:${incident.id}`;
     return (
       <div className="incident-item-actions">
         {diagnosableStatuses.has(incident.status) ? (
@@ -447,6 +614,19 @@ export function IncidentBell({
             忽略 1 小时
           </button>
         ) : null}
+        {activeStatuses.has(incident.status) ? (
+          <button
+            type="button"
+            className={`incident-action-btn incident-silence-btn ${silenceArming ? "is-arming" : ""}`}
+            disabled={busy}
+            title="永久静默该类告警"
+            aria-label="永久静默该类告警"
+            onClick={() => confirmDiagnose(`silence:${incident.id}`, () => void silenceForever(incident.id))}
+          >
+            {busy ? <Loader2 size={12} className="status-spinner" /> : <BellOff size={12} />}
+            {silenceArming ? "确认永久静默？" : null}
+          </button>
+        ) : null}
       </div>
     );
   }
@@ -464,13 +644,70 @@ export function IncidentBell({
         >
           <div className="incident-item-header-row">
             <span className="incident-item-title">{incident.instanceName}</span>
-            <span className={`incident-badge-meta status-${incident.status}`}>
-              {triggerLabel(incident.trigger)} · {statusDisplayLabel(incident.status)}
+            <span className="incident-item-badges">
+              {incident.recurrenceCount > 0 ? (
+                <span
+                  className="incident-chip"
+                  title={`该指纹历史上已出现 ${incident.recurrenceCount} 次，上次修复可能未治本`}
+                >
+                  复发×{incident.recurrenceCount}
+                </span>
+              ) : null}
+              {incident.flapping ? (
+                <span className="incident-chip is-warning" title="一小时内反复出现，疑似抖动">
+                  抖动
+                </span>
+              ) : null}
+              {incident.autoApplied ? (
+                <span className="incident-chip is-success" title="已由自治策略自动执行修复">
+                  自动修复
+                </span>
+              ) : null}
+              {incident.escalatedAt && activeStatuses.has(incident.status) ? (
+                <span className="incident-chip is-warning" title="超时未处理，已推送升级通知">
+                  已升级
+                </span>
+              ) : null}
+              <span className={`incident-badge-meta status-${incident.status}`}>
+                {triggerLabel(incident.trigger)} · {statusDisplayLabel(incident.status)}
+              </span>
             </span>
           </div>
           <span className="incident-item-summary">{incident.summary || "等待你确认后才会消耗额度开始诊断。"}</span>
         </button>
         {renderActions(incident)}
+      </li>
+    );
+  }
+
+  // 分组渲染：单条组直接按平铺条目渲染；多条组渲染为可折叠分组块，
+  // 组头显示触发类型、条数徽标与涉及实例（去重，最多 3 个）。
+  function renderGroup(group: IncidentGroup, section: "active" | "recent") {
+    const firstItem = group.items[0];
+    if (!firstItem) return null;
+    if (group.items.length === 1) return renderItem(firstItem);
+    const stateKey = `${section}:${group.key}`;
+    const defaultExpanded = section === "active" && group.items.length <= 3;
+    const expanded = groupOverrides[stateKey] ?? defaultExpanded;
+    const names = [...new Set(group.items.map((item) => item.instanceName))];
+    const shownNames = names.slice(0, 3);
+    return (
+      <li key={stateKey} className={`incident-group ${expanded ? "is-expanded" : ""}`}>
+        <button
+          type="button"
+          className="incident-group-header"
+          aria-expanded={expanded}
+          onClick={() => setGroupOverrides((prev) => ({ ...prev, [stateKey]: !expanded }))}
+        >
+          <ChevronDown size={12} className="incident-group-chevron" />
+          <span className="incident-group-title">{triggerLabel(firstItem.trigger)}</span>
+          <span className="incident-group-count">{group.items.length} 条</span>
+          <span className="incident-group-instances">
+            {shownNames.join("、")}
+            {names.length > 3 ? ` 等 ${names.length} 个实例` : ""}
+          </span>
+        </button>
+        {expanded ? <ul className="incident-group-items">{group.items.map(renderItem)}</ul> : null}
       </li>
     );
   }
@@ -493,15 +730,31 @@ export function IncidentBell({
                 {openCount > 0 ? `${openCount} 条未完成` : "运行正常"}
               </span>
             </div>
-            <button
-              type="button"
-              className="incident-popover-close"
-              onClick={() => setOpen(false)}
-              title="关闭"
-              aria-label="关闭"
-            >
-              <X size={14} />
-            </button>
+            <div className="incident-popover-header-actions">
+              <button
+                type="button"
+                className="incident-ignore-all-btn"
+                disabled={ignoreAllBusy || visibleActive.length === 0}
+                title={
+                  visibleActive.length === 0
+                    ? "当前分类下没有待处理事件"
+                    : `忽略当前分类下全部 ${visibleActive.length} 条待处理事件（1 小时）`
+                }
+                onClick={() => void ignoreAllVisible()}
+              >
+                {ignoreAllBusy ? <Loader2 size={12} className="status-spinner" /> : <CheckCheck size={12} />}
+                全部忽略
+              </button>
+              <button
+                type="button"
+                className="incident-popover-close"
+                onClick={() => setOpen(false)}
+                title="关闭"
+                aria-label="关闭"
+              >
+                <X size={14} />
+              </button>
+            </div>
           </div>
           {actionError ? (
             <div className="incident-popover-error" role="alert">
@@ -530,21 +783,101 @@ export function IncidentBell({
               <span>暂无未完成的崩溃或告警事件</span>
             </div>
           ) : (
-            <div className="incident-popover-body">
-              {active.length > 0 ? (
-                <>
-                  <div className="incident-section-label">待处理</div>
-                  <ul className="incident-list">{active.slice(0, ACTIVE_DISPLAY_LIMIT).map(renderItem)}</ul>
-                </>
-              ) : null}
-              {recent.length > 0 ? (
-                <>
-                  <div className="incident-section-label">最近已完结</div>
-                  <ul className="incident-list">{recent.slice(0, RECENT_DISPLAY_LIMIT).map(renderItem)}</ul>
-                </>
-              ) : null}
+            <div className="incident-popover-main">
+              <nav className="incident-category-nav" aria-label="告警分类筛选">
+                {triggerCategories.map((category) => (
+                  <button
+                    key={category.key}
+                    type="button"
+                    className={`incident-category-item ${triggerFilter === category.key ? "is-active" : ""}`}
+                    aria-pressed={triggerFilter === category.key}
+                    onClick={() => setTriggerFilter(category.key)}
+                  >
+                    <span>{category.label}</span>
+                    {categoryCounts[category.key] > 0 ? (
+                      <span className="incident-category-count">{categoryCounts[category.key]}</span>
+                    ) : null}
+                  </button>
+                ))}
+              </nav>
+              <div className="incident-popover-body">
+                {visibleActive.length === 0 && visibleRecent.length === 0 ? (
+                  <div className="incident-filtered-empty">
+                    <Check size={16} />
+                    <span>该分类下暂无事件</span>
+                  </div>
+                ) : null}
+                {visibleActive.length > 0 ? (
+                  <>
+                    <div className="incident-section-label">待处理</div>
+                    <ul className="incident-list">
+                      {groupIncidents(visibleActive.slice(0, ACTIVE_DISPLAY_LIMIT)).map((group) => renderGroup(group, "active"))}
+                    </ul>
+                  </>
+                ) : null}
+                {visibleRecent.length > 0 ? (
+                  <>
+                    <div className="incident-section-label">最近已完结</div>
+                    <ul className="incident-list">
+                      {groupIncidents(visibleRecent.slice(0, RECENT_DISPLAY_LIMIT)).map((group) => renderGroup(group, "recent"))}
+                    </ul>
+                  </>
+                ) : null}
+              </div>
             </div>
           )}
+          <div className={`incident-silence-section ${silenceOpen ? "is-open" : ""}`}>
+            <button
+              type="button"
+              className="incident-silence-header"
+              aria-expanded={silenceOpen}
+              onClick={toggleSilenceSection}
+            >
+              <BellOff size={12} />
+              <span>静默规则</span>
+              {silenceRules && silenceRules.length > 0 ? (
+                <span className="incident-silence-count">{silenceRules.length}</span>
+              ) : null}
+              <ChevronDown size={12} className="incident-silence-chevron" />
+            </button>
+            {silenceOpen ? (
+              <div className="incident-silence-body">
+                {silenceLoading && silenceRules === null ? (
+                  <div className="incident-silence-empty">
+                    <Loader2 size={12} className="status-spinner" />
+                    加载中…
+                  </div>
+                ) : silenceRules && silenceRules.length > 0 ? (
+                  <ul className="incident-silence-list">
+                    {silenceRules.map((rule) => (
+                      <li key={rule.id} className="incident-silence-rule">
+                        <div className="incident-silence-rule-info">
+                          <span className="incident-silence-rule-scope">{silenceRuleScope(rule)}</span>
+                          <span className="incident-silence-rule-expiry">{silenceRuleExpiry(rule)}</span>
+                        </div>
+                        <button
+                          type="button"
+                          className="incident-silence-rule-delete"
+                          disabled={silenceBusyId === rule.id}
+                          title="删除该静默规则"
+                          aria-label="删除该静默规则"
+                          onClick={() => void removeSilenceRule(rule.id)}
+                        >
+                          {silenceBusyId === rule.id ? (
+                            <Loader2 size={11} className="status-spinner" />
+                          ) : (
+                            <X size={11} />
+                          )}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="incident-silence-empty">暂无静默规则</div>
+                )}
+              </div>
+            ) : null}
+          </div>
           <div className={`incident-popover-footer ${lastError ? "is-error" : ""}`}>
             {lastError
               ? lastUpdatedAt

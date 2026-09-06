@@ -17,7 +17,9 @@ import {
 } from "../routes/saki/state.js";
 import type { SakiAgentRuntime } from "../routes/saki/types.js";
 import { buildWatchSystemPrompt, buildWatchUserMessage, watchChatRequest } from "../routes/saki/watch-prompt.js";
+import { executeApprovedSakiAction } from "../routes/saki/approval.js";
 import { emitIncident, getIncident, updateIncident } from "./incidents.js";
+import { collectWatchEvidence, formatWatchEvidenceSection } from "./evidence.js";
 import { recordWatchRun, watchCooldownRemainingSeconds, watchRunsInLastHour } from "./detector.js";
 import { clearRestartLease, suppressRestart } from "./leases.js";
 import { readWatchPolicy } from "./policy.js";
@@ -113,6 +115,48 @@ export async function maybeFinishWatchIncident(incidentId: string): Promise<void
   }
 }
 
+// 风险分级自治：诊断 risk 不高于策略阈值且置信度达标时，自动批准本次诊断产生的待审批动作。
+// 任一动作执行失败都退回 awaiting_approval 交人工处理；diagnose_only 模式永不自动执行。
+const autoApproveRiskRank: Record<string, number> = { low: 1, medium: 2, high: 3, critical: 4 };
+
+async function maybeAutoApproveWatchActions(
+  incidentId: string,
+  actionIds: string[],
+  diagnosis: WatchDiagnosis | null,
+  instanceId: string,
+  mode: Exclude<WatchPolicyMode, "off">,
+  user: CurrentUser
+): Promise<void> {
+  if (mode === "diagnose_only") return;
+  const policyRow = await prisma.watchPolicy.findUnique({ where: { instanceId } }).catch(() => null);
+  const autoApproveRisk = policyRow?.autoApproveRisk ?? "none";
+  if (autoApproveRisk !== "low" && autoApproveRisk !== "medium") return;
+  if (!diagnosis?.risk) return;
+  const policyRank = autoApproveRisk === "low" ? 1 : 2;
+  const diagnosisRank = autoApproveRiskRank[diagnosis.risk] ?? Number.MAX_SAFE_INTEGER;
+  if (diagnosisRank > policyRank) return;
+  if ((diagnosis.confidence ?? 0) < (policyRow?.autoApproveMinConfidence ?? 0.85)) return;
+
+  try {
+    for (const actionId of actionIds) {
+      await executeApprovedSakiAction(actionId, { id: user.id, permissions: user.permissions });
+    }
+    const current = await getIncident(incidentId);
+    if (!current || current.status === "ignored" || current.status === "rolled_back") return;
+    await updateIncident(incidentId, {
+      autoApplied: true,
+      summary: `${current.summary ?? diagnosis.summary}（已按自治策略自动执行）`
+    });
+  } catch (error) {
+    // 自动执行失败：退回人工审批。maybeFinishWatchIncident 会在仍有 pending 动作时
+    // 置回 awaiting_approval，已完成执行的动作不受影响。
+    console.error("watch auto-approve failed:", error instanceof Error ? error.stack ?? error.message : error);
+    const current = await getIncident(incidentId);
+    if (!current || current.status === "ignored" || current.status === "rolled_back") return;
+    await maybeFinishWatchIncident(incidentId);
+  }
+}
+
 export class WatchRunConflictError extends Error {
   constructor() {
     super("Saki is already diagnosing this instance.");
@@ -170,6 +214,14 @@ export async function startWatchRun(input: {
 
     const taskId = randomUUID();
     const context = await resolveSakiContext(user.id, instance.id, true);
+    // 诊断前采集证据包（日志/崩溃历史/节点资源/最近变更），失败不阻断诊断。
+    let evidenceSection = "";
+    try {
+      const evidence = await collectWatchEvidence(latest);
+      evidenceSection = formatWatchEvidenceSection(evidence, latest.recurrenceCount);
+    } catch (error) {
+      console.error("watch evidence collection failed:", error instanceof Error ? error.stack ?? error.message : error);
+    }
     const message = buildWatchUserMessage({
       instance,
       context,
@@ -178,7 +230,7 @@ export async function startWatchRun(input: {
       trigger: input.trigger,
       mode: input.mode,
       willRetry: input.willRetry
-    });
+    }) + (evidenceSection ? `\n\n${evidenceSection}` : "");
     const chatInput = watchChatRequest(message, instance.id);
     const skills = (await loadSakiSkills("runtime crash logs diagnostics", false, 8)).skills;
     const config = await readEffectiveSakiConfig();
@@ -237,7 +289,9 @@ export async function startWatchRun(input: {
         rootCause: diagnosis?.rootCause ?? null,
         diagnosis
       });
-      if (!pending.length) {
+      if (pending.length) {
+        await maybeAutoApproveWatchActions(input.incidentId, pending.map((action) => action.id), diagnosis, instance.id, input.mode, user);
+      } else {
         await maybeFinishWatchIncident(input.incidentId);
       }
     } catch (error) {

@@ -105,7 +105,16 @@ export function persistableSakiMessages(messages: LocalSakiMessage[]): LocalSaki
 }
 
 export function hasPersistableSakiSpeech(messages: LocalSakiMessage[]): boolean {
-  return messages.some((message) => message.id !== "saki-welcome" && message.content.trim().length > 0);
+  return messages.some(
+    (message) =>
+      message.id !== "saki-welcome" &&
+      (message.role === "user" ||
+        message.content.trim().length > 0 ||
+        Boolean(message.attachments?.length) ||
+        Boolean(message.actions?.length) ||
+        Boolean(message.timeline?.length) ||
+        message.source === "local-fallback")
+  );
 }
 
 export function sakiAttachmentHistoryText(attachments: SakiInputAttachment[] | undefined): string {
@@ -193,8 +202,18 @@ export function writeSakiConversations(conversations: StoredSakiConversation[]) 
 }
 
 export function sakiConversationTitle(messages: LocalSakiMessage[]): string {
-  const firstUserMessage = messages.find((message) => message.role === "user")?.content.trim();
-  return firstUserMessage ? compactContextText(firstUserMessage.replace(/\s+/g, " "), 38) : "新对话";
+  const firstUser = messages.find((message) => message.role === "user");
+  const firstUserText = firstUser?.content?.trim();
+  if (firstUserText) return compactContextText(firstUserText.replace(/\s+/g, " "), 38);
+  if (firstUser?.attachments?.length) {
+    const attachName = firstUser.attachments[0]?.name || "附件";
+    return compactContextText(attachName.replace(/\s+/g, " "), 38);
+  }
+  const firstAssistant = messages.find((message) => message.role === "assistant" && message.content?.trim());
+  if (firstAssistant) {
+    return compactContextText(firstAssistant.content.trim().replace(/\s+/g, " "), 38);
+  }
+  return "新对话";
 }
 
 export function latestSakiConversationForContext(conversations: StoredSakiConversation[], contextKey: string): StoredSakiConversation | null {
@@ -596,6 +615,14 @@ export function mergeSakiFinalText(current: string, finalText: string): string {
   if (!currentTrimmed) return finalText;
   if (!finalTrimmed) return current;
   if (currentTrimmed === finalTrimmed) return finalText;
+  if (
+    currentTrimmed.includes("needs your approval") ||
+    currentTrimmed.includes("action preview first") ||
+    currentTrimmed.includes("需要审批") ||
+    currentTrimmed.includes("等待审批")
+  ) {
+    return finalText;
+  }
   if (currentTrimmed.includes(finalTrimmed)) return current;
   if (finalTrimmed.includes(currentTrimmed)) return finalText;
   return `${current}\n\n${finalText}`;
@@ -795,7 +822,15 @@ export function mergeSakiActionList(
 
 export function mergeSakiFinalTimeline(timeline: LocalSakiTimelineItem[] | undefined, finalText: string): LocalSakiTimelineItem[] {
   const text = finalText.trim();
-  const current = timeline ?? [];
+  const rawCurrent = timeline ?? [];
+  const current = rawCurrent.filter(
+    (entry) =>
+      entry.kind !== "text" ||
+      (!entry.content.includes("needs your approval") &&
+        !entry.content.includes("action preview first") &&
+        !entry.content.includes("需要审批") &&
+        !entry.content.includes("等待审批"))
+  );
   if (!text) return current;
   const textItems = current.filter((entry): entry is Extract<LocalSakiTimelineItem, { kind: "text" }> => entry.kind === "text");
   if (textItems.some((entry) => entry.content.trim() === text || entry.content.includes(text))) return current;
@@ -1496,12 +1531,13 @@ export function SakiToolActionCard({
     <div className={`saki-action-row ${isPending ? "pending" : ""} ${isFailed ? "failed" : ""}`}>
       <div className="saki-action-row-main" onClick={() => setExpanded(!expanded)}>
         <span className="saki-action-icon"><SakiToolIcon action={action} /></span>
-        <span className="saki-action-label">
+        <span className="saki-action-label" title={target || undefined}>
           {target ? (
             onOpenPath && !target.includes(" ") ? (
               <button
                 type="button"
                 className="saki-action-path-link"
+                title={target}
                 onClick={(event) => {
                   event.stopPropagation();
                   onOpenPath(target);
@@ -1510,7 +1546,7 @@ export function SakiToolActionCard({
                 <code>{compactContextText(target, 120)}</code>
               </button>
             ) : (
-              <code>{compactContextText(target, 120)}</code>
+              <code title={target}>{compactContextText(target, 120)}</code>
             )
           ) : (
             <span>{sakiActionTitle(action)}</span>
@@ -1641,8 +1677,8 @@ export function SakiPendingToolCard({
         <span className="saki-action-icon">
           <Loader2 size={16} className="status-spinner" />
         </span>
-        <span className="saki-action-label">
-          {target ? <code>{compactContextText(target, 120)}</code> : <span>{sakiActionTitle(fakeAction)}</span>}
+        <span className="saki-action-label" title={target || undefined}>
+          {target ? <code title={target}>{compactContextText(target, 120)}</code> : <span>{sakiActionTitle(fakeAction)}</span>}
           <span className="saki-action-meta">{message || "进行中"}</span>
         </span>
         <span className="saki-action-status-dot saki-action-status-live" />

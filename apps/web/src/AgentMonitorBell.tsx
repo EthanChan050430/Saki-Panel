@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Activity, Bot, CheckCircle2, Loader2, X, XCircle } from "lucide-react";
+import { Activity, Bot, CheckCircle2, Loader2, Square, Trash2, Undo2, X, XCircle } from "lucide-react";
 import type { ManagedInstance } from "@webops/shared";
 import { api, ApiError, type SakiActiveTaskSummary } from "./api.js";
 
@@ -54,6 +54,9 @@ export function AgentMonitorBell({
   const [instances, setInstances] = useState<ManagedInstance[]>([]);
   const [open, setOpen] = useState(false);
   const [popoverPos, setPopoverPos] = useState<{ top: number; right: number } | null>(null);
+  const [operatingTaskId, setOperatingTaskId] = useState<string | null>(null);
+  const [globalOperating, setGlobalOperating] = useState<"stop_all" | "clear_finished" | null>(null);
+  const [feedback, setFeedback] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
 
@@ -97,6 +100,13 @@ export function AgentMonitorBell({
     return () => window.clearInterval(timer);
   }, [open, refresh, refreshInstances]);
 
+  // Auto-dismiss feedback message after 3.5s
+  useEffect(() => {
+    if (!feedback) return;
+    const timer = window.setTimeout(() => setFeedback(null), 3500);
+    return () => window.clearTimeout(timer);
+  }, [feedback]);
+
   // Tick once per second while running tasks exist so elapsed times stay live.
   const [, setClockTick] = useState(0);
   useEffect(() => {
@@ -104,6 +114,117 @@ export function AgentMonitorBell({
     const timer = window.setInterval(() => setClockTick((value) => value + 1), 1000);
     return () => window.clearInterval(timer);
   }, [runningCount]);
+
+  const finishedTasksCount = tasks.filter((t) => t.status !== "running").length;
+
+  const handleStopAll = async () => {
+    if (runningCount === 0 || globalOperating) return;
+    if (!window.confirm("确定要停止所有正在运行的 Agent 任务吗？")) return;
+    setGlobalOperating("stop_all");
+    try {
+      const result = await api.sakiCancelAllTasks(token);
+      setFeedback({
+        type: "success",
+        message: `已停止 ${result.cancelledCount} 个运行中任务`
+      });
+      await refresh();
+      window.dispatchEvent(new CustomEvent("saki:active_task_updated"));
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        message: `停止失败: ${err instanceof Error ? err.message : String(err)}`
+      });
+    } finally {
+      setGlobalOperating(null);
+    }
+  };
+
+  const handleClearFinished = async () => {
+    if (finishedTasksCount === 0 || globalOperating) return;
+    setGlobalOperating("clear_finished");
+    try {
+      const result = await api.sakiClearFinishedTasks(token);
+      setFeedback({
+        type: "success",
+        message: `已清理 ${result.deletedCount} 个已结束任务`
+      });
+      await refresh();
+      window.dispatchEvent(new CustomEvent("saki:active_task_updated"));
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        message: `清理失败: ${err instanceof Error ? err.message : String(err)}`
+      });
+    } finally {
+      setGlobalOperating(null);
+    }
+  };
+
+  const handleStopTask = async (taskId: string) => {
+    if (operatingTaskId) return;
+    setOperatingTaskId(taskId);
+    try {
+      await api.sakiCancelTask(token, taskId);
+      setFeedback({
+        type: "success",
+        message: "已发送停止指令"
+      });
+      await refresh();
+      window.dispatchEvent(new CustomEvent("saki:active_task_updated"));
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        message: `停止任务失败: ${err instanceof Error ? err.message : String(err)}`
+      });
+    } finally {
+      setOperatingTaskId(null);
+    }
+  };
+
+  const handleDeleteTask = async (taskId: string) => {
+    if (operatingTaskId) return;
+    setOperatingTaskId(taskId);
+    try {
+      await api.sakiDeleteTask(token, taskId);
+      setFeedback({
+        type: "success",
+        message: "任务已删除"
+      });
+      await refresh();
+      window.dispatchEvent(new CustomEvent("saki:active_task_updated"));
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        message: `删除任务失败: ${err instanceof Error ? err.message : String(err)}`
+      });
+    } finally {
+      setOperatingTaskId(null);
+    }
+  };
+
+  const handleRollbackTask = async (taskId: string) => {
+    if (operatingTaskId) return;
+    if (!window.confirm("确定要撤销并回溯此任务产生的所有代码与配置修改吗？此操作将还原相关文件。")) return;
+    setOperatingTaskId(taskId);
+    try {
+      const result = await api.sakiRollbackTask(token, taskId);
+      setFeedback({
+        type: "success",
+        message: result.message || `已成功回溯 ${result.rolledBackCount} 处修改`
+      });
+      window.dispatchEvent(new CustomEvent("saki:files_modified"));
+      window.dispatchEvent(new CustomEvent("workspace:refresh"));
+      window.dispatchEvent(new CustomEvent("saki:active_task_updated"));
+      await refresh();
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        message: `回溯失败: ${err instanceof Error ? err.message : String(err)}`
+      });
+    } finally {
+      setOperatingTaskId(null);
+    }
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -115,9 +236,7 @@ export function AgentMonitorBell({
         return;
       }
       const rect = button.getBoundingClientRect();
-      // Align the popover's right edge with the button, but clamp so the
-      // popover never slides past the viewport's left or right edge.
-      const width = popoverRef.current?.offsetWidth || 360;
+      const width = popoverRef.current?.offsetWidth || 380;
       const idealRight = window.innerWidth - rect.right;
       const maxRight = Math.max(12, window.innerWidth - width - 12);
       setPopoverPos({
@@ -126,8 +245,6 @@ export function AgentMonitorBell({
       });
     }
     placePopover();
-    // Re-measure after layout settles (topbar/sidebar transitions can shift
-    // the button right after the popover opens).
     const settleFrame = window.requestAnimationFrame(() => placePopover());
     window.addEventListener("resize", placePopover);
     window.addEventListener("scroll", placePopover, true);
@@ -188,6 +305,48 @@ export function AgentMonitorBell({
                 <X size={14} />
               </button>
             </div>
+
+            {/* Quick action toolbar */}
+            <div className="agent-monitor-toolbar">
+              <button
+                type="button"
+                className="agent-monitor-quick-btn danger"
+                disabled={runningCount === 0 || Boolean(globalOperating)}
+                onClick={() => void handleStopAll()}
+                title="停止所有正在运行的任务"
+              >
+                {globalOperating === "stop_all" ? (
+                  <Loader2 size={12} className="status-spinner" />
+                ) : (
+                  <Square size={12} />
+                )}
+                <span>全部停止</span>
+                {runningCount > 0 ? <span className="quick-btn-badge">{runningCount}</span> : null}
+              </button>
+
+              <button
+                type="button"
+                className="agent-monitor-quick-btn"
+                disabled={finishedTasksCount === 0 || Boolean(globalOperating)}
+                onClick={() => void handleClearFinished()}
+                title="删除所有已完成、已取消或失败的任务记录"
+              >
+                {globalOperating === "clear_finished" ? (
+                  <Loader2 size={12} className="status-spinner" />
+                ) : (
+                  <Trash2 size={12} />
+                )}
+                <span>删除已完成任务</span>
+                {finishedTasksCount > 0 ? <span className="quick-btn-badge">{finishedTasksCount}</span> : null}
+              </button>
+            </div>
+
+            {feedback ? (
+              <div className={`agent-monitor-feedback ${feedback.type}`} role="status">
+                <span>{feedback.message}</span>
+              </div>
+            ) : null}
+
             {tasks.length === 0 ? (
               <div className="incident-empty">
                 <Bot size={28} aria-hidden="true" />
@@ -199,6 +358,7 @@ export function AgentMonitorBell({
                 {tasks.map((task) => {
                   const running = task.status === "running";
                   const instance = task.instanceId ? instanceById.get(task.instanceId) ?? null : null;
+                  const isOperatingThis = operatingTaskId === task.id;
                   return (
                     <li key={task.id} className={`incident-item agent-task-item status-${task.status}`}>
                       <button
@@ -238,9 +398,61 @@ export function AgentMonitorBell({
                         ) : null}
                         <span className="agent-task-meta">
                           <span>{task.actionCount > 0 ? `${task.actionCount} 个动作` : "等待模型输出"}</span>
+                          {task.hasRollback ? " · 可回溯代码" : ""}
                           {task.error ? ` · ${task.error}` : ""}
                         </span>
                       </button>
+                      <div className="agent-task-item-actions">
+                        {running ? (
+                          <button
+                            type="button"
+                            className="agent-task-action-btn btn-stop"
+                            disabled={isOperatingThis}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleStopTask(task.id);
+                            }}
+                            title="停止此任务"
+                          >
+                            {isOperatingThis ? (
+                              <Loader2 size={11} className="status-spinner" />
+                            ) : (
+                              <Square size={11} />
+                            )}
+                            <span>停止</span>
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="agent-task-action-btn btn-rollback"
+                          disabled={isOperatingThis}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleRollbackTask(task.id);
+                          }}
+                          title="撤销并回溯此任务生成的所有代码与配置修改"
+                        >
+                          {isOperatingThis ? (
+                            <Loader2 size={11} className="status-spinner" />
+                          ) : (
+                            <Undo2 size={11} />
+                          )}
+                          <span>撤销（回溯全部代码）</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="agent-task-action-btn btn-delete"
+                          disabled={isOperatingThis}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleDeleteTask(task.id);
+                          }}
+                          title="删除此任务记录"
+                        >
+                          <Trash2 size={11} />
+                          <span>删除</span>
+                        </button>
+                      </div>
                     </li>
                   );
                 })}

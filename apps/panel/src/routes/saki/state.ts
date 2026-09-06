@@ -20,7 +20,45 @@ const sessionMemoryTtlMs = 30 * 60 * 1000; // 30 minutes session memory
 
 const checkpointsDir = path.join(panelPaths.dataDir, "saki-checkpoints");
 const pendingActionsDir = path.join(panelPaths.dataDir, "saki-pending-actions");
+const completedActionsDir = path.join(panelPaths.dataDir, "saki-completed-actions");
 const pendingActionTtlMs = 24 * 60 * 60 * 1000;
+const completedActionTtlMs = 7 * 24 * 60 * 60 * 1000;
+
+export async function saveCompletedSakiAction(action: SakiAgentAction): Promise<void> {
+  completedSakiActions.set(action.id, action);
+  try {
+    await fs.mkdir(completedActionsDir, { recursive: true });
+    await fs.writeFile(path.join(completedActionsDir, `${action.id}.json`), JSON.stringify(action, null, 2), "utf8");
+  } catch {}
+}
+
+async function loadCompletedSakiActionsFromDisk(): Promise<void> {
+  try {
+    await fs.mkdir(completedActionsDir, { recursive: true });
+    const files = await fs.readdir(completedActionsDir);
+    const now = Date.now();
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      const filePath = path.join(completedActionsDir, file);
+      try {
+        const content = await fs.readFile(filePath, "utf8");
+        const action = JSON.parse(content) as SakiAgentAction;
+        if (!action?.id) {
+          await fs.rm(filePath, { force: true });
+          continue;
+        }
+        const createdAt = Date.parse(action.createdAt);
+        if (Number.isFinite(createdAt) && now - createdAt > completedActionTtlMs) {
+          await fs.rm(filePath, { force: true });
+          continue;
+        }
+        completedSakiActions.set(action.id, action);
+      } catch {
+        await fs.rm(filePath, { force: true }).catch(() => undefined);
+      }
+    }
+  } catch {}
+}
 
 export async function savePendingSakiAction(pending: PendingSakiAction): Promise<void> {
   pendingSakiActions.set(pending.id, pending);
@@ -405,12 +443,75 @@ export function cancelRunningSakiTasksForContext(
   return cancelled;
 }
 
+export function cancelAllRunningSakiTasks(userId: string): number {
+  let cancelled = 0;
+  for (const task of activeSakiTasks.values()) {
+    if (task.userId === userId && task.status === "running") {
+      if (cancelActiveSakiTask(task.id)) {
+        cancelled += 1;
+      }
+    }
+  }
+  return cancelled;
+}
+
+export function clearFinishedSakiTasks(userId: string): number {
+  let cleared = 0;
+  for (const [taskId, task] of [...activeSakiTasks.entries()]) {
+    if (task.userId === userId && task.status !== "running") {
+      activeSakiTasks.delete(taskId);
+      cleared += 1;
+      for (const [key, id] of activeSakiTasksByContext.entries()) {
+        if (id === taskId) {
+          activeSakiTasksByContext.delete(key);
+        }
+      }
+    }
+  }
+  return cleared;
+}
+
+export function deleteSakiTask(taskId: string, userId: string): boolean {
+  const task = activeSakiTasks.get(taskId);
+  if (!task || task.userId !== userId) return false;
+  if (task.status === "running") {
+    cancelActiveSakiTask(taskId);
+  }
+  activeSakiTasks.delete(taskId);
+  for (const [key, id] of activeSakiTasksByContext.entries()) {
+    if (id === taskId) {
+      activeSakiTasksByContext.delete(key);
+    }
+  }
+  return true;
+}
+
 export function toSakiActiveTaskSummary(task: SakiActiveTask): SakiActiveTaskSummary {
   const actionCount = task.eventsBuffer.filter((e) => e.type === "action").length;
   const lastWorkflow = [...task.eventsBuffer].reverse().find((e) => e.type === "workflow");
   const progressMessage = trimString(lastWorkflow?.payload?.message);
   const progressStatus = trimString(lastWorkflow?.payload?.status);
   const progressTool = trimString(lastWorkflow?.payload?.tool);
+
+  let hasRollback = false;
+  const actionIds = new Set<string>();
+  for (const ev of task.eventsBuffer) {
+    if (ev.type === "action") {
+      const act = ev.payload?.action as { id?: string } | undefined;
+      if (act?.id) actionIds.add(act.id);
+    }
+  }
+  for (const cp of sakiCheckpoints.values()) {
+    if (
+      ("taskId" in cp && cp.taskId === task.id) ||
+      ("taskOriginId" in cp && cp.taskOriginId === task.id) ||
+      (cp.actionId && actionIds.has(cp.actionId))
+    ) {
+      hasRollback = true;
+      break;
+    }
+  }
+
   return {
     id: task.id,
     userId: task.userId,
@@ -421,6 +522,7 @@ export function toSakiActiveTaskSummary(task: SakiActiveTask): SakiActiveTaskSum
     message: task.input.message,
     ...(task.input.mode ? { mode: task.input.mode } : {}),
     actionCount,
+    hasRollback,
     ...(progressMessage
       ? {
           progress: {
@@ -453,3 +555,4 @@ export function listSakiActiveTasks(userId: string, limit = 20): SakiActiveTask[
 
 void loadCheckpointsFromDisk();
 void loadPendingSakiActionsFromDisk();
+void loadCompletedSakiActionsFromDisk();

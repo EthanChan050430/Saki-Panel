@@ -261,6 +261,28 @@ import {
   toSakiHistoryMessage
 } from "./sakiChatHelpers.js";
 
+function resolveSakiModelPointsMultiplier(
+  multipliers: Record<string, number> | null | undefined,
+  model: { id: string; provider?: string }
+): number {
+  if (!multipliers || typeof multipliers !== "object") return 1;
+  const modelId = (model.id || "").trim();
+  if (!modelId) return 1;
+  const provider = (model.provider || "").trim();
+  if (provider) {
+    const scoped = multipliers[`${provider}:${modelId}`];
+    if (scoped !== undefined && Number.isFinite(scoped)) return Math.max(0, scoped);
+  }
+  const direct = multipliers[modelId];
+  if (direct !== undefined && Number.isFinite(direct)) return Math.max(0, direct);
+  return 1;
+}
+
+function formatSakiModelMultiplier(value: number): string {
+  const rounded = Math.round(value * 100) / 100;
+  return `${Number.isInteger(rounded) ? rounded.toFixed(1) : rounded}x`;
+}
+
 export function SakiFloatingChat({
   token,
   instance,
@@ -369,9 +391,13 @@ export function SakiFloatingChat({
   const [draggingExpression, setDraggingExpression] = useState<string | null>(null);
   const [storedConversations, setStoredConversations] = useState<StoredSakiConversation[]>(() => readSakiConversations());
   const [activeConversationId, setActiveConversationId] = useState(() => newClientId());
+  const activeConversationIdRef = useRef(activeConversationId);
+  activeConversationIdRef.current = activeConversationId;
+  const persistCloudTimerRef = useRef<number | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
+  const [copiedUserMessageId, setCopiedUserMessageId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<SakiInputAttachment[]>([]);
   const [previewingAttachment, setPreviewingAttachment] = useState<{ attachment: SakiInputAttachment; editable: boolean } | null>(null);
   const [composerNotice, setComposerNotice] = useState<string | null>(null);
@@ -439,6 +465,7 @@ export function SakiFloatingChat({
   const [isDragOverSaki, setIsDragOverSaki] = useState(false);
   const dragFoodRef = useRef<DraggingFoodState | null>(null);
   const sakiCharacterRef = useRef<HTMLDivElement | null>(null);
+  const videoBubbleRef = useRef<HTMLDivElement | null>(null);
 
   function getFavorabilityLevelInfo(totalExp: number) {
     const isEn = language === "en-US";
@@ -681,6 +708,7 @@ export function SakiFloatingChat({
     }, 4500);
   }
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [modelPointsMultipliers, setModelPointsMultipliers] = useState<Record<string, number>>({});
   const [permissionDropdownOpen, setPermissionDropdownOpen] = useState(false);
   const [sakiAddMenuOpen, setSakiAddMenuOpen] = useState(false);
   const [mentionCaret, setMentionCaret] = useState(0);
@@ -789,41 +817,44 @@ export function SakiFloatingChat({
     setSakiEchoState("idle");
   }, [open, listening, miniGameActive, sakiLieMode, mobileActiveTab]);
 
-  useEffect(() => {
-    void (async () => {
-      let currentModel = "";
-      try {
-        const config = await api.sakiConfig(token);
-        currentModel = config.model;
-        onCurrentModelIdChange(currentModel);
-      } catch {}
-      try {
-        const config = await api.sakiConfig(token);
-        currentModel = config.model;
-        onCurrentModelIdChange(currentModel);
-        const result = await api.sakiModels(token, {
-          provider: config.provider,
-          model: config.model,
-          ollamaUrl: config.ollamaUrl,
-          baseUrl: config.baseUrl,
-          apiKey: config.apiKey,
-          providerConfigs: config.providerConfigs
-        });
-        onAvailableModelsChange(result.models);
-        const current = result.models.find((m) => m.id === currentModel);
-        if (current) {
-          const modelName = current.label || current.name || current.id;
-          onCurrentModelNameChange(modelName);
-        } else if (currentModel) {
-          onCurrentModelNameChange(currentModel);
-        }
-      } catch {
-        if (currentModel) {
-          onCurrentModelNameChange(currentModel);
-        }
+  const refreshSakiModels = useCallback(async () => {
+    let currentModel = "";
+    try {
+      const config = await api.sakiConfig(token);
+      currentModel = config.model;
+      setModelPointsMultipliers(config.modelPointsMultipliers || {});
+      onCurrentModelIdChange(currentModel);
+      const result = await api.sakiModels(token, {
+        provider: config.provider,
+        model: config.model,
+        ollamaUrl: config.ollamaUrl,
+        baseUrl: config.baseUrl,
+        apiKey: config.apiKey,
+        providerConfigs: config.providerConfigs
+      });
+      onAvailableModelsChange(result.models);
+      const current = result.models.find((m) => m.id === currentModel);
+      if (current) {
+        onCurrentModelNameChange(current.label || current.name || current.id);
+      } else if (currentModel) {
+        onCurrentModelNameChange(currentModel);
       }
-    })();
+    } catch {
+      if (currentModel) {
+        onCurrentModelNameChange(currentModel);
+      }
+    }
   }, [token, onCurrentModelIdChange, onCurrentModelNameChange, onAvailableModelsChange]);
+
+  useEffect(() => {
+    void refreshSakiModels();
+  }, [refreshSakiModels]);
+
+  // 设置页可能刚改过服务商 / 连接方式 / API Key：每次打开模型下拉都实时同步一次，
+  // 避免下拉里长期展示旧的（如反代模式下的）模型列表。
+  useEffect(() => {
+    if (modelDropdownOpen) void refreshSakiModels();
+  }, [modelDropdownOpen, refreshSakiModels]);
 
   useEffect(() => {
     if (!modelDropdownOpen) return;
@@ -1103,8 +1134,8 @@ export function SakiFloatingChat({
             if (streamEvent.type === "done") {
               const response = streamEvent.response;
               activeTaskIdRef.current = null;
-              setMessages((current) =>
-                current.map((message) => {
+              setMessages((current) => {
+                const next = current.map((message) => {
                   if (message.id !== assistantId) return message;
                   const nextActions = response.actions?.length ? response.actions : message.actions;
                   const sealedTimeline = sealSakiTimelineDelta(message.timeline);
@@ -1126,13 +1157,17 @@ export function SakiFloatingChat({
                   };
                   if (nextActions?.length) return { ...nextMessage, actions: nextActions };
                   return nextMessage;
-                })
-              );
+                });
+                queueMicrotask(() => {
+                  saveConversationStateDirectly(next, activeConversationIdRef.current);
+                });
+                return next;
+              });
             }
             if (streamEvent.type === "error") {
               activeTaskIdRef.current = null;
-              setMessages((current) =>
-                current.map((message) =>
+              setMessages((current) => {
+                const next = current.map((message) =>
                   message.id === assistantId
                     ? {
                         ...message,
@@ -1145,8 +1180,12 @@ export function SakiFloatingChat({
                         streaming: false
                       }
                     : message
-                )
-              );
+                );
+                queueMicrotask(() => {
+                  saveConversationStateDirectly(next, activeConversationIdRef.current);
+                });
+                return next;
+              });
             }
           };
 
@@ -1158,8 +1197,8 @@ export function SakiFloatingChat({
             } else if (typeof finalResp.usage?.remainingPoints === "number") {
               onPointsBalanceChange?.({ points: finalResp.usage.remainingPoints, unlimitedPoints: false });
             }
-            setMessages((current) =>
-              current.map((message) => {
+            setMessages((current) => {
+              const next = current.map((message) => {
                 if (message.id !== assistantId) return message;
                 const nextActions = finalResp.actions?.length ? finalResp.actions : message.actions;
                 const sealedTimeline = sealSakiTimelineDelta(message.timeline);
@@ -1181,8 +1220,12 @@ export function SakiFloatingChat({
                 };
                 if (nextActions?.length) return { ...nextMessage, actions: nextActions };
                 return nextMessage;
-              })
-            );
+              });
+              queueMicrotask(() => {
+                saveConversationStateDirectly(next, activeConversationIdRef.current);
+              });
+              return next;
+            });
           } catch {
             settleInterruptedSakiMessage(assistantId);
           } finally {
@@ -1310,33 +1353,110 @@ export function SakiFloatingChat({
   useEffect(() => {
     if (initialConversationLoadedRef.current) return;
     initialConversationLoadedRef.current = true;
-    const storedConversation = latestSakiConversationForContext(readSakiConversations(), contextKey);
+    const allStored = readSakiConversations();
+    const storedConversation = latestSakiConversationForContext(allStored, contextKey) ?? allStored[0];
     if (!storedConversation) return;
     restoringContextRef.current = true;
     setActiveConversationId(storedConversation.id);
     setMessages(storedConversation.messages);
   }, [contextKey]);
 
+  const syncConversationToCloud = useCallback((conv: StoredSakiConversation) => {
+    if (!token || !hasPersistableSakiSpeech(conv.messages)) return;
+    void api.sakiSaveConversation(token, {
+      id: conv.id,
+      contextKey: conv.contextKey,
+      title: conv.title,
+      label: conv.label,
+      detail: conv.detail,
+      instanceId: conv.instanceId ?? null,
+      messages: conv.messages
+    }).catch((err) => {
+      console.warn("[saki] failed to save conversation to cloud:", err);
+    });
+  }, [token]);
+
+  const saveConversationStateDirectly = useCallback(
+    (targetMessages: LocalSakiMessage[], conversationId?: string) => {
+      const targetId = conversationId || activeConversationIdRef.current;
+      conversationsRef.current[contextKey] = targetMessages;
+      if (!hasPersistableSakiSpeech(targetMessages)) {
+        return;
+      }
+      const now = new Date().toISOString();
+      const storedMessages = persistableSakiMessages(targetMessages);
+      let nextToPersist: StoredSakiConversation | null = null;
+
+      setStoredConversations((current) => {
+        const existing = current.find((conversation) => conversation.id === targetId);
+        const nextConversation: StoredSakiConversation = {
+          id: targetId,
+          contextKey: existing?.contextKey ?? contextKey,
+          label: existing?.label ?? baseContextLabel,
+          detail: existing?.detail ?? baseContextPath,
+          instanceId: (existing?.instanceId ?? instance?.id) || null,
+          title: sakiConversationTitle(storedMessages),
+          messages: storedMessages,
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now
+        };
+        nextToPersist = nextConversation;
+        const next = [nextConversation, ...current.filter((conversation) => conversation.id !== targetId)]
+          .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
+          .slice(0, 80);
+        writeSakiConversations(next);
+        return next;
+      });
+
+      if (token && nextToPersist) {
+        const isCurrentlyStreaming = targetMessages.some((m) => m.streaming);
+        if (!isCurrentlyStreaming) {
+          syncConversationToCloud(nextToPersist);
+        } else {
+          if (persistCloudTimerRef.current) window.clearTimeout(persistCloudTimerRef.current);
+          persistCloudTimerRef.current = window.setTimeout(() => {
+            if (nextToPersist) syncConversationToCloud(nextToPersist);
+            persistCloudTimerRef.current = null;
+          }, 2000);
+        }
+      }
+    },
+    [baseContextLabel, baseContextPath, contextKey, instance?.id, syncConversationToCloud, token]
+  );
+
   useEffect(() => {
     const previousContextKey = previousContextKeyRef.current;
     if (previousContextKey === contextKey) return;
 
-    conversationsRef.current[previousContextKey] = messages;
+    if (hasPersistableSakiSpeech(messages)) {
+      conversationsRef.current[previousContextKey] = messages;
+      saveConversationStateDirectly(messages, activeConversationIdRef.current);
+    }
     previousContextKeyRef.current = contextKey;
 
-    // If an agent task is actively executing or streaming, do not drop or reset the active chat:
-    if (loading || activeTaskIdRef.current) {
+    // If an agent task is actively executing or streaming, or if the current chat has active conversation,
+    // NEVER drop or wipe the active conversation when the user navigates between views or back to the instance list!
+    if (loading || activeTaskIdRef.current || hasPersistableSakiSpeech(messages)) {
       return;
     }
 
     restoringContextRef.current = true;
-    const storedConversation = latestSakiConversationForContext(readSakiConversations(), contextKey);
-    setActiveConversationId(storedConversation?.id ?? newClientId());
-    setMessages(
-      storedConversation?.messages ?? conversationsRef.current[contextKey] ?? [
-        createSakiWelcomeMessage(getSakiWelcomeMessageText(instance, panelContext.label))
-      ]
-    );
+    const allStored = readSakiConversations();
+    const storedConversation = latestSakiConversationForContext(allStored, contextKey) ?? allStored[0];
+    if (storedConversation) {
+      activeConversationIdRef.current = storedConversation.id;
+      setActiveConversationId(storedConversation.id);
+      setMessages(storedConversation.messages);
+    } else {
+      const newId = newClientId();
+      activeConversationIdRef.current = newId;
+      setActiveConversationId(newId);
+      setMessages(
+        conversationsRef.current[contextKey] ?? [
+          createSakiWelcomeMessage(getSakiWelcomeMessageText(instance, panelContext.label))
+        ]
+      );
+    }
     setDraft("");
     setPanelError(null);
     setContextTitle(null);
@@ -1346,57 +1466,15 @@ export function SakiFloatingChat({
     setComposerNotice(null);
     setMode(coerceSakiMode("agent", canUseChat, canUseAgent));
     setPermissionMode(defaultSakiAgentPermissionMode);
-  }, [canUseAgent, canUseChat, contextKey, instance, loading, messages, panelContext.label]);
+  }, [canUseAgent, canUseChat, contextKey, instance, loading, messages, panelContext.label, saveConversationStateDirectly]);
 
   useEffect(() => {
     if (restoringContextRef.current) {
       restoringContextRef.current = false;
       return;
     }
-    conversationsRef.current[contextKey] = messages;
-    if (!hasPersistableSakiSpeech(messages)) {
-      setStoredConversations((current) => {
-        const next = current.filter((conversation) => conversation.id !== activeConversationId);
-        if (next.length !== current.length) {
-          writeSakiConversations(next);
-        }
-        return next;
-      });
-      return;
-    }
-    const now = new Date().toISOString();
-    setStoredConversations((current) => {
-      const existing = current.find((conversation) => conversation.id === activeConversationId);
-      const storedMessages = persistableSakiMessages(messages);
-      const nextConversation: StoredSakiConversation = {
-        id: activeConversationId,
-        contextKey,
-        label: baseContextLabel,
-        detail: baseContextPath,
-        instanceId: (existing?.instanceId ?? instance?.id) || null,
-        title: sakiConversationTitle(storedMessages),
-        messages: storedMessages,
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now
-      };
-      const next = [nextConversation, ...current.filter((conversation) => conversation.id !== activeConversationId)]
-        .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
-        .slice(0, 80);
-      writeSakiConversations(next);
-      if (token && hasPersistableSakiSpeech(storedMessages)) {
-        void api.sakiSaveConversation(token, {
-          id: nextConversation.id,
-          contextKey: nextConversation.contextKey,
-          title: nextConversation.title,
-          label: nextConversation.label,
-          detail: nextConversation.detail,
-          instanceId: nextConversation.instanceId ?? null,
-          messages: nextConversation.messages
-        }).catch(() => {});
-      }
-      return next;
-    });
-  }, [activeConversationId, baseContextLabel, baseContextPath, contextKey, instance?.id, messages, token]);
+    saveConversationStateDirectly(messages);
+  }, [messages, saveConversationStateDirectly]);
 
   useEffect(() => {
     if (!token) return;
@@ -1432,9 +1510,10 @@ export function SakiFloatingChat({
           writeSakiConversations(merged);
 
           if (!hasPersistableSakiSpeech(messages)) {
-            const latestForCtx = latestSakiConversationForContext(merged, contextKey);
+            const latestForCtx = latestSakiConversationForContext(merged, contextKey) ?? merged[0];
             if (latestForCtx && hasPersistableSakiSpeech(latestForCtx.messages)) {
               restoringContextRef.current = true;
+              activeConversationIdRef.current = latestForCtx.id;
               setActiveConversationId(latestForCtx.id);
               setMessages(latestForCtx.messages);
             }
@@ -1718,7 +1797,46 @@ export function SakiFloatingChat({
 
   function toggleSakiHistory() {
     setMessagesExpanded(true);
-    setHistoryOpen((current) => !current);
+    setHistoryOpen((current) => {
+      const next = !current;
+      if (next) {
+        const local = readSakiConversations();
+        if (local.length > 0) {
+          setStoredConversations(local);
+        }
+        if (token) {
+          void api.sakiListConversations(token).then((cloudRows) => {
+            if (!Array.isArray(cloudRows) || cloudRows.length === 0) return;
+            setStoredConversations((currentLocal) => {
+              const map = new Map<string, StoredSakiConversation>();
+              for (const item of currentLocal) map.set(item.id, item);
+              for (const row of cloudRows) {
+                const l = map.get(row.id);
+                if (!l || new Date(row.updatedAt).getTime() >= new Date(l.updatedAt).getTime()) {
+                  map.set(row.id, {
+                    id: row.id,
+                    contextKey: row.contextKey,
+                    label: row.label,
+                    detail: row.detail,
+                    instanceId: row.instanceId ?? null,
+                    title: row.title,
+                    messages: row.messages,
+                    createdAt: row.createdAt,
+                    updatedAt: row.updatedAt
+                  });
+                }
+              }
+              const merged = [...map.values()]
+                .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+                .slice(0, 80);
+              writeSakiConversations(merged);
+              return merged;
+            });
+          }).catch(() => {});
+        }
+      }
+      return next;
+    });
   }
 
   function toggleSakiFullscreen() {
@@ -1733,7 +1851,11 @@ export function SakiFloatingChat({
   }
 
   function startNewConversation() {
+    if (hasPersistableSakiSpeech(messages)) {
+      saveConversationStateDirectly(messages, activeConversationIdRef.current);
+    }
     const id = newClientId();
+    activeConversationIdRef.current = id;
     restoringContextRef.current = true;
     setActiveConversationId(id);
     setMessages([
@@ -1750,7 +1872,11 @@ export function SakiFloatingChat({
   }
 
   function loadConversation(conversation: StoredSakiConversation) {
+    if (hasPersistableSakiSpeech(messages) && activeConversationIdRef.current !== conversation.id) {
+      saveConversationStateDirectly(messages, activeConversationIdRef.current);
+    }
     restoringContextRef.current = true;
+    activeConversationIdRef.current = conversation.id;
     setActiveConversationId(conversation.id);
     setMessages(conversation.messages);
     setAttachments([]);
@@ -1766,9 +1892,11 @@ export function SakiFloatingChat({
       return next;
     });
     if (token) {
-      void api.sakiDeleteConversation(token, conversationId).catch(() => {});
+      void api.sakiDeleteConversation(token, conversationId).catch((err) => {
+        console.warn("[saki] failed to delete conversation on server:", err);
+      });
     }
-    if (conversationId === activeConversationId) {
+    if (conversationId === activeConversationIdRef.current) {
       startNewConversation();
     }
   }
@@ -2354,6 +2482,104 @@ export function SakiFloatingChat({
     }
   }
 
+  async function copyUserMessage(messageId: string, content: string) {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedUserMessageId(messageId);
+      showComposerNotice("已复制提问内容");
+      window.setTimeout(() => {
+        setCopiedUserMessageId((current) => (current === messageId ? null : current));
+      }, 2000);
+    } catch {
+      showComposerNotice("复制失败，请手动选择复制");
+    }
+  }
+
+  async function rollbackUserTurn(userMessageId: string) {
+    if (actionBusyId) return;
+    const targetIndex = messages.findIndex((m) => m.id === userMessageId);
+    if (targetIndex === -1) return;
+
+    const targetMessage = messages[targetIndex];
+    if (!targetMessage) return;
+
+    const affectedMessages = messages.slice(targetIndex);
+    const actionsToRollback: SakiAgentAction[] = [];
+    const seenActionIds = new Set<string>();
+
+    for (const msg of affectedMessages) {
+      if (msg.role === "assistant") {
+        if (Array.isArray(msg.actions)) {
+          for (const act of msg.actions) {
+            if (!seenActionIds.has(act.id) && act.status !== "rolled_back" && (act.approval?.rollbackAvailable || isSakiFileEditTool(act.tool))) {
+              seenActionIds.add(act.id);
+              actionsToRollback.push(act);
+            }
+          }
+        }
+        if (Array.isArray(msg.timeline)) {
+          for (const item of msg.timeline) {
+            if (item.kind === "action" && item.action) {
+              const act = item.action;
+              if (!seenActionIds.has(act.id) && act.status !== "rolled_back" && (act.approval?.rollbackAvailable || isSakiFileEditTool(act.tool))) {
+                seenActionIds.add(act.id);
+                actionsToRollback.push(act);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    setActionBusyId(`rollback_user:${userMessageId}`);
+    try {
+      if (activeTaskIdRef.current && token) {
+        void api.sakiCancelTask(token, activeTaskIdRef.current).catch(() => {});
+        activeTaskIdRef.current = null;
+      }
+      if (sakiStreamAbortRef.current && !sakiStreamAbortRef.current.signal.aborted) {
+        sakiStreamAbortRef.current.abort();
+        sakiStreamAbortRef.current = null;
+      }
+      setLoading(false);
+
+      let rolledBackCount = 0;
+      if (token && actionsToRollback.length > 0) {
+        for (const action of [...actionsToRollback].reverse()) {
+          try {
+            await api.sakiAction(token, action.id, "rollback");
+            rolledBackCount += 1;
+          } catch (err) {
+            console.warn("Rollback action error:", action.id, err);
+          }
+        }
+      }
+
+      const remaining = messages.slice(0, targetIndex);
+      const nextMessages = remaining.length > 0
+        ? remaining
+        : [createSakiWelcomeMessage(getSakiWelcomeMessageText(instance, panelContext.label))];
+      
+      setMessages(nextMessages);
+
+      if (targetMessage.content) {
+        setDraft(targetMessage.content);
+      }
+
+      saveConversationStateDirectly(nextMessages);
+
+      window.dispatchEvent(new CustomEvent("saki:files_modified"));
+      window.dispatchEvent(new CustomEvent("workspace:refresh"));
+
+      const notice = rolledBackCount > 0
+        ? `已回退到该提问前，并还原了 ${rolledBackCount} 处修改。`
+        : "已回退到上一个对话。";
+      showComposerNotice(notice);
+    } finally {
+      setActionBusyId(null);
+    }
+  }
+
   async function submit(event?: React.FormEvent<HTMLFormElement>, override?: SakiSubmitOverride) {
     event?.preventDefault();
     const submittedAttachments = override?.attachments ?? attachments;
@@ -2423,6 +2649,7 @@ export function SakiFloatingChat({
     };
     const nextMessages = [...messages, userMessage, assistantMessage];
     setMessages(nextMessages);
+    saveConversationStateDirectly(nextMessages);
     setDraft("");
     setAttachments([]);
     setComposerNotice(null);
@@ -2496,8 +2723,8 @@ export function SakiFloatingChat({
       if (response.skills) setSkills(response.skills);
       if (response.agentPermissionMode) setPermissionMode(response.agentPermissionMode);
       setSakiActivityMood(Math.random() > 0.5 ? "happy" : "OK");
-      setMessages((current) =>
-        current.map((message) =>
+      setMessages((current) => {
+        const next = current.map((message) =>
           message.id === assistantId
             ? (() => {
                 const nextActions = response.actions?.length ? response.actions : message.actions;
@@ -2527,8 +2754,12 @@ export function SakiFloatingChat({
                 return nextMessage;
               })()
             : message
-        )
-      );
+        );
+        queueMicrotask(() => {
+          saveConversationStateDirectly(next, activeConversationIdRef.current);
+        });
+        return next;
+      });
       if (requestMode === "agent") {
         window.dispatchEvent(new CustomEvent("saki:active_task_updated"));
       }
@@ -2753,8 +2984,8 @@ export function SakiFloatingChat({
         : message;
       setReachable(false);
       setSakiActivityMood("upset");
-      setMessages((current) =>
-        current.map((item) =>
+      setMessages((current) => {
+        const nextFailed: LocalSakiMessage[] = current.map((item) =>
           item.id === assistantId
             ? {
                 ...item,
@@ -2764,13 +2995,15 @@ export function SakiFloatingChat({
                   content: friendlyMessage,
                   source: "error"
                 }),
-                source: "local-fallback",
+                source: "local-fallback" as const,
                 workflowExpanded: false,
                 streaming: false
               }
             : item
-        )
-      );
+        );
+        saveConversationStateDirectly(nextFailed);
+        return nextFailed;
+      });
     } finally {
       clearStreamIdleTimer();
       const current = sakiStreamAbortRef.current;
@@ -3021,6 +3254,15 @@ export function SakiFloatingChat({
     ? (language === "en-US" ? "♪ Mimicking your voice～" : language === "zh-TW" ? "♪ 學你說話～" : "♪ 学你说话～")
     : null;
 
+  useEffect(() => {
+    if (!videoBubbleRef.current) return;
+    if (isStreamingReply) {
+      videoBubbleRef.current.scrollTop = videoBubbleRef.current.scrollHeight;
+    } else {
+      videoBubbleRef.current.scrollTop = 0;
+    }
+  }, [videoBubbleText, isStreamingReply]);
+
   return (
     <>
       <ChatLauncher
@@ -3234,10 +3476,18 @@ export function SakiFloatingChat({
                     className={`saki-video-bubble ${isStreamingReply || (videoBubbleText && videoBubbleText.length > 25) ? "streaming-reply" : ""}`}
                     aria-live="polite"
                   >
-                    <span>{videoBubbleText}</span>
-                    {isStreamingReply ? (
-                      <span className="saki-bubble-typing-cursor">▌</span>
-                    ) : null}
+                    <div ref={videoBubbleRef} className="saki-video-bubble-content">
+                      {isStreamingReply || (videoBubbleText && videoBubbleText.length > 25) ? (
+                        <div className="saki-video-bubble-markdown">
+                          <MarkdownContent content={videoBubbleText} />
+                          {isStreamingReply ? (
+                            <span className="saki-bubble-typing-cursor">▌</span>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <span style={{ unicodeBidi: "isolate" }}>{videoBubbleText}</span>
+                      )}
+                    </div>
                   </div>
                 ) : null}
                 <SakiCharacterArt mood={artMood} activityMood={effectiveActivityMood} />
@@ -3519,7 +3769,42 @@ export function SakiFloatingChat({
                     <span>{message.role === "assistant" ? "Saki" : "你"}</span>
                     {message.source === "local-fallback" ? <em>fallback</em> : null}
                   </div>
-                  {message.role === "assistant" && timelineItems.length > 0 ? (
+                  {message.role === "user" ? (
+                    <div className="saki-user-message-wrapper">
+                      <div className="saki-user-message-actions">
+                        <button
+                          className="saki-user-action-btn rollback-btn"
+                          type="button"
+                          title="回退到此对话并撤销所有修改"
+                          disabled={Boolean(actionBusyId)}
+                          onClick={() => void rollbackUserTurn(message.id)}
+                        >
+                          {actionBusyId === `rollback_user:${message.id}` ? (
+                            <Loader2 size={12} className="status-spinner" />
+                          ) : (
+                            <CornerUpLeft size={12} />
+                          )}
+                          <span>回退</span>
+                        </button>
+                        <button
+                          className="saki-user-action-btn copy-btn"
+                          type="button"
+                          title="复制提问内容"
+                          onClick={() => void copyUserMessage(message.id, message.content)}
+                        >
+                          {copiedUserMessageId === message.id ? (
+                            <Check size={12} style={{ color: "#10b981" }} />
+                          ) : (
+                            <Copy size={12} />
+                          )}
+                          <span>{copiedUserMessageId === message.id ? "已复制" : "复制"}</span>
+                        </button>
+                      </div>
+                      <div className="saki-message-body">
+                        <MarkdownContent content={message.content} />
+                      </div>
+                    </div>
+                  ) : message.role === "assistant" && timelineItems.length > 0 ? (
                     <div className="saki-message-timeline">
                       {timelineItems.map((item) => {
                         if (item.kind === "pending") {
@@ -3595,7 +3880,7 @@ export function SakiFloatingChat({
                     <div className="saki-message-body">
                       <p className="saki-stream-placeholder">等待模型响应...</p>
                     </div>
-                  ) : message.content || message.thinking ? (
+                  ) : message.role === "assistant" && (message.content || message.thinking) ? (
                     (() => {
                       const parsed = parseThinkingContent(message.content, message.thinking, Boolean(message.streaming));
                       const hasThinking = Boolean(parsed.thinking);
@@ -3627,6 +3912,13 @@ export function SakiFloatingChat({
                         </div>
                       );
                     })()
+                  ) : message.role === "assistant" ? (
+                    <div className="saki-message-body saki-message-body-failed">
+                      <div className="saki-message-failed-notice">
+                        <AlertTriangle size={14} className="saki-failed-icon" />
+                        <span>{message.source === "local-fallback" ? "Agent 执行中断或未完成" : "未收到 Agent 回应"}</span>
+                      </div>
+                    </div>
                   ) : null}
                   {message.role === "assistant" && message.usage ? (
                     <div className="saki-token-usage-text">
@@ -4167,6 +4459,13 @@ export function SakiFloatingChat({
         >
           {availableModels.map((model) => {
             const supportsVision = sakiListedModelSupportsVision(model);
+            const multiplier = resolveSakiModelPointsMultiplier(modelPointsMultipliers, model);
+            const isEn = language === "en-US";
+            const isTw = language === "zh-TW";
+            const multiplierText =
+              multiplier === 0
+                ? isEn ? "Free" : isTw ? "免費" : "免费"
+                : formatSakiModelMultiplier(multiplier);
             return (
             <button
               key={model.id}
@@ -4178,11 +4477,19 @@ export function SakiFloatingChat({
               }}
             >
               <span className="saki-model-option-name">{model.label || model.id}</span>
-              {supportsVision ? (
-                <span className="saki-model-vision-icon" title="支持视觉" aria-label="支持视觉">
-                  <ScanEye size={14} />
+              <span className="saki-model-option-meta">
+                <span
+                  className={`saki-model-multiplier ${multiplier === 0 ? "free" : multiplier !== 1 ? "custom" : ""}`}
+                  title={isEn ? "Points cost multiplier" : isTw ? "積分消耗乘區" : "积分消耗乘区"}
+                >
+                  {multiplierText}
                 </span>
-              ) : null}
+                {supportsVision ? (
+                  <span className="saki-model-vision-icon" title="支持视觉" aria-label="支持视觉">
+                    <ScanEye size={14} />
+                  </span>
+                ) : null}
+              </span>
             </button>
             );
           })}

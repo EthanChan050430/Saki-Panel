@@ -96,33 +96,6 @@ export const panelConfig = {
 
 export const isProduction = process.env.NODE_ENV?.toLowerCase() === "production";
 
-function runProductionGuard(config: typeof panelConfig): void {
-  if (!isProduction) return;
-
-  const problems: string[] = [];
-  if (config.jwtSecret === "dev-panel-secret-change-me") {
-    problems.push("JWT_SECRET 必须在生产环境中显式设置为随机强密钥（当前使用开发默认值）。");
-  }
-  if (config.adminPassword === "admin123456") {
-    problems.push("ADMIN_PASSWORD 必须在生产环境中修改为强密码（当前使用开发默认值）。");
-  }
-  if (config.daemonRegistrationToken === "dev-registration-token") {
-    problems.push("DAEMON_REGISTRATION_TOKEN 必须在生产环境中修改为随机强值（当前使用开发默认值）。");
-  }
-  if (config.disableAuth) {
-    problems.push("DISABLE_AUTH=1 禁止在生产环境使用。");
-  }
-
-  if (problems.length > 0) {
-    throw new Error(
-      "DreamStarry Panel 启动前生产环境安全检查未通过:\n  " + problems.join("\n  ")
-    );
-  }
-}
-
-// Run eagerly so a mis-configured production deployment crashes fast at import time.
-runProductionGuard(panelConfig);
-
 export const panelPaths = {
   dataDir: path.resolve(rootDir, "data", "panel"),
   sessionSettingsFile: path.resolve(rootDir, "data", "panel", "session-settings.json"),

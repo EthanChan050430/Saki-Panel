@@ -625,7 +625,7 @@ function parseXmlParameters(inner: string): Record<string, unknown> {
   }
   if (hasParamAttr) return args;
 
-  const tagRe = /<([a-zA-Z0-9_-]+)(?:\s+[^>]*)?>([\s\S]*?)<\/\1>/gi;
+  const tagRe = /<([a-zA-Z0-9_-]+)(?:\s+[^>]*)?>([\s\S]*?)(?:<\/\1>|(?=<[a-zA-Z0-9_-]+>)|$)/gi;
   for (const match of inner.matchAll(tagRe)) {
     const key = match[1]?.trim();
     if (!key) continue;
@@ -639,14 +639,16 @@ function parseXmlParameters(inner: string): Record<string, unknown> {
 }
 
 export function parseXmlToolCalls(source: string): ParsedToolCall[] | null {
-  const stripped = stripThinking(source).trim();
-  const toolTagRe = /<(tool_call|invoke)(?:\s+([^>]*))?>([\s\S]*?)<\/\1>/gi;
+  let stripped = stripThinking(source).trim();
+  stripped = stripped.replace(/<\/?(?:tool_calls|commands)(?:\s+[^>]*)?>/gi, "").trim();
+  const toolTagRe = /<(tool_call|invoke|(?:command|function|action|call|tool|[a-zA-Z0-9_-]+))(?:\s+([^>]*))?>([\s\S]*?)(?:<\/\1>|(?=<(?:tool_call|invoke|[a-zA-Z0-9_-]+\s+[^>]*\b(?:name|tool|function)=))|$)/gi;
   const matches = [...stripped.matchAll(toolTagRe)];
   if (matches.length === 0) return null;
 
   const calls: ParsedToolCall[] = [];
 
   for (const match of matches) {
+    const tag = (match[1] ?? "").trim();
     const attrs = match[2] ?? "";
     const inner = (match[3] ?? "").trim();
     if (!inner && !attrs) continue;
@@ -662,12 +664,16 @@ export function parseXmlToolCalls(source: string): ParsedToolCall[] | null {
         toolName = nameTagMatch[1]?.trim() ?? "";
       }
     }
+    if (!toolName && canonicalToolSchema(tag)) {
+      toolName = tag;
+    }
     if (!toolName) {
       const firstLine = inner.split(/\r?\n/, 1)[0]?.trim() ?? "";
       if (firstLine && !firstLine.startsWith("<") && !firstLine.startsWith("{") && canonicalToolSchema(firstLine)) {
         toolName = firstLine;
       }
     }
+    if (!toolName) continue;
 
     if (inner.startsWith("{")) {
       try {
@@ -682,14 +688,18 @@ export function parseXmlToolCalls(source: string): ParsedToolCall[] | null {
       }
     }
 
-    if (toolName) {
-      const xmlArgs = parseXmlParameters(inner);
-      try {
-        calls.push(normalizeStructuredToolCall({ name: toolName, arguments: xmlArgs }));
-        continue;
-      } catch {
-        // Fall back to JSON extraction inside inner
+    const xmlArgs = parseXmlParameters(inner);
+    if (Object.keys(xmlArgs).length === 0 && inner && !inner.startsWith("<")) {
+      const primaryKey = shorthandPrimaryArgumentKey(toolName);
+      if (primaryKey) {
+        xmlArgs[primaryKey] = cleanXmlParamValue(inner);
       }
+    }
+    try {
+      calls.push(normalizeStructuredToolCall({ name: toolName, arguments: xmlArgs }));
+      continue;
+    } catch {
+      // Fall back to JSON extraction inside inner
     }
 
     try {

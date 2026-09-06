@@ -149,7 +149,7 @@ export async function getOrCreateDaemonNodeKey(overrideHost?: string, overridePo
   }
 
   let host = overrideHost?.trim() || daemonConfig.publicHost;
-  if (!overrideHost && (host === "127.0.0.1" || host === "0.0.0.0" || host === "localhost")) {
+  if (!overrideHost && daemonConfig.host === "0.0.0.0" && (host === "127.0.0.1" || host === "0.0.0.0" || host === "localhost")) {
     const publicIp = await getPublicIp(1500);
     if (publicIp) {
       host = publicIp;

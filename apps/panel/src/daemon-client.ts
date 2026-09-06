@@ -449,10 +449,12 @@ export async function fetchDaemonStatus(
 ): Promise<{
   ok: boolean;
   effectiveProtocol: "http" | "https";
+  effectiveHost?: string;
   statusData?: { os?: string; arch?: string; version?: string };
   error?: string;
 }> {
   let effectiveProtocol: "http" | "https" = node.protocol === "https" ? "https" : "http";
+  let effectiveHost = node.host;
   try {
     let response: DaemonHttpResponse;
     try {
@@ -464,8 +466,31 @@ export async function fetchDaemonStatus(
       } else if (shouldRetryDaemonRequestAsHttp(firstError, node)) {
         effectiveProtocol = "http";
         response = await requestDaemonRaw(withProtocol(node, "http"), "/api/status", {}, timeoutMs);
+      } else if (!isLoopbackHostname(node.host)) {
+        // Attempt loopback fallback if specified host (e.g. public IP or LAN IP) is unreachable
+        try {
+          const loopbackNode = withHost(node, "127.0.0.1");
+          response = await requestDaemonRaw(loopbackNode, "/api/status", {}, timeoutMs);
+          effectiveHost = "127.0.0.1";
+        } catch {
+          throw firstError;
+        }
       } else {
         throw firstError;
+      }
+    }
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      // If we got an error and host is not loopback, try loopback once as well
+      if (!isLoopbackHostname(node.host) && effectiveHost !== "127.0.0.1") {
+        try {
+          const loopbackNode = withHost(node, "127.0.0.1");
+          const loopbackResponse = await requestDaemonRaw(loopbackNode, "/api/status", {}, timeoutMs);
+          if (loopbackResponse.statusCode >= 200 && loopbackResponse.statusCode < 300) {
+            response = loopbackResponse;
+            effectiveHost = "127.0.0.1";
+          }
+        } catch {}
       }
     }
 
@@ -473,6 +498,7 @@ export async function fetchDaemonStatus(
       return {
         ok: false,
         effectiveProtocol,
+        effectiveHost,
         error: `节点返回状态码 ${response.statusCode}: ${response.statusMessage || response.body}`
       };
     }
@@ -492,19 +518,34 @@ export async function fetchDaemonStatus(
     const successResult: {
       ok: boolean;
       effectiveProtocol: "http" | "https";
+      effectiveHost?: string;
       statusData?: { os?: string; arch?: string; version?: string };
       error?: string;
     } = {
       ok: true,
-      effectiveProtocol
+      effectiveProtocol,
+      effectiveHost
     };
     if (statusData) successResult.statusData = statusData;
     return successResult;
   } catch (error) {
+    if (!isLoopbackHostname(node.host) && effectiveHost !== "127.0.0.1") {
+      try {
+        const loopbackNode = withHost(node, "127.0.0.1");
+        const loopbackRes = await fetchDaemonStatus(loopbackNode, timeoutMs);
+        if (loopbackRes.ok) {
+          return {
+            ...loopbackRes,
+            effectiveHost: "127.0.0.1"
+          };
+        }
+      } catch {}
+    }
     const message = error instanceof Error ? error.message : String(error);
     return {
       ok: false,
       effectiveProtocol,
+      effectiveHost,
       error: message
     };
   }

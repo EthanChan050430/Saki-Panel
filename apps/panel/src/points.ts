@@ -27,11 +27,13 @@ export async function assertUserHasSpendablePoints(userId: string): Promise<void
 }
 
 /**
- * 换算规则：1000 Tokens = 1 积分（向上取整，最低 1 积分；0 tokens 扣 0 积分）
+ * 换算规则：1000 Tokens = 1 积分 × 乘区倍率（向上取整，最低 1 积分；0 tokens 或 0 倍率扣 0 积分）
  */
-export function calculatePointsForTokens(tokens: number): number {
+export function calculatePointsForTokens(tokens: number, multiplier = 1): number {
   if (tokens <= 0) return 0;
-  return Math.max(1, Math.ceil(tokens / 1000));
+  const rate = Number.isFinite(multiplier) && multiplier >= 0 ? multiplier : 1;
+  if (rate === 0) return 0;
+  return Math.max(1, Math.ceil((tokens / 1000) * rate));
 }
 
 /**
@@ -45,15 +47,15 @@ export async function getUserPointsSummary(userId: string): Promise<UserPointsSu
 
   if (!user) {
     throw new Error("用户不存在");
-  }  const fourteenDaysAgo = new Date();
+  }  const fourteenDaysAgo = new Date();
   fourteenDaysAgo.setHours(0, 0, 0, 0);
-  fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 13);  const records = await prisma.pointRecord.findMany({
+  fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 13);  const records = await prisma.pointRecord.findMany({
     where: {
       userId,
       createdAt: { gte: fourteenDaysAgo }
     },
     orderBy: { createdAt: "asc" }
-  });  const dayMap = new Map<string, { tokens: number; points: number }>();
+  });  const dayMap = new Map<string, { tokens: number; points: number }>();
   for (let i = 0; i < 14; i++) {
     const d = new Date(fourteenDaysAgo);
     d.setDate(d.getDate() + i);
@@ -84,7 +86,7 @@ export async function getUserPointsSummary(userId: string): Promise<UserPointsSu
     date,
     tokens: data.tokens,
     points: data.points
-  }));  const recentRaw = await prisma.pointRecord.findMany({
+  }));  const recentRaw = await prisma.pointRecord.findMany({
     where: { userId },
     orderBy: { createdAt: "desc" },
     take: 30
@@ -112,12 +114,13 @@ export async function getUserPointsSummary(userId: string): Promise<UserPointsSu
 }
 
 /**
- * 记录 Agent 调用的 Token 与扣减积分
+ * 记录 Agent 调用的 Token 与扣减积分（支持模型乘区倍率）
  */
 export async function recordAgentTokenUsage(
   userId: string,
   tokensUsed: number,
-  description = "Agent 任务执行"
+  description = "Agent 任务执行",
+  multiplier = 1
 ): Promise<{
   tokensUsed: number;
   pointsUsed: number;
@@ -135,7 +138,8 @@ export async function recordAgentTokenUsage(
 
   const billedTokens = Math.max(0, Math.round(tokensUsed));
   const isUnlimited = Boolean(user.unlimitedPoints);
-  const pointsToDeduct = isUnlimited ? 0 : calculatePointsForTokens(billedTokens);
+  const rate = Number.isFinite(multiplier) && multiplier >= 0 ? multiplier : 1;
+  const pointsToDeduct = isUnlimited ? 0 : calculatePointsForTokens(billedTokens, rate);
 
   return await prisma.$transaction(async (tx) => {
     let nextBalance = user.points;
@@ -147,6 +151,9 @@ export async function recordAgentTokenUsage(
       });
     }
 
+    const rateDesc = rate !== 1 ? ` [${rate}x 乘区]` : "";
+    const recordDesc = isUnlimited ? `${description}${rateDesc} (无限积分)` : `${description}${rateDesc}`;
+
     await tx.pointRecord.create({
       data: {
         userId,
@@ -154,7 +161,7 @@ export async function recordAgentTokenUsage(
         balanceAfter: isUnlimited ? null : nextBalance,
         type: "agent_consume",
         tokensUsed: billedTokens,
-        description: isUnlimited ? `${description} (无限积分)` : description
+        description: recordDesc
       }
     });
 

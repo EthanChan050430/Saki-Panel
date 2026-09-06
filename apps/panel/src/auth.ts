@@ -180,6 +180,9 @@ export function requireSuperAdmin() {
 }
 
 export async function loadCurrentUser(userId: string): Promise<CurrentUser | null> {
+  if (panelConfig.disableAuth && userId === authDisabledUserId) {
+    return loadAuthDisabledCurrentUser();
+  }
   const user = await prisma.user.findUnique({
     where: { id: userId },
     include: {

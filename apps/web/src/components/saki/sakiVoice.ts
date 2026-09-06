@@ -1,4 +1,5 @@
 import type { SakiVoiceEchoState } from "./SakiComponents.js";
+import { getSakiVoiceEchoEngine } from "./sakiVoiceEngine.js";
 
 export function concatFloat32(chunks: Float32Array[]): Float32Array {
   let total = 0;
@@ -225,10 +226,18 @@ export function estimateF0Hz(samples: Float32Array, sampleRate: number): number 
 export function toSakiVoice(samples: Float32Array, sampleRate: number): { samples: Float32Array; male: boolean } {
   const normalized = normalizeFloat32(samples, 0.6);
   const f0 = estimateF0Hz(normalized, sampleRate);
-  const assumedF0 = f0 && f0 >= 70 && f0 <= 380 ? f0 : 120;
-  const male = assumedF0 < 170;
-  const pitchRatio = male ? semitoneRatio(12 + 8 * 2) : semitoneRatio(4);
-  const formantRatio = male ? 1.3 : 1.1;
+  // 基础音高检测：成人男声约 80-160Hz，女声约 170-260Hz
+  const assumedF0 = f0 && f0 >= 65 && f0 <= 380 ? f0 : 130;
+  const male = assumedF0 < 175;
+
+  // 目标基频绝对锚定：将基频死死锁定在 Saki 专属的元气二次元基础音高 392Hz (G4)
+  const TARGET_SAKI_F0 = 392;
+  const targetRatio = TARGET_SAKI_F0 / assumedF0;
+  // 限制合理倍率区间，防止极端背景噪音引起尖锐杂音
+  const pitchRatio = Math.min(3.4, Math.max(1.15, targetRatio));
+
+  // 共振峰压缩（模拟少女更短的声道长度 VTLN）
+  const formantRatio = male ? 1.32 : 1.18;
   const psolaRatio = Math.max(1.02, pitchRatio / formantRatio);
 
   const formed = resampleByRatio(normalized, formantRatio);
@@ -334,7 +343,7 @@ export class SakiVoiceEcho {
     this.releaseMic();
 
     const longEnough = speechMs >= 180 && recordedSamples > sampleRate * 0.12;
-    if (longEnough) this.speakAsSaki(samples);
+    if (longEnough) void this.speakAsSaki(samples);
     else this.emitState("idle");
   }
 
@@ -460,53 +469,100 @@ export class SakiVoiceEcho {
     if (this.recordedSamples >= maxSamples) this.endHold();
   }
 
-  private speakAsSaki(samples: Float32Array) {
+  private async speakAsSaki(samples: Float32Array) {
     if (!this.ctx || !this.running) {
       this.emitState("idle");
       return;
     }
 
-    const converted = toSakiVoice(samples, this.ctx.sampleRate);
-    if (converted.samples.length < 64) {
+    const engine = getSakiVoiceEchoEngine();
+    let finalSamples: Float32Array;
+    const f0 = estimateF0Hz(normalizeFloat32(samples, 0.6), this.ctx.sampleRate);
+    const assumedF0 = f0 && f0 >= 65 && f0 <= 380 ? f0 : 130;
+    let isMale = assumedF0 < 175;
+
+    if (engine === "ai") {
+      try {
+        const { sakiVoiceAiManager } = await import("./sakiVoiceAi.js");
+        const aiSamples = await sakiVoiceAiManager.convert(samples, this.ctx.sampleRate);
+        if (aiSamples && aiSamples.length >= 64) {
+          finalSamples = aiSamples;
+        } else {
+          const converted = toSakiVoice(samples, this.ctx.sampleRate);
+          finalSamples = converted.samples;
+          isMale = converted.male;
+        }
+      } catch (err) {
+        console.warn("[SakiVoiceEcho] AI engine error, falling back to DSP:", err);
+        const converted = toSakiVoice(samples, this.ctx.sampleRate);
+        finalSamples = converted.samples;
+        isMale = converted.male;
+      }
+    } else {
+      const converted = toSakiVoice(samples, this.ctx.sampleRate);
+      finalSamples = converted.samples;
+      isMale = converted.male;
+    }
+
+    if (finalSamples.length < 64) {
       this.emitState("idle");
       return;
     }
 
-    const buffer = this.ctx.createBuffer(1, converted.samples.length, this.ctx.sampleRate);
-    buffer.getChannelData(0).set(converted.samples);
+    const buffer = this.ctx.createBuffer(1, finalSamples.length, this.ctx.sampleRate);
+    buffer.getChannelData(0).set(finalSamples);
 
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
 
+    // 1. 强力低切：切除 160Hz 以下成年胸腔共鸣与风噪
     const highpass = this.ctx.createBiquadFilter();
     highpass.type = "highpass";
-    highpass.frequency.value = 110;
-    highpass.Q.value = 0.7;
+    highpass.frequency.value = 160;
+    highpass.Q.value = 0.8;
 
-    const chestResidue = this.ctx.createBiquadFilter();
-    chestResidue.type = "peaking";
-    chestResidue.frequency.value = 120;
-    chestResidue.Q.value = 0.85;
-    chestResidue.gain.value = converted.male ? -3.2 : -1.2;
+    // 2. 衰减箱体与鼻音浑浊共振（360Hz 陷波）
+    const chestDip = this.ctx.createBiquadFilter();
+    chestDip.type = "peaking";
+    chestDip.frequency.value = 360;
+    chestDip.Q.value = 1.2;
+    chestDip.gain.value = isMale ? -4.5 : -2.5;
 
-    const presence = this.ctx.createBiquadFilter();
-    presence.type = "peaking";
-    presence.frequency.value = 4800;
-    presence.Q.value = 0.9;
-    presence.gain.value = converted.male ? 2.6 : 1.6;
+    // 3. Saki F1 第一共振峰增益（1100Hz 元气甜美共鸣）
+    const formant1 = this.ctx.createBiquadFilter();
+    formant1.type = "peaking";
+    formant1.frequency.value = 1100;
+    formant1.Q.value = 1.4;
+    formant1.gain.value = 3.2;
 
+    // 4. Saki F2 第二共振峰增益（2850Hz 咬字清晰度与清亮感）
+    const formant2 = this.ctx.createBiquadFilter();
+    formant2.type = "peaking";
+    formant2.frequency.value = 2850;
+    formant2.Q.value = 1.2;
+    formant2.gain.value = 2.8;
+
+    // 5. 空气感与甜美高频（7500Hz 高架滤波）
+    const airShelf = this.ctx.createBiquadFilter();
+    airShelf.type = "highshelf";
+    airShelf.frequency.value = 7500;
+    airShelf.gain.value = 1.8;
+
+    // 6. 高频低通滤波：剔除 11500Hz 以上高频电子底噪
     const lowpass = this.ctx.createBiquadFilter();
     lowpass.type = "lowpass";
-    lowpass.frequency.value = 10500;
+    lowpass.frequency.value = 11500;
     lowpass.Q.value = 0.7;
 
     const gain = this.ctx.createGain();
-    gain.gain.value = 1.12;
+    gain.gain.value = 1.15;
 
     src.connect(highpass);
-    highpass.connect(chestResidue);
-    chestResidue.connect(presence);
-    presence.connect(lowpass);
+    highpass.connect(chestDip);
+    chestDip.connect(formant1);
+    formant1.connect(formant2);
+    formant2.connect(airShelf);
+    airShelf.connect(lowpass);
     lowpass.connect(gain);
     gain.connect(this.ctx.destination);
 

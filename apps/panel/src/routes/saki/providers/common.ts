@@ -250,7 +250,17 @@ export async function streamPromptAgentTurnWithFilteredDelta(
       thinkingEmitted = thinking.length;
     }
   };
-  const stopPatterns = ["```json", '{"tool_calls"', '{"toolcalls"', "<tool_call", "<invoke"];
+  const stopPatterns = [
+    "```json",
+    '{"tool_calls"',
+    '{"toolcalls"',
+    "<tool_call",
+    "<tool_calls",
+    "<command",
+    "<invoke",
+    "<function",
+    "<action"
+  ];
   const maxPrefixLen = Math.max(...stopPatterns.map((pattern) => pattern.length));
   const filteredDelta = (text: string) => {
     accumulated += text;
@@ -281,7 +291,7 @@ export async function streamPromptAgentTurnWithFilteredDelta(
     const visible = stripThinking(accumulated);
     if (forwardedIndex < visible.length) {
       const tail = visible.slice(forwardedIndex);
-      if (tail && !/<tool_call/i.test(tail) && !/<invoke/i.test(tail) && !/"?tool_calls"?\s*:/i.test(tail)) {
+      if (tail && !/<(?:tool_call|tool_calls|command|invoke|function|action)\b/i.test(tail) && !/"?tool_calls"?\s*:/i.test(tail)) {
         onDelta(tail);
         forwardedIndex = visible.length;
       }

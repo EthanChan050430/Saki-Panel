@@ -2,6 +2,7 @@ import { panelConfig, panelPaths } from "../../config.js";
 import type { SakiConfigResponse, SakiProviderConfig, UpdateSakiConfigRequest } from "@webops/shared";
 import { publishAppearanceUpdate } from "./appearance-events.js";
 import { registerCopilotConfigHost } from "./providers.js";
+import { registerAntigravityConfigHost } from "./providers/antigravity.js";
 import {
   defaultLocalProviderUrl,
   defaultProviderConfig,
@@ -70,6 +71,7 @@ export async function readEffectiveSakiConfig(): Promise<SakiConfigResponse> {
     baseUrl: trimString(providerConfig.baseUrl) || providerDefaults[provider]?.baseUrl || "",
     apiKey: trimString(providerConfig.apiKey),
     providerConfigs,
+    modelPointsMultipliers: settings.modelPointsMultipliers ?? {},
     searchEnabled: settings.searchEnabled !== false,
     mcpEnabled: Boolean(settings.mcpEnabled),
     systemPrompt,
@@ -102,6 +104,18 @@ export async function saveSakiConfig(input: UpdateSakiConfigRequest): Promise<Sa
   if (input.apiKey !== undefined) activeConfig.apiKey = trimString(input.apiKey);
   providerConfigs[nextProvider] = sanitizeProviderConfig(nextProvider, activeConfig);
 
+  const rawMultipliers = input.modelPointsMultipliers !== undefined ? input.modelPointsMultipliers : current.modelPointsMultipliers;
+  const sanitizedMultipliers: Record<string, number> = {};
+  if (rawMultipliers && typeof rawMultipliers === "object") {
+    for (const [key, val] of Object.entries(rawMultipliers)) {
+      const trimmed = trimString(key);
+      const num = Number(val);
+      if (trimmed && Number.isFinite(num) && num >= 0) {
+        sanitizedMultipliers[trimmed] = Math.round(num * 100) / 100;
+      }
+    }
+  }
+
   const next: PanelSakiSettings = {
     requestTimeoutMs: normalizeTimeout(input.requestTimeoutMs, current.requestTimeoutMs),
     provider: nextProvider,
@@ -110,6 +124,7 @@ export async function saveSakiConfig(input: UpdateSakiConfigRequest): Promise<Sa
     baseUrl: trimString(providerConfigs[nextProvider]?.baseUrl) || providerDefaults[nextProvider]?.baseUrl || "",
     apiKey: trimString(providerConfigs[nextProvider]?.apiKey),
     providerConfigs,
+    modelPointsMultipliers: sanitizedMultipliers,
     searchEnabled: input.searchEnabled !== undefined ? Boolean(input.searchEnabled) : current.searchEnabled,
     mcpEnabled: input.mcpEnabled !== undefined ? Boolean(input.mcpEnabled) : current.mcpEnabled,
     appearance: input.appearance !== undefined ? sanitizePanelAppearance(input.appearance, current.appearance) : current.appearance
@@ -140,9 +155,28 @@ async function persistCopilotTokenForPanel(gitHubToken: string): Promise<void> {
   await saveSakiConfig({ providerConfigs });
 }
 
+async function persistAntigravityDirectKeyForPanel(apiKey: string): Promise<void> {
+  const current = await readEffectiveSakiConfig();
+  const existing = providerConfigFor(current.providerConfigs, "antigravity");
+  const providerConfigs = {
+    ...current.providerConfigs,
+    antigravity: sanitizeProviderConfig("antigravity", {
+      ...existing,
+      apiKey,
+      baseUrl: "",
+      mode: "direct"
+    })
+  };
+  await saveSakiConfig({ providerConfigs });
+}
+
 export function initSakiConfigHost(): void {
   registerCopilotConfigHost({
     readEffectiveConfig: readEffectiveSakiConfig,
     persistCopilotToken: persistCopilotTokenForPanel
+  });
+  registerAntigravityConfigHost({
+    readEffectiveConfig: readEffectiveSakiConfig,
+    persistAntigravityDirectKey: persistAntigravityDirectKeyForPanel
   });
 }

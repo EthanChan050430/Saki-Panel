@@ -16,7 +16,8 @@ import { writeAuditLog } from "../../audit.js";
 import {
   approvePendingSakiAction,
   rejectPendingSakiAction,
-  rollbackSakiAction
+  rollbackSakiAction,
+  rollbackSakiTask
 } from "./approval.js";
 import { ensureSakiModulesReady } from "./bootstrap.js";
 import {
@@ -34,10 +35,15 @@ import { emitAgentFinalText, runSakiAgent } from "./loop.js";
 import { assertUserHasSpendablePoints, recordAgentTokenUsage } from "../../points.js";
 import {
   checkAntigravityAuthStatus,
+  exchangeAntigravityOAuthCode,
+  getAntigravityLoginUrl,
+  loginAntigravityAccount,
+  logoutAntigravityAccount,
   readCopilotAuthStatus,
   readCopilotLoginState,
   saveCopilotToken,
-  startCopilotDeviceLogin
+  startCopilotDeviceLogin,
+  switchAntigravityAccount
 } from "./providers.js";
 import {
   downloadSakiSkill,
@@ -52,8 +58,11 @@ import { prisma } from "../../db.js";
 import { createSakiAgentEvents, startSakiEventStream } from "./stream.js";
 import {
   cancelActiveSakiTask,
+  cancelAllRunningSakiTasks,
   cancelRunningSakiTasksForContext,
+  clearFinishedSakiTasks,
   createActiveSakiTask,
+  deleteSakiTask,
   enqueueSakiTaskSteer,
   emitActiveSakiTaskEvent,
   finishActiveSakiTask,
@@ -66,6 +75,7 @@ import {
 } from "./state.js";
 import {
   effectiveSakiAgentPermissionMode,
+  getModelPointsMultiplier,
   isSakiContinuationMessage,
   normalizeProviderId,
   objectValue,
@@ -143,6 +153,83 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/saki/antigravity/status", { preHandler: requirePermission("saki.configure") }, async () => {
     const config = await readEffectiveSakiConfig();
     return checkAntigravityAuthStatus(config);
+  });
+
+  app.get("/api/saki/antigravity/login", { preHandler: requirePermission("saki.configure") }, async () => {
+    return getAntigravityLoginUrl();
+  });
+
+  app.post("/api/saki/antigravity/exchange", { preHandler: requirePermission("saki.configure") }, async (request) => {
+    const body = objectValue(request.body) ?? {};
+    const code = trimString(body.code ?? body.authorizationCode ?? body.token);
+    const sessionId = trimString(body.sessionId);
+    const accountEmail = trimString(body.accountEmail ?? body.email);
+    const config = await readEffectiveSakiConfig();
+    const result = await exchangeAntigravityOAuthCode({ code, ...(sessionId ? { sessionId } : {}), ...(accountEmail ? { accountEmail } : {}) }, config);
+    await writeAuditLog({
+      request,
+      userId: request.user.sub,
+      action: "saki.antigravity.exchange",
+      resourceType: "saki",
+      payload: {
+        accountEmail: result.accountEmail,
+        authenticated: result.authenticated
+      }
+    });
+    return result;
+  });
+
+  app.post("/api/saki/antigravity/login", { preHandler: requirePermission("saki.configure") }, async (request) => {
+    const body = objectValue(request.body) ?? {};
+    const tokenOrKey = trimString(body.tokenOrKey ?? body.token ?? body.apiKey);
+    const accountEmail = trimString(body.accountEmail ?? body.email);
+    const config = await readEffectiveSakiConfig();
+    const result = await loginAntigravityAccount({ tokenOrKey, ...(accountEmail ? { accountEmail } : {}) }, config);
+    await writeAuditLog({
+      request,
+      userId: request.user.sub,
+      action: "saki.antigravity.login",
+      resourceType: "saki",
+      payload: {
+        accountEmail: result.accountEmail,
+        authenticated: result.authenticated
+      }
+    });
+    return result;
+  });
+
+  app.post("/api/saki/antigravity/switch-account", { preHandler: requirePermission("saki.configure") }, async (request) => {
+    const body = objectValue(request.body) ?? {};
+    const accountEmail = trimString(body.accountEmail ?? body.email);
+    const config = await readEffectiveSakiConfig();
+    const result = await switchAntigravityAccount({ accountEmail }, config);
+    await writeAuditLog({
+      request,
+      userId: request.user.sub,
+      action: "saki.antigravity.switch_account",
+      resourceType: "saki",
+      payload: {
+        activeAccount: result.accountEmail
+      }
+    });
+    return result;
+  });
+
+  app.post("/api/saki/antigravity/logout", { preHandler: requirePermission("saki.configure") }, async (request) => {
+    const body = objectValue(request.body) ?? {};
+    const accountEmail = trimString(body.accountEmail ?? body.email);
+    const config = await readEffectiveSakiConfig();
+    const result = await logoutAntigravityAccount({ ...(accountEmail ? { accountEmail } : {}) }, config);
+    await writeAuditLog({
+      request,
+      userId: request.user.sub,
+      action: "saki.antigravity.logout",
+      resourceType: "saki",
+      payload: {
+        removedAccount: accountEmail || "active"
+      }
+    });
+    return result;
   });
 
   app.get("/api/saki/skills", { preHandler: requirePermission("saki.skills") }, async (request) => {
@@ -410,10 +497,13 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
         }
         let chatUsage: any;
         try {
+          const effectiveModel = modelInput.model || config.model || "default";
+          const multiplier = getModelPointsMultiplier(config, effectiveModel, config.provider);
           chatUsage = await recordAgentTokenUsage(
             request.user.sub,
             chatTokensUsed,
-            `Chat: ${String(modelInput.message || "问答").slice(0, 50)}`
+            `Chat [${effectiveModel}]: ${String(modelInput.message || "问答").slice(0, 45)}`,
+            multiplier
           );
         } catch {}
         response = {
@@ -535,6 +625,52 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
+  app.post("/api/saki/tasks/cancel-all", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    const cancelledCount = cancelAllRunningSakiTasks(request.user.sub);
+    await writeAuditLog({
+      request,
+      userId: request.user.sub,
+      action: "saki.agent.cancel_all_tasks",
+      resourceType: "saki_task",
+      payload: { cancelledCount }
+    });
+    return { ok: true, cancelledCount };
+  });
+
+  app.delete("/api/saki/tasks/finished", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    const deletedCount = clearFinishedSakiTasks(request.user.sub);
+    await writeAuditLog({
+      request,
+      userId: request.user.sub,
+      action: "saki.agent.clear_finished_tasks",
+      resourceType: "saki_task",
+      payload: { deletedCount }
+    });
+    return { ok: true, deletedCount };
+  });
+
+  app.delete("/api/saki/tasks/:taskId", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    const { taskId } = request.params as { taskId: string };
+    const task = getActiveSakiTaskById(taskId);
+    if (!task || task.userId !== request.user.sub) {
+      throw new RouteError("Task not found.", 404);
+    }
+    const deleted = deleteSakiTask(taskId, request.user.sub);
+    await writeAuditLog({
+      request,
+      userId: request.user.sub,
+      action: "saki.agent.delete_task",
+      resourceType: "saki_task",
+      resourceId: taskId
+    });
+    return { ok: deleted };
+  });
+
+  app.post("/api/saki/tasks/:taskId/rollback", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    const { taskId } = request.params as { taskId: string };
+    return rollbackSakiTask(request, taskId);
+  });
+
   app.post("/api/saki/chat", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
     const prepared = await prepareSakiChatInvocation(request, request.body as Partial<SakiChatRequest>);
     const { modelInput, context, skills } = prepared;
@@ -581,10 +717,13 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
       const reply = await callConfiguredModel(modelInput, context, skills);
       let chatUsage: any;
       try {
+        const effectiveModel = modelInput.model || config.model || "default";
+        const multiplier = getModelPointsMultiplier(config, effectiveModel, config.provider);
         chatUsage = await recordAgentTokenUsage(
           request.user.sub,
           reply.tokensUsed,
-          `Chat: ${String(modelInput.message || "问答").slice(0, 50)}`
+          `Chat [${effectiveModel}]: ${String(modelInput.message || "问答").slice(0, 45)}`,
+          multiplier
         );
       } catch {}
       const response = {
@@ -635,6 +774,10 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     if (!body || typeof body !== "object") {
       throw new RouteError("Invalid conversation data.", 400);
     }
+    const existing = await prisma.sakiConversation.findUnique({ where: { id } });
+    if (existing && existing.userId !== request.user.sub) {
+      throw new RouteError("Forbidden", 403);
+    }
     const record = await prisma.sakiConversation.upsert({
       where: { id },
       create: {
@@ -648,6 +791,8 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
         messages: JSON.stringify(Array.isArray(body.messages) ? body.messages : [])
       },
       update: {
+        ...(typeof body.contextKey === "string" ? { contextKey: body.contextKey } : {}),
+        ...(typeof body.instanceId === "string" ? { instanceId: body.instanceId } : {}),
         ...(typeof body.title === "string" ? { title: body.title } : {}),
         ...(typeof body.label === "string" ? { label: body.label } : {}),
         ...(typeof body.detail === "string" ? { detail: body.detail } : {}),

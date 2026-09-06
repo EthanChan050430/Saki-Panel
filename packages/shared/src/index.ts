@@ -202,6 +202,8 @@ export interface PanelAppearanceSettings {
   loginCoverSrc: string;
   backgroundSrc: string;
   mobileBackgroundSrc: string;
+  darkBackgroundSrc: string;
+  mobileDarkBackgroundSrc: string;
 }
 
 export interface NodeMetricSnapshot {
@@ -306,7 +308,7 @@ export interface DaemonEventResponse {
 export const watchPolicyModes = ["off", "diagnose_only", "diagnose_and_patch"] as const;
 export type WatchPolicyMode = (typeof watchPolicyModes)[number];
 
-export const incidentTriggers = ["crash", "crash_loop", "disk", "memory"] as const;
+export const incidentTriggers = ["crash", "crash_loop", "disk", "memory", "webhook", "health"] as const;
 export type IncidentTrigger = (typeof incidentTriggers)[number];
 
 export const incidentStatuses = [
@@ -338,6 +340,20 @@ export interface WatchDiagnosis {
   confidence?: number;
 }
 
+// 诊断证据包：诊断发起时由 panel 自动收集，随事件持久化并注入诊断上下文
+export interface WatchEvidence {
+  collectedAt: string;
+  logTail?: string;
+  crashHistory?: Array<{ at: string; exitCode?: number | null; status: string }>;
+  nodeMetrics?: { cpuPercent?: number; memoryPercent?: number; diskPercent?: number };
+  recentChanges?: string[];
+  notes?: string[];
+}
+
+// 风险分级自治阈值：none=全部人工批准；low=低风险自动执行；medium=中低风险自动执行
+export const autoApproveRiskLevels = ["none", "low", "medium"] as const;
+export type AutoApproveRiskLevel = (typeof autoApproveRiskLevels)[number];
+
 export interface ManagedWatchPolicy {
   instanceId: string;
   enabled: boolean;
@@ -346,6 +362,12 @@ export interface ManagedWatchPolicy {
   maxRunsPerHour: number;
   verifyWaitSeconds: number;
   approverUserId?: string | null;
+  autoApproveRisk: AutoApproveRiskLevel;
+  autoApproveMinConfidence: number;
+  healthCheckUrl?: string | null;
+  healthCheckTimeoutSeconds: number;
+  notifyChannelIds: string[];
+  escalationMinutes: number;
 }
 
 export interface UpdateWatchPolicyRequest {
@@ -355,6 +377,12 @@ export interface UpdateWatchPolicyRequest {
   maxRunsPerHour?: number;
   verifyWaitSeconds?: number;
   approverUserId?: string | null;
+  autoApproveRisk?: AutoApproveRiskLevel;
+  autoApproveMinConfidence?: number;
+  healthCheckUrl?: string | null;
+  healthCheckTimeoutSeconds?: number;
+  notifyChannelIds?: string[];
+  escalationMinutes?: number;
 }
 
 export interface ManagedIncident {
@@ -378,6 +406,12 @@ export interface ManagedIncident {
   lastOccurredAt: string;
   resolvedAt?: string | null;
   ignoredUntil?: string | null;
+  groupKey?: string | null;
+  recurrenceCount: number;
+  flapping: boolean;
+  autoApplied: boolean;
+  evidence?: WatchEvidence | null;
+  escalatedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -389,6 +423,114 @@ export interface IncidentListResponse {
 
 export interface IgnoreIncidentRequest {
   minutes?: number;
+}
+
+// ---- 静默规则 ----
+export interface ManagedSilenceRule {
+  id: string;
+  instanceId?: string | null;
+  instanceName?: string | null;
+  fingerprint?: string | null;
+  trigger?: IncidentTrigger | null;
+  reason?: string | null;
+  expiresAt?: string | null; // null = 永久
+  createdAt: string;
+}
+
+export interface CreateSilenceRuleRequest {
+  instanceId?: string;
+  fingerprint?: string;
+  trigger?: IncidentTrigger;
+  reason?: string;
+  minutes?: number; // 缺省 = 永久静默
+}
+
+// ---- 出站通知渠道 ----
+export const notificationChannelTypes = ["webhook", "dingtalk", "wecom", "telegram"] as const;
+export type NotificationChannelType = (typeof notificationChannelTypes)[number];
+
+export const notificationEventKinds = ["opened", "awaiting", "resolved", "failed", "escalation"] as const;
+export type NotificationEventKind = (typeof notificationEventKinds)[number];
+
+export interface ManagedNotificationChannel {
+  id: string;
+  name: string;
+  type: NotificationChannelType;
+  url: string;
+  hasSecret: boolean;
+  enabled: boolean;
+  events: NotificationEventKind[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpsertNotificationChannelRequest {
+  name: string;
+  type: NotificationChannelType;
+  url: string;
+  secret?: string | null;
+  enabled?: boolean;
+  events?: NotificationEventKind[];
+}
+
+export interface ManagedNotificationDelivery {
+  id: string;
+  channelId: string;
+  channelName?: string;
+  incidentId?: string | null;
+  kind: string;
+  status: string;
+  error?: string | null;
+  createdAt: string;
+}
+
+// ---- 外部告警接入口令 ----
+export interface ManagedIngestToken {
+  id: string;
+  instanceId: string;
+  instanceName?: string;
+  label: string;
+  token: string;
+  createdAt: string;
+  lastUsedAt?: string | null;
+}
+
+export interface CreateIngestTokenRequest {
+  instanceId: string;
+  label?: string;
+}
+
+// ---- 可靠性报告 ----
+export interface IncidentReport {
+  days: number;
+  generatedAt: string;
+  totals: {
+    opened: number;
+    resolved: number;
+    failed: number;
+    ignored: number;
+    activeNow: number;
+  };
+  mttrMinutes: number | null;
+  autoFix: { attempted: number; succeeded: number; successRate: number | null };
+  recurrenceRate: number | null; // 复发事件（recurrenceCount > 0）占比
+  topRecurring: Array<{
+    fingerprint: string;
+    instanceId: string;
+    instanceName: string;
+    trigger: IncidentTrigger;
+    count: number;
+    lastOccurredAt: string;
+  }>;
+  perInstance: Array<{
+    instanceId: string;
+    instanceName: string;
+    total: number;
+    resolved: number;
+    failed: number;
+    mttrMinutes: number | null;
+  }>;
+  daily: Array<{ date: string; opened: number; resolved: number }>;
 }
 
 export interface DashboardOverview {
@@ -520,6 +662,22 @@ export interface ConnectNodeByKeyResponse {
   error?: string | undefined;
 }
 
+export interface LocalDaemonStatusResponse {
+  running: boolean;
+  port: number;
+  connected: boolean;
+  nodeId?: string | null | undefined;
+  nodeName?: string | null | undefined;
+  canConnect?: boolean | undefined;
+}
+
+export interface ConnectLocalNodeResponse {
+  ok: boolean;
+  node?: ManagedNode | undefined;
+  message?: string | undefined;
+  error?: string | undefined;
+}
+
 export interface UserAccessKeyInfo {
   id: string;
   name: string;
@@ -619,6 +777,30 @@ export interface CreateInstanceRequest {
   assignedToUserIds?: string[] | null;
 }
 
+export interface RemoteNodeUserSummary {
+  id: string;
+  username: string;
+  displayName: string | null;
+  instanceCount: number;
+  activeKeyLast4?: string | null;
+}
+
+export interface SyncInstancesByUserKeyRequest {
+  nodeId: string;
+  userKey?: string | undefined;
+  targetUserId?: string | undefined;
+  remotePanelUrl?: string | undefined;
+}
+
+export interface SyncInstancesByUserKeyResponse {
+  ok: boolean;
+  syncedCount: number;
+  message?: string;
+  instances?: ManagedInstance[];
+  availableUsers?: RemoteNodeUserSummary[];
+  error?: string;
+}
+
 export interface SuggestInstanceStartCommandRequest {
   nodeId: string;
   workingDirectory: string;
@@ -635,10 +817,10 @@ export interface SuggestInstanceStartCommandResponse {
 export interface InstanceTemplate {
   id: string;
   name: string;
-  description: string;
+  description: string | null;
   type: InstanceType;
   defaultStartCommand: string;
-  defaultStopCommand?: string | null | undefined;
+  defaultStopCommand: string | null;
   defaultWorkingDirectoryPrefix: string;
   ports: Array<{
     port: number;
@@ -648,6 +830,49 @@ export interface InstanceTemplate {
     key: string;
     value: string;
   }>;
+  autoStart: boolean;
+  restartPolicy: RestartPolicy;
+  restartMaxRetries: number;
+  runAsUser: string | null;
+  memoryLimit: number | null;
+  cpuLimit: number | null;
+  isBuiltin: boolean;
+  fromInstanceId: string | null;
+  createdById: string | null;
+  createdByUsername: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SaveTemplateFromInstanceRequest {
+  name: string;
+  description?: string;
+  /** override start command (defaults to instance.startCommand) */
+  startCommand?: string;
+  /** override stop command (defaults to instance.stopCommand) */
+  stopCommand?: string | null;
+  workingDirectoryPrefix?: string;
+}
+
+export interface UpdateTemplateRequest {
+  name?: string;
+  description?: string;
+  defaultStartCommand?: string;
+  defaultStopCommand?: string | null;
+  defaultWorkingDirectoryPrefix?: string;
+  ports?: Array<{ port: number; description: string }>;
+  envs?: Array<{ key: string; value: string }>;
+  autoStart?: boolean;
+  restartPolicy?: RestartPolicy;
+  restartMaxRetries?: number;
+  runAsUser?: string | null;
+  memoryLimit?: number | null;
+  cpuLimit?: number | null;
+}
+
+export interface DeleteTemplateResponse {
+  success: boolean;
+  id: string;
 }
 
 export interface CreateInstanceFromTemplateRequest {
@@ -1288,6 +1513,15 @@ export interface SakiProviderConfig {
   baseUrl?: string;
   apiKey?: string;
   ollamaUrl?: string;
+  /**
+   * Connection scheme for the "antigravity" provider only:
+   * - "proxy": local/third-party reverse proxy gateway (default http://localhost:8080/v1),
+   *   auth = optional custom Bearer token or locally stored Google OAuth credential.
+   * - "direct": official Google endpoint (https://generativelanguage.googleapis.com/v1beta/openai),
+   *   auth = Google AI Studio API key (AIzaSy...).
+   * Ignored by all other providers.
+   */
+  mode?: "proxy" | "direct";
 }
 
 export interface SakiConfigResponse {
@@ -1298,6 +1532,7 @@ export interface SakiConfigResponse {
   baseUrl: string;
   apiKey: string;
   providerConfigs: Record<string, SakiProviderConfig>;
+  modelPointsMultipliers?: Record<string, number> | undefined;
   searchEnabled: boolean;
   mcpEnabled: boolean;
   memoryEnabled?: boolean;
@@ -1315,6 +1550,7 @@ export interface UpdateSakiConfigRequest {
   baseUrl?: string;
   apiKey?: string;
   providerConfigs?: Record<string, SakiProviderConfig>;
+  modelPointsMultipliers?: Record<string, number> | undefined;
   searchEnabled?: boolean;
   mcpEnabled?: boolean;
   memoryEnabled?: boolean;
@@ -1361,13 +1597,68 @@ export interface SakiCopilotLoginResponse {
   output?: string;
 }
 
+export interface SakiAntigravityUsageInfo {
+  totalTokensUsed?: number | undefined;
+  todayTokensUsed?: number | undefined;
+  totalRequests?: number | undefined;
+  proxyQuotaLimit?: string | number | undefined;
+  proxyQuotaRemaining?: string | number | undefined;
+  proxyQuotaUsed?: string | number | undefined;
+  expiresAt?: string | undefined;
+  tier?: string | undefined;
+}
+
+export interface SakiAntigravityAccountItem {
+  email: string;
+  name?: string | undefined;
+  picture?: string | undefined;
+  isActive?: boolean | undefined;
+  hasToken?: boolean | undefined;
+  addedAt?: string | undefined;
+}
+
 export interface SakiAntigravityAuthStatusResponse {
   available: boolean;
   authenticated: boolean;
+  /** Resolved connection scheme for the antigravity provider. */
+  mode?: "proxy" | "direct";
+  isEndpointReachable?: boolean;
   hasLocalCredentials?: boolean;
-  accountEmail?: string;
+  accountEmail?: string | undefined;
+  accounts?: SakiAntigravityAccountItem[] | undefined;
   endpoint?: string;
   message?: string;
+  usage?: SakiAntigravityUsageInfo | undefined;
+  loginUrl?: string | undefined;
+  verificationUri?: string | undefined;
+}
+
+export interface SakiAntigravityLoginUrlResponse {
+  url: string;
+  sessionId: string;
+  verificationUri: string;
+  secondaryUri?: string | undefined;
+  expiresIn?: number | undefined;
+  message: string;
+}
+
+export interface SakiAntigravityExchangeRequest {
+  sessionId?: string | undefined;
+  code: string;
+  accountEmail?: string | undefined;
+}
+
+export interface SakiAntigravityLoginRequest {
+  tokenOrKey: string;
+  accountEmail?: string | undefined;
+}
+
+export interface SakiAntigravitySwitchAccountRequest {
+  accountEmail: string;
+}
+
+export interface SakiAntigravityLogoutRequest {
+  accountEmail?: string | undefined;
 }
 
 export type DatabaseEngine = "sqlite" | "mysql" | "postgres" | "redis" | "mariadb" | "generic";

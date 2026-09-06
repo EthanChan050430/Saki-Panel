@@ -162,65 +162,58 @@ export function DatabaseTerminalConsole({
       {/* Bottom Command Row matching Ordinary Instance */}
       <form
         className="terminal-command-row"
-        style={{ margin: "10px 14px 14px", borderRadius: 16 }}
         onSubmit={(e) => {
           e.preventDefault();
           void execute();
         }}
       >
-        <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-          <button
-            type="button"
-            className="icon-button mini"
-            title="历史命令"
-            onClick={() => setShowHistory((v) => !v)}
-            style={{ marginLeft: 6 }}
-          >
-            <Clock size={15} />
-          </button>
+        <div className="terminal-input-wrap">
+          <div className="terminal-history-wrap">
+            <button
+              type="button"
+              className="terminal-history-btn"
+              title="历史命令"
+              onClick={() => setShowHistory((v) => !v)}
+            >
+              <Clock size={16} />
+            </button>
 
-          {showHistory && (
-            <div className="glass-panel terminal-history-popover" style={{ bottom: "calc(100% + 12px)" }}>
-              <div className="terminal-history-header">
-                <span>历史记录</span>
-                <span className="terminal-history-count">{history.length} 条</span>
+            {showHistory && (
+              <div className="glass-panel terminal-history-popover">
+                <div className="terminal-history-header">
+                  <span>历史记录</span>
+                  <span className="terminal-history-count">{history.length} 条</span>
+                </div>
+                <div className="terminal-history-list">
+                  {history.length === 0 ? (
+                    <div className="terminal-history-empty">暂无历史命令</div>
+                  ) : (
+                    history.map((cmd, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        className="terminal-history-item"
+                        onClick={() => {
+                          setSql(cmd);
+                          setShowHistory(false);
+                        }}
+                      >
+                        <span className="history-cmd-text">{cmd}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
               </div>
-              <div className="terminal-history-list">
-                {history.length === 0 ? (
-                  <div className="terminal-history-empty">暂无历史命令</div>
-                ) : (
-                  history.map((cmd, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      className="terminal-history-item"
-                      onClick={() => {
-                        setSql(cmd);
-                        setShowHistory(false);
-                      }}
-                    >
-                      <span className="history-cmd-text">{cmd}</span>
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
+            )}
+          </div>
+
+          <input
+            className="terminal-cmd-input"
+            value={sql}
+            onChange={(e) => setSql(e.target.value)}
+            placeholder={isRedis ? "输入 Redis 命令 (如 GET / SET / HGETALL / KEYS)..." : "输入 SQL 语句按回车执行..."}
+          />
         </div>
-
-        <input
-          className="terminal-cmd-input"
-          style={{
-            background: "transparent",
-            backgroundColor: "transparent",
-            border: "none",
-            boxShadow: "none",
-            outline: "none"
-          }}
-          value={sql}
-          onChange={(e) => setSql(e.target.value)}
-          placeholder={isRedis ? "输入 Redis 命令 (如 GET / SET / HGETALL / KEYS)..." : "输入 SQL 语句按回车执行..."}
-        />
 
         <button
           className="terminal-send-btn"

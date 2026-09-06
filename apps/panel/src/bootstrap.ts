@@ -6,6 +6,7 @@ import { ensureLegacyInstanceAssignments } from "./instance-access.js";
 import { hashPassword } from "./security.js";
 import { recoverStuckWatchIncidents } from "./watch/incidents.js";
 import { startWatchMaintenance } from "./watch/detector.js";
+import { startEscalationScanner } from "./watch/notify-outbound.js";
 import fs from "node:fs/promises";
 
 export async function ensureBootstrapData(): Promise<void> {
@@ -250,10 +251,11 @@ export async function ensureBootstrapData(): Promise<void> {
   }
 
   // 面板重启后恢复卡死的 watch incident（中间态全是内存驱动，重启后无法自恢复），
-  // 并启动 watch 内存态（崩溃采样/冷却/租约）的周期清扫。
+  // 并启动 watch 内存态（崩溃采样/冷却/租约）的周期清扫与超时升级扫描。
   try {
     await recoverStuckWatchIncidents();
     startWatchMaintenance();
+    startEscalationScanner();
   } catch (error) {
     console.warn("Watch incident recovery skipped:", error instanceof Error ? error.message : error);
   }

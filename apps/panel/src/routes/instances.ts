@@ -1,3 +1,5 @@
+import http from "node:http";
+import https from "node:https";
 import net from "node:net";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Prisma } from "@prisma/client";
@@ -15,6 +17,9 @@ import type {
   RestartPolicy,
   SuggestInstanceStartCommandRequest,
   SuggestInstanceStartCommandResponse,
+  SyncInstancesByUserKeyRequest,
+  SyncInstancesByUserKeyResponse,
+  RemoteNodeUserSummary,
   UpdateInstanceRequest
 } from "@webops/shared";
 import { randomUUID } from "node:crypto";
@@ -34,10 +39,12 @@ import {
   type InstanceWithAccess
 } from "../instance-access.js";
 import { writeAuditLog } from "../audit.js";
-import { findDangerousCommandReason } from "../security.js";
+import { findDangerousCommandReason, hashToken } from "../security.js";
 import {
   applyDaemonClashSubscription,
   createDaemonInstanceShell,
+  discoverDaemonDatabases,
+  executeDaemonDatabaseQuery,
   deleteDaemonInstanceShell,
   fetchDaemonClashSubscription,
   killDaemonInstance,
@@ -752,7 +759,483 @@ async function runInstanceAction(
   }
 }
 
+
+async function fetchRemoteUserInstances(
+  remoteBaseUrl: string,
+  userKey: string,
+  timeoutMs = 8000
+): Promise<{ ok: boolean; status: number; instances?: any[]; error?: string }> {
+  return new Promise((resolve) => {
+    let url: URL;
+    try {
+      const base = remoteBaseUrl.startsWith("http://") || remoteBaseUrl.startsWith("https://")
+        ? remoteBaseUrl
+        : `https://${remoteBaseUrl}`;
+      url = new URL("/api/instances", base);
+    } catch {
+      resolve({ ok: false, status: 0, error: `Invalid remote URL: ${remoteBaseUrl}` });
+      return;
+    }
+
+    const isHttps = url.protocol === "https:";
+    const client = isHttps ? https : http;
+    const requestOptions: https.RequestOptions = {
+      method: "GET",
+      hostname: url.hostname,
+      port: url.port ? Number(url.port) : isHttps ? 443 : 80,
+      path: `${url.pathname}${url.search}`,
+      headers: {
+        "x-api-key": userKey.trim(),
+        "accept": "application/json"
+      },
+      timeout: timeoutMs,
+      ...(isHttps ? { rejectUnauthorized: false } : {})
+    };
+
+    const req = client.request(requestOptions, (res) => {
+      let data = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => { data += chunk; });
+      res.on("end", () => {
+        if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+          try {
+            const parsed = JSON.parse(data);
+            if (Array.isArray(parsed)) {
+              resolve({ ok: true, status: res.statusCode, instances: parsed });
+              return;
+            }
+            resolve({ ok: false, status: res.statusCode, error: "远程接口未返回实例数组格式" });
+          } catch {
+            resolve({ ok: false, status: res.statusCode, error: "无法解析远程面板返回的 JSON 数据" });
+          }
+        } else if (res.statusCode === 401 || res.statusCode === 403) {
+          resolve({ ok: false, status: res.statusCode, error: "用户专属访问密钥无效或未通过验证 (401/403)" });
+        } else {
+          resolve({ ok: false, status: res.statusCode || 500, error: `远程面板响应异常 (${res.statusCode}): ${data.slice(0, 100)}` });
+        }
+      });
+    });
+
+    req.on("timeout", () => {
+      req.destroy(new Error(`连接远程面板超时 (${timeoutMs}ms)`));
+    });
+    req.on("error", (err) => {
+      resolve({ ok: false, status: 0, error: err.message });
+    });
+    req.end();
+  });
+}
+
+
+async function findNodePanelDatabasePath(node: any): Promise<string | null> {
+  try {
+    const res = await discoverDaemonDatabases(node);
+    if (!res.ok || !Array.isArray(res.databases)) return null;
+    const found = res.databases.find(
+      (d) =>
+        d.engine === "sqlite" &&
+        d.path &&
+        (d.isSystem ||
+          d.name === "dev.db" ||
+          d.name === "database.sqlite" ||
+          d.path.includes("/panel/") ||
+          d.path.includes("/data/dev.db"))
+    );
+    return found?.path ?? null;
+  } catch {
+    return null;
+  }
+}
+
+interface NodeDatabaseFetchResult {
+  ok: boolean;
+  user?: { id: string; username: string; displayName: string | null } | undefined;
+  instances?: any[] | undefined;
+  availableUsers?: RemoteNodeUserSummary[] | undefined;
+  mismatchReason?: string | undefined;
+  error?: string | undefined;
+}
+
+async function fetchInstancesFromNodeDatabase(
+  node: any,
+  dbPath: string,
+  filter: { userKey?: string | undefined; targetUserId?: string | undefined }
+): Promise<NodeDatabaseFetchResult> {
+  try {
+    let targetUserId = filter.targetUserId?.trim();
+    let matchedUser: { id: string; username: string; displayName: string | null } | undefined;
+
+    if (filter.userKey?.trim()) {
+      const rawKey = filter.userKey.trim();
+      const keyHash = hashToken(rawKey);
+      const keyQuery = await executeDaemonDatabaseQuery(node, {
+        path: dbPath,
+        sql: `SELECT uak.id, uak.userId, u.username, u.displayName FROM user_access_keys uak LEFT JOIN users u ON u.id = uak.userId WHERE uak.keyHash = '${keyHash}';`
+      });
+
+      const firstKeyRow = keyQuery.ok && keyQuery.result.rows ? keyQuery.result.rows[0] : undefined;
+      if (firstKeyRow) {
+        targetUserId = String((firstKeyRow as any).userId);
+        matchedUser = {
+          id: targetUserId,
+          username: String((firstKeyRow as any).username || "user"),
+          displayName: (firstKeyRow as any).displayName ? String((firstKeyRow as any).displayName) : null
+        };
+      } else {
+        // Key hash didn't match! Query active keys and users for diagnosis
+        const allKeysQuery = await executeDaemonDatabaseQuery(node, {
+          path: dbPath,
+          sql: `SELECT uak.keyLast4, u.id, u.username, u.displayName, count(i.id) as instanceCount
+                FROM user_access_keys uak
+                LEFT JOIN users u ON u.id = uak.userId
+                LEFT JOIN instances i ON (i.createdById = u.id OR i.assignedToId = u.id)
+                GROUP BY uak.id;`
+        });
+
+        const activeSummaries: RemoteNodeUserSummary[] = (allKeysQuery.ok && allKeysQuery.result.rows ? allKeysQuery.result.rows : []).map((r: any) => ({
+          id: String(r.id),
+          username: String(r.username || "user"),
+          displayName: r.displayName ? String(r.displayName) : null,
+          instanceCount: Number(r.instanceCount) || 0,
+          activeKeyLast4: r.keyLast4 ? String(r.keyLast4) : null
+        }));
+
+        const inputLast4 = rawKey.slice(-4);
+        let mismatchReason = `您输入的密钥（末尾指纹 ...${inputLast4}）在远程节点数据库中未匹配到有效记录。`;
+        const matchingUser = activeSummaries.find((u) => u.instanceCount > 0);
+        if (matchingUser && matchingUser.activeKeyLast4) {
+          mismatchReason += `检测到远程用户「${matchingUser.displayName || matchingUser.username}」当前生效的密钥指纹为 ...${matchingUser.activeKeyLast4}。`;
+        }
+
+        return {
+          ok: false,
+          mismatchReason,
+          availableUsers: activeSummaries
+        };
+      }
+    }
+
+    if (!targetUserId) {
+      return { ok: false, error: "未指定用户专属访问密钥或目标用户 ID" };
+    }
+
+    const safeUserId = targetUserId.replace(/['"\\]/g, "");
+    const instQuery = await executeDaemonDatabaseQuery(node, {
+      path: dbPath,
+      sql: `SELECT * FROM instances WHERE createdById = '${safeUserId}' OR assignedToId = '${safeUserId}';`
+    });
+
+    if (!instQuery.ok || !instQuery.result.rows) {
+      return { ok: false, error: "查询节点数据库实例表失败" };
+    }
+
+    if (!matchedUser) {
+      const uQuery = await executeDaemonDatabaseQuery(node, {
+        path: dbPath,
+        sql: `SELECT id, username, displayName FROM users WHERE id = '${safeUserId}';`
+      });
+      const firstURow = uQuery.ok && uQuery.result.rows ? uQuery.result.rows[0] : undefined;
+      if (firstURow) {
+        matchedUser = {
+          id: safeUserId,
+          username: String((firstURow as any).username || "user"),
+          displayName: (firstURow as any).displayName ? String((firstURow as any).displayName) : null
+        };
+      }
+    }
+
+    const result: NodeDatabaseFetchResult = {
+      ok: true,
+      instances: instQuery.result.rows
+    };
+    if (matchedUser) {
+      result.user = matchedUser;
+    }
+    return result;
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function upsertSyncedInstances(node: any, remoteList: any[], currentUserId: string): Promise<ManagedInstance[]> {
+  const syncedInstances: ManagedInstance[] = [];
+  for (const remote of remoteList) {
+    if (!remote || typeof remote !== "object") continue;
+    const instanceId = remote.id || randomUUID();
+    const instanceName = remote.name || `Remote-${instanceId.slice(0, 6)}`;
+    const workingDirectory = remote.workingDirectory || `/var/saki/workspace/${instanceId}`;
+    const startCommand = remote.startCommand || "npm start";
+
+    const existing = await prisma.instance.findUnique({ where: { id: instanceId } });
+    let saved;
+    if (existing) {
+      saved = await prisma.instance.update({
+        where: { id: instanceId },
+        data: {
+          name: instanceName,
+          type: remote.type || existing.type,
+          nodeId: node.id,
+          workingDirectory,
+          startCommand,
+          stopCommand: remote.stopCommand ?? existing.stopCommand,
+          restartPolicy: remote.restartPolicy ?? existing.restartPolicy,
+          restartMaxRetries: typeof remote.restartMaxRetries === "number" ? remote.restartMaxRetries : existing.restartMaxRetries,
+          description: remote.description ?? existing.description,
+          status: remote.status || existing.status,
+          createdById: existing.createdById || currentUserId
+        },
+        include: instanceAccessInclude
+      });
+    } else {
+      saved = await prisma.instance.create({
+        data: {
+          id: instanceId,
+          name: instanceName,
+          type: remote.type || "generic_command",
+          nodeId: node.id,
+          workingDirectory,
+          startCommand,
+          stopCommand: remote.stopCommand ?? null,
+          restartPolicy: remote.restartPolicy ?? "never",
+          restartMaxRetries: typeof remote.restartMaxRetries === "number" ? remote.restartMaxRetries : 0,
+          description: remote.description ?? "通过专属访问密钥同步导入",
+          status: remote.status || "UNKNOWN",
+          createdById: currentUserId
+        },
+        include: instanceAccessInclude
+      });
+    }
+    syncedInstances.push(toManagedInstance(saved));
+  }
+  return syncedInstances;
+}
+
 export async function registerInstanceRoutes(app: FastifyInstance): Promise<void> {
+  
+  // Get list of users with instances from a node's local panel database
+  app.get(
+    "/api/instances/node-remote-users/:nodeId",
+    { preHandler: requirePermission("instance.create") },
+    async (request, reply) => {
+      const { nodeId } = request.params as { nodeId: string };
+      const currentUser = await loadCurrentUser(request.user.sub);
+      const node = await prisma.node.findUnique({ where: { id: nodeId } });
+      if (!node || !currentUser || !canAccessNode(currentUser, node)) {
+        reply.code(404).send({ message: "未找到目标节点或无权访问" });
+        return;
+      }
+
+      const dbPath = await findNodePanelDatabasePath(node);
+      if (!dbPath) {
+        return { ok: true, users: [] };
+      }
+
+      try {
+        const q = await executeDaemonDatabaseQuery(node, {
+          path: dbPath,
+          sql: `SELECT u.id, u.username, u.displayName, count(i.id) as instanceCount,
+                       (SELECT uak.keyLast4 FROM user_access_keys uak WHERE uak.userId = u.id ORDER BY uak.createdAt DESC LIMIT 1) as activeKeyLast4
+                FROM users u
+                LEFT JOIN instances i ON (i.createdById = u.id OR i.assignedToId = u.id)
+                GROUP BY u.id
+                HAVING instanceCount > 0 OR activeKeyLast4 IS NOT NULL
+                ORDER BY instanceCount DESC;`
+        });
+
+        const users: RemoteNodeUserSummary[] = (q.ok && q.result.rows ? q.result.rows : []).map((r) => ({
+          id: String(r.id),
+          username: String(r.username || "user"),
+          displayName: r.displayName ? String(r.displayName) : null,
+          instanceCount: Number(r.instanceCount) || 0,
+          activeKeyLast4: r.activeKeyLast4 ? String(r.activeKeyLast4) : null
+        }));
+
+        return { ok: true, users };
+      } catch {
+        return { ok: true, users: [] };
+      }
+    }
+  );
+
+  app.post(
+    "/api/instances/sync-by-user-key",
+    { preHandler: requirePermission("instance.create") },
+    async (request, reply) => {
+      const body = request.body as Partial<SyncInstancesByUserKeyRequest>;
+      const nodeId = trimmedString(body.nodeId);
+      const userKey = trimmedString(body.userKey);
+      const targetUserId = trimmedString(body.targetUserId);
+
+      if (!nodeId) {
+        reply.code(400).send({ message: "请提供目标节点编号 (nodeId)" });
+        return;
+      }
+
+      if (!userKey && !targetUserId) {
+        reply.code(400).send({ message: "请提供用户专属访问密钥 (userKey) 或选择目标用户 ID" });
+        return;
+      }
+
+      if (userKey && !userKey.startsWith("saki_usr_")) {
+        reply.code(400).send({ message: "专属访问密钥格式无效，必须以 saki_usr_ 开头" });
+        return;
+      }
+
+      const currentUser = await loadCurrentUser(request.user.sub);
+      const node = await prisma.node.findUnique({ where: { id: nodeId } });
+      if (!node || !currentUser || !canAccessNode(currentUser, node)) {
+        reply.code(404).send({ message: "未找到目标节点或无权访问该节点" });
+        return;
+      }
+
+      let nodeDbDiagnostic: { mismatchReason?: string | undefined; availableUsers?: RemoteNodeUserSummary[] | undefined } | null = null;
+
+      // 1. Direct Node Database Sync via connected Daemon
+      const dbPath = await findNodePanelDatabasePath(node);
+      if (dbPath) {
+        const dbResult = await fetchInstancesFromNodeDatabase(node, dbPath, {
+          userKey: userKey || undefined,
+          targetUserId: targetUserId || undefined
+        });
+
+        if (dbResult.ok && dbResult.instances) {
+          const syncedInstances = await upsertSyncedInstances(node, dbResult.instances, request.user.sub);
+          const userName = dbResult.user ? (dbResult.user.displayName || dbResult.user.username) : "目标用户";
+
+          await writeAuditLog({
+            request,
+            userId: request.user.sub,
+            action: "instance.sync_by_user_key",
+            resourceType: "instance",
+            payload: {
+              nodeId: node.id,
+              nodeName: node.name,
+              source: "node_database",
+              dbPath,
+              userId: dbResult.user?.id,
+              syncedCount: syncedInstances.length
+            }
+          });
+
+          return {
+            ok: true,
+            syncedCount: syncedInstances.length,
+            message: syncedInstances.length > 0
+              ? `成功通过节点本地数据库验证用户「${userName}」，并导入了 ${syncedInstances.length} 个实例！`
+              : `已通过节点数据库验证用户「${userName}」，但该用户暂无可用的实例配置。`,
+            instances: syncedInstances
+          } satisfies SyncInstancesByUserKeyResponse;
+        }
+
+        // If targetUserId was selected and failed
+        if (targetUserId && !userKey) {
+          reply.code(400).send({
+            ok: false,
+            syncedCount: 0,
+            message: `从节点数据库导入用户实例失败：${dbResult.error || "未能获取该用户实例"}`,
+            availableUsers: dbResult.availableUsers
+          });
+          return;
+        }
+
+        nodeDbDiagnostic = {
+          mismatchReason: dbResult.mismatchReason,
+          availableUsers: dbResult.availableUsers
+        };
+      }
+
+      // 2. HTTP API fallback (if userKey was provided)
+      if (!userKey) {
+        reply.code(400).send({
+          ok: false,
+          syncedCount: 0,
+          message: "未找到该节点的面板数据库，且未提供专属密钥进行 HTTP 同步"
+        });
+        return;
+      }
+
+      const candidateUrls: string[] = [];
+      if (body.remotePanelUrl?.trim()) {
+        const raw = body.remotePanelUrl.trim();
+        candidateUrls.push(raw);
+        try {
+          const parsed = new URL(raw.startsWith("http") ? raw : `https://${raw}`);
+          if (!parsed.port) {
+            candidateUrls.push(`https://${parsed.hostname}:5479`);
+            candidateUrls.push(`http://${parsed.hostname}:5479`);
+          }
+        } catch {}
+      } else {
+        const host = node.host;
+        candidateUrls.push(`https://${host}:5479`);
+        candidateUrls.push(`http://${host}:5479`);
+        const isIp = /^[\d\.]+$|^\[[a-fA-F0-9:]+\]$/.test(host);
+        if (!isIp && !host.includes("localhost")) {
+          candidateUrls.push(`https://${host}`);
+        }
+        candidateUrls.push(`http://${host}`);
+      }
+
+      let fetchResult: { ok: boolean; status: number; instances?: any[]; error?: string } | null = null;
+      let usedUrl = "";
+
+      for (const targetUrl of candidateUrls) {
+        const res = await fetchRemoteUserInstances(targetUrl, userKey);
+        if (res.ok) {
+          fetchResult = res;
+          usedUrl = targetUrl;
+          break;
+        }
+        if (res.status === 401 || res.status === 403) {
+          fetchResult = res;
+          usedUrl = targetUrl;
+          break;
+        }
+        fetchResult = res;
+      }
+
+      if (!fetchResult || !fetchResult.ok || !fetchResult.instances) {
+        let failureMsg = fetchResult?.error || "无法连接到远程服务器面板 API";
+        if (nodeDbDiagnostic?.mismatchReason) {
+          failureMsg = `${nodeDbDiagnostic.mismatchReason}（远程面板 API 也返回：${failureMsg}）。您可以直接选择下方用户一键导入，或在远程面板重新复制最新密钥。`;
+        }
+
+        reply.code(400).send({
+          ok: false,
+          syncedCount: 0,
+          message: failureMsg,
+          availableUsers: nodeDbDiagnostic?.availableUsers
+        });
+        return;
+      }
+
+      const syncedInstances = await upsertSyncedInstances(node, fetchResult.instances, request.user.sub);
+
+      await writeAuditLog({
+        request,
+        userId: request.user.sub,
+        action: "instance.sync_by_user_key",
+        resourceType: "instance",
+        payload: {
+          nodeId: node.id,
+          nodeName: node.name,
+          source: "http_api",
+          remoteUrl: usedUrl,
+          syncedCount: syncedInstances.length
+        }
+      });
+
+      return {
+        ok: true,
+        syncedCount: syncedInstances.length,
+        message: syncedInstances.length > 0
+          ? `成功通过远程 API 同步并导入 ${syncedInstances.length} 个实例！`
+          : "验证成功，但该用户在远程面板上暂无可用实例。",
+        instances: syncedInstances
+      } satisfies SyncInstancesByUserKeyResponse;
+    }
+  );
+
   app.get("/api/instances", { preHandler: requirePermission("instance.view") }, async (request) => {
     const instances = await listVisibleInstances(request.user.sub);
     const refreshed = await Promise.all(instances.map(refreshVolatileStatus));

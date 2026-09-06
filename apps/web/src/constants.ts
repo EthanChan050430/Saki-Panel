@@ -14,7 +14,9 @@ export const defaultPanelAppearance: PanelAppearanceSettings = {
   sidebarLogoSrc: "/assets/saki-panel-icon.png",
   loginCoverSrc: "/assets/cover.png",
   backgroundSrc: "/assets/background.png",
-  mobileBackgroundSrc: "/assets/background_mobile.png"
+  mobileBackgroundSrc: "/assets/background_mobile.png",
+  darkBackgroundSrc: "/assets/background_dark.png",
+  mobileDarkBackgroundSrc: "/assets/background_mobile_dark.png"
 };
 
 export const defaultStartCommand = "npm run start";

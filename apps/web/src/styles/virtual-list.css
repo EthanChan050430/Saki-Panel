@@ -1,0 +1,42 @@
+/* ==========================================================================
+   Virtual List (fixed-row-height)
+   --------------------------------------------------------------------------
+   Minimal styles — the component itself handles positioning via absolute
+   rows, so the CSS only covers the scroll container and row resets.
+   Keeping inline positioning out of CSS makes measurement math simpler,
+   but the visual container chrome lives here for theme consistency.
+   ========================================================================== */
+
+.virtual-list {
+  position: relative;
+  overflow-y: auto;
+  /* Let parent control exact height; default fill flex container */
+  height: 100%;
+  scroll-behavior: auto;
+}
+
+.virtual-list-offset {
+  position: relative;
+  width: 100%;
+}
+
+.virtual-list:focus {
+  outline: none;
+}
+
+.virtual-list-row {
+  /* Reset browser listitem defaults */
+  display: block;
+  box-sizing: border-box;
+  /* Subtle bottom divider — row renders one "grid line" per entry */
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.virtual-list-row:last-child {
+  border-bottom: none;
+}
+
+html[data-theme="dark"] .virtual-list-row,
+body[data-theme="dark"] .virtual-list-row {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}

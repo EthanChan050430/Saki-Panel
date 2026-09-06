@@ -3,11 +3,13 @@ import type {
   IncidentStatus,
   IncidentTrigger,
   ManagedIncident,
-  WatchDiagnosis
+  WatchDiagnosis,
+  WatchEvidence
 } from "@webops/shared";
 import { prisma } from "../db.js";
 import { publishIncident, publishIncidentCounts } from "./notify.js";
 import { clearRestartLease } from "./leases.js";
+import { isIncidentSilenced } from "./silence-rules.js";
 
 // 所有"仍在处理中、需要出现在待办计数里"的 incident 状态。
 export const activeIncidentStatuses: IncidentStatus[] = [
@@ -76,6 +78,17 @@ function parseDiagnosis(value: string | null | undefined): WatchDiagnosis | null
   }
 }
 
+function parseEvidence(value: string | null | undefined): WatchEvidence | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as WatchEvidence;
+    if (!parsed || typeof parsed !== "object" || typeof parsed.collectedAt !== "string") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 export function toManagedIncident(row: {
   id: string;
   instanceId: string;
@@ -95,6 +108,12 @@ export function toManagedIncident(row: {
   lastOccurredAt: Date;
   resolvedAt: Date | null;
   ignoredUntil: Date | null;
+  groupKey: string | null;
+  recurrenceCount: number;
+  flapping: boolean;
+  autoApplied: boolean;
+  evidenceJson: string | null;
+  escalatedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   instance?: { name: string; node: { name: string } | null } | null;
@@ -120,6 +139,12 @@ export function toManagedIncident(row: {
     lastOccurredAt: row.lastOccurredAt.toISOString(),
     resolvedAt: row.resolvedAt?.toISOString() ?? null,
     ignoredUntil: row.ignoredUntil?.toISOString() ?? null,
+    groupKey: row.groupKey,
+    recurrenceCount: row.recurrenceCount,
+    flapping: row.flapping,
+    autoApplied: row.autoApplied,
+    evidence: parseEvidence(row.evidenceJson),
+    escalatedAt: row.escalatedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString()
   };
@@ -215,6 +240,66 @@ export async function findActiveIncidentForInstance(instanceId: string): Promise
 // 串行化降低同一崩溃并发重复建单的概率。
 const openLocks = new Map<string, Promise<unknown>>();
 
+// 分组键：资源类事件按 节点+指标+小时桶 聚合（同一小时内反复触发归为一组），
+// 崩溃/webhook/health 类按 实例+指纹前缀 聚合（同一根因的复发归为一组）。
+function incidentGroupKey(input: { instanceId: string; nodeId: string; fingerprint: string; trigger: string }): string {
+  if (input.trigger === "disk" || input.trigger === "memory") {
+    const hourBucket = new Date().toISOString().slice(0, 13).replace(/[-T]/g, "");
+    return `${input.nodeId}:${input.trigger}:${hourBucket}`;
+  }
+  return `${input.instanceId}:${input.fingerprint.slice(0, 16)}`;
+}
+
+// 抖动判定：同一活跃 incident 在创建后一小时内 occurrenceCount 达到阈值即视为 flapping。
+const flappingWindowMs = 60 * 60 * 1000;
+const flappingThreshold = 3;
+
+// 被静默规则吞掉的事件不落库，但调用方需要一个 DTO（与 ignored 分支一致）；
+// 优先复用同指纹最近一条真实 incident，完全没有历史时构造一个不指向任何数据库行的哨兵 DTO
+// （id 永不匹配真实记录，updateIncident 对缺失行已做 P2025 防御）。
+function silencedIncidentDto(
+  input: {
+    instanceId: string;
+    nodeId: string;
+    fingerprint: string;
+    trigger: IncidentTrigger;
+    exitCode?: number | null;
+  },
+  logTail: string
+): ManagedIncident {
+  const now = new Date().toISOString();
+  return {
+    id: `silenced:${input.instanceId}:${input.fingerprint}`,
+    instanceId: input.instanceId,
+    instanceName: input.instanceId,
+    nodeId: input.nodeId,
+    nodeName: null,
+    fingerprint: input.fingerprint,
+    trigger: input.trigger,
+    status: "ignored",
+    exitCode: input.exitCode ?? null,
+    summary: null,
+    rootCause: null,
+    diagnosis: null,
+    logTail,
+    rollbackSet: [],
+    taskId: null,
+    assigneeUserId: null,
+    occurrenceCount: 0,
+    lastOccurredAt: now,
+    resolvedAt: null,
+    ignoredUntil: null,
+    groupKey: null,
+    recurrenceCount: 0,
+    flapping: false,
+    autoApplied: false,
+    evidence: null,
+    escalatedAt: null,
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
 export async function openOrRefreshIncident(input: {
   instanceId: string;
   nodeId: string;
@@ -252,6 +337,12 @@ async function openOrRefreshIncidentLocked(input: {
   // 避免资源类文案覆盖崩溃日志等吞证据问题。
   const existing = await findActiveIncident(input.instanceId, input.fingerprint);
   if (existing && isActiveIncidentStatus(existing.status)) {
+    const nextOccurrenceCount = existing.occurrenceCount + 1;
+    // 抖动判定：创建后一小时内复发次数达到阈值，标记 flapping 并在 summary 上标注一次。
+    const turnsFlapping =
+      !existing.flapping &&
+      nextOccurrenceCount >= flappingThreshold &&
+      Date.now() - new Date(existing.createdAt).getTime() <= flappingWindowMs;
     const row = await prisma.incident.update({
       where: { id: existing.id },
       data: {
@@ -259,6 +350,14 @@ async function openOrRefreshIncidentLocked(input: {
         lastOccurredAt: new Date(),
         // 合并时保留信息更全的那份日志（同 fingerprint 即同类型，取更长的）。
         logTail: logTail.length >= existing.logTail.length ? logTail : existing.logTail,
+        // 老数据 groupKey 可能为空，刷新时补齐（recurrenceCount 只在创建时定值，不随刷新变化）。
+        ...(existing.groupKey ? {} : { groupKey: incidentGroupKey(input) }),
+        ...(turnsFlapping
+          ? {
+              flapping: true,
+              summary: `${existing.summary ?? ""}（检测到抖动：一小时内已复发 ${nextOccurrenceCount} 次）`.trim()
+            }
+          : {}),
         ...(input.exitCode !== undefined ? { exitCode: input.exitCode } : {}),
         ...(input.assigneeUserId !== undefined ? { assigneeUserId: input.assigneeUserId } : {})
       },
@@ -282,6 +381,35 @@ async function openOrRefreshIncidentLocked(input: {
     return { incident: toManagedIncident({ ...ignored, instance: null }), created: false };
   }
 
+  // 静默规则：命中未过期规则的事件直接吞掉（不开单、不通知），与 ignoredUntil 生效时行为一致。
+  // 静默匹配失败（如数据库异常）时按未静默处理，宁可多报不可漏报。
+  let silenced = false;
+  try {
+    silenced = await isIncidentSilenced({
+      instanceId: input.instanceId,
+      fingerprint: input.fingerprint,
+      trigger: input.trigger
+    });
+  } catch (error) {
+    console.error("watch silence check failed:", error instanceof Error ? error.stack ?? error.message : error);
+  }
+  if (silenced) {
+    const latestRow = await prisma.incident.findFirst({
+      where: { instanceId: input.instanceId, fingerprint: input.fingerprint },
+      include: incidentInclude,
+      orderBy: { updatedAt: "desc" }
+    });
+    return {
+      incident: latestRow ? toManagedIncident(latestRow) : silencedIncidentDto(input, logTail),
+      created: false
+    };
+  }
+
+  // 复发次数：同实例同指纹的历史 incident 数（ignored 不计入，避免被忽略的历史噪音抬高计数）。
+  const recurrenceCount = await prisma.incident.count({
+    where: { instanceId: input.instanceId, fingerprint: input.fingerprint, status: { not: "ignored" } }
+  });
+
   const row = await prisma.incident.create({
     data: {
       instanceId: input.instanceId,
@@ -292,6 +420,8 @@ async function openOrRefreshIncidentLocked(input: {
       exitCode: input.exitCode ?? null,
       summary: input.summary ?? null,
       logTail,
+      groupKey: incidentGroupKey(input),
+      recurrenceCount,
       assigneeUserId: input.assigneeUserId ?? null,
       lastOccurredAt: new Date()
     },
@@ -313,22 +443,31 @@ export async function updateIncident(
     assigneeUserId?: string | null;
     resolvedAt?: Date | null;
     ignoredUntil?: Date | null;
+    autoApplied?: boolean;
   }
 ): Promise<ManagedIncident | null> {
-  const row = await prisma.incident.update({
-    where: { id },
-    data: {
-      ...(data.status ? { status: data.status } : {}),
-      ...(data.summary !== undefined ? { summary: data.summary } : {}),
-      ...(data.rootCause !== undefined ? { rootCause: data.rootCause } : {}),
-      ...(data.diagnosis !== undefined ? { proposedPatch: data.diagnosis ? JSON.stringify(data.diagnosis) : null } : {}),
-      ...(data.taskId !== undefined ? { taskId: data.taskId } : {}),
-      ...(data.assigneeUserId !== undefined ? { assigneeUserId: data.assigneeUserId } : {}),
-      ...(data.resolvedAt !== undefined ? { resolvedAt: data.resolvedAt } : {}),
-      ...(data.ignoredUntil !== undefined ? { ignoredUntil: data.ignoredUntil } : {})
-    },
-    include: incidentInclude
-  });
+  let row;
+  try {
+    row = await prisma.incident.update({
+      where: { id },
+      data: {
+        ...(data.status ? { status: data.status } : {}),
+        ...(data.summary !== undefined ? { summary: data.summary } : {}),
+        ...(data.rootCause !== undefined ? { rootCause: data.rootCause } : {}),
+        ...(data.diagnosis !== undefined ? { proposedPatch: data.diagnosis ? JSON.stringify(data.diagnosis) : null } : {}),
+        ...(data.taskId !== undefined ? { taskId: data.taskId } : {}),
+        ...(data.assigneeUserId !== undefined ? { assigneeUserId: data.assigneeUserId } : {}),
+        ...(data.resolvedAt !== undefined ? { resolvedAt: data.resolvedAt } : {}),
+        ...(data.ignoredUntil !== undefined ? { ignoredUntil: data.ignoredUntil } : {}),
+        ...(data.autoApplied !== undefined ? { autoApplied: data.autoApplied } : {})
+      },
+      include: incidentInclude
+    });
+  } catch (error) {
+    // 记录不存在（如静默事件的哨兵 DTO id）：视为无操作，不抛出。
+    if ((error as { code?: string }).code === "P2025") return null;
+    throw error;
+  }
   const incident = toManagedIncident(row);
   publishIncident(incident);
   return incident;

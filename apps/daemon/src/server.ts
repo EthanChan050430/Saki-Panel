@@ -9,6 +9,7 @@ import { registerFileRoutes } from "./routes/files.js";
 import { registerInstanceRoutes } from "./routes/instances.js";
 import { registerTerminalRoutes } from "./routes/terminal.js";
 import { registerDatabaseRoutes } from "./routes/databases.js";
+import { registerProgressRoutes } from "./routes/progress.js";
 
 export async function createDaemonServer() {
   const app = Fastify({
@@ -46,6 +47,7 @@ export async function createDaemonServer() {
   await registerFileRoutes(app);
   await registerTerminalRoutes(app);
   await registerDatabaseRoutes(app);
+  await registerProgressRoutes(app);
 
   // Unified error handler — DaemonErrors carry machine-readable codes;
   // other errors are treated as 500s. Production mode hides raw messages.
