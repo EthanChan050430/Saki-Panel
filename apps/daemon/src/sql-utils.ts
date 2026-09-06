@@ -1,5 +1,7 @@
 // SQL helper functions shared across database engines.
 
+import { DaemonErrorCode, throwDaemonError } from "./errors.js";
+
 const ALLOWED_SQL_FUNCTIONS = new Set<string>([
   "current_timestamp",
   "current_date",
@@ -51,22 +53,33 @@ export function escapeDefaultValue(raw: unknown, sqlType: string, dialect: "mysq
     const trimmed = String(raw).trim().toLowerCase();
     if (trimmed === "true" || trimmed === "1") return "TRUE";
     if (trimmed === "false" || trimmed === "0") return "FALSE";
-    throw new Error(`Unsupported boolean default: ${String(raw).slice(0, 64)}`);
+    throwDaemonError(
+      DaemonErrorCode.DB_INVALID_DEFAULT,
+      `Unsupported boolean default: ${String(raw).slice(0, 64)}`,
+      "Boolean defaults must be true/false or 1/0."
+    );
   }
 
   if (isNumeric) {
     if (typeof raw === "number" && Number.isFinite(raw)) return String(raw);
     const str = String(raw).trim();
     if (/^-?\d+(\.\d+)?$/.test(str)) return str;
-    // Allow CURRENT_TIMESTAMP, NOW() etc. as numeric defaults only when whitelisted.
     if (isAllowedFunction(str)) return str;
-    throw new Error(`Unsupported numeric default: ${str.slice(0, 64)}`);
+    throwDaemonError(
+      DaemonErrorCode.DB_INVALID_DEFAULT,
+      `Unsupported numeric default: ${str.slice(0, 64)}`,
+      "Numeric defaults must be a number literal or a whitelisted SQL function (CURRENT_TIMESTAMP, NOW, etc.)."
+    );
   }
 
   if (isJson) {
     const str = typeof raw === "string" ? raw : JSON.stringify(raw);
     if (!looksLikeValidJsonExpression(str)) {
-      throw new Error(`Unsupported JSON default: ${str.slice(0, 64)}`);
+      throwDaemonError(
+        DaemonErrorCode.DB_INVALID_DEFAULT,
+        `Unsupported JSON default: ${str.slice(0, 64)}`,
+        "JSON defaults must be valid JSON literals or safe expressions."
+      );
     }
     return dialect === "mysql" ? `CAST(${escapeSqlString(str)} AS JSON)` : `'${escapeSqlString(str)}'::json`;
   }

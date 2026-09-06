@@ -2,6 +2,7 @@ import pg from "pg";
 const { Pool } = pg;
 import { PoolCache } from "./pool-cache.js";
 import { escapeDefaultValue } from "./sql-utils.js";
+import { DaemonErrorCode, throwDaemonError } from "./errors.js";
 import type {
   DatabaseColumnInfo,
   DatabaseCreateTableRequest,
@@ -406,7 +407,19 @@ export async function truncateTable(cfg: PostgreSQLConnectionConfig, tableName: 
   const pool = getPool(cfg);
   const client = await pool.connect();
   try {
-    await client.query(`TRUNCATE TABLE ${escapeIdentifier(tableName)} RESTART IDENTITY CASCADE`);
+    try {
+      await client.query(`TRUNCATE TABLE ${escapeIdentifier(tableName)} RESTART IDENTITY`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message.toLowerCase() : "";
+      if (msg.includes("foreign key") || msg.includes("referenced")) {
+        throwDaemonError(
+          DaemonErrorCode.DB_FK_VIOLATION,
+          `Table "${tableName}" is referenced by foreign keys.`,
+          `Use DELETE FROM "${tableName}" instead, or drop/detach referencing tables first.`
+        );
+      }
+      throw err;
+    }
     return { ok: true, affectedRows: 0 };
   } finally {
     client.release();

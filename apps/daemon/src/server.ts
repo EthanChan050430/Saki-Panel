@@ -4,6 +4,7 @@ import multipart from "@fastify/multipart";
 import { collectMetrics } from "./metrics.js";
 import { daemonConfig } from "./config.js";
 import { authenticatePanelRequest } from "./daemon-auth.js";
+import { DaemonError, isDaemonError } from "./errors.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerInstanceRoutes } from "./routes/instances.js";
 import { registerTerminalRoutes } from "./routes/terminal.js";
@@ -45,6 +46,42 @@ export async function createDaemonServer() {
   await registerFileRoutes(app);
   await registerTerminalRoutes(app);
   await registerDatabaseRoutes(app);
+
+  // Unified error handler — DaemonErrors carry machine-readable codes;
+  // other errors are treated as 500s. Production mode hides raw messages.
+  const isProd = process.env.NODE_ENV?.toLowerCase() === "production";
+  app.setErrorHandler((error: unknown, _request, reply) => {
+    if (isDaemonError(error)) {
+      const status = error.httpStatus;
+      const body: Record<string, unknown> = {
+        code: error.code,
+        hint: error.hint
+      };
+      if (!isProd) {
+        body.message = error.message;
+      } else {
+        // Production clients still need *some* clue; hint is safe.
+        if (error.hint) body.message = error.hint;
+      }
+      reply.code(status).send(body);
+      return;
+    }
+
+    // Unknown / unexpected errors → always log, always return generic.
+    // Extract statusCode from Fastify's default wrapped errors (e.g. validation).
+    const statusCode =
+      typeof error === "object" && error !== null && "statusCode" in error && typeof error.statusCode === "number"
+        ? error.statusCode
+        : 500;
+    if (isProd) {
+      reply.code(statusCode).send({ code: "INTERNAL_ERROR", message: statusCode >= 500 ? "Internal Server Error" : "Bad Request" });
+    } else {
+      reply.code(statusCode).send({
+        code: "INTERNAL_ERROR",
+        message: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+  });
 
   return app;
 }

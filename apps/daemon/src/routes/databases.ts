@@ -26,6 +26,7 @@ import type {
 import { daemonPaths } from "../config.js";
 import { authenticatePanelRequest } from "../daemon-auth.js";
 import { escapeDefaultValue } from "../sql-utils.js";
+import { DaemonErrorCode, throwDaemonError } from "../errors.js";
 import * as mysql from "../mysql.js";
 import * as postgres from "../postgres.js";
 import * as redis from "../redis.js";
@@ -78,8 +79,10 @@ function resolveDbPath(inputPath: string): string {
   }
 
   if (!isInsideAny(resolved, allowedRoots)) {
-    throw new Error(
-      `SQLite path must reside inside one of the daemon's allowed roots (workspace, data, or cwd). Rejected: ${resolved}`
+    throwDaemonError(
+      DaemonErrorCode.PATH_OUT_OF_BOUNDS,
+      `SQLite path must reside inside one of the daemon's allowed roots.`,
+      "The requested path is outside the daemon workspace/data directory and has been rejected for safety."
     );
   }
 
@@ -88,8 +91,10 @@ function resolveDbPath(inputPath: string): string {
     try {
       const real = fsSync.realpathSync(resolved);
       if (!isInsideAny(real, allowedRoots)) {
-        throw new Error(
-          `SQLite path escapes the allowed roots via symlink: ${resolved} → ${real}`
+        throwDaemonError(
+          DaemonErrorCode.PATH_SYMLINK_ESCAPE,
+          `SQLite path escapes the allowed roots via symlink.`,
+          "Resolved target is outside allowed roots — symlink attack attempt blocked."
         );
       }
     } catch (err) {

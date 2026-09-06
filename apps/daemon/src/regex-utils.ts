@@ -6,6 +6,8 @@
 //   - reject overly long runs of identical characters with trailing quantifiers
 // Accepts the same strings passed to `new RegExp()`.
 
+import { DaemonErrorCode, throwDaemonError } from "./errors.js";
+
 const MAX_PATTERN_LENGTH = 512;
 
 function hasNestedQuantifiers(pattern: string): boolean {
@@ -17,7 +19,6 @@ function hasNestedQuantifiers(pattern: string): boolean {
   // Find each (group) and check if its immediately-following token is a quantifier.
   // We keep a simple stack for balanced parens.
   const stack: number[] = []; // start indices of open groups
-  const groupOpen = simplified.indexOf("(");
   // Walk through simplified looking for `)<quantifier>` where quantifier is *,+,?, or {n,m}
   const quantifier = /^[*+?]|\{\d+,?\d*\}/;
   let i = 0;
@@ -39,7 +40,6 @@ function hasNestedQuantifiers(pattern: string): boolean {
         // has a trailing quantifier too — the classic nested case.
         const inside = simplified.slice(open + 1, i);
         if (/[*+?]|\{\d+,?\d*\}/.test(inside)) {
-          // Skip obvious non-capturing lookarounds by just flagging all nested-quantifier patterns.
           return true;
         }
       }
@@ -57,23 +57,40 @@ function hasLongCharRunWithQuantifier(pattern: string): boolean {
 }
 
 export function assertSafeRegex(pattern: string, flags: string): void {
-  if (typeof pattern !== "string") throw new Error("Regex pattern must be a string.");
-  if (pattern.length === 0) throw new Error("Regex pattern must not be empty.");
+  if (typeof pattern !== "string") {
+    throwDaemonError(DaemonErrorCode.REGEX_REJECTED, "Regex pattern must be a string.");
+  }
+  if (pattern.length === 0) {
+    throwDaemonError(DaemonErrorCode.REGEX_REJECTED, "Regex pattern must not be empty.");
+  }
   if (pattern.length > MAX_PATTERN_LENGTH) {
-    throw new Error(`Regex pattern is too long (${pattern.length} > ${MAX_PATTERN_LENGTH}).`);
+    throwDaemonError(
+      DaemonErrorCode.REGEX_REJECTED,
+      `Regex pattern is too long (${pattern.length} > ${MAX_PATTERN_LENGTH}).`,
+      "Shorten the pattern or narrow your search scope."
+    );
   }
   if (hasNestedQuantifiers(pattern)) {
-    throw new Error("Regex pattern appears to use nested quantifiers (ReDoS risk); please rewrite it without groups followed by * + ?.");
+    throwDaemonError(
+      DaemonErrorCode.REGEX_REJECTED,
+      "Regex pattern appears to use nested quantifiers (ReDoS risk).",
+      "Rewrite without groups followed by * + ? quantifiers."
+    );
   }
   if (hasLongCharRunWithQuantifier(pattern)) {
-    throw new Error("Regex pattern contains a long repeated character run followed by a quantifier (ReDoS risk).");
+    throwDaemonError(
+      DaemonErrorCode.REGEX_REJECTED,
+      "Regex pattern contains a long repeated character run followed by a quantifier (ReDoS risk)."
+    );
   }
-  // Try compiling with DNE flag if available (Node 16+). Falls back to safe match-time if absent.
+  // Try compiling to surface early syntax errors.
   try {
     const re = new RegExp(pattern, flags);
-    // Force a no-op match to surface early syntax errors.
     re.test("");
   } catch (err) {
-    throw new Error(`Invalid regular expression: ${err instanceof Error ? err.message : String(err)}`);
+    throwDaemonError(
+      DaemonErrorCode.REGEX_REJECTED,
+      `Invalid regular expression: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
 }
