@@ -31,6 +31,20 @@ You can tell it:
 
 Local models via [Ollama](https://ollama.com/) or [LM Studio](https://lmstudio.ai/) work with no API key. Cloud providers and GitHub Copilot are optional.
 
+## Screenshots
+
+**Dashboard** — cluster overview, CPU / memory / disk, resource curves, node health, and recent audit:
+
+![Dashboard](.github/assets/screenshot-dashboard.png)
+
+**Saki on the logs** — the agent works inside the same workspace: live instance logs behind, Saki chat in front, asked to find out why a player keeps dying:
+
+![Saki reading instance logs](.github/assets/screenshot-saki-logs.png)
+
+**Saki Watch incident** — a watched instance exits with code 1, the daemon fingerprints it, and diagnosis waits for your confirm:
+
+![Saki Watch incident](.github/assets/screenshot-watch-incident.png)
+
 ---
 
 ## Saki
