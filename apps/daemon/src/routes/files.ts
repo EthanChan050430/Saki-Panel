@@ -33,6 +33,7 @@ import type {
 } from "@webops/shared";
 import { daemonPaths, daemonConfig } from "../config.js";
 import { authenticatePanelRequest } from "../daemon-auth.js";
+import { assertSafeRegex } from "../regex-utils.js";
 
 const maxEditableFileBytes = 1024 * 1024;
 const outlinePatterns = [
@@ -1450,7 +1451,9 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     const maxResults = Math.min(Math.max(1, body.maxResults ?? 100), 500);
     const contextLines = Math.min(Math.max(0, body.contextLines ?? 2), 3);
     const isCaseInsensitive = body.pattern === body.pattern.toLowerCase();
-    const regex = new RegExp(body.pattern, isCaseInsensitive ? "i" : "");
+    const flags = isCaseInsensitive ? "i" : "";
+    assertSafeRegex(body.pattern, flags);
+    const regex = new RegExp(body.pattern, flags);
 
     const matches: GrepInstanceFilesResponse["matches"] = [];
     let totalMatches = 0;

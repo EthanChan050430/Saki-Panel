@@ -3,6 +3,7 @@ import websocket from "@fastify/websocket";
 import multipart from "@fastify/multipart";
 import { collectMetrics } from "./metrics.js";
 import { daemonConfig } from "./config.js";
+import { authenticatePanelRequest } from "./daemon-auth.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerInstanceRoutes } from "./routes/instances.js";
 import { registerTerminalRoutes } from "./routes/terminal.js";
@@ -31,13 +32,11 @@ export async function createDaemonServer() {
     }
   });
 
-  app.get("/health", async () => ({
-    ok: true,
-    service: "daemon",
-    time: new Date().toISOString()
-  }));
+  // /health is intentionally open for load-balancer probing. It returns no sensitive details.
+  app.get("/health", async () => ({ ok: true }));
 
-  app.get("/api/status", async () => ({
+  // /api/status returns runtime metrics; only the paired panel may read it.
+  app.get("/api/status", { preHandler: authenticatePanelRequest }, async () => ({
     ok: true,
     metrics: await collectMetrics()
   }));

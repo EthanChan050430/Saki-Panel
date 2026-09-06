@@ -25,6 +25,7 @@ import type {
 } from "@webops/shared";
 import { daemonPaths } from "../config.js";
 import { authenticatePanelRequest } from "../daemon-auth.js";
+import { escapeDefaultValue } from "../sql-utils.js";
 import * as mysql from "../mysql.js";
 import * as postgres from "../postgres.js";
 import * as redis from "../redis.js";
@@ -40,17 +41,63 @@ function toSqlParam(val: unknown): SQLiteParam {
   return JSON.stringify(val);
 }
 
+function isInsideAny(target: string, roots: string[]): boolean {
+  const normalized = path.resolve(target);
+  return roots.some((root) => {
+    const rootNormalized = path.resolve(root);
+    const rel = path.relative(rootNormalized, normalized);
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  });
+}
+
+// SQLite files may only be opened inside these roots to prevent arbitrary
+// file access via an absolute path supplied by the API caller.
+function allowedSqliteRoots(): string[] {
+  const workspace = path.resolve(daemonPaths.workspaceDir);
+  const daemonData = path.resolve(daemonPaths.dataDir);
+  const cwd = path.resolve(process.cwd());
+  const panelData = path.resolve(cwd, "data", "panel");
+  return Array.from(new Set([workspace, daemonData, cwd, panelData]));
+}
+
 function resolveDbPath(inputPath: string): string {
   const normalized = inputPath.trim();
+  const allowedRoots = allowedSqliteRoots();
+
+  let resolved: string;
   if (path.isAbsolute(normalized)) {
-    return path.normalize(normalized);
+    resolved = path.normalize(normalized);
+  } else {
+    // Prefer workspace-rooted discovery so relative names stay stable.
+    const fromWorkspace = path.resolve(daemonPaths.workspaceDir, normalized);
+    if (fsSync.existsSync(fromWorkspace)) {
+      resolved = fromWorkspace;
+    } else {
+      resolved = path.resolve(process.cwd(), normalized);
+    }
   }
-  // Try relative to workspace dir, then cwd
-  const fromWorkspace = path.resolve(daemonPaths.workspaceDir, normalized);
-  if (fsSync.existsSync(fromWorkspace)) {
-    return fromWorkspace;
+
+  if (!isInsideAny(resolved, allowedRoots)) {
+    throw new Error(
+      `SQLite path must reside inside one of the daemon's allowed roots (workspace, data, or cwd). Rejected: ${resolved}`
+    );
   }
-  return path.resolve(process.cwd(), normalized);
+
+  // If the file exists, also verify symlinks do not escape the allowed roots.
+  if (fsSync.existsSync(resolved)) {
+    try {
+      const real = fsSync.realpathSync(resolved);
+      if (!isInsideAny(real, allowedRoots)) {
+        throw new Error(
+          `SQLite path escapes the allowed roots via symlink: ${resolved} → ${real}`
+        );
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+  }
+
+  return resolved;
 }
 
 function probePort(host: string, port: number, timeoutMs = 400): Promise<boolean> {
@@ -738,7 +785,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
         def += " NOT NULL";
       }
       if (col.defaultValue !== undefined && col.defaultValue !== null && col.defaultValue !== "") {
-        def += ` DEFAULT ${col.defaultValue}`;
+        def += ` DEFAULT ${escapeDefaultValue(col.defaultValue, col.type || "TEXT", "sqlite")}`;
       }
       return def;
     });

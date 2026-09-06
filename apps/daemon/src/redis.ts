@@ -1,6 +1,7 @@
 import IORedis, { type Redis as RedisClient } from "ioredis";
 const RedisClass: any = (IORedis as any).default || IORedis;
 
+import { PoolCache } from "./pool-cache.js";
 import type {
   DatabaseColumnInfo,
   DatabaseDeleteRowRequest,
@@ -22,7 +23,7 @@ export interface RedisConnectionConfig {
   database?: number | string | undefined;
   username?: string | undefined;
 }
-const clients = new Map<string, RedisClient>();
+const clientCache = new PoolCache<RedisClient>();
 
 function clientKey(cfg: RedisConnectionConfig): string {
   const db = typeof cfg.database === "number" ? cfg.database : parseInt(String(cfg.database || "0"), 10) || 0;
@@ -31,38 +32,46 @@ function clientKey(cfg: RedisConnectionConfig): string {
 
 export function getClient(cfg: RedisConnectionConfig): RedisClient {
   const key = clientKey(cfg);
-  const existing = clients.get(key);
-  if (existing && existing.status !== "end") return existing;
-
-  const db = typeof cfg.database === "number" ? cfg.database : parseInt(String(cfg.database || "0"), 10) || 0;
-
-  const client: RedisClient = new RedisClass({
-    host: cfg.host,
-    port: cfg.port ?? 6379,
-    password: cfg.password || undefined,
-    username: cfg.username || undefined,
-    db,
-    lazyConnect: false,
-    connectTimeout: 5000,
-    maxRetriesPerRequest: 2,
-    retryStrategy(times: number) {
-      if (times > 3) return null;
-      return Math.min(times * 200, 1000);
+  const cached = clientCache.has(key);
+  if (cached) {
+    // getOrCreate below updates last-used even on hit, so no explicit bump needed if present.
+  }
+  return clientCache.getOrCreate(
+    key,
+    () => {
+      const db = typeof cfg.database === "number" ? cfg.database : parseInt(String(cfg.database || "0"), 10) || 0;
+      const client: RedisClient = new RedisClass({
+        host: cfg.host,
+        port: cfg.port ?? 6379,
+        password: cfg.password || undefined,
+        username: cfg.username || undefined,
+        db,
+        lazyConnect: false,
+        connectTimeout: 5000,
+        maxRetriesPerRequest: 2,
+        retryStrategy(times: number) {
+          if (times > 3) return null;
+          return Math.min(times * 200, 1000);
+        }
+      });
+      client.on("error", (err: Error) => {
+        console.error(`[Redis Error ${key}]:`, err.message);
+      });
+      return client;
+    },
+    undefined,
+    async (client) => {
+      try {
+        if (client.status !== "end") await client.quit();
+      } catch {}
     }
-  });
-
-  client.on("error", (err: Error) => {
-    console.error(`[Redis Error ${key}]:`, err.message);
-  });
-
-  clients.set(key, client);
-  return client;
+  );
 }
 
 export async function closeAllClients(): Promise<void> {
-  await Promise.all(Array.from(clients.values()).map((c) => c.quit().catch(() => {})));
-  clients.clear();
+  await clientCache.closeAll();
 }
+
 export async function testConnection(cfg: RedisConnectionConfig): Promise<{ ok: boolean; message: string }> {
   try {
     const client = getClient(cfg);
@@ -341,9 +350,12 @@ export async function deleteRow(cfg: RedisConnectionConfig, req: DatabaseDeleteR
   return { ok: true, affectedRows: count };
 }
 export async function truncateTable(cfg: RedisConnectionConfig, _tableName: string): Promise<{ ok: boolean; affectedRows?: number }> {
-  const client = getClient(cfg);
-  await client.flushdb();
-  return { ok: true, affectedRows: 0 };
+  // Intentionally disabled. There is no per-table truncate in Redis; calling
+  // FLUSHDB here would drop EVERY key in the selected database, including keys
+  // owned by unrelated services sharing the same Redis instance.
+  throw new Error(
+    "Redis does not support table-level truncation. Use the raw command interface with `DEL <key>` or `UNLINK <key>` to clear individual keys, or contact an admin to perform FLUSHDB manually."
+  );
 }
 function parseCommandLine(cmd: string): string[] {
   const parts: string[] = [];

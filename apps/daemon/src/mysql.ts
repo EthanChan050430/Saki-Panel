@@ -1,4 +1,6 @@
 import mysql, { type RowDataPacket, type ResultSetHeader, type FieldPacket } from "mysql2/promise";
+import { PoolCache } from "./pool-cache.js";
+import { escapeDefaultValue } from "./sql-utils.js";
 import type {
   DatabaseColumnInfo,
   DatabaseCreateTableRequest,
@@ -23,19 +25,14 @@ export interface MySQLConnectionConfig {
 }
 type PoolInstance = ReturnType<typeof mysql.createPool>;
 
-const pools = new Map<string, PoolInstance>();
+const poolCache = new PoolCache<PoolInstance>();
 
 function poolKey(cfg: MySQLConnectionConfig): string {
-  return `${cfg.host}:${cfg.port ?? 3306}/${cfg.database}/${cfg.user}:${cfg.password}`;
+  return `${cfg.host}:${cfg.port ?? 3306}/${cfg.database}/${cfg.user}`;
 }
 
 export function evictPool(cfg: MySQLConnectionConfig): void {
-  const key = poolKey(cfg);
-  const existing = pools.get(key);
-  if (existing) {
-    pools.delete(key);
-    existing.end().catch(() => {});
-  }
+  poolCache.invalidate(poolKey(cfg));
 }
 
 export function formatMySQLError(err: unknown, cfg?: MySQLConnectionConfig): string {
@@ -81,28 +78,31 @@ export async function withPool<T>(
 
 export function getPool(cfg: MySQLConnectionConfig): PoolInstance {
   const key = poolKey(cfg);
-  const existing = pools.get(key);
-  if (existing) return existing;
-
-  const pool = mysql.createPool({
-    host: cfg.host,
-    port: cfg.port ?? 3306,
-    user: cfg.user,
-    password: cfg.password,
-    database: cfg.database,
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0,
-    charset: "utf8mb4"
-  });
-
-  pools.set(key, pool);
-  return pool;
+  return poolCache.getOrCreate(
+    key,
+    () =>
+      mysql.createPool({
+        host: cfg.host,
+        port: cfg.port ?? 3306,
+        user: cfg.user,
+        password: cfg.password,
+        database: cfg.database,
+        waitForConnections: true,
+        connectionLimit: 10,
+        queueLimit: 0,
+        charset: "utf8mb4"
+      }),
+    undefined,
+    async (pool) => {
+      try {
+        await pool.end();
+      } catch {}
+    }
+  );
 }
 
 export async function closeAllPools(): Promise<void> {
-  await Promise.all(Array.from(pools.values()).map((p) => p.end()));
-  pools.clear();
+  await poolCache.closeAll();
 }
 function escapeTable(name: string): string {
   return `\`${name.replace(/`/g, "``")}\``;
@@ -435,13 +435,7 @@ export async function createTable(
       def += " NOT NULL";
     }
     if (col.defaultValue !== undefined && col.defaultValue !== null && col.defaultValue !== "") {
-      // For MySQL, string defaults need quotes; numbers don't
-      const upperType = (col.type || "").toUpperCase();
-      if (upperType.includes("INT") || upperType.includes("DECIMAL") || upperType.includes("FLOAT") || upperType.includes("DOUBLE")) {
-        def += ` DEFAULT ${col.defaultValue}`;
-      } else {
-        def += ` DEFAULT '${String(col.defaultValue).replace(/'/g, "''")}'`;
-      }
+      def += ` DEFAULT ${escapeDefaultValue(col.defaultValue, col.type || "VARCHAR(255)", "mysql")}`;
     }
     return def;
   });

@@ -3,7 +3,7 @@ import jwt from "@fastify/jwt";
 import websocket from "@fastify/websocket";
 import multipart from "@fastify/multipart";
 import { applyPanelCorsHeaders } from "./cors.js";
-import { panelConfig } from "./config.js";
+import { panelConfig, isProduction } from "./config.js";
 import { authenticate } from "./auth.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerDaemonRoutes } from "./routes/daemon.js";
@@ -99,10 +99,16 @@ export async function createPanelServer() {
       typeof error === "object" && error !== null && "statusCode" in error && typeof error.statusCode === "number"
         ? error.statusCode
         : 500;
-    const message = error instanceof Error ? error.message : "Internal Server Error";
-    reply.code(statusCode).send({
-      message
-    });
+    // In production, do not leak raw exception messages (SQL, file paths, internal stack frames, etc.).
+    const message =
+      isProduction
+        ? statusCode >= 500
+          ? "Internal Server Error"
+          : "Bad Request"
+        : error instanceof Error
+          ? error.message
+          : "Internal Server Error";
+    reply.code(statusCode).send({ message });
   });
 
   return app;

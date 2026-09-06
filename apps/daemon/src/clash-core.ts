@@ -10,6 +10,7 @@ import net from "node:net";
 import { execFile } from "node:child_process";
 import type { ClashSubscriptionProxy, InstanceProxyConfig } from "@webops/shared";
 import { daemonPaths } from "./config.js";
+import { fetchWithSsrFGuard } from "./ssrf.js";
 
 const execFileAsync = promisify(execFile);
 const gunzipAsync = promisify(gunzip);
@@ -420,9 +421,8 @@ function mihomoAssetPrefix(): string {
 }
 
 async function downloadFile(url: string, dest: string): Promise<void> {
-  const response = await fetch(url, {
-    headers: { "User-Agent": "Saki-Panel-Daemon", Accept: "application/octet-stream" },
-    redirect: "follow"
+  const response = await fetchWithSsrFGuard(url, {
+    headers: { "User-Agent": "Saki-Panel-Daemon", Accept: "application/octet-stream" }
   });
   if (!response.ok || !response.body) throw new Error(`下载失败 HTTP ${response.status}`);
   await pipeline(response.body as unknown as NodeJS.ReadableStream, createWriteStream(dest));

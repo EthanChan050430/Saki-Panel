@@ -1,5 +1,7 @@
 import pg from "pg";
 const { Pool } = pg;
+import { PoolCache } from "./pool-cache.js";
+import { escapeDefaultValue } from "./sql-utils.js";
 import type {
   DatabaseColumnInfo,
   DatabaseCreateTableRequest,
@@ -22,7 +24,7 @@ export interface PostgreSQLConnectionConfig {
   password?: string;
   database: string;
 }
-const pools = new Map<string, pg.Pool>();
+const poolCache = new PoolCache<pg.Pool>();
 
 function poolKey(cfg: PostgreSQLConnectionConfig): string {
   return `${cfg.host}:${cfg.port ?? 5432}/${cfg.database}/${cfg.user}`;
@@ -30,32 +32,36 @@ function poolKey(cfg: PostgreSQLConnectionConfig): string {
 
 export function getPool(cfg: PostgreSQLConnectionConfig): pg.Pool {
   const key = poolKey(cfg);
-  const existing = pools.get(key);
-  if (existing) return existing;
-
-  const pool = new Pool({
-    host: cfg.host,
-    port: cfg.port ?? 5432,
-    user: cfg.user,
-    password: cfg.password || "",
-    database: cfg.database,
-    max: 10,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 5000
-  });
-
-  // Prevent unhandled errors from crashing the daemon
-  pool.on("error", (err) => {
-    console.error(`[PostgreSQL Pool Error ${key}]:`, err.message);
-  });
-
-  pools.set(key, pool);
-  return pool;
+  return poolCache.getOrCreate(
+    key,
+    () => {
+      const pool = new Pool({
+        host: cfg.host,
+        port: cfg.port ?? 5432,
+        user: cfg.user,
+        password: cfg.password || "",
+        database: cfg.database,
+        max: 10,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 5000
+      });
+      // Prevent unhandled errors from crashing the daemon
+      pool.on("error", (err) => {
+        console.error(`[PostgreSQL Pool Error ${key}]:`, err.message);
+      });
+      return pool;
+    },
+    undefined,
+    async (pool) => {
+      try {
+        await pool.end();
+      } catch {}
+    }
+  );
 }
 
 export async function closeAllPools(): Promise<void> {
-  await Promise.all(Array.from(pools.values()).map((p) => p.end()));
-  pools.clear();
+  await poolCache.closeAll();
 }
 function escapeIdentifier(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
@@ -373,7 +379,7 @@ export async function createTable(cfg: PostgreSQLConnectionConfig, req: Database
         def += " NOT NULL";
       }
       if (col.defaultValue !== undefined && col.defaultValue !== null && col.defaultValue !== "") {
-        def += ` DEFAULT ${col.defaultValue}`;
+        def += ` DEFAULT ${escapeDefaultValue(col.defaultValue, col.type || "TEXT", "postgres")}`;
       }
       return def;
     });
@@ -588,7 +594,8 @@ export async function importTable(
     await client.query("BEGIN");
     try {
       if (mode === "replace") {
-        await client.query(`TRUNCATE TABLE ${escapeIdentifier(tableName)} RESTART IDENTITY CASCADE`);
+        // DELETE instead of TRUNCATE to avoid accidental FK cascade deletes on replace imports.
+        await client.query(`DELETE FROM ${escapeIdentifier(tableName)}`);
       }
 
       let records: Array<Record<string, unknown>> = [];
