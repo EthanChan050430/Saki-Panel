@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="apps/web/public/assets/saki-panel-icon.png" width="88" height="88" alt="Saki Panel" />
+<img src="apps/web/public/assets/saki-panel-icon.webp" width="88" height="88" alt="Saki Panel" />
 
 # Saki Panel
 
@@ -8,6 +8,8 @@
 High-risk work waits for your OK. Crashes get a fingerprint, a reviewed patch, and a rollback if it happens again.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![check](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml/badge.svg)](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml)
+[![Release](https://img.shields.io/github/v/release/EthanChan050430/Saki-Panel)](https://github.com/EthanChan050430/Saki-Panel/releases/latest)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6.svg)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/)
 [![Fastify](https://img.shields.io/badge/Fastify-5-000000.svg)](https://fastify.dev/)

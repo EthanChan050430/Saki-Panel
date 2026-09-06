@@ -24,9 +24,9 @@
   --surface-border: rgba(255, 255, 255, 0.65);
   --surface-border-subtle: rgba(226, 232, 240, 0.8);
   --surface-border-light: rgba(203, 213, 225, 0.5);
-  --app-background-image: url('/assets/background.png');
-  --mobile-background-image: url('/assets/background_mobile.png');
-  --login-cover-image: url('/assets/cover.png');
+  --app-background-image: url('/assets/background.webp');
+  --mobile-background-image: url('/assets/background_mobile.webp');
+  --login-cover-image: url('/assets/cover.webp');
   --sidebar-accent: #ff75ac;
   --sidebar-accent-bg: rgba(255, 117, 172, 0.12);
   --sidebar-accent-hover: rgba(255, 117, 172, 0.18);

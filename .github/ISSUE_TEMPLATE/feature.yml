@@ -1,0 +1,23 @@
+name: Feature
+description: A concrete change you want
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      placeholder: What is awkward or missing today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      placeholder: What should change, and where in the panel it lives.
+    validations:
+      required: true
+  - type: textarea
+    id: extras
+    attributes:
+      label: Notes
+      placeholder: Instance types, providers, or screens this would touch.

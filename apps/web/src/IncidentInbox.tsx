@@ -774,7 +774,7 @@ export function IncidentBell({
           {active.length === 0 && recent.length === 0 ? (
             <div className="incident-empty">
               <img
-                src="/assets/expression/empty_healthy.png"
+                src="/assets/expression/empty_healthy.webp"
                 alt="Saki Healthy"
                 className="incident-empty-saki"
                 draggable={false}

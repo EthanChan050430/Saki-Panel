@@ -939,13 +939,13 @@ export const defaultPanelAppearance: PanelAppearanceSettings = {
   appTitle: "Saki Panel",
   sidebarTitle: "Saki Panel",
   appSubtitle: "System Administration",
-  appLogoSrc: "/assets/saki-panel-icon.png",
-  sidebarLogoSrc: "/assets/saki-panel-icon.png",
-  loginCoverSrc: "/assets/cover.png",
-  backgroundSrc: "/assets/background.png",
-  mobileBackgroundSrc: "/assets/background_mobile.png",
-  darkBackgroundSrc: "/assets/background_dark.png",
-  mobileDarkBackgroundSrc: "/assets/background_mobile_dark.png"
+  appLogoSrc: "/assets/saki-panel-icon.webp",
+  sidebarLogoSrc: "/assets/saki-panel-icon.webp",
+  loginCoverSrc: "/assets/cover.webp",
+  backgroundSrc: "/assets/background.webp",
+  mobileBackgroundSrc: "/assets/background_mobile.webp",
+  darkBackgroundSrc: "/assets/background_dark.webp",
+  mobileDarkBackgroundSrc: "/assets/background_mobile_dark.webp"
 };
 
 export const maxAppearanceTextChars = 120;
@@ -1302,6 +1302,13 @@ export function sanitizeAppearanceImageSrc(value: unknown, fallback: string): st
   return sanitizeAppearanceMediaSrc(value, fallback, false);
 }
 
+function migrateBundledAssetSrc(source: string): string {
+  if (!source.startsWith("/assets/")) return source;
+  if (source.endsWith(".png")) return `${source.slice(0, -4)}.webp`;
+  if (source.endsWith("/background_room.jpg")) return source.replace(/\.jpg$/i, ".webp");
+  return source;
+}
+
 export function sanitizePanelAppearance(
   value: unknown,
   fallback: PanelAppearanceSettings = defaultPanelAppearance
@@ -1311,13 +1318,17 @@ export function sanitizePanelAppearance(
     appTitle: sanitizeAppearanceText(item.appTitle, fallback.appTitle, 80) || defaultPanelAppearance.appTitle,
     sidebarTitle: sanitizeAppearanceText(item.sidebarTitle, fallback.sidebarTitle, 80) || defaultPanelAppearance.sidebarTitle,
     appSubtitle: sanitizeAppearanceText(item.appSubtitle, fallback.appSubtitle),
-    appLogoSrc: sanitizeAppearanceImageSrc(item.appLogoSrc, fallback.appLogoSrc),
-    sidebarLogoSrc: sanitizeAppearanceImageSrc(item.sidebarLogoSrc, fallback.sidebarLogoSrc),
-    loginCoverSrc: sanitizeAppearanceImageSrc(item.loginCoverSrc, fallback.loginCoverSrc),
-    backgroundSrc: sanitizeAppearanceMediaSrc(item.backgroundSrc, fallback.backgroundSrc, true),
-    mobileBackgroundSrc: sanitizeAppearanceMediaSrc(item.mobileBackgroundSrc, fallback.mobileBackgroundSrc, true),
-    darkBackgroundSrc: sanitizeAppearanceMediaSrc(item.darkBackgroundSrc, fallback.darkBackgroundSrc, true),
-    mobileDarkBackgroundSrc: sanitizeAppearanceMediaSrc(item.mobileDarkBackgroundSrc, fallback.mobileDarkBackgroundSrc, true)
+    appLogoSrc: migrateBundledAssetSrc(sanitizeAppearanceImageSrc(item.appLogoSrc, fallback.appLogoSrc)),
+    sidebarLogoSrc: migrateBundledAssetSrc(sanitizeAppearanceImageSrc(item.sidebarLogoSrc, fallback.sidebarLogoSrc)),
+    loginCoverSrc: migrateBundledAssetSrc(sanitizeAppearanceImageSrc(item.loginCoverSrc, fallback.loginCoverSrc)),
+    backgroundSrc: migrateBundledAssetSrc(sanitizeAppearanceMediaSrc(item.backgroundSrc, fallback.backgroundSrc, true)),
+    mobileBackgroundSrc: migrateBundledAssetSrc(
+      sanitizeAppearanceMediaSrc(item.mobileBackgroundSrc, fallback.mobileBackgroundSrc, true)
+    ),
+    darkBackgroundSrc: migrateBundledAssetSrc(sanitizeAppearanceMediaSrc(item.darkBackgroundSrc, fallback.darkBackgroundSrc, true)),
+    mobileDarkBackgroundSrc: migrateBundledAssetSrc(
+      sanitizeAppearanceMediaSrc(item.mobileDarkBackgroundSrc, fallback.mobileDarkBackgroundSrc, true)
+    )
   };
 }
 

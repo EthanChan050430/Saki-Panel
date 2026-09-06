@@ -47,7 +47,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
           gap: "10px"
         }}>
           <img
-            src="/assets/expression/daemon_offline.png"
+            src="/assets/expression/daemon_offline.webp"
             alt="Error"
             style={{ width: "96px", height: "96px", objectFit: "contain", marginBottom: "4px" }}
             draggable={false}

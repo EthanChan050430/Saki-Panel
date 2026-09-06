@@ -1072,7 +1072,7 @@
     0 0 0 1px rgba(255, 117, 172, 0.35) !important;
 }
 
-/* Peeping Saki on collapsed agent chat box (shuru.png in light mode / shuru_sit.png in dark mode) */
+/* Peeping Saki on collapsed agent chat box (shuru.webp in light mode / shuru_sit.webp in dark mode) */
 .saki-input-peep {
   position: absolute;
   top: -46px;

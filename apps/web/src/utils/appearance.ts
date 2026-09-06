@@ -9,19 +9,29 @@ export function isVideoSource(source?: string | null): boolean {
   return /\.(mp4|webm|ogg|mov|m4v)$/i.test(urlWithoutParams);
 }
 
+function migrateBundledAssetSrc(source: string): string {
+  const trimmed = source.trim();
+  if (!trimmed.startsWith("/assets/")) return trimmed;
+  if (trimmed.endsWith(".png")) return `${trimmed.slice(0, -4)}.webp`;
+  if (trimmed.endsWith("/background_room.jpg")) return trimmed.replace(/\.jpg$/i, ".webp");
+  return trimmed;
+}
+
 export function normalizePanelAppearance(input?: Partial<PanelAppearanceSettings> | null): PanelAppearanceSettings {
   return {
     ...defaultPanelAppearance,
     ...(input ?? {}),
     appTitle: input?.appTitle?.trim() || defaultPanelAppearance.appTitle,
     appSubtitle: input?.appSubtitle ?? defaultPanelAppearance.appSubtitle,
-    appLogoSrc: input?.appLogoSrc?.trim() || defaultPanelAppearance.appLogoSrc,
-    sidebarLogoSrc: input?.sidebarLogoSrc?.trim() || defaultPanelAppearance.sidebarLogoSrc,
-    loginCoverSrc: input?.loginCoverSrc?.trim() || defaultPanelAppearance.loginCoverSrc,
-    backgroundSrc: input?.backgroundSrc?.trim() || defaultPanelAppearance.backgroundSrc,
-    mobileBackgroundSrc: input?.mobileBackgroundSrc?.trim() || defaultPanelAppearance.mobileBackgroundSrc,
-    darkBackgroundSrc: input?.darkBackgroundSrc?.trim() || defaultPanelAppearance.darkBackgroundSrc,
-    mobileDarkBackgroundSrc: input?.mobileDarkBackgroundSrc?.trim() || defaultPanelAppearance.mobileDarkBackgroundSrc
+    appLogoSrc: migrateBundledAssetSrc(input?.appLogoSrc?.trim() || defaultPanelAppearance.appLogoSrc),
+    sidebarLogoSrc: migrateBundledAssetSrc(input?.sidebarLogoSrc?.trim() || defaultPanelAppearance.sidebarLogoSrc),
+    loginCoverSrc: migrateBundledAssetSrc(input?.loginCoverSrc?.trim() || defaultPanelAppearance.loginCoverSrc),
+    backgroundSrc: migrateBundledAssetSrc(input?.backgroundSrc?.trim() || defaultPanelAppearance.backgroundSrc),
+    mobileBackgroundSrc: migrateBundledAssetSrc(input?.mobileBackgroundSrc?.trim() || defaultPanelAppearance.mobileBackgroundSrc),
+    darkBackgroundSrc: migrateBundledAssetSrc(input?.darkBackgroundSrc?.trim() || defaultPanelAppearance.darkBackgroundSrc),
+    mobileDarkBackgroundSrc: migrateBundledAssetSrc(
+      input?.mobileDarkBackgroundSrc?.trim() || defaultPanelAppearance.mobileDarkBackgroundSrc
+    )
   };
 }
 

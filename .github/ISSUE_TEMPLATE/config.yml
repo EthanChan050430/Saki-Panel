@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/EthanChan050430/Saki-Panel/security/advisories/new
+    about: Vulnerabilities — do not file a public issue

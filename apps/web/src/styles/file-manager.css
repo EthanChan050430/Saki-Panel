@@ -2340,7 +2340,7 @@ body.saki-selection-capture-active .saki-launcher {
   border: 1px solid rgba(214, 222, 232, 0.95);
   box-shadow: 0 14px 44px rgba(15, 23, 42, 0.12);
   overflow: hidden;
-  background-image: url("/assets/background_room.jpg");
+  background-image: url("/assets/background_room.webp");
   background-size: cover;
   background-position: center bottom;
   background-repeat: no-repeat;

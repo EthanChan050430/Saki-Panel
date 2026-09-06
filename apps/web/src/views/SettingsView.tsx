@@ -3259,7 +3259,7 @@ export function SettingsView({
                           className="settings-input mini"
                           value={form.appearance?.loginCoverSrc ?? ""}
                           onChange={(event) => updateAppearance({ loginCoverSrc: event.target.value })}
-                          placeholder="/assets/cover.png"
+                          placeholder="/assets/cover.webp"
                         />
                         <button
                           className="ghost-button mini"
@@ -3293,7 +3293,7 @@ export function SettingsView({
                           className="settings-input mini"
                           value={form.appearance?.appLogoSrc ?? ""}
                           onChange={(event) => updateAppearance({ appLogoSrc: event.target.value })}
-                          placeholder="/assets/saki-panel-icon.png"
+                          placeholder="/assets/saki-panel-icon.webp"
                         />
                         <button
                           className="ghost-button mini"
@@ -3327,7 +3327,7 @@ export function SettingsView({
                           className="settings-input mini"
                           value={form.appearance?.sidebarLogoSrc ?? ""}
                           onChange={(event) => updateAppearance({ sidebarLogoSrc: event.target.value })}
-                          placeholder="/assets/saki-panel-icon.png"
+                          placeholder="/assets/saki-panel-icon.webp"
                         />
                         <button
                           className="ghost-button mini"
@@ -3424,7 +3424,7 @@ export function SettingsView({
                                 className="settings-input mini"
                                 value={form.appearance?.backgroundSrc ?? ""}
                                 onChange={(event) => updateAppearance({ backgroundSrc: event.target.value })}
-                                placeholder="/assets/background.png"
+                                placeholder="/assets/background.webp"
                               />
                               <button
                                 className="ghost-button mini"
@@ -3491,7 +3491,7 @@ export function SettingsView({
                                 className="settings-input mini"
                                 value={form.appearance?.mobileBackgroundSrc ?? ""}
                                 onChange={(event) => updateAppearance({ mobileBackgroundSrc: event.target.value })}
-                                placeholder="/assets/background_mobile.png"
+                                placeholder="/assets/background_mobile.webp"
                               />
                               <button
                                 className="ghost-button mini"
@@ -3563,7 +3563,7 @@ export function SettingsView({
                                 className="settings-input mini"
                                 value={form.appearance?.darkBackgroundSrc ?? ""}
                                 onChange={(event) => updateAppearance({ darkBackgroundSrc: event.target.value })}
-                                placeholder="/assets/background_dark.png"
+                                placeholder="/assets/background_dark.webp"
                               />
                               <button
                                 className="ghost-button mini"
@@ -3630,7 +3630,7 @@ export function SettingsView({
                                 className="settings-input mini"
                                 value={form.appearance?.mobileDarkBackgroundSrc ?? ""}
                                 onChange={(event) => updateAppearance({ mobileDarkBackgroundSrc: event.target.value })}
-                                placeholder="/assets/background_mobile_dark.png"
+                                placeholder="/assets/background_mobile_dark.webp"
                               />
                               <button
                                 className="ghost-button mini"

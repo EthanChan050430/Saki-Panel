@@ -1719,7 +1719,7 @@ export const sakiFoodMenu = [
   {
     id: "caomeidafu",
     name: "草莓大福",
-    image: "/assets/game/caomeidafu.png",
+    image: "/assets/game/caomeidafu.webp",
     cost: 1,
     favorability: 10,
     desc: "软糯香甜，仅需 1 Saki 积分",
@@ -1729,7 +1729,7 @@ export const sakiFoodMenu = [
   {
     id: "naicha",
     name: "波霸珍珠奶茶",
-    image: "/assets/game/naicha.png",
+    image: "/assets/game/naicha.webp",
     cost: 2,
     favorability: 25,
     desc: "Q弹珍珠，仅需 2 Saki 积分",
@@ -1739,7 +1739,7 @@ export const sakiFoodMenu = [
   {
     id: "biandang",
     name: "猫咪爱心便当",
-    image: "/assets/game/biandang.png",
+    image: "/assets/game/biandang.webp",
     cost: 5,
     favorability: 60,
     desc: "特制萌猫便当，仅需 5 Saki 积分",
@@ -1754,7 +1754,7 @@ export function getLocalizedFoodMenu(language?: string) {
       {
         id: "caomeidafu",
         name: "Strawberry Daifuku",
-        image: "/assets/game/caomeidafu.png",
+        image: "/assets/game/caomeidafu.webp",
         cost: 1,
         favorability: 10,
         desc: "Soft and sweet, only 1 Saki Point",
@@ -1764,7 +1764,7 @@ export function getLocalizedFoodMenu(language?: string) {
       {
         id: "naicha",
         name: "Boba Pearl Milk Tea",
-        image: "/assets/game/naicha.png",
+        image: "/assets/game/naicha.webp",
         cost: 2,
         favorability: 25,
         desc: "Chewy boba, only 2 Saki Points",
@@ -1774,7 +1774,7 @@ export function getLocalizedFoodMenu(language?: string) {
       {
         id: "biandang",
         name: "Kitty Heart Bento",
-        image: "/assets/game/biandang.png",
+        image: "/assets/game/biandang.webp",
         cost: 5,
         favorability: 60,
         desc: "Special kitty bento, only 5 Saki Points",
@@ -1788,7 +1788,7 @@ export function getLocalizedFoodMenu(language?: string) {
       {
         id: "caomeidafu",
         name: "草莓大福",
-        image: "/assets/game/caomeidafu.png",
+        image: "/assets/game/caomeidafu.webp",
         cost: 1,
         favorability: 10,
         desc: "軟糯香甜，僅需 1 Saki 積分",
@@ -1798,7 +1798,7 @@ export function getLocalizedFoodMenu(language?: string) {
       {
         id: "naicha",
         name: "波霸珍珠奶茶",
-        image: "/assets/game/naicha.png",
+        image: "/assets/game/naicha.webp",
         cost: 2,
         favorability: 25,
         desc: "Q彈珍珠，僅需 2 Saki 積分",
@@ -1808,7 +1808,7 @@ export function getLocalizedFoodMenu(language?: string) {
       {
         id: "biandang",
         name: "貓咪愛心便當",
-        image: "/assets/game/biandang.png",
+        image: "/assets/game/biandang.webp",
         cost: 5,
         favorability: 60,
         desc: "特製萌貓便當，僅需 5 Saki 積分",

@@ -68,7 +68,7 @@ class GameSoundFX {
 
   public setMuted(muted: boolean) {
     this.isMuted = muted;
-  }
+  }
   public playCatch(combo: number, isWishStar: boolean = false) {
     if (this.isMuted) return;
     this.init();
@@ -126,7 +126,7 @@ class GameSoundFX {
       osc.stop(t + 0.14);
       osc2.stop(t + 0.14);
     } catch {}
-  }
+  }
   public playBugHit() {
     if (this.isMuted) return;
     this.init();
@@ -158,7 +158,7 @@ class GameSoundFX {
       osc1.stop(t + 0.26);
       osc2.stop(t + 0.26);
     } catch {}
-  }
+  }
   public playFever() {
     if (this.isMuted) return;
     this.init();
@@ -182,7 +182,7 @@ class GameSoundFX {
         osc.stop(t + i * 0.05 + 0.32);
       });
     } catch {}
-  }
+  }
   public playCountdownTick(isFinal: boolean = false) {
     if (this.isMuted) return;
     this.init();
@@ -204,7 +204,7 @@ class GameSoundFX {
       osc.start(t);
       osc.stop(t + 0.09);
     } catch {}
-  }
+  }
   public playVictory() {
     if (this.isMuted) return;
     this.init();
@@ -234,7 +234,7 @@ class GameSoundFX {
         osc.stop(t + m.time + m.dur + 0.02);
       });
     } catch {}
-  }
+  }
   public playWhoosh() {
     if (this.isMuted) return;
     this.init();
@@ -311,12 +311,12 @@ export function SakiDessertDropGame({ onClose, onFinish }: SakiDessertDropGamePr
   }, [gameOver]);
 
   const itemTypes = [
-    { name: "心愿星", iconSrc: "/assets/game/star.png", points: 30, isBug: false, weight: 2 },
-    { name: "草莓大福", iconSrc: "/assets/game/caomeidafu.png", points: 25, isBug: false, weight: 3 },
-    { name: "珍珠奶茶", iconSrc: "/assets/game/naicha.png", points: 25, isBug: false, weight: 3 },
-    { name: "甜甜圈", iconSrc: "/assets/game/donut.png", points: 20, isBug: false, weight: 4 },
-    { name: "马卡龙", iconSrc: "/assets/game/macaron.png", points: 15, isBug: false, weight: 4 },
-    { name: "调皮Bug", iconSrc: "/assets/game/bug.png", points: -15, isBug: true, weight: 2 }
+    { name: "心愿星", iconSrc: "/assets/game/star.webp", points: 30, isBug: false, weight: 2 },
+    { name: "草莓大福", iconSrc: "/assets/game/caomeidafu.webp", points: 25, isBug: false, weight: 3 },
+    { name: "珍珠奶茶", iconSrc: "/assets/game/naicha.webp", points: 25, isBug: false, weight: 3 },
+    { name: "甜甜圈", iconSrc: "/assets/game/donut.webp", points: 20, isBug: false, weight: 4 },
+    { name: "马卡龙", iconSrc: "/assets/game/macaron.webp", points: 15, isBug: false, weight: 4 },
+    { name: "调皮Bug", iconSrc: "/assets/game/bug.webp", points: -15, isBug: true, weight: 2 }
   ];
 
   const spawnParticleBurst = (x: number, y: number, isBug: boolean) => {
@@ -363,7 +363,7 @@ export function SakiDessertDropGame({ onClose, onFinish }: SakiDessertDropGamePr
       if (isGameOverRef.current) return;
       const totalWeight = itemTypes.reduce((acc, t) => acc + t.weight, 0);
       let r = Math.random() * totalWeight;
-      let chosen = itemTypes[0] ?? { name: "甜甜圈", iconSrc: "/assets/game/donut.png", points: 20, isBug: false, weight: 4 };
+      let chosen = itemTypes[0] ?? { name: "甜甜圈", iconSrc: "/assets/game/donut.webp", points: 20, isBug: false, weight: 4 };
       for (const t of itemTypes) {
         if (r < t.weight) {
           chosen = t;
@@ -540,7 +540,7 @@ export function SakiDessertDropGame({ onClose, onFinish }: SakiDessertDropGamePr
     <div
       ref={gameAreaRef}
       className={`saki-mini-game-overlay ${shaking ? "shaking" : ""} ${isFeverMode ? "fever-active" : ""}`}
-      style={{ backgroundImage: `url("/assets/game/game_bg.png")` }}
+      style={{ backgroundImage: `url("/assets/game/game_bg.webp")` }}
       onPointerMove={handlePointerMove}
       onPointerDown={handlePointerMove}
     >
@@ -665,7 +665,7 @@ export function SakiDessertDropGame({ onClose, onFinish }: SakiDessertDropGamePr
               transform: `translateX(-50%) rotate(${basketTilt}deg)`
             }}
           >
-            <img src="/assets/game/basket.png" alt="接物盘" draggable={false} />
+            <img src="/assets/game/basket.webp" alt="接物盘" draggable={false} />
             <div className="saki-basket-glow-aura" />
           </div>
         </div>
@@ -682,7 +682,7 @@ export function SakiDessertDropGame({ onClose, onFinish }: SakiDessertDropGamePr
                     grade: "SSS",
                     title: isEn ? "Dessert Master" : isTw ? "甜點神捕手" : "甜点神捕手",
                     badgeColor: "gold",
-                    expression: "/assets/expression/eating.png",
+                    expression: "/assets/expression/eating.webp",
                     quote: isEn
                       ? "Wowww! Caught so many desserts! Master is truly a dessert champion, amazing～ (੭ˊ꒳​ˋ)੭✧"
                       : isTw
@@ -694,7 +694,7 @@ export function SakiDessertDropGame({ onClose, onFinish }: SakiDessertDropGamePr
                     grade: "S",
                     title: isEn ? "Sweet Harvest" : isTw ? "美味大豐收" : "美味大丰收",
                     badgeColor: "pink",
-                    expression: "/assets/expression/eating.png",
+                    expression: "/assets/expression/eating.webp",
                     quote: isEn
                       ? "Caught so many delicious pastries! Afternoon tea is all set, the donuts smell incredible～ (≧∇≦)ﾉ"
                       : isTw
@@ -706,7 +706,7 @@ export function SakiDessertDropGame({ onClose, onFinish }: SakiDessertDropGamePr
                     grade: "A",
                     title: isEn ? "Full Basket" : isTw ? "滿載而歸" : "满载而归",
                     badgeColor: "cyan",
-                    expression: "/assets/expression/happy.png",
+                    expression: "/assets/expression/happy.webp",
                     quote: isEn
                       ? "Phew～ Caught quite a few treats! We'll definitely catch even more together next time, hehe～ (๑>◡<๑)"
                       : isTw
@@ -717,7 +717,7 @@ export function SakiDessertDropGame({ onClose, onFinish }: SakiDessertDropGamePr
                     grade: "B",
                     title: isEn ? "Keep It Up" : isTw ? "繼續加油" : "继续加油",
                     badgeColor: "purple",
-                    expression: "/assets/expression/upset.png",
+                    expression: "/assets/expression/upset.webp",
                     quote: isEn
                       ? "Aww, just missed by a little bit... But having Master play with me makes me super happy! Next time will be even better～ (´,,•ω•,,)"
                       : isTw
