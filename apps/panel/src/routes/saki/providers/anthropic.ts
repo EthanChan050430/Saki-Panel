@@ -9,15 +9,16 @@ import {
   providerConfigFor,
   pushStreamingTextDelta,
   RouteError,
-  streamingThinkingText,
   stripThinking,
   trimString
 } from "../types.js";
 import { anthropicToolSchemas, normalizeStructuredToolCall, parseJsonMaybe, toolSchemasForRuntime, withAdvertisedSakiToolSchemas } from "../tools.js";
 import { buildDirectMessages, buildDirectSystemPrompt } from "../prompt.js";
+import { buildAnthropicAgentMessages, currentAgentTurnConversation } from "../agent-messages.js";
 import { extractProviderUsage, mergeModelUsage, type ModelUsage } from "../../../tokenizer.js";
+import { anthropicSupportsThinking } from "../model-profile.js";
 import { streamPromptAgentTurnWithFilteredDelta, withTurnUsage } from "./common.js";
-import { readServerSentEventData, requestJsonPayload, requestStreamingPayload } from "./http.js";
+import { parseStreamJsonPayload, readServerSentEventData, requestJsonPayload, requestStreamingPayload } from "./http.js";
 import {
   isToolCallingUnsupportedError,
   lastUserMessageIndex,
@@ -28,6 +29,25 @@ import {
   withAnthropicImageInputs
 } from "./catalog.js";
 
+function anthropicRequestHeaders(apiKey: string, model: string): Record<string, string> {
+  return {
+    "content-type": "application/json",
+    "x-api-key": apiKey,
+    "anthropic-version": "2023-06-01",
+    ...(anthropicSupportsThinking(model) ? { "anthropic-beta": "interleaved-thinking-2025-05-14" } : {})
+  };
+}
+
+function anthropicRequestBody(model: string, rest: Record<string, unknown>): Record<string, unknown> {
+  if (!anthropicSupportsThinking(model)) return { model, max_tokens: 4096, ...rest };
+  return {
+    model,
+    max_tokens: 16000,
+    thinking: { type: "enabled", budget_tokens: 4096 },
+    ...rest
+  };
+}
+
 export async function callAnthropicModel(config: SakiConfigResponse, input: SakiChatRequest, prompt: string): Promise<string> {
   const { baseUrl, apiKey, model } = requireCloudConfig(config, "anthropic");
   const messages = withAnthropicImageInputs(buildDirectMessages(input, prompt), input).filter((message) => message.role !== "system");
@@ -35,17 +55,13 @@ export async function callAnthropicModel(config: SakiConfigResponse, input: Saki
     `${baseUrl}/messages`,
     {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 4096,
-        system: buildDirectSystemPrompt(config),
-        messages
-      })
+      headers: anthropicRequestHeaders(apiKey, model),
+      body: JSON.stringify(
+        anthropicRequestBody(model, {
+          system: buildDirectSystemPrompt(config),
+          messages
+        })
+      )
     },
     config.requestTimeoutMs
   );
@@ -88,23 +104,21 @@ export async function callAnthropicModelStream(
     `${baseUrl}/messages`,
     {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 4096,
-        system: buildDirectSystemPrompt(config),
-        messages,
-        stream: true
-      })
+      headers: anthropicRequestHeaders(apiKey, model),
+      body: JSON.stringify(
+        anthropicRequestBody(model, {
+          system: buildDirectSystemPrompt(config),
+          messages,
+          stream: true
+        })
+      )
     },
     config.requestTimeoutMs,
     async (response) => {
       await readServerSentEventData(response, (data) => {
-        const chunk = anthropicStreamDelta(JSON.parse(data) as unknown);
+        const payload = parseStreamJsonPayload(data);
+        if (payload === undefined) return;
+        const chunk = anthropicStreamDelta(payload);
         pushStreamingTextDelta(state, chunk.content, onDelta, onThinking, chunk.reasoningContent);
       });
     }
@@ -117,23 +131,19 @@ export async function callAnthropicModelStream(
 
 export async function callAnthropicAgentTurn(config: SakiConfigResponse, input: SakiChatRequest, prompt: string): Promise<SakiModelToolTurn> {
   const { baseUrl, apiKey, model } = requireCloudConfig(config, "anthropic");
-  const messages = withAnthropicImageInputs(buildDirectMessages(input, prompt), input).filter((message) => message.role !== "system");
+  const messages = buildAnthropicAgentMessages(input, prompt);
   const payload = await requestJsonPayload(
     `${baseUrl}/messages`,
     {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 4096,
-        system: buildDirectSystemPrompt(config),
-        messages,
-        tools: anthropicToolSchemas()
-      })
+      headers: anthropicRequestHeaders(apiKey, model),
+      body: JSON.stringify(
+        anthropicRequestBody(model, {
+          system: currentAgentTurnConversation()?.systemPrompt ?? buildDirectSystemPrompt(config),
+          messages,
+          tools: anthropicToolSchemas()
+        })
+      )
     },
     config.requestTimeoutMs
   );
@@ -232,7 +242,7 @@ export async function callAnthropicAgentTurnStream(
   onThinking?: (text: string) => void
 ): Promise<SakiModelToolTurn> {
   const { baseUrl, apiKey, model } = requireCloudConfig(config, "anthropic");
-  const messages = withAnthropicImageInputs(buildDirectMessages(input, prompt), input).filter((message) => message.role !== "system");
+  const messages = buildAnthropicAgentMessages(input, prompt);
   const state = createStreamingTextState();
   const toolAccumulator = new AnthropicStreamToolCallAccumulator();
   const usageHolder: { current: ModelUsage | null } = { current: null };
@@ -240,24 +250,20 @@ export async function callAnthropicAgentTurnStream(
     `${baseUrl}/messages`,
     {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 4096,
-        system: buildDirectSystemPrompt(config),
-        messages,
-        stream: true,
-        tools: anthropicToolSchemas()
-      })
+      headers: anthropicRequestHeaders(apiKey, model),
+      body: JSON.stringify(
+        anthropicRequestBody(model, {
+          system: currentAgentTurnConversation()?.systemPrompt ?? buildDirectSystemPrompt(config),
+          messages,
+          stream: true,
+          tools: anthropicToolSchemas()
+        })
+      )
     },
     config.requestTimeoutMs,
     async (response) => {
       await readServerSentEventData(response, (data) => {
-        const event = objectValue(JSON.parse(data) as unknown);
+        const event = objectValue(parseStreamJsonPayload(data));
         if (!event) return;
         usageHolder.current = mergeModelUsage(usageHolder.current, extractProviderUsage(event));
         toolAccumulator.ingest(event);
@@ -296,7 +302,7 @@ export async function callAnthropicAgentTurnStreamWithFallback(
   } catch (error) {
     if (isToolCallingUnsupportedError(error)) {
       return streamPromptAgentTurnWithFilteredDelta(
-        (filteredDelta) => callAnthropicModelStream(config, input, prompt, filteredDelta),
+        (filteredDelta) => callAnthropicModelStream(config, input, prompt, filteredDelta, onThinking),
         onDelta,
         onThinking
       );

@@ -2594,7 +2594,7 @@ const domExactTranslationsEn: Record<string, string> = {
   "移除附件": "Remove attachment",
   "进行中": "Running",
   "完成": "Completed",
-  "待确认": "Pending approval",
+  "待确认": "Needs Confirmation",
   "受阻": "Blocked",
   "Saki 活动": "Saki Activity",
   "待审批": "Pending Approval",
@@ -3337,6 +3337,12 @@ const domExactTranslationsEn: Record<string, string> = {
   "展开思考过程": "Expand reasoning",
   "正在深度思考...": "Deep thinking...",
   "思考过程": "Reasoning process",
+  "正在分析下一步...": "Working out the next step...",
+  "思考完成，开始执行。": "Finished thinking, starting work.",
+  "模型调用中断。": "Model call interrupted.",
+  "任务已取消。": "Task cancelled.",
+  "上下文超出模型窗口，已压缩较早的工作记录并重试。": "Context exceeded the model window; older working notes were compacted and the step was retried.",
+  "任务已取消。已完成的修改均已保留，可随时发送“继续”让 Saki 接着处理。": "Task cancelled. Completed changes are preserved — send “continue” anytime and Saki will pick up from the current workspace.",
   "查看计划任务": "View scheduled tasks",
   "查看任务运行": "View task runs",
   "检索网页": "Search web",
@@ -3432,7 +3438,7 @@ const domExactTranslationsEn: Record<string, string> = {
   "保存项目记忆": "Save项目记忆",
   "制定计划": "制定计划",
   "这次调用已被拒绝，没有执行。": "这次调用已被拒绝，没有执行。",
-  "已回滚到执行前的状态。": "已回滚到执行前的Status。",
+  "已回滚到执行前的状态。": "Rolled back to the pre-execution state.",
   "调用完成，没有返回额外内容。": "调用完成，没有返回额外内容。",
   "删除操作已完成。": "DeleteAction已完成。",
   "移动或重命名已完成。": "移动或重命名已完成。",
@@ -3541,14 +3547,25 @@ const domExactTranslationsEn: Record<string, string> = {
   "第一页": "第一页",
   "最后一页": "最后一页",
   "读取表结构失败": "读取表结构Failed",
-  "崩溃循环": "崩溃循环",
-  "磁盘告警": "磁盘告警",
-  "内存告警": "内存告警",
-  "Saki 值班事件": "Saki 值班事件",
-  "等待你确认后才会消耗额度开始诊断。": "等待你Confirm后才会消耗额度开始诊断。",
-  "确认后才会调用模型，会消耗额度": "Confirm后才会调用模型，会消耗额度",
-  "确认诊断": "Confirm诊断",
-  "Saki 发现了问题，但不会自动消耗额度。确认后才会开始诊断。": "Saki 发现了问题，但不会自动消耗额度。Confirm后才会开始诊断。",
+  "崩溃循环": "Crash Loop",
+  "磁盘告警": "Disk Alert",
+  "内存告警": "Memory Alert",
+  "Saki 值班事件": "Saki Watch Events",
+  "Agent 任务监控": "Agent Task Monitor",
+  "Agent 任务": "Agent Tasks",
+  "暂无运行中": "Nothing running",
+  "暂无 Agent 任务": "No Agent tasks",
+  "发起 Agent 对话后，可以在这里随时查看进度": "Start an Agent conversation and track its progress here anytime",
+  "已完成": "Completed",
+  "已取消": "Cancelled",
+  "未知实例": "Unknown instance",
+  "全局会话": "Global session",
+  "（空任务）": "(Empty task)",
+  "等待模型输出": "Waiting for model output",
+  "等待你确认后才会消耗额度开始诊断。": "Diagnosis consumes quota only after you confirm.",
+  "确认后才会调用模型，会消耗额度": "The model runs (and consumes quota) only after you confirm",
+  "确认诊断": "Confirm Diagnosis",
+  "Saki 发现了问题，但不会自动消耗额度。确认后才会开始诊断。": "Saki found an issue but will not spend quota automatically. Diagnosis starts only after you confirm.",
   "取得使用量資料失敗": "取得使用量資料Failed",
   "積分與使用量統計": "Points & Usage Statistics",
   "檢視您的可用積分與 Token 消耗趨勢": "View your available points and Token usage trends",
@@ -3754,7 +3771,38 @@ const domExactTranslationsEn: Record<string, string> = {
   "加载趋势图...": "Loading trend chart...",
   "消耗积分:": "Points:",
   "最近使用明细": "Recent Usage Records",
-  "暂无使用记录": "No usage records"
+  "暂无使用记录": "No usage records",
+  "值班中": "Watching",
+  "Saki 值班监控已开启": "Saki watch monitoring is enabled",
+  "值班策略加载中…": "Loading watch policy…",
+  "值班策略加载完成后才能保存": "You can save once the watch policy has loaded",
+  "值班策略加载中，请稍候再保存": "Loading the watch policy, please save in a moment",
+  "值班策略加载失败，为避免写入错误配置，本次不能保存。请关闭后重试": "Failed to load the watch policy. To avoid writing a wrong config, saving is disabled. Please close and retry.",
+  "Saki 值班": "Saki Watch",
+  "值班事件": "Watch Events",
+  "待处理": "Pending",
+  "最近已完结": "Recently Closed",
+  "进程崩溃": "Process Crash",
+  "运行正常": "All Normal",
+  "再次诊断": "Diagnose Again",
+  "批准并重启": "Approve & Restart",
+  "回滚修复": "Rollback Fix",
+  "忽略": "Ignore",
+  "忽略 1 小时": "Ignore for 1 Hour",
+  "已忽略 1 小时": "Ignored for 1 hour",
+  "系统运行一切正常 ✨": "All systems running smoothly ✨",
+  "暂无未完成的崩溃或告警事件": "No unresolved crashes or alerts",
+  "Saki 自愈监控策略": "Saki Self-healing Watch Policy",
+  "崩溃后诊断并给出补丁": "Diagnose crashes and propose a patch",
+  "只诊断，不改文件": "Diagnose only, do not modify files",
+  "关闭该实例的值班监控": "Disable watch monitoring for this instance",
+  "确认消耗额度并开始诊断？": "Confirm: spend quota and start diagnosis?",
+  "部分变更应用失败，其余已应用。": "Some changes failed to apply; the rest were applied.",
+  "操作失败，请稍后重试。": "Action failed. Please try again later.",
+  "网络异常，操作未完成。": "Network error. The action was not completed.",
+  "正在连接…": "Connecting…",
+  "连接中断，正在重连…": "Connection interrupted, reconnecting…",
+  "已恢复 ✓": "Resolved ✓"
 };
 
 const domExactTranslationsTw: Record<string, string> = {
@@ -4080,7 +4128,48 @@ const domExactTranslationsTw: Record<string, string> = {
   "图片": "圖片",
   "简体中文": "簡體中文",
   "繁體中文": "繁體中文",
-  "English": "English"
+  "English": "English",
+  "值班中": "值班中",
+  "Saki 值班监控已开启": "Saki 值班監控已開啟",
+  "值班策略加载中…": "值班策略載入中…",
+  "值班策略加载完成后才能保存": "值班策略載入完成後才能儲存",
+  "值班策略加载中，请稍候再保存": "值班策略載入中，請稍候再儲存",
+  "值班策略加载失败，为避免写入错误配置，本次不能保存。请关闭后重试": "值班策略載入失敗，為避免寫入錯誤配置，本次不能儲存。請關閉後重試",
+  "待确认": "待確認",
+  "崩溃循环": "崩潰循環",
+  "磁盘告警": "磁碟告警",
+  "内存告警": "記憶體告警",
+  "Saki 值班事件": "Saki 值班事件",
+  "Saki 值班": "Saki 值班",
+  "值班事件": "值班事件",
+  "已回滚到执行前的状态。": "已復原到執行前的狀態。",
+  "等待你确认后才会消耗额度开始诊断。": "等待你確認後才會消耗額度開始診斷。",
+  "确认后才会调用模型，会消耗额度": "確認後才會呼叫模型，會消耗額度",
+  "确认诊断": "確認診斷",
+  "Saki 发现了问题，但不会自动消耗额度。确认后才会开始诊断。": "Saki 發現了問題，但不會自動消耗額度。確認後才會開始診斷。",
+  "待处理": "待處理",
+  "最近已完结": "最近已完結",
+  "进程崩溃": "程式崩潰",
+  "运行正常": "運作正常",
+  "再次诊断": "再次診斷",
+  "批准并重启": "批准並重啟",
+  "回滚修复": "復原修復",
+  "忽略": "忽略",
+  "忽略 1 小时": "忽略 1 小時",
+  "已忽略 1 小时": "已忽略 1 小時",
+  "系统运行一切正常 ✨": "系統運作一切正常 ✨",
+  "暂无未完成的崩溃或告警事件": "暫無未完成的崩潰或告警事件",
+  "Saki 自愈监控策略": "Saki 自癒監控策略",
+  "崩溃后诊断并给出补丁": "崩潰後診斷並給出補丁",
+  "只诊断，不改文件": "只診斷，不改檔案",
+  "关闭该实例的值班监控": "關閉該執行個體的值班監控",
+  "确认消耗额度并开始诊断？": "確認消耗額度並開始診斷？",
+  "部分变更应用失败，其余已应用。": "部分變更套用失敗，其餘已套用。",
+  "操作失败，请稍后重试。": "操作失敗，請稍後重試。",
+  "网络异常，操作未完成。": "網路異常，操作未完成。",
+  "正在连接…": "正在連線…",
+  "连接中断，正在重连…": "連線中斷，正在重連…",
+  "已恢复 ✓": "已復原 ✓"
 };
 
 export function translateDomText(value: string, language: PanelLanguage = "en-US"): string {
@@ -4095,6 +4184,15 @@ export function translateDomText(value: string, language: PanelLanguage = "en-US
     const exactTw = domExactTranslationsTw[trimmed];
     if (exactTw) return value.replace(trimmed, exactTw);
 
+    // 动态片段里的实例名/文件路径必须原样保留：整串 toTraditionalChinese 会把
+    // 简体实例名转成繁体，导致显示名与真实目录名不一致。这里用私用区占位符
+    // 把名字/路径摘出来，整串转换完成后再填回。
+    const protectedPartsTw: string[] = [];
+    const protectTw = (part: string): string => {
+      protectedPartsTw.push(part);
+      return "" + String(protectedPartsTw.length - 1) + "";
+    };
+
     let translatedTw = trimmed
       .replace(/^(\d+)\s*个可分配对象$/, "$1 個可分配對象")
       .replace(/^(\d+)\s*个可管理实例$/, "$1 個可管理執行個體")
@@ -4105,37 +4203,45 @@ export function translateDomText(value: string, language: PanelLanguage = "en-US
       .replace(/^已清空\s*(\d+)\s*条审计日志。?$/, "已清空 $1 條稽核日誌。")
       .replace(/^(\d+)\s*个$/, "$1 個")
       .replace(/^(\d+)\s*台$/, "$1 臺")
-      .replace(/^创建\s+(.+)$/, (_, name: string) => "建立 " + (domExactTranslationsTw[name] ?? toTraditionalChinese(name)))
-      .replace(/^(.+)\s+运行记录$/, (_, name: string) => (domExactTranslationsTw[name] ?? toTraditionalChinese(name)) + " 執行記錄")
-      .replace(/^审计日志：(.+)$/, "稽核日誌：$1")
+      .replace(/^创建\s+(.+)$/, (_, name: string) => "建立 " + (domExactTranslationsTw[name] ?? protectTw(name)))
+      .replace(/^(.+)\s+运行记录$/, (_, name: string) => (domExactTranslationsTw[name] ?? protectTw(name)) + " 執行記錄")
+      .replace(/^审计日志：(.+)$/, (_, name: string) => "稽核日誌：" + protectTw(name))
       .replace(/^当前账号\s*@(.+)\s+还没有被分配任何权限。$/, "目前帳號 @$1 尚未被分配任何權限。")
       .replace(/^当前账号\s*@(.+)\s+的权限暂时没有对应的侧边栏入口。$/, "目前帳號 @$1 的權限暫時沒有對應的側邊欄入口。")
       .replace(/^(.+)\s*\/\s*(.+)\s*个文件改动可回滚$/, "$1 / $2 個檔案變更可復原")
-      .replace(/^等待确认：(.+)$/, "等待確認：$1")
-      .replace(/^已回滚\s+(.+)。?$/, "已復原 $1。")
-      .replace(/^(.+)\s+是空目录。?$/, "$1 是空目錄。")
+      .replace(/^等待确认：(.+)$/, (_, name: string) => "等待確認：" + protectTw(name))
+      .replace(/^已回滚\s+(.+)。?$/, (_, name: string) => "已復原 " + protectTw(name) + "。")
+      .replace(/^(.+)\s+是空目录。?$/, (_, name: string) => protectTw(name) + " 是空目錄。")
       .replace(/^找到\s+(\d+)\s+个目录、(\d+)\s+个文件。?/, "找到 $1 個目錄、$2 個檔案。")
-      .replace(/^已读取\s+(.+)$/, "已讀取 $1")
-      .replace(/^已写入\s+(.+)$/, "已寫入 $1")
-      .replace(/^已上传\s+(.+)$/, "已上傳 $1")
-      .replace(/^已编辑\s+(.+)$/, "已編輯 $1")
-      .replace(/^目录已准备好：(.+)$/, "目錄已準備好：$1")
-      .replace(/^已处理删除：(.+)$/, "已處理刪除：$1")
+      .replace(/^已读取\s+(.+)$/, (_, name: string) => "已讀取 " + protectTw(name))
+      .replace(/^已写入\s+(.+)$/, (_, name: string) => "已寫入 " + protectTw(name))
+      .replace(/^已上传\s+(.+)$/, (_, name: string) => "已上傳 " + protectTw(name))
+      .replace(/^已编辑\s+(.+)$/, (_, name: string) => "已編輯 " + protectTw(name))
+      .replace(/^目录已准备好：(.+)$/, (_, name: string) => "目錄已準備好：" + protectTw(name))
+      .replace(/^已处理删除：(.+)$/, (_, name: string) => "已處理刪除：" + protectTw(name))
       .replace(/^命令已结束(.+)$/, "指令已結束$1")
       .replace(/^最多只能附加\s+(\d+)\s+个项目。?$/, "最多只能附加 $1 個項目。")
       .replace(/^最多只能附加\s+(\d+)\s+个项目，已添加\s+(\d+)\s+个。?$/, "最多只能附加 $1 個項目，已加入 $2 個。")
       .replace(/^最多只能附加\s+(\d+)\s+个项目，剩余文件未添加。?$/, "最多只能附加 $1 個項目，其餘檔案未加入。")
       .replace(/^最新版本:\s*(.+)$/, "最新版本: $1")
       .replace(/^发现新版本:\s*(.+)$/, "發現新版本: $1")
-      .replace(/^值班：(.+)$/, "值班：$1")
+      .replace(/^值班：(.+)$/, (_, name: string) => "值班：" + protectTw(name))
+      .replace(/^值班策略加载失败：(.+)，请关闭后重试$/, "值班策略載入失敗：$1，請關閉後重試")
+      .replace(/^实例信息已保存，值班策略保存失败：(.+)$/, "執行個體資訊已儲存，值班策略儲存失敗：$1")
+      .replace(/^(\d+)\s*条未完成$/, "$1 筆未完成")
+      .replace(/^(\d+)\s*条值班事件$/, "$1 條值班事件")
+      .replace(/^已忽略至\s*(.+)$/, "已忽略至 $1")
+      .replace(/^上次检查\s*(.+)$/, "上次檢查 $1")
+      .replace(/^连接中断，最后更新于\s*(.+)$/, "連線中斷，最後更新於 $1")
+      .replace(/^距离上次诊断不足\s*(\d+)\s*秒的冷却期，请约\s*(\d+)\s*秒后再试。?$/, "距離上次診斷不足 $1 秒的冷卻期，請約 $2 秒後再試。")
       .replace(/^确定要删除选中的\s*(\d+)\s*项吗？$/, "確定要刪除選取的 $1 項嗎？")
-      .replace(/^确定要清空表\s*(.+)\s*吗？/, "確定要清空資料表 $1 嗎？")
-      .replace(/^确定要彻底删除表\s*(.+)\s*吗？/, "確定要徹底刪除資料表 $1 嗎？")
-      .replace(/^确定要移除数据库可视化实例\s*(.+)\s*吗？/, "確定要移除資料庫視覺化執行個體 $1 嗎？")
+      .replace(/^确定要清空表\s*(.+)\s*吗？/, (_, name: string) => "確定要清空資料表 " + protectTw(name) + " 嗎？")
+      .replace(/^确定要彻底删除表\s*(.+)\s*吗？/, (_, name: string) => "確定要徹底刪除資料表 " + protectTw(name) + " 嗎？")
+      .replace(/^确定要移除数据库可视化实例\s*(.+)\s*吗？/, (_, name: string) => "確定要移除資料庫視覺化執行個體 " + protectTw(name) + " 嗎？")
       .replace(/^采样:\s*(.+)\/次$/, "取樣: $1/次")
       .replace(/^成功导入\s*(\d+)\s*条记录$/, "成功匯入 $1 筆記錄")
       .replace(/^(\d+)\s*个同名项，请选择覆盖或跳过$/, "$1 個同名項，請選擇覆蓋或略過")
-      .replace(/^目标目录\s*(.+)\s*中已有$/, "目標目錄 $1 中已有")
+      .replace(/^目标目录\s*(.+)\s*中已有$/, (_, name: string) => "目標目錄 " + protectTw(name) + " 中已有")
       .replace(/^共\s*(\d+)\s*项$/, "共 $1 項")
       .replace(/^共\s*(\d+)\s*条记录$/, "共 $1 筆記錄")
       .replace(/^第\s*(\d+)\s*页$/, "第 $1 頁")
@@ -4145,6 +4251,7 @@ export function translateDomText(value: string, language: PanelLanguage = "en-US
       .replace(/^(\d+)\s*个目录$/, "$1 個目錄");
 
     translatedTw = toTraditionalChinese(translatedTw);
+    translatedTw = translatedTw.replace(/\uE000(\d+)\uE001/g, (_, index: string) => protectedPartsTw[Number(index)] ?? "");
     return translatedTw === trimmed ? value : value.replace(trimmed, translatedTw);
   }
 
@@ -4184,7 +4291,18 @@ export function translateDomText(value: string, language: PanelLanguage = "en-US
     .replace(/^最多只能附加\s+(\d+)\s+个项目，剩余文件未添加。?$/, "You can attach up to $1 items; remaining files were not added.")
     .replace(/^最新版本:\s*(.+)$/, "Latest version: $1")
     .replace(/^发现新版本:\s*(.+)$/, "New version found: $1")
+    .replace(/^(\d+)\s*个 Agent 任务运行中$/, "$1 Agent task(s) running")
+    .replace(/^(\d+)\s*个运行中$/, "$1 running")
+    .replace(/^(\d+)\s*个动作$/, "$1 action(s)")
     .replace(/^值班：(.+)$/, "Watch: $1")
+    .replace(/^(\d+)\s*条未完成$/, "$1 unresolved")
+    .replace(/^(\d+)\s*条值班事件$/, "$1 watch events")
+    .replace(/^已忽略至\s*(.+)$/, "Ignored until $1")
+    .replace(/^上次检查\s*(.+)$/, "Last checked $1")
+    .replace(/^连接中断，最后更新于\s*(.+)$/, "Connection interrupted. Last updated at $1")
+    .replace(/^距离上次诊断不足\s*(\d+)\s*秒的冷却期，请约\s*(\d+)\s*秒后再试。?$/, "Diagnosis cooldown ($1s) has not elapsed; please retry in about $2s.")
+    .replace(/^值班策略加载失败：(.+)，请关闭后重试$/, "Failed to load the watch policy: $1. Please close and retry.")
+    .replace(/^实例信息已保存，值班策略保存失败：(.+)$/, "Instance info saved, but saving the watch policy failed: $1")
     .replace(/^确定要删除选中的\s*(\d+)\s*项吗？$/, "Are you sure you want to delete the selected $1 item(s)?")
     .replace(/^确定要清空表\s*(.+)\s*吗？/, "Are you sure you want to truncate table $1?")
     .replace(/^确定要彻底删除表\s*(.+)\s*吗？/, "High-risk action: Are you sure you want to permanently drop table $1?")

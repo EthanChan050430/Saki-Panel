@@ -1,5 +1,6 @@
 import { panelConfig, panelPaths } from "../../config.js";
 import type { SakiConfigResponse, SakiProviderConfig, UpdateSakiConfigRequest } from "@webops/shared";
+import { publishAppearanceUpdate } from "./appearance-events.js";
 import { registerCopilotConfigHost } from "./providers.js";
 import {
   defaultLocalProviderUrl,
@@ -118,8 +119,13 @@ export async function saveSakiConfig(input: UpdateSakiConfigRequest): Promise<Sa
     next.systemPrompt = nextSystemPrompt;
   }
 
+  const appearanceChanged = JSON.stringify(current.appearance) !== JSON.stringify(next.appearance);
   await writeJsonFile(panelPaths.sakiConfigFile, next);
-  return readEffectiveSakiConfig();
+  const saved = await readEffectiveSakiConfig();
+  if (appearanceChanged) {
+    publishAppearanceUpdate(saved.appearance);
+  }
+  return saved;
 }
 
 async function persistCopilotTokenForPanel(gitHubToken: string): Promise<void> {

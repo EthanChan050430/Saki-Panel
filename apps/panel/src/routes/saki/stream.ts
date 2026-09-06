@@ -47,7 +47,7 @@ export function startSakiEventStream(request: FastifyRequest, reply: FastifyRepl
   const heartbeat = setInterval(() => {
     const ts = Date.now();
     write(`event: heartbeat\ndata: ${JSON.stringify({ type: "heartbeat", ts })}\n\n`);
-  }, 12000);
+  }, 8000);
   reply.raw.on("close", () => {
     ended = true;
     clearInterval(heartbeat);

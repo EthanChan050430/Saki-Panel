@@ -83,7 +83,8 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "diagnoseCode", description: "Fast syntax/typecheck. Call after edits before respond. Never uses npm test.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, command: { type: "string" } }), aliases: ["diagnostics", "checkTypes", "typecheck", "lintCode", "diagnose_code", "lint"] },
   { name: "manageTodos", description: "Markdown TODO list with [x]/[ ] for multi-step work.", parameters: objectSchema({ todos: { type: "string" } }, ["todos"]), aliases: ["setTodos", "todos", "updateTodos", "manage_todos", "todoTool", "taskList"] },
   { name: "spawnTask", description: "Research-only sub-agent. Inspect, do not edit. Use only for broad multi-file exploration.", parameters: objectSchema({ instanceId: instanceLookupSchema, task: { type: "string" }, maxSteps: { type: "integer", minimum: 1, maximum: 10 } }, ["task"]), aliases: ["subAgent", "delegate", "runSubTask"] },
-  { name: "batchEdit", description: "Apply multiple file edits in one step. Checkpointed.", parameters: objectSchema({ instanceId: instanceLookupSchema, edits: { type: "array", items: { type: "object", properties: { path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, endLine: { type: "integer", minimum: 0 }, replacement: { type: "string" }, oldText: { type: "string" }, newText: { type: "string" } }, required: ["path"] } } }, ["edits"]), aliases: ["batch_edit", "applyPatches", "multiFileEdit", "batch_patch"] },
+  { name: "batchEdit", description: "Apply multiple file edits in one step. Checkpointed.", parameters: objectSchema({ instanceId: instanceLookupSchema, edits: { type: "array", items: { type: "object", properties: { path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, endLine: { type: "integer", minimum: 0 }, replacement: { type: "string" }, oldText: { type: "string" }, newText: { type: "string" } }, required: ["path"] } } }, ["edits"]), aliases: ["batch_edit", "multiFileEdit", "batch_patch"] },
+  { name: "applyPatch", description: "Apply a unified diff or Codex-style patch to one or more existing/new files. Preferred edit tool.", parameters: objectSchema({ instanceId: instanceLookupSchema, patch: { type: "string", description: "Unified diff (---/+++ / @@) or *** Begin Patch format." } }, ["patch"]), aliases: ["apply_patch", "applyDiff", "applyPatches", "patchFiles"] },
   { name: "statFile", description: "Metadata only: exists, size, line count, mtime. Does not load file content.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema }, ["path"]), aliases: ["fileInfo", "stat_file", "file_info", "inspectPath", "stat"] },
   { name: "gitStatus", description: "Git status (branch, staged, modified, untracked).", parameters: objectSchema({ instanceId: instanceLookupSchema }), aliases: ["git_status", "gitStatusTool"] },
   { name: "gitDiff", description: "Git unified diff of uncommitted changes.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, staged: { type: "boolean" } }), aliases: ["git_diff", "gitDiffTool", "diff"] },
@@ -139,30 +140,17 @@ const sakiToolSchemaByName = new Map(sakiToolSchemas.map((schema) => [schema.nam
 const sakiCoreToolNames = [
   "listFiles",
   "readFile",
-  "writeFile",
-  "replaceInFile",
-  "editLines",
-  "mkdir",
-  "deletePath",
-  "renamePath",
   "searchFiles",
   "findFiles",
-  "outlineFile",
-  "findSymbols",
-  "readSymbol",
-  "statFile",
+  "applyPatch",
+  "writeFile",
+  "replaceInFile",
   "runCommand",
   "diagnoseCode",
-  "searchSkills",
-  "readSkill",
-  "batchEdit",
-  "reportProgress",
-  "respond",
   "gitStatus",
   "gitDiff",
-  "manageTodos",
-  "instanceLogs",
-  "plan"
+  "searchSkills",
+  "readSkill"
 ] as const;
 
 const sakiResearchToolNames = new Set([
@@ -307,14 +295,12 @@ export function toolSchemasForRuntime(runtime: SakiAgentRuntime): SakiToolSchema
     }
   }
 
-  names.add("respond");
-  names.add("reportProgress");
   return capAdvertisedToolSchemas(schemasNamed(names), sakiModelProfile(runtime.config.provider, runtime.config.model));
 }
 
 function capAdvertisedToolSchemas(schemas: SakiToolSchema[], maxTools: ReturnType<typeof sakiModelProfile>): SakiToolSchema[] {
   if (schemas.length <= maxTools.maxAdvertisedTools) return schemas;
-  const essential = new Set(["respond", "reportProgress", "readFile", "searchFiles", "findFiles", "editLines", "replaceInFile", "writeFile", "diagnoseCode", "runCommand", "listFiles"]);
+  const essential = new Set(["readFile", "searchFiles", "findFiles", "applyPatch", "replaceInFile", "writeFile", "diagnoseCode", "runCommand", "listFiles"]);
   const kept: SakiToolSchema[] = [];
   const rest: SakiToolSchema[] = [];
   for (const schema of schemas) {
@@ -457,9 +443,10 @@ export function shorthandPrimaryArgumentKey(toolName: string): string | null {
   if (lower === "listinstances") return "query";
   if (lower === "describeinstance" || lower === "instancelogs" || lower === "listtasks") return "instanceId";
   if (lower === "listfiles" || lower === "readfile" || lower === "mkdir" || lower === "deletepath" || lower === "statfile" || lower === "fileinfo" || lower === "inspectpath" || lower === "gitdiff" || lower === "diff") return "path";
-  if (lower === "batchedit" || lower === "applypatches" || lower === "multifileedit") return "edits";
+  if (lower === "batchedit" || lower === "multifileedit") return "edits";
+  if (lower === "applypatch" || lower === "apply_patch" || lower === "applydiff" || lower === "applypatches" || lower === "patchfiles") return "patch";
   if (lower === "runcommand") return "command";
-  if (lower === "sendinput" || lower === "reportprogress" || lower === "respond") return "text";
+  if (lower === "sendinput" || lower === "reportprogress") return "text";
   if (lower === "sendcommand") return "command";
   if (lower === "instanceaction") return "action";
   if (lower === "searchaudit" || lower === "searchweb" || lower === "researchweb" || lower === "searchskills") return "query";
@@ -981,6 +968,9 @@ export const sakiAutoAcceptedFileToolNames = new Set([
   "replaceinfile",
   "editlines",
   "batchedit",
+  "applypatch",
+  "apply_patch",
+  "applydiff",
   "applypatches",
   "multifileedit",
   "mkdir",
@@ -1034,14 +1024,16 @@ export const watchAgentToolAllowlist = new Set([
   "respond",
   "writefile",
   "replaceinfile",
-  "editlines"
+  "editlines",
+  "applypatch"
 ]);
 
 export const watchMutatingToolNames = new Set([
   "writefile",
   "replaceinfile",
   "editlines",
-  "batchedit"
+  "batchedit",
+  "applypatch"
 ]);
 
 export function assertWatchToolAllowed(runtime: SakiAgentRuntime, toolName: string, args: Record<string, unknown>): void {

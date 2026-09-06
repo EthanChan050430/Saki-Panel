@@ -23,6 +23,7 @@ import type {
   DatabaseVisualizerConfig,
   DatabaseVisualizerInstance,
   DiscoveredDatabase,
+  InstanceAssignee,
   ManagedNode
 } from "@webops/shared";
 import { api, ApiError } from "../../api.js";
@@ -58,6 +59,14 @@ export function AddDatabaseModal({
   const [passwordValue, setPasswordValue] = useState("");
   const [databaseValue, setDatabaseValue] = useState("");
   const [isReadOnly, setIsReadOnly] = useState(false);
+  const [assignees, setAssignees] = useState<InstanceAssignee[]>([]);
+  const [assignedToUserId, setAssignedToUserId] = useState<string>("");
+
+  useEffect(() => {
+    api.instanceAssignees(token)
+      .then((list) => setAssignees(list))
+      .catch(() => {});
+  }, [token]);
 
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message?: string } | null>(null);
@@ -123,6 +132,8 @@ export function AddDatabaseModal({
         name: name.trim(),
         engine: currentEngine,
         description: description.trim() || undefined,
+        assignedToUserId: assignedToUserId || undefined,
+        assignedToUserIds: assignedToUserId ? [assignedToUserId] : undefined,
         config: {
           path: currentEngine === "sqlite" ? pathValue.trim() : undefined,
           host: currentEngine !== "sqlite" ? (hostValue.trim() || "127.0.0.1") : undefined,
@@ -430,13 +441,30 @@ export function AddDatabaseModal({
           />
         </label>
 
-        <label>
+        {assignees.length > 0 && (
+          <label>
+            分配负责人
+            <select
+              value={assignedToUserId}
+              onChange={(e) => setAssignedToUserId(e.target.value)}
+            >
+              <option value="">未指定负责人 (默认仅管理员可见)</option>
+              {assignees.map((user) => (
+                <option key={user.id} value={user.id}>
+                  {user.displayName || user.username} (@{user.username})
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        <label className="checkbox-field">
           <input
             type="checkbox"
             checked={isReadOnly}
             onChange={(e) => setIsReadOnly(e.target.checked)}
           />
-          启用只读保护模式 (禁止任何 INSERT / UPDATE / DELETE / DROP 等写操作)
+          <span>启用只读保护模式 (禁止任何 INSERT / UPDATE / DELETE / DROP 等写操作)</span>
         </label>
       </div>
 

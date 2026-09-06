@@ -19,6 +19,7 @@ import {
   callConfiguredPrompt,
   callConfiguredPromptStream,
   fetchAnthropicModelCatalog,
+  fetchAntigravityModelCatalog,
   fetchCopilotModelCatalog,
   fetchLmStudioModelCatalog,
   fetchOllamaModelCatalog,
@@ -217,6 +218,8 @@ export async function detectSakiModels(input: UpdateSakiConfigRequest = {}): Pro
     models = await fetchAnthropicModelCatalog(effective);
   } else if (providerId === "copilot") {
     models = await fetchCopilotModelCatalog(effective);
+  } else if (providerId === "antigravity") {
+    models = await fetchAntigravityModelCatalog(effective);
   } else {
     models = await fetchOpenAiModelCatalog(providerId, effective);
   }
@@ -277,7 +280,7 @@ export async function prepareSakiChatInvocation(
   const includeInstanceLogs = Boolean(input.instanceId && hasPermission(request.user.permissions, "instance.logs"));
   const context = await resolveSakiContext(request.user.sub, input.instanceId, includeInstanceLogs);
   const projectMemory = await loadInstanceProjectMemory(context.instance);
-  const memoryContext = projectMemory ? `[Project Memory (SAKI.md)]\n${projectMemory}` : "";
+  const memoryContext = projectMemory ?? "";
 
   const skillQuery =
     `${message} ${modelInput.panelError ?? ""} ${modelInput.contextTitle ?? ""} ${combinedSakiContextText(modelInput).slice(0, 1200)}`.trim() ||
@@ -306,18 +309,24 @@ export async function prepareSakiChatInvocation(
 
 async function loadInstanceProjectMemory(instance: InstanceWithNode | null): Promise<string | null> {
   if (!instance) return null;
-  const cached = getCachedInstanceFile(instance.id, "SAKI.md");
-  if (cached?.content) return cached.content.slice(0, 3000);
-  try {
-    const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, "SAKI.md");
-    if (file?.content) {
-      recordInstanceFileRead(instance.id, "SAKI.md", { content: file.content, size: file.size, modifiedAt: file.modifiedAt });
-      return file.content.slice(0, 3000);
+  const chunks: string[] = [];
+  for (const name of ["SAKI.md", "AGENTS.md"]) {
+    const cached = getCachedInstanceFile(instance.id, name);
+    if (cached?.content) {
+      chunks.push(`[Project Memory (${name})]\n${cached.content.slice(0, 2500)}`);
+      continue;
     }
-  } catch {
-    // SAKI.md does not exist
+    try {
+      const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, name);
+      if (file?.content) {
+        recordInstanceFileRead(instance.id, name, { content: file.content, size: file.size, modifiedAt: file.modifiedAt });
+        chunks.push(`[Project Memory (${name})]\n${file.content.slice(0, 2500)}`);
+      }
+    } catch {
+      // optional project instruction file
+    }
   }
-  return null;
+  return chunks.length ? chunks.join("\n\n") : null;
 }
 
 export async function auditSakiChatResponse(

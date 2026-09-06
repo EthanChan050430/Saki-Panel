@@ -244,6 +244,15 @@ export function DatabaseActiveWorkspace({
                 <button className="small-button" type="button" onClick={() => void loadTables()}>
                   重试
                 </button>
+                <button
+                  className="small-button primary"
+                  type="button"
+                  onClick={onEditDatabase}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+                >
+                  <Settings size={13} />
+                  修改连接配置
+                </button>
                 <button className="page-error-close" type="button" onClick={() => setTableError("")} title="关闭提示">
                   <X size={14} />
                 </button>

@@ -1,18 +1,17 @@
 
 /* ==========================================================================
    Master Modal Animation Keyframes (iOS 26 / VisionOS Silky Spring Physics)
+   NOTE: backdrop-filter/filter are NOT animated inside keyframes — doing so
+   forces GPU repaint every frame and causes severe jank. Blur is a static
+   CSS property on each element; only opacity + transform are animated here.
    ========================================================================== */
 
 @keyframes glassModalOverlayIn {
   0% {
     opacity: 0;
-    backdrop-filter: blur(0px);
-    -webkit-backdrop-filter: blur(0px);
   }
   100% {
     opacity: 1;
-    backdrop-filter: blur(16px) saturate(180%);
-    -webkit-backdrop-filter: blur(16px) saturate(180%);
   }
 }
 
@@ -20,44 +19,32 @@
   0% {
     opacity: 0;
     transform: scale(0.94) translateY(14px);
-    filter: blur(6px);
   }
-  50% {
+  60% {
     opacity: 1;
   }
   100% {
     opacity: 1;
     transform: scale(1) translateY(0);
-    filter: blur(0);
   }
 }
 
 @keyframes backdrop-enter {
-  0% {
-    opacity: 0;
-    backdrop-filter: blur(0px);
-    -webkit-backdrop-filter: blur(0px);
-  }
-  100% {
-    opacity: 1;
-    backdrop-filter: blur(16px) saturate(180%);
-    -webkit-backdrop-filter: blur(16px) saturate(180%);
-  }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 @keyframes modal-enter {
   0% {
     opacity: 0;
     transform: scale(0.94) translateY(14px);
-    filter: blur(6px);
   }
-  50% {
+  60% {
     opacity: 1;
   }
   100% {
     opacity: 1;
     transform: scale(1) translateY(0);
-    filter: blur(0);
   }
 }
 

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { createPatch } from "diff";
+import { applyPatchToContent, parseWorkspacePatch, patchHunkStartLine } from "./patch.js";
 import type { CreateScheduledTaskRequest, PermissionCode, SakiAgentAction, SakiAgentRiskLevel, SakiChatRequest, UpdateScheduledTaskRequest } from "@webops/shared";
 import { prisma } from "../../db.js";
 import { writeAuditLog } from "../../audit.js";
@@ -49,6 +50,7 @@ import {
   savePendingSakiAction
 } from "./state.js";
 import type { InstanceWithNode, ParsedToolCall, PendingSakiAction, SakiAgentResumeState, SakiAgentRuntime, SakiCheckpoint, SakiSkillDocument, SakiSkillSummary } from "./types.js";
+import { currentAgentAbortSignal } from "./types.js";
 import {
   actionId,
   agentReadFileLineCountInput,
@@ -553,6 +555,20 @@ async function buildApproval(runtime: SakiAgentRuntime, call: ParsedToolCall): P
   let diff: string | undefined;
   let rollbackAvailable = false;
 
+  if (toolName === "applypatch" || toolName === "apply_patch" || toolName === "applydiff" || toolName === "patchfiles") {
+    requireUserPermission(runtime.permissions, "file.write");
+    const patch = rawStringArg(args, "patch");
+    if (!patch.trim()) throw new RouteError("applyPatch requires patch.", 400);
+    const files = parseWorkspacePatch(patch);
+    return {
+      required: true,
+      reason: "File patch requires approval. Review the diff; Saki will checkpoint previous files before writing.",
+      risk: "high",
+      preview: files.map((file) => `${file.kind} ${file.path}`).join(", "),
+      diff: patch.slice(0, 8000),
+      rollbackAvailable: true
+    };
+  }
   if (toolName === "writefile" || toolName === "replaceinfile" || toolName === "editlines" || toolName === "uploadbase64") {
     requireUserPermission(runtime.permissions, "file.write");
     const instance = await resolveAgentInstance(runtime, args);
@@ -1085,18 +1101,32 @@ export async function executeSakiAgentTool(
         if (commandRisk.risk === "critical") throw new RouteError(commandRisk.reason, 400);
         const timeoutMs = numericArg(args.timeoutMs, 30000, 1000, 120000);
         const { daemonWorkingDirectory } = commandWorkingDirectoryForAgent(instance, args);
-        const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
-          command,
-          workingDirectory: daemonWorkingDirectory,
-          timeoutMs
-        });
-        const outputParts: string[] = [];
-        if (runResult.stdout) outputParts.push(`stdout:\n${truncateText(runResult.stdout.trim(), 6000)}`);
-        if (runResult.stderr) outputParts.push(`stderr:\n${truncateText(runResult.stderr.trim(), 4000)}`);
-        outputParts.push(`exit code: ${runResult.exitCode ?? 0} (${runResult.durationMs ?? 0}ms)`);
-        observation = outputParts.join("\n\n") || "(Command completed with no output)";
-        if ((runResult.exitCode ?? 0) !== 0) {
-          ok = false;
+        try {
+          const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
+            command,
+            workingDirectory: daemonWorkingDirectory,
+            timeoutMs
+          }, currentAgentAbortSignal());
+          if (runResult.signal === "ABORTED" || currentAgentAbortSignal()?.aborted) {
+            ok = false;
+            observation = "Command aborted because the task was cancelled.";
+          } else {
+            const outputParts: string[] = [];
+            if (runResult.stdout) outputParts.push(`stdout:\n${truncateText(runResult.stdout.trim(), 6000)}`);
+            if (runResult.stderr) outputParts.push(`stderr:\n${truncateText(runResult.stderr.trim(), 4000)}`);
+            outputParts.push(`exit code: ${runResult.exitCode ?? 0} (${runResult.durationMs ?? 0}ms)`);
+            observation = outputParts.join("\n\n") || "(Command completed with no output)";
+            if ((runResult.exitCode ?? 0) !== 0) {
+              ok = false;
+            }
+          }
+        } catch (error) {
+          if (currentAgentAbortSignal()?.aborted || /aborted/i.test(error instanceof Error ? error.message : String(error))) {
+            ok = false;
+            observation = "Command aborted because the task was cancelled.";
+          } else {
+            throw error;
+          }
         }
       } else if (toolName === "sendinput") {
         requireUserPermission(runtime.permissions, "terminal.input");
@@ -1359,7 +1389,7 @@ export async function executeSakiAgentTool(
               command: checkCommand,
               workingDirectory: instance.workingDirectory,
               timeoutMs: 20000
-            });
+            }, currentAgentAbortSignal());
 
             const outputText = [runResult.stdout, runResult.stderr].filter(Boolean).join("\n").trim();
             if (runResult.exitCode === 0) {
@@ -1420,6 +1450,73 @@ export async function executeSakiAgentTool(
         } catch (error) {
           ok = false;
           observation = `Sub-agent failed: ${userFacingError(error)}`;
+        }
+      } else if (toolName === "applypatch" || toolName === "apply_patch" || toolName === "applydiff" || toolName === "patchfiles") {
+        requireUserPermission(runtime.permissions, "file.write");
+        const instance = await resolveAgentInstance(runtime, args);
+        const patch = rawStringArg(args, "patch");
+        const files = parseWorkspacePatch(patch);
+        const results: string[] = [];
+        const batchCheckpoints: SakiCheckpoint[] = [];
+        const afterByPath = new Map<string, string>();
+        let failed = 0;
+        for (const file of files) {
+          batchCheckpoints.push(await createFileCheckpoint(currentActionId, instance, file.path, runtime));
+          if (file.kind === "delete") {
+            await deleteDaemonInstancePath(instance.node, instance.id, instance.workingDirectory, { path: file.path });
+            invalidateInstanceFileCache(instance.id, file.path);
+            recordWorkingFileAccess(runtime.userId, instance.id, file.path);
+            results.push(`✓ deleted ${file.path}`);
+            continue;
+          }
+          let original = "";
+          if (file.kind === "update") {
+            original = (await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, file.path)).content;
+          }
+          try {
+            const next = applyPatchToContent(original, file.unified, file.path);
+            const sanitized = sanitizeAgentTextContent(next);
+            const written = await writeDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, {
+              path: file.path,
+              content: sanitized.content
+            });
+            afterByPath.set(file.path, sanitized.content);
+            recordInstanceFileRead(instance.id, file.path, {
+              content: sanitized.content,
+              size: written.size,
+              modifiedAt: new Date().toISOString()
+            });
+            recordWorkingFileAccess(runtime.userId, instance.id, file.path);
+            results.push(`✓ ${file.kind} ${file.path}${formatSanitizedWriteNote(sanitized.removed)}`);
+          } catch (error) {
+            failed += 1;
+            const startLine = Math.max(1, patchHunkStartLine(file.unified) - 12);
+            let snippet = original.slice(0, 1600);
+            try {
+              snippet = formatLineNumberedContent(original, String(startLine), "40").text;
+            } catch {
+              // Keep the raw head if line numbers are out of range.
+            }
+            results.push(
+              [
+                `✗ ${file.path}: patch did not apply (${error instanceof Error ? error.message : String(error)}).`,
+                "Current file around the hunk. Do not re-search the workspace. Emit a fresh unified diff against this exact text:",
+                snippet
+              ].join("\n")
+            );
+          }
+        }
+        checkpoint = batchCheckpoints[0] ?? null;
+        relatedCheckpointIds = batchCheckpoints.slice(1).map((item) => item.id);
+        if (checkpoint?.type === "file") {
+          fileEditAfterContent = afterByPath.get(checkpoint.path) ?? null;
+        }
+        fileEditPreview = files.map((file) => file.path).join(", ");
+        if (failed > 0) {
+          ok = false;
+          observation = `Patch finished with ${files.length - failed} applied, ${failed} failed:\n${results.join("\n\n")}`;
+        } else {
+          observation = `Success: applied patch to ${files.length} file(s):\n${results.join("\n")}\n\n${patch.slice(0, 4000)}`;
         }
       } else if (toolName === "batchedit" || toolName === "applypatches" || toolName === "multifileedit" || toolName === "batch_patch") {
         requireUserPermission(runtime.permissions, "file.write");
@@ -1701,5 +1798,22 @@ export async function executeSakiAgentTool(
     completedSakiActions.set(action.id, action);
     await auditAgentTool(runtime, action);
     return action;
+  }
+}
+
+export async function loadWorkspaceGitSummary(runtime: SakiAgentRuntime): Promise<string> {
+  const instance = runtime.context.instance;
+  if (!instance) return "";
+  try {
+    const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
+      command: "git status -sb",
+      workingDirectory: instance.workingDirectory,
+      timeoutMs: 8000
+    });
+    const text = [runResult.stdout, runResult.stderr].filter(Boolean).join("\n").trim();
+    if (!text || /not a git repository/i.test(text)) return "";
+    return text.slice(0, 1200);
+  } catch {
+    return "";
   }
 }

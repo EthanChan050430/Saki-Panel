@@ -217,7 +217,32 @@ async function findSqliteFilesInDir(
   return results;
 }
 
-export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void> {
+export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void> {
+  const defaultErrorHandler = app.errorHandler;
+  app.setErrorHandler((error, request, reply) => {
+    if (request.url.startsWith("/api/databases")) {
+      const msg = error instanceof Error ? error.message : String(error);
+      reply.code(400).send({ ok: false, statusCode: 400, message: msg });
+      return;
+    }
+    if (defaultErrorHandler) {
+      defaultErrorHandler(error, request, reply);
+    } else {
+      reply.send(error);
+    }
+  });
+
+  app.post("/api/databases/clear-cache", { preHandler: authenticatePanelRequest }, async (request) => {
+    const body = request.body as { host?: string; port?: number; user?: string; password?: string; database?: string; engine?: DatabaseEngine };
+    if (isMySQLEngine(body)) {
+      try {
+        const cfg = extractMySQLConfig(body);
+        mysql.evictPool(cfg);
+      } catch {}
+    }
+    return { ok: true };
+  });
+
   app.get("/api/databases/discover", { preHandler: authenticatePanelRequest }, async () => {
     const discovered: DiscoveredDatabase[] = [];
 

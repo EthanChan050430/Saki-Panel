@@ -580,12 +580,12 @@
   background: rgba(255, 255, 255, 0.06) !important;
 }
 
-[data-theme="dark"] .form-group label,
-[data-theme="dark"] .node-form label,
-[data-theme="dark"] .instance-form label,
-[data-theme="dark"] .task-form label,
-[data-theme="dark"] .modal-form label,
-[data-theme="dark"] .assignment-form label {
+[data-theme="dark"] .form-group label:not(.checkbox-field),
+[data-theme="dark"] .node-form label:not(.checkbox-field),
+[data-theme="dark"] .instance-form label:not(.checkbox-field),
+[data-theme="dark"] .task-form label:not(.checkbox-field),
+[data-theme="dark"] .modal-form label:not(.checkbox-field),
+[data-theme="dark"] .assignment-form label:not(.checkbox-field) {
   color: #f5f5f7 !important;
 }
 
@@ -593,17 +593,17 @@
   color: #f5f5f7 !important;
 }
 
-[data-theme="dark"] .form-group input,
+[data-theme="dark"] .form-group input:not([type="checkbox"]):not([type="radio"]),
 [data-theme="dark"] .form-group select,
 [data-theme="dark"] .form-group textarea,
-[data-theme="dark"] .node-form input,
+[data-theme="dark"] .node-form input:not([type="checkbox"]):not([type="radio"]),
 [data-theme="dark"] .node-form select,
 [data-theme="dark"] .node-form textarea,
-[data-theme="dark"] .instance-form input,
+[data-theme="dark"] .instance-form input:not([type="checkbox"]):not([type="radio"]),
 [data-theme="dark"] .instance-form select,
-[data-theme="dark"] .task-form input,
+[data-theme="dark"] .task-form input:not([type="checkbox"]):not([type="radio"]),
 [data-theme="dark"] .task-form select,
-[data-theme="dark"] .modal-form input,
+[data-theme="dark"] .modal-form input:not([type="checkbox"]):not([type="radio"]),
 [data-theme="dark"] .modal-form select {
   color: #f5f5f7 !important;
   background: rgba(0, 0, 0, 0.28) !important;
@@ -613,12 +613,12 @@
   -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
 }
 
-[data-theme="dark"] .node-form input:focus,
+[data-theme="dark"] .node-form input:not([type="checkbox"]):not([type="radio"]):focus,
 [data-theme="dark"] .node-form select:focus,
 [data-theme="dark"] .node-form textarea:focus,
-[data-theme="dark"] .instance-form input:focus,
+[data-theme="dark"] .instance-form input:not([type="checkbox"]):not([type="radio"]):focus,
 [data-theme="dark"] .instance-form select:focus,
-[data-theme="dark"] .task-form input:focus,
+[data-theme="dark"] .task-form input:not([type="checkbox"]):not([type="radio"]):focus,
 [data-theme="dark"] .task-form select:focus {
   border-color: rgba(255, 117, 172, 0.5) !important;
   background: rgba(0, 0, 0, 0.45) !important;
@@ -1477,7 +1477,7 @@
   background: var(--btn-ghost-hover);
 }
 
-[data-theme="dark"] input,
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]),
 [data-theme="dark"] select,
 [data-theme="dark"] textarea {
   background: rgba(255, 255, 255, 0.06) !important;
@@ -1489,7 +1489,7 @@
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2) !important;
 }
 
-[data-theme="dark"] input:focus,
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):focus,
 [data-theme="dark"] select:focus,
 [data-theme="dark"] textarea:focus {
   outline: none !important;
@@ -2452,18 +2452,18 @@
   color: #cbd5e1;
 }
 
-[data-theme="dark"] .user-edit-modal .form-group input,
+[data-theme="dark"] .user-edit-modal .form-group input:not([type="checkbox"]):not([type="radio"]),
 [data-theme="dark"] .user-edit-modal .form-group select {
   background: var(--input-bg-override) !important;
   border-color: var(--glass-border) !important;
   color: #e2e8f0 !important;
 }
 
-[data-theme="dark"] .modal-form label {
+[data-theme="dark"] .modal-form label:not(.checkbox-field) {
   color: #cbd5e1;
 }
 
-[data-theme="dark"] .modal-form .form-group input,
+[data-theme="dark"] .modal-form .form-group input:not([type="checkbox"]):not([type="radio"]),
 [data-theme="dark"] .modal-form .form-group select,
 [data-theme="dark"] .modal-form .form-group textarea {
   background: var(--input-bg-override) !important;
@@ -2471,7 +2471,7 @@
   color: #e2e8f0 !important;
 }
 
-[data-theme="dark"] .modal-form .form-group input:focus,
+[data-theme="dark"] .modal-form .form-group input:not([type="checkbox"]):not([type="radio"]):focus,
 [data-theme="dark"] .modal-form .form-group select:focus,
 [data-theme="dark"] .modal-form .form-group textarea:focus {
   background: var(--input-focus-bg) !important;
@@ -3600,7 +3600,7 @@
   background: rgba(30, 41, 59, 0.76);
 }
 
-[data-theme="dark"] .settings-wiki input,
+[data-theme="dark"] .settings-wiki input:not([type="checkbox"]):not([type="radio"]),
 [data-theme="dark"] .settings-wiki select,
 [data-theme="dark"] .settings-wiki textarea {
   background: rgba(30, 41, 59, 0.8) !important;
@@ -3608,7 +3608,7 @@
   color: #e2e8f0 !important;
 }
 
-[data-theme="dark"] .settings-wiki input:focus,
+[data-theme="dark"] .settings-wiki input:not([type="checkbox"]):not([type="radio"]):focus,
 [data-theme="dark"] .settings-wiki select:focus,
 [data-theme="dark"] .settings-wiki textarea:focus {
   border-color: var(--sidebar-accent) !important;
@@ -3616,13 +3616,61 @@
   box-shadow: 0 0 0 3px rgba(255, 117, 172, 0.12) !important;
 }
 
-[data-theme="dark"] .settings-wiki .checkbox-field {
-  border-color: rgba(51, 65, 85, 0.72);
-  background: rgba(30, 41, 59, 0.8);
+/* Checkbox Field Dark Theme */
+[data-theme="dark"] .checkbox-field {
+  color: #e2e8f0 !important;
 }
 
-[data-theme="dark"] .settings-wiki .checkbox-field:hover {
-  background: rgba(51, 65, 85, 0.6);
+[data-theme="dark"] .checkbox-field:hover {
+  color: #ffffff !important;
+}
+
+[data-theme="dark"] .checkbox-field input[type="checkbox"],
+[data-theme="dark"] input[type="checkbox"] {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  accent-color: var(--sidebar-accent, #ff75ac) !important;
+}
+
+[data-theme="dark"] .instance-form .checkbox-field,
+[data-theme="dark"] .task-form .checkbox-field,
+[data-theme="dark"] .node-form .checkbox-field,
+[data-theme="dark"] .modal-form .checkbox-field,
+[data-theme="dark"] .modal-settings-grid .checkbox-field,
+[data-theme="dark"] .settings-wiki .checkbox-field,
+[data-theme="dark"] .checkbox-field.checkbox-card {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  color: #f5f5f7 !important;
+}
+
+[data-theme="dark"] .instance-form .checkbox-field:hover,
+[data-theme="dark"] .task-form .checkbox-field:hover,
+[data-theme="dark"] .node-form .checkbox-field:hover,
+[data-theme="dark"] .modal-form .checkbox-field:hover,
+[data-theme="dark"] .modal-settings-grid .checkbox-field:hover,
+[data-theme="dark"] .settings-wiki .checkbox-field:hover,
+[data-theme="dark"] .checkbox-field.checkbox-card:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(255, 117, 172, 0.4) !important;
+}
+
+[data-theme="dark"] .instance-form .checkbox-field:has(input[type="checkbox"]:checked),
+[data-theme="dark"] .task-form .checkbox-field:has(input[type="checkbox"]:checked),
+[data-theme="dark"] .node-form .checkbox-field:has(input[type="checkbox"]:checked),
+[data-theme="dark"] .modal-form .checkbox-field:has(input[type="checkbox"]:checked),
+[data-theme="dark"] .modal-settings-grid .checkbox-field:has(input[type="checkbox"]:checked),
+[data-theme="dark"] .settings-wiki .checkbox-field:has(input[type="checkbox"]:checked),
+[data-theme="dark"] .checkbox-field.checkbox-card:has(input[type="checkbox"]:checked) {
+  border-color: rgba(255, 117, 172, 0.5) !important;
+  background: rgba(255, 117, 172, 0.14) !important;
+  box-shadow: 0 2px 12px rgba(255, 117, 172, 0.15), inset 0 1px 1px rgba(255, 255, 255, 0.1) !important;
 }
 
 [data-theme="dark"] .settings-wiki .appearance-field {
@@ -5603,7 +5651,7 @@ form.login-panel.register-panel {
   color: var(--primary) !important;
 }
 
-input,
+input:not([type="checkbox"]):not([type="radio"]),
 select,
 textarea {
   background: rgba(255, 255, 255, 0.6) !important;
@@ -5611,7 +5659,7 @@ textarea {
   border-color: var(--glass-border) !important;
 }
 
-input:focus,
+input:not([type="checkbox"]):not([type="radio"]):focus,
 select:focus,
 textarea:focus {
   outline: 2px solid rgba(255, 117, 172, 0.3) !important;

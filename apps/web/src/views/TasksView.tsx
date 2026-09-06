@@ -237,7 +237,7 @@ export function TasksView({ token, onLogout, refreshTick }: { token: string; onL
                 checked={form.enabled}
                 onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))}
               />
-              启用任务
+              <span>启用任务</span>
             </label>
             <button className="primary-button form-submit" disabled={creating || instances.length === 0} type="submit">
               <Clock size={18} />

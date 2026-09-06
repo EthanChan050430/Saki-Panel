@@ -177,6 +177,17 @@ function requestDaemonRaw(
       request.destroy(new Error(`Daemon request timed out after ${timeoutMs}ms`));
     });
     request.on("error", reject);
+    const abortSignal = options.signal;
+    if (abortSignal) {
+      const onAbort = () => request.destroy(new Error("aborted"));
+      if (abortSignal.aborted) {
+        reject(new Error("aborted"));
+        request.destroy();
+        return;
+      }
+      abortSignal.addEventListener("abort", onAbort, { once: true });
+      request.on("close", () => abortSignal.removeEventListener("abort", onAbort));
+    }
 
     if (body) request.write(body);
     request.end();
@@ -395,10 +406,16 @@ export function sendDaemonInstanceInput(
   });
 }
 
-export function runDaemonInstanceCommand(node: DaemonNodeCredentials, instanceId: string, input: InstanceCommandRequest) {
+export function runDaemonInstanceCommand(
+  node: DaemonNodeCredentials,
+  instanceId: string,
+  input: InstanceCommandRequest,
+  signal?: AbortSignal
+) {
   return requestDaemon<InstanceCommandResponse>(node, `/api/instances/${instanceId}/command`, {
     method: "POST",
-    body: JSON.stringify(input)
+    body: JSON.stringify(input),
+    ...(signal ? { signal } : {})
   }, Math.max(10000, (input.timeoutMs ?? 30000) + 5000));
 }
 
@@ -410,12 +427,87 @@ export function readDaemonInstanceStatus(node: DaemonNodeCredentials, instanceId
   return requestDaemon<DaemonInstanceState>(node, `/api/instances/${instanceId}/status`, {}, timeoutMs);
 }
 
-export async function testDaemonHealth(node: DaemonNodeCredentials, timeoutMs = 5000) {
-  const response = await requestDaemonRawWithFallback(node, "/health", {}, timeoutMs);
-  return {
-    ok: response.statusCode >= 200 && response.statusCode < 300,
-    statusCode: response.statusCode
-  };
+export async function testDaemonHealth(node: DaemonNodeCredentials, timeoutMs = 5000): Promise<{ ok: boolean; statusCode?: number; error?: string }> {
+  try {
+    const response = await requestDaemonRawWithFallback(node, "/health", {}, timeoutMs);
+    const ok = response.statusCode >= 200 && response.statusCode < 300;
+    const ret: { ok: boolean; statusCode?: number; error?: string } = { ok };
+    if (response.statusCode) ret.statusCode = response.statusCode;
+    if (!ok) ret.error = `节点响应异常 (HTTP ${response.statusCode})`;
+    return ret;
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+export async function fetchDaemonStatus(
+  node: DaemonNodeCredentials,
+  timeoutMs = 6000
+): Promise<{
+  ok: boolean;
+  effectiveProtocol: "http" | "https";
+  statusData?: { os?: string; arch?: string; version?: string };
+  error?: string;
+}> {
+  let effectiveProtocol: "http" | "https" = node.protocol === "https" ? "https" : "http";
+  try {
+    let response: DaemonHttpResponse;
+    try {
+      response = await requestDaemonRaw(node, "/api/status", {}, timeoutMs);
+    } catch (firstError) {
+      if (shouldRetryDaemonRequestAsHttps(firstError, node)) {
+        effectiveProtocol = "https";
+        response = await requestDaemonRaw(withProtocol(node, "https"), "/api/status", {}, timeoutMs);
+      } else if (shouldRetryDaemonRequestAsHttp(firstError, node)) {
+        effectiveProtocol = "http";
+        response = await requestDaemonRaw(withProtocol(node, "http"), "/api/status", {}, timeoutMs);
+      } else {
+        throw firstError;
+      }
+    }
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return {
+        ok: false,
+        effectiveProtocol,
+        error: `节点返回状态码 ${response.statusCode}: ${response.statusMessage || response.body}`
+      };
+    }
+
+    let statusData: { os?: string; arch?: string; version?: string } | undefined;
+    try {
+      const data = JSON.parse(response.body) as { metrics?: { system?: { platform?: string; arch?: string; version?: string } } };
+      const system = data?.metrics?.system;
+      if (system) {
+        statusData = {};
+        if (typeof system.platform === "string") statusData.os = system.platform;
+        if (typeof system.arch === "string") statusData.arch = system.arch;
+        if (typeof system.version === "string") statusData.version = system.version;
+      }
+    } catch {}
+
+    const successResult: {
+      ok: boolean;
+      effectiveProtocol: "http" | "https";
+      statusData?: { os?: string; arch?: string; version?: string };
+      error?: string;
+    } = {
+      ok: true,
+      effectiveProtocol
+    };
+    if (statusData) successResult.statusData = statusData;
+    return successResult;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      effectiveProtocol,
+      error: message
+    };
+  }
 }
 
 export function listDaemonInstanceFiles(
@@ -694,15 +786,33 @@ export async function getDaemonArchiveDownloadStream(
   );
 }
 
-export function createDaemonInstanceShell(node: DaemonNodeCredentials, instanceId: string, workingDirectory?: string) {
-  return requestDaemon<{ sessionId: string }>(node, `/api/instances/${instanceId}/shells`, {
+export function createDaemonInstanceShell(
+  node: DaemonNodeCredentials,
+  instanceId: string,
+  workingDirectory?: string,
+  label?: string
+) {
+  const body: { workingDirectory?: string; label?: string } = {};
+  if (workingDirectory) body.workingDirectory = workingDirectory;
+  if (label) body.label = label;
+  return requestDaemon<{ sessionId: string; label?: string }>(node, `/api/instances/${instanceId}/shells`, {
     method: "POST",
-    body: workingDirectory ? JSON.stringify({ workingDirectory }) : JSON.stringify({})
+    body: JSON.stringify(body)
   });
 }
 
 export function listDaemonInstanceShells(node: DaemonNodeCredentials, instanceId: string) {
-  return requestDaemon<{ instanceId: string; sessions: string[] }>(node, `/api/instances/${instanceId}/shells`);
+  return requestDaemon<{
+    instanceId: string;
+    sessions: string[];
+    shells?: Array<{ id: string; label?: string; createdAt: number }>;
+  }>(node, `/api/instances/${instanceId}/shells`);
+}
+
+export function deleteDaemonInstanceShell(node: DaemonNodeCredentials, instanceId: string, shellId: string) {
+  return requestDaemon<{ ok: boolean }>(node, `/api/instances/${instanceId}/shells/${shellId}`, {
+    method: "DELETE"
+  });
 }
 
 export function sendDaemonShellInput(node: DaemonNodeCredentials, instanceId: string, shellId: string, data: string, options: { echo?: boolean } = {}) {

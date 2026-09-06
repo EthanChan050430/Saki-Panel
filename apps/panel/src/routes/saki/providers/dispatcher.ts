@@ -10,8 +10,11 @@ import {
   pushStreamingTextDelta,
   RouteError,
   sakiVerboseModelLogsEnabled,
-  stripThinking
+  stripThinking,
+  withAgentAbortSignal
 } from "../types.js";
+import { agentSystemPromptForConfig, withAgentTurnConversation } from "../agent-messages.js";
+import { buildAgentWorkspacePrefix } from "../prompt.js";
 import { toolSchemasForRuntime, withAdvertisedSakiToolSchemas } from "../tools.js";
 import {
   callCopilotSdkAgentTurn,
@@ -36,6 +39,12 @@ import {
   callAnthropicModelStream
 } from "./anthropic.js";
 import {
+  callAntigravityAgentTurn,
+  callAntigravityAgentTurnStream,
+  callAntigravityModel,
+  callAntigravityModelStream
+} from "./antigravity.js";
+import {
   callOllamaAgentTurn,
   callOllamaAgentTurnStream,
   callOllamaAgentTurnStreamWithFallback,
@@ -58,6 +67,9 @@ export async function callConfiguredPrompt(input: SakiChatRequest, prompt: strin
   }
   if (provider === "copilot") {
     return callCopilotSdkModel(config, input, prompt);
+  }
+  if (provider === "antigravity") {
+    return callAntigravityModel(config, input, prompt);
   }
   return callOpenAiCompatibleModel(provider, config, input, prompt);
 }
@@ -83,6 +95,9 @@ export async function callConfiguredPromptStream(
   if (provider === "copilot") {
     return callCopilotSdkModelStream(config, input, prompt, onDelta, onThinking);
   }
+  if (provider === "antigravity") {
+    return callAntigravityModelStream(config, input, prompt, onDelta, onThinking);
+  }
   return callOpenAiCompatibleModelStream(provider, config, input, prompt, onDelta, onThinking);
 }
 
@@ -94,7 +109,7 @@ export async function callCopilotPromptAgentTurnStream(
   onThinking?: (text: string) => void
 ): Promise<SakiModelToolTurn> {
   return streamPromptAgentTurnWithFilteredDelta(
-    (filteredDelta) => callCopilotSdkModelStream(config, input, prompt, filteredDelta),
+    (filteredDelta) => callCopilotSdkModelStream(config, input, prompt, filteredDelta, onThinking),
     onDelta,
     onThinking
   );
@@ -120,6 +135,9 @@ export async function callConfiguredAgentTurnStream(
   if (provider === "copilot") {
     return callCopilotPromptAgentTurnStream(config, runtime.input, prompt, onDelta, onThinking);
   }
+  if (provider === "antigravity") {
+    return callAntigravityAgentTurnStream(config, runtime.input, prompt, onDelta, onThinking);
+  }
   return callOpenAiCompatibleAgentTurnStreamWithFallback(provider, config, runtime.input, prompt, onDelta, onThinking);
 }
 
@@ -129,7 +147,21 @@ export async function callConfiguredAgentTurn(
   onDelta?: (text: string) => void,
   onThinking?: (text: string) => void
 ): Promise<SakiModelToolTurn> {
-  return withAdvertisedSakiToolSchemas(toolSchemasForRuntime(runtime), () => callConfiguredAgentTurnUnfiltered(runtime, prompt, onDelta, onThinking));
+  // Bind the task abort signal into this async context so every provider HTTP
+  // call made for the turn is hard-aborted the moment the task is cancelled.
+  return withAgentAbortSignal(runtime.abortController?.signal, () =>
+    withAdvertisedSakiToolSchemas(toolSchemasForRuntime(runtime), () =>
+      withAgentTurnConversation(
+        runtime.turnMessages?.length
+          ? {
+              systemPrompt: `${agentSystemPromptForConfig(runtime.config, runtime.systemPromptOverride)}\n\n${buildAgentWorkspacePrefix(runtime)}`,
+              messages: runtime.turnMessages
+            }
+          : undefined,
+        () => callConfiguredAgentTurnUnfiltered(runtime, prompt, onDelta, onThinking)
+      )
+    )
+  );
 }
 
 export async function callConfiguredAgentTurnUnfiltered(
@@ -153,6 +185,8 @@ export async function callConfiguredAgentTurnUnfiltered(
       turn = { ...(await callAnthropicAgentTurn(config, runtime.input, prompt)), forwardedDeltaText: false };
     } else if (provider === "copilot") {
       turn = { ...(await callCopilotSdkAgentTurn(config, runtime.input, prompt)), forwardedDeltaText: false };
+    } else if (provider === "antigravity") {
+      turn = { ...(await callAntigravityAgentTurn(config, runtime.input, prompt)), forwardedDeltaText: false };
     } else {
       turn = { ...(await callOpenAiCompatibleAgentTurnWithFallback(provider, config, runtime.input, prompt)), forwardedDeltaText: false };
     }

@@ -139,6 +139,7 @@ import type {
   InstanceDirectoryView,
   SakiInstanceFileDragPayload,
   SakiInstanceFileDropRequest,
+  SakiOpenFileRequest,
   SakiPromptSeed
 } from "../../types/app.js";
 import { api, ApiError } from "../../api.js";
@@ -181,8 +182,8 @@ import { InstanceProcessProbeCard } from "./InstanceProcessProbeCard.js";
 import { formatBytes, formatDate } from "../../utils/path.js";
 import { parseHashRoute, updateHashRoute } from "../../utils/route.js";
 import { defaultStartCommand, sakiArtAssets } from "../../constants.js";
-import { DatabaseVisualizer, AddDatabaseModal } from "../../DatabaseVisualizer.js";
-import { IncidentBanner } from "../../IncidentInbox.js";
+import { DatabaseVisualizer, AddDatabaseModal, EditDatabaseModal } from "../../DatabaseVisualizer.js";
+import { IncidentBanner, useIncidents } from "../../IncidentInbox.js";
 
 export function InstancesView({
   token,
@@ -190,27 +191,35 @@ export function InstancesView({
   refreshTick,
   onOpenTemplates,
   onInstanceFocus,
+  onInstancesLoaded,
   onAskSaki,
   onSakiFileDragChange,
   onSakiInstanceFileDrop,
   darkMode,
   initialInstanceId,
-  onSelectInstance
+  onSelectInstance,
+  openFileRequest = null,
+  onOpenFileRequestConsumed
 }: {
   token: string;
   onLogout: () => void;
   refreshTick: number;
   onOpenTemplates: () => void;
   onInstanceFocus: (instance: ManagedInstance | null) => void;
+  onInstancesLoaded?: ((instances: ManagedInstance[]) => void) | undefined;
   onAskSaki?: ((seed: Omit<SakiPromptSeed, "nonce">) => void) | undefined;
   onSakiFileDragChange: (active: boolean) => void;
   onSakiInstanceFileDrop?: ((payload: SakiInstanceFileDragPayload) => void) | undefined;
   darkMode: boolean;
   initialInstanceId?: string | null;
   onSelectInstance?: (id: string | null) => void;
+  openFileRequest?: SakiOpenFileRequest | null;
+  onOpenFileRequestConsumed?: () => void;
 }) {
   const [nodes, setNodes] = useState<ManagedNode[]>([]);
   const [instances, setInstances] = useState<ManagedInstance[]>([]);
+  const [watchEnabledMap, setWatchEnabledMap] = useState<Record<string, boolean>>({});
+  const { active: watchActiveIncidents } = useIncidents(token, onLogout);
   const [selectedId, setSelectedIdState] = useState<string | null>(() => {
     return initialInstanceId ?? parseHashRoute().instanceId ?? null;
   });
@@ -275,6 +284,7 @@ export function InstancesView({
   const [createModalType, setCreateModalType] = useState<"instance" | "database">("instance");
   const [databases, setDatabases] = useState<DatabaseVisualizerInstance[]>([]);
   const [selectedDatabaseId, setSelectedDatabaseId] = useState<string | null>(null);
+  const [editingDatabase, setEditingDatabase] = useState<DatabaseVisualizerInstance | null>(null);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showFileManagerModal, setShowFileManagerModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -290,8 +300,15 @@ export function InstancesView({
     showFileManagerModal ||
     showSettingsModal ||
     showProxyModal ||
-    showDatabaseVisualizer
+    showDatabaseVisualizer ||
+    editingDatabase
   );
+
+  useEffect(() => {
+    if (!openFileRequest?.path) return;
+    if (openFileRequest.instanceId && selectedId && openFileRequest.instanceId !== selectedId) return;
+    setShowFileManagerModal(true);
+  }, [openFileRequest?.nonce, openFileRequest?.path, openFileRequest?.instanceId, selectedId]);
 
   useEffect(() => {
     if (!isAnyModalOpen) return;
@@ -348,13 +365,64 @@ export function InstancesView({
   const selectedInstance = instances.find((instance) => instance.id === selectedId) ?? null;
   const selectedNode = selectedInstance ? nodes.find((node) => node.id === selectedInstance.nodeId) ?? null : null;
 
-  // Reset terminal tabs when switching instances
+  const handleSelectTerminalTab = useCallback(
+    (key: string) => {
+      setActiveTerminalKey(key);
+      if (selectedId && typeof window !== "undefined") {
+        window.localStorage.setItem(`webops.instanceActiveTab.${selectedId}`, key);
+      }
+    },
+    [selectedId]
+  );
+
+  const syncInstanceShells = useCallback(
+    async (targetId: string) => {
+      if (!token) return;
+      try {
+        const res = await api.listInstanceShells(token, targetId);
+        const serverShells = res.shells ?? res.sessions.map((sid) => ({ id: sid, label: undefined, createdAt: 0 }));
+
+        if (serverShells.length > 0) {
+          const tabs: Array<{ key: string; label: string; shellSessionId?: string }> = [
+            { key: "main", label: "shell1" }
+          ];
+          serverShells.forEach((shell, idx) => {
+            tabs.push({
+              key: `shell-${shell.id}`,
+              label: shell.label || `shell${idx + 2}`,
+              shellSessionId: shell.id
+            });
+          });
+          setTerminalTabs(tabs);
+          const savedKey =
+            typeof window !== "undefined" ? window.localStorage.getItem(`webops.instanceActiveTab.${targetId}`) : null;
+          if (savedKey && tabs.some((t) => t.key === savedKey)) {
+            setActiveTerminalKey(savedKey);
+          } else {
+            setActiveTerminalKey(tabs[tabs.length - 1]!.key);
+          }
+        } else {
+          setTerminalTabs([{ key: "main", label: "终端" }]);
+          setActiveTerminalKey("main");
+        }
+      } catch (e) {
+        console.warn("Failed to sync instance shells", e);
+        setTerminalTabs([{ key: "main", label: "终端" }]);
+        setActiveTerminalKey("main");
+      }
+    },
+    [token]
+  );
+
+  // Sync terminal tabs with backend shells when switching instances or loading
   useEffect(() => {
     if (selectedId) {
+      void syncInstanceShells(selectedId);
+    } else {
       setTerminalTabs([{ key: "main", label: "终端" }]);
       setActiveTerminalKey("main");
     }
-  }, [selectedId]);
+  }, [selectedId, syncInstanceShells]);
 
   function getNextShellLabel(currentTabs: typeof terminalTabs): string {
     const used = new Set<number>();
@@ -498,12 +566,41 @@ export function InstancesView({
     };
   }, [nodes, sortedInstances]);
   const updateInstanceStatus = useCallback((id: string, status: InstanceStatus, exitCode?: number | null) => {
-    setInstances((current) =>
-      current.map((instance) =>
-        instance.id === id ? { ...instance, status, lastExitCode: exitCode ?? instance.lastExitCode } : instance
-      )
-    );
+    setInstances((current) => {
+      let changed = false;
+      const next = current.map((instance) => {
+        if (instance.id !== id) return instance;
+        const nextExitCode = exitCode ?? instance.lastExitCode;
+        if (instance.status === status && instance.lastExitCode === nextExitCode) return instance;
+        changed = true;
+        return { ...instance, status, lastExitCode: nextExitCode };
+      });
+      // Keep object identity when nothing actually changed so open modals
+      // keyed on the instance object are not reset by no-op status pushes.
+      return changed ? next : current;
+    });
   }, []);
+
+  const refreshWatchPolicies = useCallback(
+    async (list: ManagedInstance[]) => {
+      const entries = await Promise.all(
+        list.map(async (instance) => {
+          try {
+            const policy = await api.watchPolicy(token, instance.id);
+            return [instance.id, policy.enabled] as const;
+          } catch {
+            return null;
+          }
+        })
+      );
+      const nextMap: Record<string, boolean> = {};
+      for (const entry of entries) {
+        if (entry) nextMap[entry[0]] = entry[1];
+      }
+      setWatchEnabledMap(nextMap);
+    },
+    [token]
+  );
 
   const refresh = useCallback(async () => {
     setError("");
@@ -516,6 +613,7 @@ export function InstancesView({
       setNodes(nextNodes);
       setInstances(nextInstances);
       setDatabases(nextDatabases);
+      void refreshWatchPolicies(nextInstances);
       setSelectedIdState((current) => {
         if (!current) return null;
         const validId = nextInstances.some((instance) => instance.id === current) ? current : null;
@@ -539,7 +637,7 @@ export function InstancesView({
       }
       setError(err instanceof Error ? err.message : "刷新失败");
     }
-  }, [initialInstanceId, onLogout, onSelectInstance, token]);
+  }, [initialInstanceId, onLogout, onSelectInstance, refreshWatchPolicies, token]);
 
   useEffect(() => {
     void refresh();
@@ -562,6 +660,10 @@ export function InstancesView({
   useEffect(() => {
     onInstanceFocus(selectedInstance);
   }, [onInstanceFocus, selectedInstance]);
+
+  useEffect(() => {
+    onInstancesLoaded?.(instances);
+  }, [instances, onInstancesLoaded]);
 
   const handleSakiInstanceFileDrop = useCallback(
     (payload: SakiInstanceFileDragPayload) => {
@@ -815,7 +917,7 @@ export function InstancesView({
                     checked={form.autoStart}
                     onChange={(event) => setForm((current) => ({ ...current, autoStart: event.target.checked }))}
                   />
-                  自启动
+                  <span>自启动</span>
                 </label>
                 <label>
                   重启策略
@@ -889,6 +991,19 @@ export function InstancesView({
     </div>
   ) : null;
 
+  const editDatabaseDialog = editingDatabase ? (
+    <EditDatabaseModal
+      token={token}
+      database={editingDatabase}
+      nodes={nodes}
+      onClose={() => setEditingDatabase(null)}
+      onUpdated={async () => {
+        setEditingDatabase(null);
+        await refresh();
+      }}
+    />
+  ) : null;
+
   const instanceViewOptions: Array<{
     view: InstanceDirectoryView;
     label: string;
@@ -955,6 +1070,7 @@ export function InstancesView({
     const busy = busyId === selectedInstance.id;
     const selectedStatusMeta = instanceStatusMeta(selectedInstance.status);
     const selectedNodeName = selectedNode?.name ?? selectedInstance.nodeName ?? selectedInstance.nodeId;
+    const selectedIncident = watchActiveIncidents.find((item) => item.instanceId === selectedInstance.id) ?? null;
     const activeTab = terminalTabs.find((t) => t.key === activeTerminalKey);
     const isShellTab = Boolean(activeTab?.shellSessionId || (activeTab && activeTab.key !== "main"));
     const canCommandInput = Boolean(selectedInstance && (running || isShellTab));
@@ -1026,6 +1142,8 @@ export function InstancesView({
                   onSakiInstanceFileDrop={handleSakiInstanceFileDrop}
                   darkMode={darkMode}
                   onClose={() => setShowFileManagerModal(false)}
+                  {...(openFileRequest ? { openFileRequest } : {})}
+                  {...(onOpenFileRequestConsumed ? { onOpenFileRequestConsumed } : {})}
                 />
               </div>
             </div>
@@ -1042,6 +1160,10 @@ export function InstancesView({
             onClose={() => setShowSettingsModal(false)}
             onUpdated={(updated) => {
               setInstances((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+              void api
+                .watchPolicy(token, updated.id)
+                .then((policy) => setWatchEnabledMap((current) => ({ ...current, [updated.id]: policy.enabled })))
+                .catch(() => undefined);
             }}
             suggestingStartCommand={suggestingStartCommand}
             onSuggestStartCommand={async (workingDirectory, nodeId, onApply) => {
@@ -1128,9 +1250,6 @@ export function InstancesView({
                         if (!selectedId || !token) return;
                         try {
                           const wd = selectedInstance?.workingDirectory;
-                          const res = await api.createInstanceShell(token, selectedId, wd || undefined);
-                          const newKey = `shell-${res.sessionId}`;
-
                           let updatedTabs = [...terminalTabs];
                           const mainIdx = updatedTabs.findIndex((t) => t.key === "main");
                           if (mainIdx !== -1 && updatedTabs[mainIdx]?.label === "终端") {
@@ -1139,10 +1258,13 @@ export function InstancesView({
                           }
 
                           const label = getNextShellLabel(updatedTabs);
-                          updatedTabs = [...updatedTabs, { key: newKey, label, shellSessionId: res.sessionId }];
+                          const res = await api.createInstanceShell(token, selectedId, wd || undefined, label);
+                          const newKey = `shell-${res.sessionId}`;
+
+                          updatedTabs = [...updatedTabs, { key: newKey, label: res.label || label, shellSessionId: res.sessionId }];
 
                           setTerminalTabs(updatedTabs);
-                          setActiveTerminalKey(newKey);
+                          handleSelectTerminalTab(newKey);
                         } catch (e) {
                           setError(e instanceof Error ? e.message : "无法创建新终端");
                         }
@@ -1169,7 +1291,7 @@ export function InstancesView({
                         role="tab"
                         aria-selected={isActive}
                         className={`terminal-tab ${isActive ? "active" : ""}`}
-                        onClick={() => setActiveTerminalKey(tab.key)}
+                        onClick={() => handleSelectTerminalTab(tab.key)}
                       >
                         <span className="tab-label">{tab.label}</span>
                         {tab.key !== "main" && (
@@ -1179,15 +1301,21 @@ export function InstancesView({
                             title="关闭终端"
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (tab.shellSessionId && selectedId && token) {
+                                void api.deleteInstanceShell(token, selectedId, tab.shellSessionId).catch((err) => {
+                                  console.warn("Failed to delete shell session", err);
+                                });
+                              }
                               const remaining = terminalTabs.filter((t) => t.key !== tab.key);
-                              if (remaining.length === 0) {
+                              if (remaining.length <= 1) {
                                 setTerminalTabs([{ key: "main", label: "终端" }]);
-                                setActiveTerminalKey("main");
+                                handleSelectTerminalTab("main");
                                 return;
                               }
                               setTerminalTabs(remaining);
                               if (activeTerminalKey === tab.key) {
-                                setActiveTerminalKey(remaining[remaining.length - 1]!.key);
+                                const nextActive = remaining[remaining.length - 1]!.key;
+                                handleSelectTerminalTab(nextActive);
                               }
                             }}
                           >
@@ -1390,6 +1518,7 @@ export function InstancesView({
                       onAskSaki({
                         message: "",
                         contextTitle: `值班：${selectedInstance.name}`,
+                        contextText: selectedIncident?.summary || selectedIncident?.rootCause || "",
                         mode: "agent"
                       })
                   : undefined
@@ -1404,6 +1533,11 @@ export function InstancesView({
                 <div className="summary-status-row">
                   <InstanceStatusBadge status={selectedInstance.status} />
                   <span className="instance-program-badge">通用控制台程序</span>
+                  {watchEnabledMap[selectedInstance.id] ? (
+                    <span className="instance-program-badge watch-on" title="Saki 值班监控已开启">
+                      值班中
+                    </span>
+                  ) : null}
                 </div>
               </div>
               <div className="instance-summary-table">
@@ -1581,6 +1715,7 @@ export function InstancesView({
       />
       {typeof document !== "undefined" && createDialog ? createPortal(createDialog, document.body) : null}
       {typeof document !== "undefined" && databaseVisualizerDialog ? createPortal(databaseVisualizerDialog, document.body) : null}
+      {typeof document !== "undefined" && editDatabaseDialog ? createPortal(editDatabaseDialog, document.body) : null}
 
       <section className="instance-directory">
         <div className="instance-command-center">
@@ -1689,6 +1824,12 @@ export function InstancesView({
                         <span className="glance-label">{restartPolicyLabel(instance.restartPolicy)}</span>
                       </span>
                     ) : null}
+                    {watchEnabledMap[instance.id] ? (
+                      <span className="instance-glance-item watch-on" data-tooltip="Saki 值班监控已开启">
+                        <ShieldCheck size={13} />
+                        <span className="glance-label">值班中</span>
+                      </span>
+                    ) : null}
                   </div>
 
                   <div className="instance-card-footer">
@@ -1716,7 +1857,6 @@ export function InstancesView({
 
               return (
                 <div className="instance-card database-instance-card" key={`db-${db.id}`}>
-                  <span className="instance-card-signal db-card-signal" aria-hidden="true" />
                   <div className="instance-card-header">
                     <div className="instance-card-title">
                       <div className={`instance-card-icon db-icon-badge ${db.engine}`}>
@@ -1753,6 +1893,13 @@ export function InstancesView({
                       <Server size={13} />
                       <span className="glance-label">{nodeName}</span>
                     </span>
+                    <span
+                      className="instance-glance-item"
+                      data-tooltip={`创建者 ${instanceCreatorLabel(db)} · 负责人 ${instanceAssigneeLabel(db)}`}
+                    >
+                      <UserCheck size={13} />
+                      <span className="glance-label">{instanceAssigneeLabel(db)}</span>
+                    </span>
                     {db.description ? (
                       <span className="instance-glance-item" data-tooltip={`描述: ${db.description}`}>
                         <Info size={13} />
@@ -1776,6 +1923,14 @@ export function InstancesView({
                       <span>进入可视化</span>
                     </button>
                     <div className="row-actions instance-row-actions">
+                      <button
+                        className="icon-button mini"
+                        title="修改数据库配置"
+                        type="button"
+                        onClick={() => setEditingDatabase(db)}
+                      >
+                        <Wrench size={14} />
+                      </button>
                       <button
                         className="icon-button mini danger-action"
                         title="删除数据库可视化实例"
@@ -1922,9 +2077,13 @@ export function InstancesView({
                     <HardDrive size={14} />
                     <span>{endpointLabel}</span>
                   </div>
-                  <div className="instance-list-meta instance-owner-meta" role="cell">
-                    <Database size={13} />
-                    <span>数据库</span>
+                  <div
+                    className="instance-list-meta instance-owner-meta"
+                    role="cell"
+                    title={`创建者 ${instanceCreatorLabel(db)} · 负责人 ${instanceAssigneeLabel(db)}`}
+                  >
+                    <UserCheck size={14} />
+                    <span>{instanceAssigneeLabel(db)}</span>
                   </div>
                   <div className="instance-list-meta" role="cell" title="更新">
                     <Clock size={14} />
@@ -1938,6 +2097,14 @@ export function InstancesView({
                       onClick={() => setSelectedDatabaseId(db.id)}
                     >
                       <Database size={15} />
+                    </button>
+                    <button
+                      className="icon-button mini"
+                      title="修改数据库配置"
+                      type="button"
+                      onClick={() => setEditingDatabase(db)}
+                    >
+                      <Wrench size={14} />
                     </button>
                     <div className="row-actions instance-row-actions">
                       <button

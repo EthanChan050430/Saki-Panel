@@ -224,6 +224,26 @@ export function App() {
   }, [updateAppearanceState]);
 
   useEffect(() => {
+    const abort = new AbortController();
+    let retryTimer: number | undefined;
+    const connect = () => {
+      if (abort.signal.aborted) return;
+      void api
+        .sakiAppearanceStream(updateAppearanceState, abort.signal)
+        .catch(() => undefined)
+        .finally(() => {
+          if (abort.signal.aborted) return;
+          retryTimer = window.setTimeout(connect, 15000);
+        });
+    };
+    connect();
+    return () => {
+      abort.abort();
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+  }, [updateAppearanceState]);
+
+  useEffect(() => {
     applyPanelAppearance(appearance, darkMode);
   }, [appearance, darkMode]);
 

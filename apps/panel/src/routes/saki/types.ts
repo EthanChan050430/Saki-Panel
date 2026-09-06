@@ -1,5 +1,6 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { Prisma } from "@prisma/client";
 import type {
   InstanceLogLine,
@@ -74,7 +75,7 @@ export class BrowseHttpError extends RouteError {
 }
 
 export const maxAgentLoops = 80;
-export const maxAgentProgressOnlyRetries = 2;
+export const maxAgentProgressOnlyRetries = 1;
 export const maxAgentVerificationRetries = 2;
 export const maxAgentObservationTokens = 1500;
 export const maxAgentPromptObservationTokens = 800;
@@ -483,10 +484,23 @@ export function renderCommandEnvironment(instance: InstanceWithNode | null): str
   ].join("\n");
 }
 
+const thinkingTagAlternation = "think|thought|reasoning";
+const thinkingTagPrefixes = ["<think>", "<thought>", "<reasoning>"];
+
+function closedThinkingBlockPattern(): RegExp {
+  return new RegExp(`<(${thinkingTagAlternation})>([\\s\\S]*?)<\\/\\1>`, "gi");
+}
+
+function openThinkingBlockPattern(): RegExp {
+  return new RegExp(`<(${thinkingTagAlternation})>([\\s\\S]*)$`, "i");
+}
+
+function openThinkingTagPattern(): RegExp {
+  return new RegExp(`<(${thinkingTagAlternation})>`, "i");
+}
+
 export function stripThinking(text: string): string {
-  const thinkTag = "think";
-  const openRe = new RegExp(`<${thinkTag}>[\\s\\S]*?<\\/${thinkTag}>`, "gi");
-  return text.replace(openRe, "").trim();
+  return text.replace(closedThinkingBlockPattern(), "").trim();
 }
 
 export type JsonSchema = Record<string, unknown>;
@@ -529,6 +543,8 @@ export interface SakiAgentRuntime {
   abortController?: AbortController;
   usedToolNames?: string[];
   toolProfile?: "full" | "research";
+  taskId?: string;
+  turnMessages?: import("./agent-messages.js").SakiAgentTurnMessage[];
 }
 
 export interface SakiAgentResumeState {
@@ -537,6 +553,7 @@ export interface SakiAgentResumeState {
   actions: SakiAgentAction[];
   scratchpadEntries: string[];
   toolExecutions: number;
+  turnMessages?: import("./agent-messages.js").SakiAgentTurnMessage[];
 }
 
 export interface SakiSessionAgentMemory {
@@ -552,9 +569,9 @@ export interface SakiSessionAgentMemory {
 
 export function isSakiContinuationMessage(text: string): boolean {
   const normalized = text.trim().toLowerCase();
-  if (!normalized) return false;
-  return /^(继续|接着|接着做|接着改|接着修|接着处理|继续执行|继续处理|继续做|继续修|continue|go on|keep going|proceed|next|resume)$/i.test(normalized) ||
-    /^(请?继续|请?接着|go ahead|keep working)/i.test(normalized);
+  if (!normalized || normalized.length > 24) return false;
+  return /^(请?继续|请?接着)(吧|做|改|修|处理|执行)?[。.!！]?$/i.test(normalized) ||
+    /^(continue|go on|keep going|proceed|next|resume|go ahead|keep working)[.!]?$/i.test(normalized);
 }
 
 export interface SakiActiveTaskEvent {
@@ -576,6 +593,7 @@ export interface SakiActiveTask {
   error?: string;
   abortController?: AbortController;
   subscribers: Set<(event: SakiActiveTaskEvent) => void>;
+  pendingSteers?: string[];
 }
 
 export interface SakiActiveTaskSummary {
@@ -588,6 +606,11 @@ export interface SakiActiveTaskSummary {
   message: string;
   mode?: string;
   actionCount: number;
+  progress?: {
+    message: string;
+    status?: string;
+    tool?: string;
+  };
   response?: SakiChatResponse;
   error?: string;
 }
@@ -702,17 +725,16 @@ export function createStreamingTextState(): StreamingTextState {
 }
 
 export function streamingThinkingText(raw: string): string {
-  const thinkTag = "think";
   const parts: string[] = [];
-  const closedRe = new RegExp(`<${thinkTag}>([\\s\\S]*?)<\\/${thinkTag}>`, "gi");
+  const closedRe = closedThinkingBlockPattern();
   for (const match of raw.matchAll(closedRe)) {
-    const body = (match[1] ?? "").trim();
+    const body = (match[2] ?? "").trim();
     if (body) parts.push(body);
   }
-  const remainder = raw.replace(closedRe, "");
-  const openMatch = remainder.match(new RegExp(`<${thinkTag}>([\\s\\S]*)$`, "i"));
+  const remainder = raw.replace(closedThinkingBlockPattern(), "");
+  const openMatch = remainder.match(openThinkingBlockPattern());
   if (openMatch) {
-    const body = (openMatch[1] ?? "").trim();
+    const body = (openMatch[2] ?? "").trim();
     if (body) parts.push(body);
   }
   return parts.join("\n\n");
@@ -728,23 +750,21 @@ function emitStreamingThinkingDelta(state: StreamingTextState, raw: string, onTh
 }
 
 export function stripUnstableThinkingSuffix(text: string): string {
-  const tag = "think";
-  const prefix = `<${tag}>`;
   const lower = text.toLowerCase();
-  for (let length = Math.min(prefix.length - 1, text.length); length > 0; length -= 1) {
-    if (prefix.toLowerCase().startsWith(lower.slice(-length))) {
-      return text.slice(0, -length);
+  let cut = 0;
+  for (const prefix of thinkingTagPrefixes) {
+    for (let length = Math.min(prefix.length - 1, text.length); length > 0; length -= 1) {
+      if (prefix.startsWith(lower.slice(-length)) && length > cut) {
+        cut = length;
+      }
     }
   }
-  return text;
+  return cut > 0 ? text.slice(0, -cut) : text;
 }
 
 export function visibleStreamingText(raw: string): string {
-  const thinkTag = "think";
-  const closedRe = new RegExp(`<${thinkTag}>[\\s\\S]*?<\\/${thinkTag}>`, "gi");
-  const withoutClosedThinking = raw.replace(closedRe, "");
-  const openRe = new RegExp(`<${thinkTag}>`, "i");
-  const openThinking = withoutClosedThinking.search(openRe);
+  const withoutClosedThinking = raw.replace(closedThinkingBlockPattern(), "");
+  const openThinking = withoutClosedThinking.search(openThinkingTagPattern());
   const visible = openThinking >= 0 ? withoutClosedThinking.slice(0, openThinking) : withoutClosedThinking;
   return stripUnstableThinkingSuffix(visible);
 }
@@ -891,6 +911,7 @@ export const providerDefaults: Record<string, { label: string; baseUrl: string }
   deepseek: { label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1" },
   zhipu: { label: "Zhipu GLM", baseUrl: "https://open.bigmodel.cn/api/paas/v4" },
   gemini: { label: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai" },
+  antigravity: { label: "Antigravity CLI", baseUrl: "http://localhost:8080/v1" },
   minimax: { label: "MiniMax", baseUrl: "https://api.minimaxi.com/v1" },
   anthropic: { label: "Anthropic", baseUrl: "https://api.anthropic.com/v1" },
   moonshot: { label: "Moonshot AI", baseUrl: "https://api.moonshot.cn/v1" },
@@ -904,7 +925,7 @@ export const localProviderUrls = {
   lmstudio: "http://localhost:1234"
 };
 
-export const knownProviderIds = ["ollama", "lmstudio", "copilot", ...Object.keys(providerDefaults)];
+export const knownProviderIds = ["ollama", "lmstudio", "copilot", "antigravity", ...Object.keys(providerDefaults)];
 
 export const defaultPanelAppearance: PanelAppearanceSettings = {
   appTitle: "Saki Panel",
@@ -1029,6 +1050,13 @@ export function logSakiModelEvent(event: string, details: Record<string, unknown
   console.info(`[Saki model] ${event} ${JSON.stringify(cleaned)}`);
 }
 
+function isThinkingContentPart(item: Record<string, unknown> | null): boolean {
+  if (!item) return false;
+  if (item.thought === true) return true;
+  const type = trimString(item.type).toLowerCase();
+  return type === "thinking" || type === "reasoning" || type === "thought" || type === "reason";
+}
+
 export function chatTextFromContent(value: unknown): string {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
@@ -1036,12 +1064,53 @@ export function chatTextFromContent(value: unknown): string {
       .map((part) => {
         if (typeof part === "string") return part;
         const item = objectValue(part);
+        if (isThinkingContentPart(item)) return "";
         return trimString(item?.text) || trimString(item?.content);
       })
       .filter(Boolean)
       .join("");
   }
   return "";
+}
+
+export function reasoningTextFromContent(value: unknown): string {
+  if (!Array.isArray(value)) return "";
+  return value
+    .map((part) => {
+      const item = objectValue(part);
+      if (!isThinkingContentPart(item)) return "";
+      return trimString(item?.thinking) || trimString(item?.text) || trimString(item?.content) || trimString(item?.reasoning);
+    })
+    .filter(Boolean)
+    .join("");
+}
+
+export function extractReasoningText(value: unknown): string {
+  if (typeof value === "string") return value;
+  const item = objectValue(value);
+  if (!item) return "";
+  const direct = item.reasoning_content ?? item.reasoning ?? item.thinking ?? item.thought;
+  if (typeof direct === "string" && direct) return direct;
+  const nested = objectValue(direct);
+  if (nested) {
+    return trimString(nested.text) || trimString(nested.content) || trimString(nested.thinking) || trimString(nested.reasoning);
+  }
+  return reasoningTextFromContent(item.content);
+}
+
+export function extractReasoningFromStreamPayload(payload: unknown): string | undefined {
+  const root = objectValue(payload);
+  if (!root) return undefined;
+  const choice = Array.isArray(root.choices) ? objectValue(root.choices[0]) : null;
+  const delta = objectValue(choice?.delta);
+  const message = objectValue(choice?.message) ?? objectValue(root.message);
+  const text =
+    extractReasoningText(delta) ||
+    reasoningTextFromContent(delta?.content) ||
+    extractReasoningText(message) ||
+    reasoningTextFromContent(message?.content) ||
+    extractReasoningText(root);
+  return text || undefined;
 }
 
 export function actionId(): string {
@@ -1410,8 +1479,37 @@ export function uniqueSkills(skills: SakiSkillSummary[]): SakiSkillSummary[] {
   return result;
 }
 
+// Async-local abort signal for the currently running agent turn. Provider HTTP
+// helpers link it into their fetch calls so that cancelling a task hard-aborts
+// the in-flight model request instead of letting it run to completion.
+const agentAbortSignalStore = new AsyncLocalStorage<AbortSignal>();
+
+export function withAgentAbortSignal<T>(signal: AbortSignal | undefined, fn: () => T): T {
+  if (!signal) return fn();
+  return agentAbortSignalStore.run(signal, fn);
+}
+
+export function currentAgentAbortSignal(): AbortSignal | undefined {
+  return agentAbortSignalStore.getStore();
+}
+
+// Links the ambient agent abort signal (if any) into `controller`. Returns a
+// cleanup function that must be called when the request settles.
+export function linkAgentAbortSignal(controller: AbortController): () => void {
+  const external = currentAgentAbortSignal();
+  if (!external) return () => undefined;
+  const onAbort = () => controller.abort();
+  if (external.aborted) {
+    controller.abort();
+    return () => undefined;
+  }
+  external.addEventListener("abort", onAbort, { once: true });
+  return () => external.removeEventListener("abort", onAbort);
+}
+
 export async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 5000): Promise<Response> {
   const controller = new AbortController();
+  const unlinkAgentAbort = linkAgentAbortSignal(controller);
   let timedOut = false;
   const timeout = setTimeout(() => {
     timedOut = true;
@@ -1429,6 +1527,7 @@ export async function fetchWithTimeout(url: string, options: RequestInit = {}, t
     throw error;
   } finally {
     clearTimeout(timeout);
+    unlinkAgentAbort();
   }
 }
 

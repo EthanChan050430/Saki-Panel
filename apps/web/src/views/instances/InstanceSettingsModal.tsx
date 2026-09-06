@@ -35,6 +35,7 @@ export function InstanceSettingsModal({
 }: InstanceSettingsModalProps) {
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [watchPolicyState, setWatchPolicyState] = useState<"loading" | "ready" | "error">("loading");
   const [settingsForm, setSettingsForm] = useState({
     name: "",
     workingDirectory: "",
@@ -48,38 +49,65 @@ export function InstanceSettingsModal({
     watchMode: "diagnose_and_patch" as WatchPolicyMode | "off"
   });
 
+  // Only re-initialize the form when the modal opens or a *different* instance
+  // is targeted. Depending on the whole `instance` object would reset unsaved
+  // edits whenever a status push creates a new object for the same instance.
+  const instanceId = instance?.id ?? null;
   useEffect(() => {
-    if (instance) {
-      setSettingsForm({
-        name: instance.name,
-        workingDirectory: instance.workingDirectory,
-        startCommand: instance.startCommand,
-        stopCommand: instance.stopCommand || "",
-        description: instance.description || "",
-        nodeId: instance.nodeId,
-        autoStart: instance.autoStart,
-        restartPolicy: instance.restartPolicy,
-        restartMaxRetries: instance.restartMaxRetries,
-        watchMode: "diagnose_and_patch"
-      });
-      setSettingsError(null);
+    if (!open || !instanceId) return;
+    const instanceSnapshot = instance;
+    if (!instanceSnapshot) return;
+    let cancelled = false;
+    setSettingsForm({
+      name: instanceSnapshot.name,
+      workingDirectory: instanceSnapshot.workingDirectory,
+      startCommand: instanceSnapshot.startCommand,
+      stopCommand: instanceSnapshot.stopCommand || "",
+      description: instanceSnapshot.description || "",
+      nodeId: instanceSnapshot.nodeId,
+      autoStart: instanceSnapshot.autoStart,
+      restartPolicy: instanceSnapshot.restartPolicy,
+      restartMaxRetries: instanceSnapshot.restartMaxRetries,
+      watchMode: "diagnose_and_patch"
+    });
+    setSettingsError(null);
+    setWatchPolicyState("loading");
 
-      void api
-        .watchPolicy(token, instance.id)
-        .then((policy) => {
-          setSettingsForm((current) => ({
-            ...current,
-            watchMode: policy.enabled ? policy.mode : "off"
-          }));
-        })
-        .catch(() => undefined);
-    }
-  }, [instance, token, open]);
+    void api
+      .watchPolicy(token, instanceId)
+      .then((policy) => {
+        if (cancelled) return;
+        setSettingsForm((current) => ({
+          ...current,
+          watchMode: policy.enabled ? policy.mode : "off"
+        }));
+        setWatchPolicyState("ready");
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setWatchPolicyState("error");
+        setSettingsError(
+          `值班策略加载失败：${err instanceof Error ? err.message : "未知错误"}，请关闭后重试`
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instanceId, open, token]);
 
   if (!open || !instance) return null;
 
   async function handleSave() {
     if (!instance) return;
+    if (watchPolicyState !== "ready") {
+      setSettingsError(
+        watchPolicyState === "error"
+          ? "值班策略加载失败，为避免写入错误配置，本次不能保存。请关闭后重试"
+          : "值班策略加载中，请稍候再保存"
+      );
+      return;
+    }
     const name = settingsForm.name.trim();
     const workingDirectory = settingsForm.workingDirectory.trim();
     const startCommand = settingsForm.startCommand.trim();
@@ -92,28 +120,41 @@ export function InstanceSettingsModal({
     try {
       const stopCommand = settingsForm.stopCommand.trim();
       const description = settingsForm.description.trim();
-      const updated = await api.updateInstance(token, instance.id, {
-        name,
-        workingDirectory,
-        startCommand,
-        stopCommand: stopCommand || null,
-        description: description || null,
-        nodeId: settingsForm.nodeId || instance.nodeId,
-        autoStart: settingsForm.autoStart,
-        restartPolicy: settingsForm.restartPolicy,
-        restartMaxRetries: settingsForm.restartMaxRetries
-      });
+      let updated: ManagedInstance;
+      try {
+        updated = await api.updateInstance(token, instance.id, {
+          name,
+          workingDirectory,
+          startCommand,
+          stopCommand: stopCommand || null,
+          description: description || null,
+          nodeId: settingsForm.nodeId || instance.nodeId,
+          autoStart: settingsForm.autoStart,
+          restartPolicy: settingsForm.restartPolicy,
+          restartMaxRetries: settingsForm.restartMaxRetries
+        });
+      } catch (err) {
+        setSettingsError(err instanceof Error ? err.message : "保存设置失败");
+        return;
+      }
 
-      const watchMode = settingsForm.watchMode;
-      await api.updateWatchPolicy(token, updated.id, {
-        enabled: watchMode !== "off",
-        mode: watchMode === "off" ? "diagnose_and_patch" : watchMode
-      });
-
+      // Instance fields are already persisted at this point; if the watch
+      // policy save fails, say exactly which part succeeded and which failed.
       onUpdated(updated);
+      const watchMode = settingsForm.watchMode;
+      try {
+        await api.updateWatchPolicy(token, updated.id, {
+          enabled: watchMode !== "off",
+          mode: watchMode === "off" ? "diagnose_and_patch" : watchMode
+        });
+      } catch (err) {
+        setSettingsError(
+          `实例信息已保存，值班策略保存失败：${err instanceof Error ? err.message : "未知错误"}`
+        );
+        return;
+      }
+
       onClose();
-    } catch (err) {
-      setSettingsError(err instanceof Error ? err.message : "保存设置失败");
     } finally {
       setSettingsSaving(false);
     }
@@ -248,6 +289,7 @@ export function InstanceSettingsModal({
               <span>Saki 自愈监控策略</span>
               <select
                 value={settingsForm.watchMode}
+                disabled={watchPolicyState !== "ready"}
                 onChange={(e) =>
                   setSettingsForm((prev) => ({
                     ...prev,
@@ -259,6 +301,9 @@ export function InstanceSettingsModal({
                 <option value="diagnose_only">只诊断，不改文件</option>
                 <option value="off">关闭该实例的值班监控</option>
               </select>
+              {watchPolicyState === "loading" ? (
+                <small className="watch-policy-loading-hint">值班策略加载中…</small>
+              ) : null}
             </label>
 
             {settingsForm.restartPolicy !== "never" ? (
@@ -297,7 +342,8 @@ export function InstanceSettingsModal({
           <button
             className="primary-button settings-save"
             type="button"
-            disabled={settingsSaving}
+            disabled={settingsSaving || watchPolicyState !== "ready"}
+            title={watchPolicyState !== "ready" ? "值班策略加载完成后才能保存" : undefined}
             onClick={() => void handleSave()}
           >
             {settingsSaving ? <Loader2 size={16} className="spinner" /> : <Save size={16} />}

@@ -48,6 +48,8 @@ model User {
   createdInstances    Instance[]           @relation("InstanceCreator")
   assignedInstances   Instance[]           @relation("InstanceAssignee")
   instanceAssignments InstanceAssignment[]
+  createdNodes        Node[]               @relation("NodeCreator")
+  createdEnrollmentTokens NodeEnrollmentToken[] @relation("EnrollmentTokenCreator")
   accessKeys          UserAccessKey[]
   points              Int                  @default(0)
   unlimitedPoints     Boolean              @default(false)
@@ -120,8 +122,11 @@ model Node {
   metrics    NodeMetric[]
   instances  Instance[]
   tasks      ScheduledTask[]
+  createdById String?
+  createdBy   User?           @relation("NodeCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([host, port])
+  @@index([createdById])
   @@map("nodes")
 }
 
@@ -155,8 +160,11 @@ model NodeEnrollmentToken {
   usedCount   Int      @default(0)
   expiresAt   DateTime
   createdAt   DateTime @default(now())
+  createdById String?
+  createdBy   User?    @relation("EnrollmentTokenCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([tokenHash])
+  @@index([createdById])
   @@map("node_enrollment_tokens")
 }
 

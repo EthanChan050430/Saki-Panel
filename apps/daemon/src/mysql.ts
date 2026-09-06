@@ -26,7 +26,57 @@ type PoolInstance = ReturnType<typeof mysql.createPool>;
 const pools = new Map<string, PoolInstance>();
 
 function poolKey(cfg: MySQLConnectionConfig): string {
-  return `${cfg.host}:${cfg.port ?? 3306}/${cfg.database}/${cfg.user}`;
+  return `${cfg.host}:${cfg.port ?? 3306}/${cfg.database}/${cfg.user}:${cfg.password}`;
+}
+
+export function evictPool(cfg: MySQLConnectionConfig): void {
+  const key = poolKey(cfg);
+  const existing = pools.get(key);
+  if (existing) {
+    pools.delete(key);
+    existing.end().catch(() => {});
+  }
+}
+
+export function formatMySQLError(err: unknown, cfg?: MySQLConnectionConfig): string {
+  if (!(err instanceof Error)) return String(err);
+  const message = err.message || "";
+  const code = (err as { code?: string }).code || "";
+
+  if (code === "ER_ACCESS_DENIED_ERROR" || message.includes("Access denied for user")) {
+    const userStr = cfg ? `'${cfg.user}'@'${cfg.host}'` : "指定用户";
+    return `MySQL 认证失败：用户 ${userStr} 密码错误，或该用户未被授予从当前主机访问此数据库的权限。`;
+  }
+  if (code === "ER_BAD_DB_ERROR" || message.includes("Unknown database")) {
+    return `MySQL 数据库不存在：未找到名为「${cfg?.database || ""}」的数据库。`;
+  }
+  if (code === "ECONNREFUSED") {
+    return `无法连接到 MySQL 服务 (${cfg?.host || "127.0.0.1"}:${cfg?.port || 3306})：连接被拒绝，请确认服务已启动且端口开放。`;
+  }
+  if (code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT") {
+    return `连接 MySQL 服务超时 (${cfg?.host || "127.0.0.1"}:${cfg?.port || 3306})，请检查网络与防火墙配置。`;
+  }
+  if (code === "ENOTFOUND") {
+    return `未找到 MySQL 主机地址 (${cfg?.host || ""})，域名解析失败。`;
+  }
+  return message || "MySQL 操作失败";
+}
+
+export async function withPool<T>(
+  cfg: MySQLConnectionConfig,
+  fn: (pool: PoolInstance) => Promise<T>
+): Promise<T> {
+  const pool = getPool(cfg);
+  try {
+    return await fn(pool);
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    const msg = err instanceof Error ? err.message : "";
+    if (code === "ER_ACCESS_DENIED_ERROR" || code === "ECONNREFUSED" || msg.includes("Access denied")) {
+      evictPool(cfg);
+    }
+    throw new Error(formatMySQLError(err, cfg));
+  }
 }
 
 export function getPool(cfg: MySQLConnectionConfig): PoolInstance {
@@ -671,11 +721,26 @@ export async function importTable(
   return { importedRows: count, message: `成功导入 ${count} 条记录` };
 }
 export async function testConnection(cfg: MySQLConnectionConfig): Promise<{ ok: boolean; message?: string }> {
+  let conn: mysql.Connection | null = null;
   try {
-    const pool = getPool(cfg);
-    await pool.query("SELECT 1 AS test");
-    return { ok: true };
+    conn = await mysql.createConnection({
+      host: cfg.host,
+      port: cfg.port ?? 3306,
+      user: cfg.user,
+      password: cfg.password,
+      database: cfg.database,
+      connectTimeout: 4000
+    });
+    await conn.query("SELECT 1 AS test");
+    return { ok: true, message: "MySQL 连接成功" };
   } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+    evictPool(cfg);
+    return { ok: false, message: formatMySQLError(err, cfg) };
+  } finally {
+    if (conn) {
+      try {
+        await conn.end();
+      } catch {}
+    }
   }
 }

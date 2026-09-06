@@ -47,6 +47,7 @@ export interface CodeEditorHandle {
   getView: () => EditorView | null;
   getValue: () => string;
   scrollToPosition: (pos: number) => void;
+  revealLine: (line: number) => void;
 }
 
 const setFindDecorations = StateEffect.define<DecorationSet>();
@@ -461,6 +462,17 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
           effects: EditorView.scrollIntoView(pos, { y: "center" })
         });
       }
+    },
+    revealLine: (line: number) => {
+      const view = viewRef.current;
+      if (!view) return;
+      const clamped = Math.min(Math.max(1, Math.floor(line)), view.state.doc.lines);
+      const docLine = view.state.doc.line(clamped);
+      view.dispatch({
+        selection: { anchor: docLine.from },
+        effects: EditorView.scrollIntoView(docLine.from, { y: "center" })
+      });
+      view.focus();
     }
   }), []);
 

@@ -29,14 +29,24 @@ import {
   truncateText,
   trimString,
   combinedSakiContextText,
+  formatLineNumberedContent
 } from "./types.js";
 import { advertisedSakiToolSchemas, isSakiReadOnlyAgentTool, normalizedAgentToolName, shouldRequestSakiApproval, assertSakiPermissionModeAllowsTool, sakiToolSchemas, toolArgs } from "./tools.js";
 import { callConfiguredAgentTurn } from "./providers.js";
-import { buildAgentPrompt, buildAgentContinuationPrompt } from "./prompt.js";
+import { isContextOverflowError } from "./providers/common.js";
+import { buildAgentGitNote, buildAgentPrompt, buildAgentUserTurn, buildAgentWorkspacePrefix, buildStaticAgentSystemPrompt } from "./prompt.js";
+import {
+  compactAgentTurnMessages,
+  ensureToolCallId,
+  serializeTurnMessagesForPrompt,
+  type SakiAgentTurnMessage
+} from "./agent-messages.js";
+import { loadWorkspaceGitSummary } from "./executor.js";
 import { sakiModelProfile, xmlToolFormatReminder } from "./model-profile.js";
 import {
   fingerprintAgentText,
   isDegenerateRepetition,
+  looksLikeProgressOnlyToolIntent,
   maxConsecutiveFailedTools,
   maxDegenerateRetries,
   maxIdenticalOutputTurns,
@@ -50,10 +60,12 @@ import { bootstrapAgentSkills } from "./skills.js";
 import {
   completedSakiActions,
   extractTodosFromScratchpad,
+  getCachedInstanceFile,
   getRecentWorkingFiles,
   pendingSakiActions,
   sakiCheckpoints,
-  saveSessionAgentMemory
+  saveSessionAgentMemory,
+  takeSakiTaskSteers
 } from "./state.js";
 
 export { completedSakiActions, pendingSakiActions, sakiCheckpoints, saveSessionAgentMemory } from "./state.js";
@@ -183,6 +195,9 @@ function toolIntentMessage(call: ParsedToolCall): string {
   if (toolName === "readskill" || toolName === "loadskill" || toolName === "useskill" || toolName === "getskill" || toolName === "applyskill") {
     return "\u6211\u8981\u8BFB\u53D6\u8FD9\u4E2A\u6280\u80FD\u89C4\u8303\u3002";
   }
+  if (toolName === "applypatch" || toolName === "apply_patch" || toolName === "applydiff") {
+    return pathArg ? `\u6B63\u5728\u8865\u4E01 ${pathArg}\u3002` : "\u6B63\u5728\u5E94\u7528\u4EE3\u7801\u8865\u4E01\u3002";
+  }
   if (toolName === "respond") return "\u6211\u5DF2\u7ECF\u6574\u7406\u597D\u7ED3\u679C\uFF0C\u5F00\u59CB\u56DE\u590D\u4F60\u3002";
   return "\u6211\u8981\u5148\u8865\u5145\u4E00\u70B9\u4E0A\u4E0B\u6587\u3002";
 }
@@ -249,18 +264,6 @@ function looksLikeToolCallPayload(text: string): boolean {
   if (/"?tool_calls"?\s*:/i.test(text) || /"?toolCalls"?\s*:/i.test(text)) return true;
   if (new RegExp(`"(?:${sakiToolNameAlternation})"\\s*:`, "i").test(text)) return true;
   return new RegExp(`"name"\\s*:\\s*"(?:${sakiToolNameAlternation})"`, "i").test(text);
-}
-
-function looksLikeProgressOnlyToolIntent(text: string): boolean {
-  const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
-  if (!normalized) return false;
-  if (new RegExp(`\\b(?:${sakiToolNameAlternation})\\b`, "i").test(normalized)) {
-    return true;
-  }
-  const actionVerb = /(?:read|inspect|search|run|execute|call|list|check|open|edit|modify|fix|write|create|delete|verify|test|look at)/i;
-  const futureIntent = /(?:\bi(?:'ll| will| am going to| need to| should)\b|\bnext\b|\bthen\b|\babout to\b|\bgoing to\b)/i;
-  const toolWords = /(?:tool|function|operation|call|arguments)/i;
-  return actionVerb.test(normalized) && (futureIntent.test(normalized) || toolWords.test(normalized));
 }
 
 function safeAgentFinalText(text: string): string {
@@ -568,15 +571,27 @@ export async function runSakiAgent(
     throw new RouteError("executeSakiAgentTool not provided; pass executeTool to runSakiAgent.", 500);
   });
   const actions: SakiAgentAction[] = [...(resume?.actions ?? [])];
+  const gitSummary = resume ? "" : await loadWorkspaceGitSummary(runtime);
+  const turnMessages: SakiAgentTurnMessage[] = resume?.turnMessages?.length
+    ? [...resume.turnMessages]
+    : [
+        { role: "user", content: buildAgentUserTurn(runtime) },
+        ...(gitSummary ? [{ role: "user" as const, content: buildAgentGitNote(gitSummary) }] : [])
+      ];
+  runtime.turnMessages = turnMessages;
   const basePrompt = buildAgentPrompt(runtime);
   const resumeGoal = resume?.input?.message;
-  const continuationPrompt = buildAgentContinuationPrompt(runtime, resumeGoal || runtime.input.message);
   const agentScratchpadEntries: string[] = [...(resume?.scratchpadEntries ?? [])];
   const readOnlyToolCache = new Map<string, SakiAgentAction>();
+  const recentlyEditedFiles = new Map<string, string>();
   let currentPrompt = basePrompt;
   const modelProfile = sakiModelProfile(runtime.config.provider, runtime.config.model);
+  const agentSystemPrompt = `${runtime.systemPromptOverride || buildStaticAgentSystemPrompt(modelProfile)}
+
+${buildAgentWorkspacePrefix(runtime)}`;
   let invalidReplies = 0;
   let progressOnlyReplies = 0;
+  let blockedRespondCount = 0;
   let degenerateRetries = 0;
   let identicalOutputStreak = 0;
   let noProgressStreak = 0;
@@ -594,16 +609,29 @@ export async function runSakiAgent(
   let totalTokensUsed = 0;
 
   const rebuildCurrentPrompt = (): void => {
-    const agentScratchpad = renderAgentScratchpad(agentScratchpadEntries);
-    const promptBase = toolExecutions > 0 || actions.length > 0 ? continuationPrompt : basePrompt;
-    currentPrompt = agentScratchpad
-      ? `${promptBase}\n\nAgent working notes and observations:\n${agentScratchpad}`
-      : promptBase;
+    const compacted = compactAgentTurnMessages(turnMessages);
+    if (compacted !== turnMessages) {
+      turnMessages.splice(0, turnMessages.length, ...compacted);
+    }
+    runtime.turnMessages = turnMessages;
+    currentPrompt = serializeTurnMessagesForPrompt({
+      systemPrompt: agentSystemPrompt,
+      messages: turnMessages
+    });
   };
 
+  const pendingTurnNotes: string[] = [];
   const appendAgentScratchpad = (entry: string): void => {
     if (!entry.trim()) return;
     agentScratchpadEntries.push(entry);
+    pendingTurnNotes.push(entry.trim());
+  };
+  const flushTurnNotes = (): void => {
+    if (pendingTurnNotes.length === 0) return;
+    for (const note of pendingTurnNotes) {
+      turnMessages.push({ role: "user", content: note });
+    }
+    pendingTurnNotes.length = 0;
     rebuildCurrentPrompt();
   };
 
@@ -612,7 +640,8 @@ export async function runSakiAgent(
     skills: runtime.skills,
     actions: [...actions],
     scratchpadEntries: [...agentScratchpadEntries],
-    toolExecutions
+    toolExecutions,
+    turnMessages: [...turnMessages]
   });
 
   rebuildCurrentPrompt();
@@ -624,7 +653,11 @@ export async function runSakiAgent(
       combinedSakiContextText(runtime.input)
     );
     for (const entry of skillBootstrap.scratchpad) {
-      appendAgentScratchpad(entry);
+      agentScratchpadEntries.push(entry);
+    }
+    if (skillBootstrap.scratchpad.length && turnMessages[0]?.role === "user") {
+      turnMessages[0].content = `${turnMessages[0].content}\n\n${skillBootstrap.scratchpad.join("\n")}`;
+      rebuildCurrentPrompt();
     }
     if (skillBootstrap.autoLoadedCount > 0 || skillBootstrap.suggestedCount > 0) {
       logSakiModelEvent("agent.skills.bootstrap", {
@@ -657,6 +690,52 @@ export async function runSakiAgent(
   });
 
   let lastForwardedDeltaContent: string | undefined;
+  let accumulatedThinking = "";
+  const emitThinking = (text: string) => {
+    if (!text) return;
+    accumulatedThinking += text;
+    events?.thinking?.(text);
+  };
+
+  class AgentAbortedError extends Error {
+    constructor() {
+      super("Agent run was aborted");
+      this.name = "AgentAbortedError";
+    }
+  }
+
+  const abortSignal = runtime.abortController?.signal;
+  const abortedMessage = (): string =>
+    runtime.kind === "watch"
+      ? "Watch diagnosis was cancelled."
+      : "任务已取消。已完成的修改均已保留，可随时发送“继续”让 Saki 接着处理。";
+
+  // Race every model call against the abort signal so that cancelling a task
+  // stops the loop immediately instead of waiting out a long provider request.
+  const callAgentTurnWithAbort = (prompt: string): Promise<SakiModelToolTurn> => {
+    const turnPromise = callConfiguredAgentTurn(runtime, prompt, events?.delta, emitThinking);
+    if (!abortSignal) return turnPromise;
+    return new Promise<SakiModelToolTurn>((resolve, reject) => {
+      const onAbort = () => reject(new AgentAbortedError());
+      if (abortSignal.aborted) {
+        onAbort();
+        return;
+      }
+      abortSignal.addEventListener("abort", onAbort, { once: true });
+      turnPromise.then(
+        (value) => {
+          abortSignal.removeEventListener("abort", onAbort);
+          resolve(value);
+        },
+        (error: unknown) => {
+          abortSignal.removeEventListener("abort", onAbort);
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      );
+    });
+  };
+
+  let contextOverflowRecovered = false;
 
   const finishAgentResponse = async (reason: string, message: string): Promise<SakiChatResponse> => {
     try {
@@ -690,6 +769,7 @@ export async function runSakiAgent(
     return {
       source: "direct-model",
       message,
+      ...(accumulatedThinking.trim() ? { thinking: accumulatedThinking.trim() } : {}),
       workspace: runtime.context.workspace,
       agentPermissionMode,
       skills: runtime.skills,
@@ -717,6 +797,65 @@ export async function runSakiAgent(
         };
       }
       toolCacheMisses += 1;
+    }
+
+    const readPath = normalizedAgentToolName(call.name) === "readfile" ? toolTargetPath(call).replace(/\\/g, "/") : "";
+    const editedCopy = readPath ? recentlyEditedFiles.get(readPath) : undefined;
+    if (editedCopy !== undefined) {
+      const signature = agentReadOnlyToolCacheKey(runtime, call) ?? `${normalizedAgentToolName(call.name)}::${JSON.stringify(toolCallArgsForDisplay(call))}`;
+      const previousCount = toolExecutionCounts.get(signature) ?? 0;
+      if (previousCount >= maxIdenticalToolExecutions) {
+        return {
+          call,
+          toolStepId,
+          action: {
+            id: actionId(),
+            tool: call.name,
+            args: toolCallArgsForDisplay(call),
+            observation: `Skipped duplicate '${call.name}' — already ran ${previousCount} times with the same arguments. Do not repeat. Edit, diagnoseCode, or respond.`,
+            ok: true,
+            status: "completed",
+            createdAt: new Date().toISOString()
+          },
+          durationMs: Date.now() - toolStartedAt,
+          cacheHit: true
+        };
+      }
+      toolExecutionCounts.set(signature, previousCount + 1);
+      const args = toolArgs(call);
+      const startLine = Math.max(1, Number(args.startLine) || 1);
+      const lineCount = Math.max(1, Number(args.lineCount) || defaultAgentReadFileLineCount);
+      let windowText = editedCopy;
+      let totalLines = editedCopy.split(/\r?\n/).length;
+      let endLine = totalLines;
+      try {
+        const numbered = formatLineNumberedContent(editedCopy, String(startLine), String(lineCount));
+        windowText = numbered.text;
+        totalLines = numbered.totalLines;
+        endLine = numbered.endLine;
+      } catch {
+        // Keep the raw copy if the requested window is invalid.
+      }
+      const action = {
+        id: actionId(),
+        tool: call.name,
+        args: toolCallArgsForDisplay(call),
+        observation: [
+          `Reused in-memory copy of ${readPath} (just edited this run; not re-fetched from disk).`,
+          `File: ${readPath}`,
+          `Total lines: ${totalLines}`,
+          `Showing lines: ${startLine}-${endLine}`,
+          "",
+          truncateText(windowText, 4000),
+          "",
+          "Do not re-read this file unless you need a different line window."
+        ].join("\n"),
+        ok: true,
+        status: "completed" as const,
+        createdAt: new Date().toISOString()
+      };
+      if (cacheKey) readOnlyToolCache.set(cacheKey, action);
+      return { call, toolStepId, action, durationMs: Date.now() - toolStartedAt, cacheHit: true };
     }
 
     runtime.usedToolNames ??= [];
@@ -755,7 +894,7 @@ export async function runSakiAgent(
   const recentToolSignatures: Array<{ name: string; argsStr: string; ok: boolean }> = [];
   const failedAttemptsByTarget = new Map<string, number>();
   const sequentialReadPages = new Map<string, { start: number; count: number }>();
-  const fileEditTools = new Set(["writefile", "replaceinfile", "editlines", "batchedit"]);
+  const fileEditTools = new Set(["writefile", "replaceinfile", "editlines", "batchedit", "applypatch"]);
   const verifyTools = new Set(["diagnosecode", "gitdiff", "gitstatus"]);
 
   const handleToolResult = async (result: {
@@ -765,14 +904,25 @@ export async function runSakiAgent(
     durationMs: number;
     cacheHit?: boolean;
   }): Promise<SakiChatResponse | null> => {
+    if (abortSignal?.aborted) {
+      return finishAgentResponse("aborted", abortedMessage());
+    }
     const { call, toolStepId, action, cacheHit } = result;
     toolExecutions += 1;
     if (call.name.toLowerCase() === "respond") {
       const edited = actions.some((item) => item.ok && fileEditTools.has(normalizedAgentToolName(item.tool)));
       const verified = actions.some((item) => item.ok && verifyTools.has(normalizedAgentToolName(item.tool)));
-      if (edited && !verified && runtime.kind !== "watch") {
+      const diagnoseAttempted = actions.some((item) => normalizedAgentToolName(item.tool) === "diagnosecode");
+      if (edited && !verified && !diagnoseAttempted && runtime.kind !== "watch" && blockedRespondCount < 1) {
+        blockedRespondCount += 1;
+        turnMessages.push({
+          role: "tool",
+          toolCallId: ensureToolCallId(call),
+          name: call.name,
+          content: "Blocked: diagnoseCode has not been called after edits. Call diagnoseCode once, then give the final answer in plain text."
+        });
         appendAgentScratchpad(
-          "\n[Blocked respond]: You edited files but did not verify. Call diagnoseCode now. Do not respond until diagnostics are clean.\n"
+          "\n[Blocked respond]: You edited files but did not verify. Call diagnoseCode once, then answer in plain text. If diagnostics are unavailable, answer with what you changed.\n"
         );
         emitSakiWorkflow(events, {
           id: toolStepId,
@@ -780,6 +930,7 @@ export async function runSakiAgent(
           message: "改完代码后需要先跑诊断，再给出结论。",
           status: "running"
         });
+        rebuildCurrentPrompt();
         return null;
       }
       emitSakiWorkflow(events, {
@@ -810,7 +961,29 @@ export async function runSakiAgent(
       const finalMessage = "Saki has prepared an action that needs your approval. Please review it in the action preview first.";
       return finishAgentResponse("pending_approval", finalMessage);
     }
-    appendAgentScratchpad(`\nAssistant: ${renderToolCall(call)}\nObservation:\n${observationForAgentPrompt(action)}\n`);
+    if (action.ok && fileEditTools.has(normalizedAgentToolName(call.name))) {
+      const editedPath = toolTargetPath(call).replace(/\\/g, "/");
+      const instanceId = runtime.context.workspace?.instanceId;
+      if (editedPath && instanceId) {
+        const cached = getCachedInstanceFile(instanceId, editedPath);
+        if (cached?.content) recentlyEditedFiles.set(editedPath, cached.content);
+      }
+      const observationPaths = action.observation.matchAll(/✓ \S+ (\S+)/g);
+      for (const match of observationPaths) {
+        const path = (match[1] ?? "").replace(/\\/g, "/");
+        if (!path || !instanceId) continue;
+        const cached = getCachedInstanceFile(instanceId, path);
+        if (cached?.content) recentlyEditedFiles.set(path, cached.content);
+      }
+    }
+    turnMessages.push({
+      role: "tool",
+      toolCallId: ensureToolCallId(call),
+      name: call.name,
+      content: observationForAgentPrompt(action)
+    });
+    agentScratchpadEntries.push(`\nAssistant: ${renderToolCall(call)}\nObservation:\n${observationForAgentPrompt(action)}\n`);
+    rebuildCurrentPrompt();
 
     // Deadlock / repetition detection and error self-healing
     const toolName = normalizedAgentToolName(call.name);
@@ -879,16 +1052,68 @@ export async function runSakiAgent(
   };
 
   for (let loop = 0; loop < loopLimit; loop += 1) {
-    if (runtime.abortController?.signal.aborted) {
-      return finishAgentResponse("aborted", "Watch diagnosis was cancelled.");
+    flushTurnNotes();
+    if (abortSignal?.aborted) {
+      return finishAgentResponse("aborted", abortedMessage());
     }
     loopsUsed = loop + 1;
     turnMadeProgress = false;
+    const thinkStepId = randomUUID();
+    emitSakiWorkflow(events, {
+      id: thinkStepId,
+      stage: "thinking",
+      message: "正在分析下一步...",
+      status: "running"
+    });
     let turn: SakiModelToolTurn;
     try {
-      turn = await callConfiguredAgentTurn(runtime, currentPrompt, events?.delta, events?.thinking);
+      turn = await callAgentTurnWithAbort(currentPrompt);
       totalTokensUsed += billedAgentTurnTokens(runtime.config.model, currentPrompt, turn);
+      emitSakiWorkflow(events, {
+        id: thinkStepId,
+        stage: "thinking",
+        message: accumulatedThinking.trim() ? "思考完成，开始执行。" : "正在分析下一步...",
+        status: "completed"
+      });
     } catch (error) {
+      if (error instanceof AgentAbortedError || abortSignal?.aborted) {
+        emitSakiWorkflow(events, {
+          id: thinkStepId,
+          stage: "thinking",
+          message: "任务已取消。",
+          status: "failed"
+        });
+        return finishAgentResponse("aborted", abortedMessage());
+      }
+      // Context-window recovery (like Claude Code auto-compact): when the
+      // request exceeds the model context, drop older working notes and retry once.
+      if (isContextOverflowError(error) && !contextOverflowRecovered) {
+        contextOverflowRecovered = true;
+        const keepRecent = Math.min(maxAgentRecentScratchpadEntries, 6);
+        const dropped = Math.max(0, agentScratchpadEntries.length - keepRecent);
+        if (dropped > 0) agentScratchpadEntries.splice(0, dropped);
+        appendAgentScratchpad(
+          "\n[Context overflow recovery]: The request exceeded the model context window. Older working notes were dropped. Continue from the recent observations below; re-read files only when strictly necessary.\n"
+        );
+        logSakiModelEvent("agent.context_overflow.retry", {
+          droppedEntries: dropped,
+          remainingEntries: agentScratchpadEntries.length,
+          model: runtime.config.model
+        });
+        emitSakiWorkflow(events, {
+          id: randomUUID(),
+          stage: "retry",
+          message: "上下文超出模型窗口，已压缩较早的工作记录并重试。",
+          status: "running"
+        });
+        continue;
+      }
+      emitSakiWorkflow(events, {
+        id: thinkStepId,
+        stage: "thinking",
+        message: "模型调用中断。",
+        status: "failed"
+      });
       if (toolExecutions > 0 || actions.length > 0) {
         const reason = error instanceof Error ? error.message : String(error);
         return finishAgentResponse(
@@ -948,11 +1173,8 @@ export async function runSakiAgent(
 <path>relative/path</path>
 <note>short visible note</note>
 </tool_call>
-If the task is complete, use:
-<tool_call name="respond">
-<text>final answer</text>
-</tool_call>
-Do NOT use JSON inside XML. Put raw text/code directly inside parameter tags. Never use Markdown fences.\nIMPORTANT: For editing files, use editLines or replaceInFile — NOT writeFile. writeFile is for new files only with <content> parameter.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
+If the task is complete, reply in plain text with no tool calls.
+Do NOT use JSON inside XML. Put raw text/code directly inside parameter tags. Never use Markdown fences.\nIMPORTANT: For editing files, use applyPatch. writeFile is for new files only.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
         continue;
       }
       const shouldRetry = !cleaned || looksLikeToolCallPayload(cleaned);
@@ -966,7 +1188,7 @@ Do NOT use JSON inside XML. Put raw text/code directly inside parameter tags. Ne
         });
         appendAgentScratchpad(`\n\nSystem correction: Your previous output did not produce valid tool calls. ${xmlToolFormatReminder()}
 Do NOT wrap parameters in JSON. Write raw code directly inside parameter tags. If no tool is needed, answer naturally in the user's language.
-IMPORTANT: editLines or replaceInFile for existing files; writeFile only for NEW files.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
+IMPORTANT: applyPatch for existing files; writeFile only for NEW files.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
         continue;
       }
 
@@ -980,17 +1202,32 @@ IMPORTANT: editLines or replaceInFile for existing files; writeFile only for NEW
     const visibleAssistantText = stripThinking(turn.content).trim();
     if (visibleAssistantText && !looksLikeToolCallPayload(visibleAssistantText) && !turn.forwardedDeltaText) {
       emitAgentNarration(events, visibleAssistantText);
-      appendAgentScratchpad(`\nAssistant visible note: ${redactSensitiveText(visibleAssistantText).slice(0, 1200)}\n`);
     }
+    for (const call of toolCalls) ensureToolCallId(call);
+    turnMessages.push({
+      role: "assistant",
+      content: looksLikeToolCallPayload(visibleAssistantText) ? "" : visibleAssistantText,
+      toolCalls
+    });
+    rebuildCurrentPrompt();
 
     for (let callIndex = 0; callIndex < toolCalls.length;) {
+      if (abortSignal?.aborted) {
+        return finishAgentResponse("aborted", abortedMessage());
+      }
       const call = toolCalls[callIndex];
       if (!call) break;
 
       if (call.name.toLowerCase() === "reportprogress") {
         const text = rawStringArg(toolArgs(call), "text");
         emitAgentNarration(events, text);
-        appendAgentScratchpad(`\nAssistant: ${renderToolCall(call)}\nObservation: ${redactSensitiveText(text).slice(0, 1200)}\n`);
+        turnMessages.push({
+          role: "tool",
+          toolCallId: ensureToolCallId(call),
+          name: call.name,
+          content: redactSensitiveText(text).slice(0, 1200)
+        });
+        rebuildCurrentPrompt();
         callIndex += 1;
         continue;
       }
@@ -1014,6 +1251,9 @@ IMPORTANT: editLines or replaceInFile for existing files; writeFile only for NEW
         }
 
         const results = await Promise.all(batch.map((item) => runToolWithWorkflow(item.call, item.toolStepId)));
+        if (abortSignal?.aborted) {
+          return finishAgentResponse("aborted", abortedMessage());
+        }
         for (const result of results) {
           const finalResponse = await handleToolResult(result);
           if (finalResponse) return finalResponse;
@@ -1030,9 +1270,23 @@ IMPORTANT: editLines or replaceInFile for existing files; writeFile only for NEW
         tool: call.name,
         call: toolDisplayArgs(call)
       });
-      const finalResponse = await handleToolResult(await runToolWithWorkflow(call, toolStepId));
+      const toolResult = await runToolWithWorkflow(call, toolStepId);
+      if (abortSignal?.aborted) {
+        return finishAgentResponse("aborted", abortedMessage());
+      }
+      const finalResponse = await handleToolResult(toolResult);
       if (finalResponse) return finalResponse;
       callIndex += 1;
+    }
+
+    flushTurnNotes();
+    if (runtime.taskId) {
+      const steers = takeSakiTaskSteers(runtime.taskId);
+      for (const steer of steers) {
+        turnMessages.push({ role: "user", content: steer });
+        emitAgentNarration(events, `收到新指示：${steer.slice(0, 200)}`);
+      }
+      if (steers.length) rebuildCurrentPrompt();
     }
 
     if (turnMadeProgress) {
@@ -1048,25 +1302,26 @@ IMPORTANT: editLines or replaceInFile for existing files; writeFile only for NEW
     }
   }
 
-  const alreadyEdited = actions.some((item) => item.ok && fileEditTools.has(normalizedAgentToolName(item.tool)));
-  if (!alreadyEdited && loopsUsed < 8) {
-    try {
-      const finalWrapPrompt = `${currentPrompt}\n\n[TASK RESOLUTION]: Provide a concise final summary of what was found. Do not re-read files. Output natural text, no tool calls.`;
-      const finalTurn = await callConfiguredAgentTurn(runtime, finalWrapPrompt, events?.delta, events?.thinking);
-      totalTokensUsed += billedAgentTurnTokens(runtime.config.model, finalWrapPrompt, finalTurn);
-      const cleaned = stripThinking(finalTurn.content).trim();
-      if (cleaned && !looksLikeToolCallPayload(cleaned)) {
-        return finishAgentResponse("natural_wrapup", cleaned);
-      }
-    } catch {}
-  }
+  flushTurnNotes();
 
   // Synthesize a structured engineering outcome if the model did not emit text:
   const edits = actions.filter((a) => a.ok && fileEditTools.has(normalizedAgentToolName(a.tool)));
   const searches = actions.filter((a) => a.ok && (a.tool === "searchfiles" || a.tool === "outlinefile" || a.tool === "findsymbols" || a.tool === "readfile"));
   let finalSummary = "";
   if (edits.length > 0) {
-    finalSummary = `已完成代码定位与修改。\n\n**修改记录**：\n${edits.map((e) => `- \`${e.tool}\`: ${e.observation.slice(0, 120)}`).join("\n")}\n\n请检查上述修改是否满足预期。`;
+    const paths = new Set<string>();
+    for (const edit of edits) {
+      const direct = String(edit.args?.path ?? "").replace(/\\/g, "/").trim();
+      if (direct) paths.add(direct);
+      for (const match of edit.observation.matchAll(/✓ \S+ (\S+)/g)) {
+        const path = (match[1] ?? "").replace(/\\/g, "/").trim();
+        if (path) paths.add(path);
+      }
+    }
+    const list = [...paths].map((path) => `- \`${path}\``).join("\n");
+    finalSummary = list
+      ? `已完成修改。\n\n${list}\n\n请检查上述文件是否符合预期。`
+      : `已完成 ${edits.length} 处文件修改。请检查是否符合预期。`;
   } else if (searches.length > 0) {
     finalSummary = `已完成工作区代码排查与分析。\n\n**排查结果**：\n${searches.slice(-5).map((s) => `- \`${s.tool}\`: ${s.observation.slice(0, 120)}`).join("\n")}`;
   } else {

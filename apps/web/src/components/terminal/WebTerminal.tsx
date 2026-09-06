@@ -151,11 +151,14 @@ export type TerminalAutocompleteState = {
 };
 
 export const terminalCommandAutocompleteWords = [
+  "agy",
   "bun",
   "cargo",
   "cat",
   "cd",
   "clear",
+  "claude",
+  "codex",
   "cls",
   "copy",
   "curl",
@@ -887,14 +890,22 @@ export function WebTerminal({
     const initialTheme = isDark ? originalBlackTheme : finalShellNavyTheme;
 
     const terminal = new XTerm({
-      convertEol: true,
+      convertEol: false,
       cursorBlink: true,
+      cursorStyle: "bar",
       fontFamily: 'Consolas, "SFMono-Regular", "Menlo", "Courier New", monospace',
       fontSize: 13,
       lineHeight: 1.28,
       letterSpacing: 0,
-      scrollback: 2500,
-      theme: initialTheme
+      scrollback: 8000,
+      macOptionIsMeta: true,
+      macOptionClickForcesSelection: true,
+      rescaleOverlappingGlyphs: true,
+      allowTransparency: false,
+      theme: initialTheme,
+      ...(typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent)
+        ? { windowsPty: { backend: "conpty" as const, buildNumber: 22621 } }
+        : {})
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
@@ -910,7 +921,7 @@ export function WebTerminal({
       terminalDataHandlerRef.current(data);
     });
     const resizeSubscription = terminal.onResize(({ cols, rows }) => {
-      sendResizeRef.current(cols, Math.max(4, rows - 3));
+      sendResizeRef.current(cols, rows);
     });
     const selectionSubscription = terminal.onSelectionChange(() => {
       const selected = readTerminalClipboardText(terminal);
@@ -1078,7 +1089,7 @@ export function WebTerminal({
       if (!isActiveRef.current || !terminalHost) return;
       try {
         fitAddon.fit();
-        sendResizeRef.current(terminal.cols, Math.max(4, terminal.rows - 3));
+        sendResizeRef.current(terminal.cols, terminal.rows);
       } catch {}
     };
     fitTerminalSafeRef.current = fitTerminalSafe;
@@ -1261,9 +1272,16 @@ export function WebTerminal({
         }
       };
 
-      socket.onclose = () => {
+      socket.onclose = (event) => {
         if (disposed) {
           setConnectionState("closed");
+          return;
+        }
+        // 1008 = policy violation (unauthorized / permission denied). Reconnecting
+        // with the same credentials would loop forever, so stop and show the error.
+        if (event.code === 1008) {
+          setConnectionState("error");
+          setError(event.reason || "终端会话未授权");
           return;
         }
         reconnectAttemptRef.current += 1;
@@ -1295,9 +1313,19 @@ export function WebTerminal({
       setError("终端未连接");
       return false;
     }
-    const payload: any = { type: "input", data, echo };
-    if (shellSessionId) payload.sessionId = shellSessionId;
-    socket.send(JSON.stringify(payload));
+    if (!data) return true;
+    const chunkSize = 16 * 1024;
+    for (let index = 0; index < data.length; ) {
+      let end = Math.min(index + chunkSize, data.length);
+      const last = data.charCodeAt(end - 1);
+      if (last >= 0xd800 && last <= 0xdbff && end < data.length) {
+        end += 1;
+      }
+      const payload: Record<string, unknown> = { type: "input", data: data.slice(index, end), echo };
+      if (shellSessionId) payload.sessionId = shellSessionId;
+      socket.send(JSON.stringify(payload));
+      index = end;
+    }
     return true;
   }
 

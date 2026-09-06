@@ -80,6 +80,8 @@ const gbkDecoder = new TextDecoder("gbk");
 interface ShellSession {
   id: string;
   instanceId: string;
+  label?: string | undefined;
+  createdAt: number;
   pty: IPty;
   exited: boolean;
   exit?: RuntimeExit | undefined;
@@ -87,6 +89,8 @@ interface ShellSession {
   exitListeners: Set<RuntimeExitListener>;
   dataSubscription: IDisposable;
   exitSubscription: IDisposable;
+  outputBuffer: string[];
+  outputBufferChars: number;
 }
 
 function replacementCount(value: string): number {
@@ -105,26 +109,35 @@ function decodeProcessOutput(chunk: Buffer): string {
   }
 }
 
-function commandEnvironment(spec?: DaemonInstanceSpec | null): NodeJS.ProcessEnv {
-  const colorEnvironment =
-    process.env.NO_COLOR === undefined
-      ? {
-          FORCE_COLOR: process.env.FORCE_COLOR ?? "1",
-          CLICOLOR: process.env.CLICOLOR ?? "1",
-          CLICOLOR_FORCE: process.env.CLICOLOR_FORCE ?? "1"
-        }
-      : {};
+function commandEnvironment(spec?: DaemonInstanceSpec | null, size?: { cols: number; rows: number }): NodeJS.ProcessEnv {
+  const inherited = { ...process.env };
+  delete inherited.CI;
+  delete inherited.CONTINUOUS_INTEGRATION;
+  delete inherited.GITHUB_ACTIONS;
+  delete inherited.GITLAB_CI;
+  delete inherited.TF_BUILD;
+  delete inherited.NO_COLOR;
+  delete inherited.TERM;
+  delete inherited.TERM_PROGRAM;
+
+  const cols = size?.cols ?? 120;
+  const rows = size?.rows ?? 30;
 
   const baseEnv: NodeJS.ProcessEnv = {
-    ...process.env,
-    TERM: process.env.TERM ?? "xterm-256color",
-    COLORTERM: process.env.COLORTERM ?? "truecolor",
-    ...colorEnvironment,
-    LANG: process.env.LANG ?? "C.UTF-8",
-    LC_ALL: process.env.LC_ALL ?? "C.UTF-8",
+    ...inherited,
+    TERM: "xterm-256color",
+    COLORTERM: "truecolor",
+    TERM_PROGRAM: "saki-panel",
+    FORCE_COLOR: inherited.FORCE_COLOR ?? "3",
+    CLICOLOR: "1",
+    CLICOLOR_FORCE: "1",
+    COLUMNS: String(cols),
+    LINES: String(rows),
+    LANG: inherited.LANG && /utf-?8/i.test(inherited.LANG) ? inherited.LANG : "C.UTF-8",
+    LC_ALL: inherited.LC_ALL && /utf-?8/i.test(inherited.LC_ALL) ? inherited.LC_ALL : "C.UTF-8",
     PYTHONUTF8: "1",
     PYTHONIOENCODING: "utf-8",
-    PYTHONUNBUFFERED: process.env.PYTHONUNBUFFERED ?? "1"
+    PYTHONUNBUFFERED: inherited.PYTHONUNBUFFERED ?? "1"
   };
 
   if (spec?.proxy?.enabled && spec.proxy.server && spec.proxy.port) {
@@ -405,7 +418,7 @@ function getShell(sessionId: string): ShellSession | undefined {
   return shellSessions.get(sessionId);
 }
 
-function createInteractiveShellPty(instanceId: string, cwd: string): ShellSession {
+function createInteractiveShellPty(instanceId: string, cwd: string, label?: string): ShellSession {
   const id = randomUUID();
 
   let shellCmd: string;
@@ -425,7 +438,7 @@ function createInteractiveShellPty(instanceId: string, cwd: string): ShellSessio
     });
     if (ps) {
       shellCmd = ps;
-      shellArgs = ["-NoLogo", "-NoProfile", "-NoExit"];
+      shellArgs = ["-NoLogo", "-NoExit"];
     } else {
       shellCmd = process.env.ComSpec || "cmd.exe";
       shellArgs = [];
@@ -436,22 +449,48 @@ function createInteractiveShellPty(instanceId: string, cwd: string): ShellSessio
   }
 
   const spec = instanceSpecs.get(instanceId);
+  const cols = 120;
+  const rows = 30;
   const pty = nodePty.spawn(shellCmd, shellArgs, {
     name: "xterm-256color",
-    cols: 120,
-    rows: 30,
+    cols,
+    rows,
     cwd,
-    env: commandEnvironment(spec),
+    env: commandEnvironment(spec, { cols, rows }),
     encoding: "utf8",
     useConpty: process.platform === "win32"
   });
 
   const dataListeners = new Set<(text: string) => void>();
   const exitListeners = new Set<RuntimeExitListener>();
-  let exited = false;
-  let exitInfo: RuntimeExit | undefined = undefined;
 
-  const dataSubscription = pty.onData((data: string) => {
+  const session: ShellSession = {
+    id,
+    instanceId,
+    label: label?.trim() || undefined,
+    createdAt: Date.now(),
+    pty,
+    exited: false,
+    exit: undefined,
+    dataListeners,
+    exitListeners,
+    // Placeholder; replaced below
+    dataSubscription: { dispose: () => undefined },
+    exitSubscription: { dispose: () => undefined },
+    outputBuffer: [],
+    outputBufferChars: 0
+  };
+
+  const maxBufferChars = 200000;
+  session.dataSubscription = pty.onData((data: string) => {
+    session.outputBuffer.push(data);
+    session.outputBufferChars += data.length;
+    while (session.outputBufferChars > maxBufferChars && session.outputBuffer.length > 1) {
+      const dropped = session.outputBuffer.shift();
+      if (dropped) {
+        session.outputBufferChars -= dropped.length;
+      }
+    }
     for (const listener of dataListeners) {
       try {
         listener(data);
@@ -459,28 +498,18 @@ function createInteractiveShellPty(instanceId: string, cwd: string): ShellSessio
     }
   });
 
-  const exitSubscription = pty.onExit((event) => {
-    exited = true;
-    exitInfo = typeof event.signal === "number"
+  session.exitSubscription = pty.onExit((event) => {
+    session.exited = true;
+    session.exit = typeof event.signal === "number"
       ? { code: event.exitCode, signal: event.signal }
       : { code: event.exitCode };
     for (const listener of [...exitListeners]) {
-      listener(exitInfo);
+      listener(session.exit);
     }
     exitListeners.clear();
+    // Drop the session so dead shells do not accumulate in the registry.
+    shellSessions.delete(id);
   });
-
-  const session: ShellSession = {
-    id,
-    instanceId,
-    pty,
-    exited,
-    exit: exitInfo,
-    dataListeners,
-    exitListeners,
-    dataSubscription,
-    exitSubscription
-  };
 
   shellSessions.set(id, session);
   return session;
@@ -506,6 +535,12 @@ function subscribeToShell(
   const unsubscribers: Array<() => void> = [];
 
   if (handlers.onData) {
+    // Replay output buffer to new subscriber for session restoration
+    for (const chunk of session.outputBuffer) {
+      try {
+        handlers.onData(chunk);
+      } catch {}
+    }
     session.dataListeners.add(handlers.onData);
     unsubscribers.push(() => session.dataListeners.delete(handlers.onData!));
   }
@@ -548,12 +583,14 @@ function startPtyRuntimeChild(
   onData: (text: string) => void
 ): RuntimeChild {
   let managed: PtyRuntimeChild;
+  const cols = 160;
+  const rows = 40;
   const pty = nodePty.spawn(launcher.file, launcher.args, {
     name: "xterm-256color",
-    cols: 160,
-    rows: 40,
+    cols,
+    rows,
     cwd,
-    env: commandEnvironment(spec),
+    env: commandEnvironment(spec, { cols, rows }),
     encoding: "utf8",
     useConpty: process.platform === "win32"
   });
@@ -921,6 +958,7 @@ export class InstanceManager {
     try {
       child = startPtyRuntimeChild(launcher, cwd, runtimeSpec, (text) => {
         runtimeEvents.emit(`data:${spec.id}`, text);
+        if (text.includes("\x1b[") && text.length > 400) return;
         appendLog(spec.id, runtime, "stdout", text);
       });
     } catch (error) {
@@ -1034,16 +1072,21 @@ export class InstanceManager {
       return this.state(spec.id);
     }
 
+    // Validate the stop command before mutating state so a blocked command
+    // cannot leave the instance stuck in STOPPING with the child still running.
+    const stopCommand = spec.stopCommand;
+    if (stopCommand && runtime.cwd) {
+      assertCommandAllowed(stopCommand);
+    }
+
     runtime.status = "STOPPING";
     runtime.stopping = true;
     this.clearRestartTimer(runtime);
     emitStatus(spec.id, runtime);
     appendLog(spec.id, runtime, "system", "Stopping instance.");
 
-    const stopCommand = spec.stopCommand;
     if (stopCommand && runtime.cwd) {
       appendLog(spec.id, runtime, "system", `Running stop command: ${stopCommand}`);
-      assertCommandAllowed(stopCommand);
       await new Promise<void>((resolve) => {
         const launcher = commandLauncher(stopCommand);
         const stopper = spawn(launcher.file, launcher.args, {
@@ -1170,17 +1213,19 @@ export class InstanceManager {
   }
 
   resize(instanceId: string, cols: number, rows: number): void {
+    if (!Number.isFinite(cols) || !Number.isFinite(rows)) return;
     const runtime = getRuntime(instanceId);
     if (runtime.child && runtime.child.type === "pty") {
       try {
-        const safeCols = Math.max(10, Math.min(cols, 500));
-        const safeRows = Math.max(5, Math.min(rows, 200));
+        const safeCols = Math.max(10, Math.min(Math.floor(cols), 500));
+        const safeRows = Math.max(5, Math.min(Math.floor(rows), 200));
         runtime.child.pty.resize?.(safeCols, safeRows);
       } catch {}
     }
   }
 
   resizeShell(instanceId: string, sessionId: string, cols: number, rows: number): void {
+    if (!Number.isFinite(cols) || !Number.isFinite(rows)) return;
     const session = shellSessions.get(sessionId);
     if (session && !session.exited) {
       try {
@@ -1195,15 +1240,17 @@ export class InstanceManager {
     instanceSpecs.set(spec.id, spec);
   }
 
-  async createShell(instanceId: string): Promise<{ sessionId: string }> {
+  async createShell(
+    instanceId: string,
+    workingDirectory?: string,
+    label?: string
+  ): Promise<{ sessionId: string; label?: string | undefined }> {
     const spec = instanceSpecs.get(instanceId);
-    if (!spec) {
-      throw new Error("Instance spec not found. Start or register the instance first.");
-    }
-    const cwd = await ensureInsideWorkspace(spec.workingDirectory);
+    const targetDir = workingDirectory || spec?.workingDirectory || ".";
+    const cwd = await ensureInsideWorkspace(targetDir);
     await fs.mkdir(cwd, { recursive: true });
-    const session = createInteractiveShellPty(instanceId, cwd);
-    return { sessionId: session.id };
+    const session = createInteractiveShellPty(instanceId, cwd, label);
+    return { sessionId: session.id, label: session.label };
   }
 
   writeShellInput(instanceId: string, sessionId: string, data: string): void {
@@ -1222,20 +1269,24 @@ export class InstanceManager {
     closeShellSession(sessionId);
   }
 
-  listShells(instanceId: string): string[] {
-    const result: string[] = [];
+  listShells(instanceId: string): Array<{ id: string; label?: string | undefined; createdAt: number }> {
+    const result: Array<{ id: string; label?: string | undefined; createdAt: number }> = [];
     for (const [sid, sess] of shellSessions.entries()) {
       if (sess.instanceId === instanceId && !sess.exited) {
-        result.push(sid);
+        result.push({
+          id: sid,
+          label: sess.label,
+          createdAt: sess.createdAt
+        });
       }
     }
-    return result;
+    return result.sort((a, b) => a.createdAt - b.createdAt);
   }
 
   async runCommand(
     instanceId: string,
     command: string,
-    options: { workingDirectory?: string; timeoutMs?: number; input?: string } = {}
+    options: { workingDirectory?: string; timeoutMs?: number; input?: string; signal?: AbortSignal } = {}
   ): Promise<InstanceCommandResponse> {
     const runtime = getRuntime(instanceId);
     assertCommandAllowed(command);
@@ -1255,6 +1306,7 @@ export class InstanceManager {
       let stdout = "";
       let stderr = "";
       let timedOut = false;
+      let aborted = false;
       let settled = false;
 
       const spec = instanceSpecs.get(instanceId);
@@ -1269,23 +1321,38 @@ export class InstanceManager {
       });
       child.stdin?.end(typeof options.input === "string" ? options.input : undefined);
 
-      const timer = setTimeout(() => {
-        timedOut = true;
-        appendLog(instanceId, runtime, "system", `Agent command timed out after ${timeoutMs}ms; stopping it.`);
+      const killChild = (reason: string) => {
+        appendLog(instanceId, runtime, "system", reason);
         void signalProcessTree({ type: "process", process: child }, "SIGKILL", true, (message) => appendLog(instanceId, runtime, "system", message)).catch((error) => {
           appendLog(instanceId, runtime, "system", `Agent command kill failed: ${error instanceof Error ? error.message : "unknown error"}`);
         });
+      };
+
+      const timer = setTimeout(() => {
+        timedOut = true;
+        killChild(`Agent command timed out after ${timeoutMs}ms; stopping it.`);
       }, timeoutMs);
+
+      const onAbort = () => {
+        aborted = true;
+        killChild("Agent command cancelled; stopping it.");
+      };
+      if (options.signal?.aborted) {
+        onAbort();
+      } else {
+        options.signal?.addEventListener("abort", onAbort, { once: true });
+      }
 
       function finish(exitCode: number | null, signal: NodeJS.Signals | string | null): void {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        options.signal?.removeEventListener("abort", onAbort);
         resolve({
           command,
           workingDirectory: cwd,
           exitCode,
-          signal: timedOut ? "TIMEOUT" : signal,
+          signal: aborted ? "ABORTED" : timedOut ? "TIMEOUT" : signal,
           stdout,
           stderr,
           durationMs: Date.now() - startedAt

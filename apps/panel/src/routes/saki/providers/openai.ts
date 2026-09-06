@@ -10,12 +10,13 @@ import {
   providerConfigFor,
   pushStreamingTextDelta,
   RouteError,
-  streamingThinkingText,
+  extractReasoningFromStreamPayload,
   stripThinking,
   trimString
 } from "../types.js";
 import { normalizeStructuredToolCall, openAiToolSchemas, parseJsonMaybe, toolSchemasForRuntime, withAdvertisedSakiToolSchemas } from "../tools.js";
 import { buildDirectMessages, buildDirectSystemPrompt } from "../prompt.js";
+import { buildOpenAiAgentMessages, buildPromptFallbackMessages } from "../agent-messages.js";
 import { extractProviderUsage, mergeModelUsage, type ModelUsage } from "../../../tokenizer.js";
 import {
   isOfficialOpenAiEndpoint,
@@ -24,7 +25,7 @@ import {
   streamPromptAgentTurnWithFilteredDelta,
   withTurnUsage
 } from "./common.js";
-import { readServerSentEventData, requestOpenAiCompatibleJsonPayload, requestOpenAiCompatibleStreamingPayload } from "./http.js";
+import { parseStreamJsonPayload, readServerSentEventData, requestOpenAiCompatibleJsonPayload, requestOpenAiCompatibleStreamingPayload } from "./http.js";
 import {
   extractOpenAiChatText,
   extractOpenAiChatTurn,
@@ -73,8 +74,8 @@ export function openAiStreamDelta(payload: unknown): { content: string; reasonin
   const choice = Array.isArray(root?.choices) ? objectValue(root.choices[0]) : null;
   const delta = objectValue(choice?.delta);
   const content = chatTextFromContent(delta?.content) || trimString(delta?.text) || trimString(choice?.text);
-  const reasoningContent = delta?.reasoning_content || delta?.reasoning || delta?.thinking;
-  return { content, reasoningContent: reasoningContent ? String(reasoningContent) : undefined };
+  const reasoningContent = extractReasoningFromStreamPayload(payload);
+  return { content, reasoningContent: reasoningContent || undefined };
 }
 
 export async function callOpenAiCompatibleModelStream(
@@ -111,7 +112,9 @@ export async function callOpenAiCompatibleModelStream(
     async (response) => {
       await readServerSentEventData(response, (data) => {
         if (data === "[DONE]") return;
-        const chunk = openAiStreamDelta(JSON.parse(data) as unknown);
+        const payload = parseStreamJsonPayload(data);
+        if (payload === undefined) return;
+        const chunk = openAiStreamDelta(payload);
         pushStreamingTextDelta(state, chunk.content, onDelta, onThinking, chunk.reasoningContent);
       });
     }
@@ -143,7 +146,7 @@ export async function callOpenAiCompatibleAgentTurn(
       model,
       {
         model,
-        messages: withOpenAiImageInputs(buildDirectMessages(input, prompt, buildDirectSystemPrompt(config)), input),
+        messages: buildOpenAiAgentMessages(input, prompt, config),
         tools: openAiToolSchemas(),
         tool_choice: "auto"
       },
@@ -175,7 +178,7 @@ export async function callOpenAiCompatiblePromptAgentTurn(
       model,
       {
         model,
-        messages: withOpenAiImageInputs(buildDirectMessages(input, prompt, buildDirectSystemPrompt(config)), input)
+        messages: withOpenAiImageInputs(buildPromptFallbackMessages(input, prompt, config), input)
       },
       0.2
     ),
@@ -215,8 +218,8 @@ export function openAiStreamChunk(payload: unknown): { content: string; toolCall
   if (legacy && (legacy.name || legacy.arguments)) {
     toolCalls.push({ index: 0, function: legacy });
   }
-  const reasoningContent = delta?.reasoning_content || delta?.reasoning || delta?.thinking;
-  return { content, toolCalls, reasoningContent: reasoningContent ? String(reasoningContent) : undefined };
+  const reasoningContent = extractReasoningFromStreamPayload(payload);
+  return { content, toolCalls, reasoningContent: reasoningContent || undefined };
 }
 
 export class OpenAiStreamToolCallAccumulator {
@@ -286,7 +289,7 @@ export async function callOpenAiCompatibleAgentTurnStream(
       model,
       {
         model,
-        messages: withOpenAiImageInputs(buildDirectMessages(input, prompt, buildDirectSystemPrompt(config)), input),
+        messages: buildOpenAiAgentMessages(input, prompt, config),
         tools: openAiToolSchemas(),
         tool_choice: "auto",
         stream: true,
@@ -298,7 +301,8 @@ export async function callOpenAiCompatibleAgentTurnStream(
     async (response) => {
       await readServerSentEventData(response, (data) => {
         if (data === "[DONE]") return;
-        const parsed = JSON.parse(data) as unknown;
+        const parsed = parseStreamJsonPayload(data);
+        if (parsed === undefined) return;
         usageHolder.current = mergeModelUsage(usageHolder.current, extractProviderUsage(parsed));
         const chunk = openAiStreamChunk(parsed);
         toolAccumulator.ingest(chunk.toolCalls);
@@ -333,7 +337,7 @@ export async function callOpenAiCompatiblePromptAgentTurnStream(
   onThinking?: (text: string) => void
 ): Promise<SakiModelToolTurn> {
   return streamPromptAgentTurnWithFilteredDelta(
-    (filteredDelta) => callOpenAiCompatibleModelStream(provider, config, input, prompt, filteredDelta),
+    (filteredDelta) => callOpenAiCompatibleModelStream(provider, config, input, prompt, filteredDelta, onThinking),
     onDelta,
     onThinking
   );

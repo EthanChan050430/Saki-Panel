@@ -17,9 +17,9 @@ import {
 } from "../routes/saki/state.js";
 import type { SakiAgentRuntime } from "../routes/saki/types.js";
 import { buildWatchSystemPrompt, buildWatchUserMessage, watchChatRequest } from "../routes/saki/watch-prompt.js";
-import { getIncident, updateIncident } from "./incidents.js";
-import { recordWatchRun, watchRunsInLastHour } from "./detector.js";
-import { suppressRestart } from "./leases.js";
+import { emitIncident, getIncident, updateIncident } from "./incidents.js";
+import { recordWatchRun, watchCooldownRemainingSeconds, watchRunsInLastHour } from "./detector.js";
+import { clearRestartLease, suppressRestart } from "./leases.js";
 import { readWatchPolicy } from "./policy.js";
 import { assertUserHasSpendablePoints, InsufficientPointsError } from "../points.js";
 import { verifyIncident } from "./verify.js";
@@ -96,12 +96,26 @@ export async function maybeFinishWatchIncident(incidentId: string): Promise<void
       await verifyIncident(incidentId);
       return;
     }
-    await updateIncident(incidentId, {
-      status: "diagnosed",
-      summary: incident.diagnosis?.summary ?? incident.summary ?? "Saki 已完成诊断，等待你接手。"
+    // 诊断完成但没有文件改动（或 diagnose_only 模式）：不会进入验证，立即释放 restart lease。
+    clearRestartLease(incident.instanceId);
+    let summary = incident.diagnosis?.summary ?? incident.summary ?? "Saki 已完成诊断，等待你接手。";
+    // 没有后续自动动作时，若实例仍处于崩溃/停止状态，在 summary 里明确提示人工启动。
+    const instanceRow = await prisma.instance.findUnique({
+      where: { id: incident.instanceId },
+      select: { status: true }
     });
+    if (instanceRow && (instanceRow.status === "CRASHED" || instanceRow.status === "STOPPED")) {
+      summary = `${summary} 实例仍未运行，需要手动启动。`;
+    }
+    await updateIncident(incidentId, { status: "diagnosed", summary });
   } finally {
     finishing.delete(incidentId);
+  }
+}
+
+export class WatchRunConflictError extends Error {
+  constructor() {
+    super("Saki is already diagnosing this instance.");
   }
 }
 
@@ -116,7 +130,7 @@ export async function startWatchRun(input: {
   requestedByUserId?: string;
 }): Promise<void> {
   if (runningInstanceIds.has(input.instanceId)) {
-    throw new Error("Saki is already diagnosing this instance.");
+    throw new WatchRunConflictError();
   }
   runningInstanceIds.add(input.instanceId);
   suppressRestart(input.instanceId);
@@ -125,6 +139,7 @@ export async function startWatchRun(input: {
   try {
     const latest = await getIncident(input.incidentId);
     if (!latest || latest.status === "ignored" || latest.status === "rolled_back") {
+      clearRestartLease(input.instanceId);
       return;
     }
 
@@ -134,6 +149,7 @@ export async function startWatchRun(input: {
     });
     if (!instance) {
       await updateIncident(input.incidentId, { status: "failed", summary: "实例已不存在。" });
+      clearRestartLease(input.instanceId);
       return;
     }
 
@@ -148,6 +164,7 @@ export async function startWatchRun(input: {
         status: "open",
         summary: "需要拥有 saki.agent 权限的账号确认后，才能开始诊断。"
       });
+      clearRestartLease(input.instanceId);
       return;
     }
 
@@ -225,14 +242,17 @@ export async function startWatchRun(input: {
       }
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Saki watch failed";
+      console.error("Saki watch diagnosis failed:", error instanceof Error ? error.stack ?? error.message : error);
       finishActiveSakiTask(taskId, abortController.signal.aborted ? "cancelled" : "failed", undefined, reason);
       const current = await getIncident(input.incidentId);
       if (!current || current.status === "ignored" || current.status === "rolled_back" || abortController.signal.aborted) {
         return;
       }
+      // 诊断失败：不会进入验证，释放 restart lease；对外用友好文案，内部细节只进服务端日志。
+      clearRestartLease(input.instanceId);
       await updateIncident(input.incidentId, {
         status: "diagnosed",
-        summary: `Saki 值班诊断失败：${reason}`
+        summary: "Saki 值班诊断失败，请稍后重试或人工接手。"
       });
     }
   } finally {
@@ -240,13 +260,35 @@ export async function startWatchRun(input: {
   }
 }
 
-const diagnosableStatuses = new Set(["open", "diagnosed", "failed"]);
+// rate_limited 不计入"已在运行"的阻塞：一小时窗口过去后允许重新 claim（预算会重新检查）。
+const diagnosableStatuses = new Set(["open", "diagnosed", "failed", "rate_limited"]);
+
+// watchRunsInLastHour 检查与 recordWatchRun 之间按实例串行化，降低并发确认导致的超预算。
+const confirmLocks = new Map<string, Promise<unknown>>();
 
 export async function confirmWatchDiagnosis(input: {
   incidentId: string;
   requestedByUserId: string;
 }): Promise<void> {
   await assertUserHasSpendablePoints(input.requestedByUserId);
+  const incident = await getIncident(input.incidentId);
+  if (!incident) {
+    throw new Error("Incident not found");
+  }
+  const previous = confirmLocks.get(incident.instanceId) ?? Promise.resolve();
+  const task = previous.catch(() => undefined).then(() => confirmWatchDiagnosisLocked(input));
+  confirmLocks.set(incident.instanceId, task);
+  try {
+    await task;
+  } finally {
+    if (confirmLocks.get(incident.instanceId) === task) confirmLocks.delete(incident.instanceId);
+  }
+}
+
+async function confirmWatchDiagnosisLocked(input: {
+  incidentId: string;
+  requestedByUserId: string;
+}): Promise<void> {
   const incident = await getIncident(input.incidentId);
   if (!incident) {
     throw new Error("Incident not found");
@@ -258,6 +300,10 @@ export async function confirmWatchDiagnosis(input: {
   const policy = await readWatchPolicy(incident.instanceId);
   if (!policy.enabled || policy.mode === "off") {
     throw new Error("Watch is disabled for this instance.");
+  }
+  const cooldownRemaining = watchCooldownRemainingSeconds(incident.instanceId, policy.cooldownSeconds);
+  if (cooldownRemaining > 0) {
+    throw new Error(`距离上次诊断不足 ${policy.cooldownSeconds} 秒的冷却期，请约 ${cooldownRemaining} 秒后再试。`);
   }
   if (watchRunsInLastHour(incident.instanceId) >= policy.maxRunsPerHour) {
     await updateIncident(incident.id, {
@@ -279,6 +325,8 @@ export async function confirmWatchDiagnosis(input: {
   if (claimed.count === 0) {
     throw new Error("This incident is already being handled or does not need a new diagnosis.");
   }
+  // claim 用 updateMany 保证原子性，但不会触发 SSE；这里补推 diagnosing 中间态。
+  void emitIncident(incident.id);
   void startWatchRun({
     incidentId: incident.id,
     instanceId: incident.instanceId,
@@ -289,22 +337,53 @@ export async function confirmWatchDiagnosis(input: {
     mode,
     requestedByUserId: input.requestedByUserId
   }).catch(async (error) => {
-    if (runningInstanceIds.has(incident.instanceId)) return;
+    // startWatchRun 内部已处理 agent 层的失败；能走到这里的都是启动阶段的异常
+    // （含 runningInstanceIds 已占用的同步抛错），把单子退回 open 而不是留在 diagnosing + taskId null。
+    console.error("Saki watch run failed to start:", error instanceof Error ? error.stack ?? error.message : error);
     const current = await getIncident(incident.id);
-    if (!current || current.status === "ignored" || current.status === "rolled_back" || current.status === "diagnosing" && current.taskId) {
+    if (!current || current.status === "ignored" || current.status === "rolled_back") {
       return;
     }
-    const reason = error instanceof Error ? error.message : "Saki watch failed";
+    if (current.taskId) {
+      cancelActiveSakiTask(current.taskId);
+    }
+    if (!(error instanceof WatchRunConflictError)) {
+      // 冲突错误说明 lease/运行锁属于另一个正在进行的诊断，不能清；其余情况是我们自己留下的。
+      clearRestartLease(incident.instanceId);
+    }
     await updateIncident(incident.id, {
       status: "open",
-      summary: `未能开始诊断：${reason}。额度未继续消耗。`
+      taskId: null,
+      summary:
+        error instanceof WatchRunConflictError
+          ? "该实例已有另一个诊断正在进行，请稍后再确认。额度未继续消耗。"
+          : "未能开始诊断，请稍后重试。额度未继续消耗。"
     }).catch(() => undefined);
   });
 }
 
+const cancelWatchdogMs = 30 * 1000;
+
 export async function cancelWatchIncident(incidentId: string): Promise<void> {
   const incident = await getIncident(incidentId);
-  if (incident?.taskId) {
-    cancelActiveSakiTask(incident.taskId);
-  }
+  if (!incident?.taskId) return;
+  const taskId = incident.taskId;
+  cancelActiveSakiTask(taskId);
+  // 看门狗：abort 后任务若 30 秒仍未结束，强制释放运行锁并把单子退回 open，
+  // 避免 runningInstanceIds 被永久占用、该实例再也无法诊断。
+  const watchdog = setTimeout(() => {
+    void (async () => {
+      const current = await getIncident(incidentId);
+      if (!current || current.taskId !== taskId) return;
+      if (current.status !== "diagnosing" && current.status !== "applying" && current.status !== "awaiting_approval") return;
+      runningInstanceIds.delete(current.instanceId);
+      clearRestartLease(current.instanceId);
+      await updateIncident(incidentId, {
+        status: "open",
+        taskId: null,
+        summary: "诊断任务未能在取消后正常结束，已强制中止并退回待确认状态。"
+      }).catch(() => undefined);
+    })();
+  }, cancelWatchdogMs);
+  watchdog.unref?.();
 }

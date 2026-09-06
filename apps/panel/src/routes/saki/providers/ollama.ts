@@ -11,12 +11,14 @@ import {
   providerConfigFor,
   pushStreamingTextDelta,
   RouteError,
-  streamingThinkingText,
+  extractReasoningText,
   stripThinking,
   trimString
 } from "../types.js";
+import { sakiModelWantsNativeThinking } from "../model-profile.js";
 import { openAiToolSchemas, toolSchemasForRuntime, withAdvertisedSakiToolSchemas } from "../tools.js";
 import { buildDirectMessages, buildDirectSystemPrompt } from "../prompt.js";
+import { buildOllamaAgentMessages } from "../agent-messages.js";
 import { extractProviderUsage, mergeModelUsage, type ModelUsage } from "../../../tokenizer.js";
 import { streamPromptAgentTurnWithFilteredDelta, withTurnUsage } from "./common.js";
 import { readJsonLineData, requestJsonPayload, requestStreamingPayload } from "./http.js";
@@ -43,6 +45,7 @@ export async function callOllamaModel(config: SakiConfigResponse, input: SakiCha
       body: JSON.stringify({
         model: requireChatModel(config, "ollama"),
         stream: false,
+        ...(sakiModelWantsNativeThinking("ollama", config.model) ? { think: true } : {}),
         messages: withOllamaImageInputs(buildDirectMessages(input, prompt, buildDirectSystemPrompt(config)), input)
       })
     },
@@ -58,8 +61,11 @@ export function ollamaStreamDelta(payload: unknown): { content: string; reasonin
   const item = objectValue(payload);
   const message = objectValue(item?.message);
   const content = chatTextFromContent(message?.content) || trimString(item?.response);
-  const reasoningContent = message?.reasoning_content || item?.reasoning_content;
-  return { content, reasoningContent: reasoningContent ? String(reasoningContent) : undefined };
+  const reasoningContent =
+    extractReasoningText(message) ||
+    extractReasoningText(item) ||
+    trimString(message?.thinking);
+  return { content, reasoningContent: reasoningContent || undefined };
 }
 
 export async function callOllamaModelStream(
@@ -81,6 +87,7 @@ export async function callOllamaModelStream(
       body: JSON.stringify({
         model: requireChatModel(config, "ollama"),
         stream: true,
+        ...(sakiModelWantsNativeThinking("ollama", config.model) ? { think: true } : {}),
         messages: withOllamaImageInputs(buildDirectMessages(input, prompt, buildDirectSystemPrompt(config)), input)
       })
     },
@@ -111,7 +118,8 @@ export async function callOllamaAgentTurn(config: SakiConfigResponse, input: Sak
         body: JSON.stringify({
           model: requireChatModel(config, "ollama"),
           stream: false,
-          messages: withOllamaImageInputs(buildDirectMessages(input, prompt, buildDirectSystemPrompt(config)), input),
+          ...(sakiModelWantsNativeThinking("ollama", config.model) ? { think: true } : {}),
+          messages: buildOllamaAgentMessages(input, prompt, config),
           ...(withTools ? { tools: openAiToolSchemas() } : {})
         })
       },
@@ -143,8 +151,11 @@ export function ollamaAgentStreamChunk(payload: unknown): { content: string; too
   const message = objectValue(item?.message);
   const content = chatTextFromContent(message?.content) || trimString(item?.response);
   const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
-  const reasoningContent = message?.reasoning_content || item?.reasoning_content;
-  return { content, toolCalls, reasoningContent: reasoningContent ? String(reasoningContent) : undefined };
+  const reasoningContent =
+    extractReasoningText(message) ||
+    extractReasoningText(item) ||
+    trimString(message?.thinking);
+  return { content, toolCalls, reasoningContent: reasoningContent || undefined };
 }
 
 export async function callOllamaAgentTurnStream(
@@ -169,7 +180,8 @@ export async function callOllamaAgentTurnStream(
       body: JSON.stringify({
         model: requireChatModel(config, "ollama"),
         stream: true,
-        messages: withOllamaImageInputs(buildDirectMessages(input, prompt, buildDirectSystemPrompt(config)), input),
+        ...(sakiModelWantsNativeThinking("ollama", config.model) ? { think: true } : {}),
+        messages: buildOllamaAgentMessages(input, prompt, config),
         ...(withTools ? { tools: openAiToolSchemas() } : {})
       })
     },
@@ -214,7 +226,7 @@ export async function callOllamaAgentTurnStreamWithFallback(
   } catch (error) {
     if (isToolCallingUnsupportedError(error)) {
       return streamPromptAgentTurnWithFilteredDelta(
-        (filteredDelta) => callOllamaModelStream(config, input, prompt, filteredDelta),
+        (filteredDelta) => callOllamaModelStream(config, input, prompt, filteredDelta, onThinking),
         onDelta,
         onThinking
       );

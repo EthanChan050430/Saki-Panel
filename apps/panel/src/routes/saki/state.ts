@@ -10,6 +10,7 @@ import type {
   SakiCheckpoint,
   SakiSessionAgentMemory
 } from "./types.js";
+import { trimString } from "./types.js";
 
 export const pendingSakiActions = new Map<string, PendingSakiAction>();
 export const completedSakiActions = new Map<string, SakiAgentAction>();
@@ -297,12 +298,28 @@ export function emitActiveSakiTaskEvent(
 ): void {
   const task = activeSakiTasks.get(taskId);
   if (!task) return;
+  task.updatedAt = new Date().toISOString();
+  // Coalesce consecutive text-stream events in the replay buffer. A long answer
+  // produces hundreds of delta/thinking frames; without merging they would push
+  // earlier frames past the cap and a reconnecting client would lose content.
+  if ((type === "delta" || type === "thinking") && typeof payload.text === "string") {
+    const last = task.eventsBuffer[task.eventsBuffer.length - 1];
+    if (last && last.type === type && typeof last.payload.text === "string") {
+      last.payload = { ...last.payload, text: `${last.payload.text}${payload.text}` };
+      last.ts = Date.now();
+      for (const subscriber of task.subscribers) {
+        try {
+          subscriber({ type, payload, ts: last.ts });
+        } catch {}
+      }
+      return;
+    }
+  }
   const event: SakiActiveTaskEvent = {
     type,
     payload,
     ts: Date.now()
   };
-  task.updatedAt = new Date().toISOString();
   task.eventsBuffer.push(event);
   if (task.eventsBuffer.length > 500) {
     task.eventsBuffer.shift();
@@ -322,6 +339,9 @@ export function finishActiveSakiTask(
 ): void {
   const task = activeSakiTasks.get(taskId);
   if (!task) return;
+  // A cancelled task is terminal: do not let the still-unwinding agent run
+  // overwrite it back to completed/failed or emit a second terminal event.
+  if (task.status === "cancelled") return;
   task.status = status;
   task.updatedAt = new Date().toISOString();
   if (response) task.response = response;
@@ -342,8 +362,55 @@ export function cancelActiveSakiTask(taskId: string): boolean {
   return true;
 }
 
+export function enqueueSakiTaskSteer(taskId: string, message: string): boolean {
+  const task = activeSakiTasks.get(taskId);
+  if (!task || task.status !== "running") return false;
+  const text = message.trim();
+  if (!text) return false;
+  task.pendingSteers = [...(task.pendingSteers ?? []), text.slice(0, 8000)];
+  task.updatedAt = new Date().toISOString();
+  emitActiveSakiTaskEvent(taskId, "workflow", {
+    id: `steer:${Date.now()}`,
+    stage: "steer",
+    message: `收到新指示：${text.slice(0, 160)}`,
+    status: "running"
+  });
+  return true;
+}
+
+export function takeSakiTaskSteers(taskId: string): string[] {
+  const task = activeSakiTasks.get(taskId);
+  if (!task?.pendingSteers?.length) return [];
+  const steers = task.pendingSteers;
+  task.pendingSteers = [];
+  task.updatedAt = new Date().toISOString();
+  return steers;
+}
+
+export function cancelRunningSakiTasksForContext(
+  userId: string,
+  instanceId: string | null,
+  exceptTaskId?: string
+): number {
+  let cancelled = 0;
+  const contextKey = sessionWorkingFilesKey(userId, instanceId);
+  const mappedId = activeSakiTasksByContext.get(contextKey);
+  for (const task of activeSakiTasks.values()) {
+    if (task.userId !== userId || task.status !== "running") continue;
+    if (exceptTaskId && task.id === exceptTaskId) continue;
+    const sameContext = task.instanceId === instanceId || task.id === mappedId;
+    if (!sameContext) continue;
+    if (cancelActiveSakiTask(task.id)) cancelled += 1;
+  }
+  return cancelled;
+}
+
 export function toSakiActiveTaskSummary(task: SakiActiveTask): SakiActiveTaskSummary {
   const actionCount = task.eventsBuffer.filter((e) => e.type === "action").length;
+  const lastWorkflow = [...task.eventsBuffer].reverse().find((e) => e.type === "workflow");
+  const progressMessage = trimString(lastWorkflow?.payload?.message);
+  const progressStatus = trimString(lastWorkflow?.payload?.status);
+  const progressTool = trimString(lastWorkflow?.payload?.tool);
   return {
     id: task.id,
     userId: task.userId,
@@ -354,9 +421,34 @@ export function toSakiActiveTaskSummary(task: SakiActiveTask): SakiActiveTaskSum
     message: task.input.message,
     ...(task.input.mode ? { mode: task.input.mode } : {}),
     actionCount,
+    ...(progressMessage
+      ? {
+          progress: {
+            message: progressMessage,
+            ...(progressStatus ? { status: progressStatus } : {}),
+            ...(progressTool ? { tool: progressTool } : {})
+          }
+        }
+      : {}),
     ...(task.response ? { response: task.response } : {}),
     ...(task.error ? { error: task.error } : {})
   };
+}
+
+export function listSakiActiveTasks(userId: string, limit = 20): SakiActiveTask[] {
+  const now = Date.now();
+  const tasks = [...activeSakiTasks.values()].filter((task) => {
+    if (task.userId !== userId) return false;
+    const reference = Date.parse(task.updatedAt || task.startedAt);
+    return Number.isFinite(reference) && now - reference <= activeTaskTtlMs;
+  });
+  tasks.sort((a, b) => {
+    const aRunning = a.status === "running" ? 0 : 1;
+    const bRunning = b.status === "running" ? 0 : 1;
+    if (aRunning !== bRunning) return aRunning - bRunning;
+    return Date.parse(b.startedAt) - Date.parse(a.startedAt);
+  });
+  return tasks.slice(0, Math.max(1, Math.min(limit, 50)));
 }
 
 void loadCheckpointsFromDisk();

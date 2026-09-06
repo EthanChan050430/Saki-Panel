@@ -46,6 +46,7 @@ import type {
   RegisterRequest,
   SakiChatRequest,
   SakiChatResponse,
+  SakiAntigravityAuthStatusResponse,
   SakiCopilotAuthStatusResponse,
   SakiCopilotLoginResponse,
   SakiConfigResponse,
@@ -182,6 +183,9 @@ function summarizeSakiStreamEvent(event: SakiChatStreamEvent): Record<string, un
     return { type: event.type, ts: event.ts ?? null };
   }
   if (event.type === "delta") {
+    return { type: event.type, chars: event.text.length, preview: compactDebugText(event.text, 120) };
+  }
+  if (event.type === "thinking") {
     return { type: event.type, chars: event.text.length, preview: compactDebugText(event.text, 120) };
   }
   if (event.type === "workflow") {
@@ -336,8 +340,25 @@ export interface SakiActiveTaskSummary {
   message: string;
   mode?: string;
   actionCount: number;
+  progress?: {
+    message: string;
+    status?: string;
+    tool?: string;
+  };
   response?: SakiChatResponse;
   error?: string;
+}
+
+export interface SakiSavedConversation {
+  id: string;
+  contextKey: string;
+  label: string;
+  detail: string;
+  instanceId?: string | null | undefined;
+  title: string;
+  messages: any[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 function parseSakiStreamFrame(frame: string): SakiChatStreamEvent | null {
@@ -435,6 +456,7 @@ async function requestSakiChatStream(
     if (buffer.trim()) dispatch(buffer);
   } catch (error) {
     if (finalResponse) return finalResponse;
+    if (signal?.aborted) throw error;
     logSakiBrowserDebug("stream.error", {
       ...summarizeSakiRequest(input),
       durationMs: Math.round(performance.now() - startedAt),
@@ -517,6 +539,7 @@ async function requestSakiTaskReconnectStream(
     if (buffer.trim()) dispatch(buffer);
   } catch (error) {
     if (finalResponse) return finalResponse;
+    if (signal?.aborted) throw error;
     throw new ApiError(normalizeStreamError(error), 0);
   } finally {
     reader.releaseLock();
@@ -1205,22 +1228,83 @@ export const api = {
   terminalUrl() {
     return webSocketUrl("/ws/terminal", {});
   },
-  createInstanceShell(token: string, id: string, workingDirectory?: string) {
-    const body = workingDirectory ? JSON.stringify({ workingDirectory }) : undefined;
-    return requestJson<{ sessionId: string }>(
+  createInstanceShell(token: string, id: string, workingDirectory?: string, label?: string) {
+    const payload: { workingDirectory?: string; label?: string } = {};
+    if (workingDirectory) payload.workingDirectory = workingDirectory;
+    if (label) payload.label = label;
+    const body = Object.keys(payload).length > 0 ? JSON.stringify(payload) : undefined;
+    return requestJson<{ sessionId: string; label?: string }>(
       `/api/instances/${id}/shells`,
       { method: "POST", ...(body !== undefined ? { body } : {}) },
       token
     );
   },
   listInstanceShells(token: string, id: string) {
-    return requestJson<{ instanceId: string; sessions: string[] }>(`/api/instances/${id}/shells`, {}, token);
+    return requestJson<{
+      instanceId: string;
+      sessions: string[];
+      shells?: Array<{ id: string; label?: string; createdAt: number }>;
+    }>(`/api/instances/${id}/shells`, {}, token);
+  },
+  deleteInstanceShell(token: string, id: string, sid: string) {
+    return requestJson<{ ok: boolean }>(`/api/instances/${id}/shells/${sid}`, { method: "DELETE" }, token);
   },
   sakiStatus(token: string) {
     return requestJson<SakiStatusResponse>("/api/saki/status", {}, token);
   },
   sakiAppearance() {
     return requestJson<PanelAppearanceSettings>("/api/saki/appearance");
+  },
+  async sakiAppearanceStream(
+    onEvent: (appearance: PanelAppearanceSettings) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const response = await fetch(new URL("/api/saki/appearance/stream", API_BASE), {
+      ...(signal ? { signal } : {})
+    });
+    if (!response.ok) {
+      throw new ApiError(await responseErrorMessage(response), response.status);
+    }
+    if (!response.body) return;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const dispatch = (frame: string) => {
+      const lines = frame.split("\n");
+      let eventType = "message";
+      const dataLines: string[] = [];
+      for (const line of lines) {
+        if (line.startsWith("event:")) eventType = line.slice(6).trim();
+        if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+      }
+      if (!dataLines.length) return;
+      try {
+        const payload = JSON.parse(dataLines.join("\n")) as {
+          type?: string;
+          appearance?: PanelAppearanceSettings;
+        };
+        if ((payload.type ?? eventType) === "appearance" && payload.appearance) {
+          onEvent(payload.appearance);
+        }
+      } catch {
+        // ignore malformed frames
+      }
+    };
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+        while (true) {
+          const boundary = buffer.indexOf("\n\n");
+          if (boundary < 0) break;
+          dispatch(buffer.slice(0, boundary));
+          buffer = buffer.slice(boundary + 2);
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
   },
   sakiSkills(token: string, query = "") {
     return requestJson<SakiSkillSummary[]>(pathWithQuery("/api/saki/skills", { q: query || undefined }), {}, token);
@@ -1296,6 +1380,13 @@ export const api = {
       token
     );
   },
+  sakiGetActiveTasks(token: string) {
+    return requestJson<{ tasks: SakiActiveTaskSummary[]; runningCount: number }>(
+      `/api/saki/active-tasks`,
+      {},
+      token
+    );
+  },
   sakiStreamTaskReconnect(token: string, taskId: string, onEvent: (event: SakiChatStreamEvent) => void, signal?: AbortSignal) {
     return requestSakiTaskReconnectStream(token, taskId, onEvent, signal);
   },
@@ -1303,6 +1394,51 @@ export const api = {
     return requestJson<{ ok: boolean }>(
       `/api/saki/tasks/${encodeURIComponent(taskId)}/cancel`,
       { method: "POST" },
+      token
+    );
+  },
+  sakiSteerTask(token: string, taskId: string, message: string) {
+    return requestJson<{ ok: boolean }>(
+      `/api/saki/tasks/${encodeURIComponent(taskId)}/steer`,
+      { method: "POST", body: JSON.stringify({ message }) },
+      token
+    );
+  },
+  sakiListConversations(token: string) {
+    return requestJson<SakiSavedConversation[]>("/api/saki/conversations", {}, token);
+  },
+  sakiSaveConversation(
+    token: string,
+    conversation: {
+      id: string;
+      contextKey?: string | undefined;
+      title?: string | undefined;
+      label?: string | undefined;
+      detail?: string | undefined;
+      instanceId?: string | null | undefined;
+      messages: any[];
+    }
+  ) {
+    return requestJson<{ ok: boolean; id: string }>(
+      `/api/saki/conversations/${encodeURIComponent(conversation.id)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(conversation)
+      },
+      token
+    );
+  },
+  sakiDeleteConversation(token: string, id: string) {
+    return requestJson<{ ok: boolean }>(
+      `/api/saki/conversations/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+      token
+    );
+  },
+  sakiClearConversations(token: string) {
+    return requestJson<{ ok: boolean }>(
+      "/api/saki/conversations",
+      { method: "DELETE" },
       token
     );
   },
@@ -1320,7 +1456,11 @@ export const api = {
     );
   },
   approveIncident(token: string, id: string) {
-    return requestJson<{ ok: boolean; incident: ManagedIncident | null }>(
+    return requestJson<{
+      ok: boolean;
+      results?: Array<{ actionId: string; ok: boolean; message?: string }>;
+      incident: ManagedIncident | null;
+    }>(
       `/api/incidents/${id}/approve`,
       { method: "POST", body: JSON.stringify({}) },
       token
@@ -1408,6 +1548,41 @@ export const api = {
       reader.releaseLock();
     }
   },
+  // incidentsStream 只负责单次连接；断开后由这里做指数退避重连（2s → 30s 封顶）。
+  // 401 视为会话失效：停止重连并交给 onUnauthorized（登出）处理。
+  async incidentsStreamWithReconnect(
+    token: string,
+    onEvent: (event: { type: string; incident?: ManagedIncident; incidents?: ManagedIncident[]; openCount?: number }) => void,
+    signal: AbortSignal,
+    onUnauthorized?: () => void
+  ): Promise<void> {
+    let attempt = 0;
+    while (!signal.aborted) {
+      try {
+        await api.incidentsStream(token, onEvent, signal);
+      } catch (error) {
+        if (signal.aborted) return;
+        if (error instanceof ApiError && error.status === 401) {
+          onUnauthorized?.();
+          return;
+        }
+      }
+      if (signal.aborted) return;
+      const delay = Math.min(30000, 2000 * 2 ** attempt);
+      attempt += 1;
+      await new Promise<void>((resolve) => {
+        const onAbort = () => {
+          window.clearTimeout(timer);
+          resolve();
+        };
+        const timer = window.setTimeout(() => {
+          signal.removeEventListener("abort", onAbort);
+          resolve();
+        }, delay);
+        signal.addEventListener("abort", onAbort, { once: true });
+      });
+    }
+  },
   sakiAction(token: string, id: string, decision: "approve" | "reject" | "rollback") {
     return requestJson<SakiActionDecisionResponse>(
       `/api/saki/actions/${id}/${decision}`,
@@ -1444,6 +1619,9 @@ export const api = {
   },
   sakiCopilotLoginState(token: string) {
     return requestJson<SakiCopilotLoginResponse>("/api/saki/copilot/login", {}, token);
+  },
+  sakiAntigravityStatus(token: string) {
+    return requestJson<SakiAntigravityAuthStatusResponse>("/api/saki/antigravity/status", {}, token);
   },
   testNode(token: string, id: string) {
     return requestJson<{ ok: boolean; statusCode?: number; error?: string }>(

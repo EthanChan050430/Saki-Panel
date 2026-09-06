@@ -3,6 +3,7 @@ import type { SakiChatRequest, SakiConfigResponse, SakiModelOption } from "@webo
 import type { SakiModelToolTurn } from "../types.js";
 import {
   compactDebugText,
+  currentAgentAbortSignal,
   errorMessageFromJson,
   logSakiModelEvent,
   normalizeHttpBaseUrl,
@@ -22,6 +23,7 @@ import {
   trimString
 } from "../types.js";
 import { openAiToolSchemas } from "../tools.js";
+import { nativeThinkingChatExtras } from "../model-profile.js";
 import { extractProviderUsage, estimateModelCallTokens, mergeModelUsage, modelUsageTotal, type ModelUsage } from "../../../tokenizer.js";
 import { parseToolCallsFromText } from "./catalog.js";
 
@@ -94,6 +96,10 @@ export async function withRetry<T>(
       return await operation();
     } catch (error) {
       lastError = error instanceof Error ? error : new RouteError(String(error), 500);
+      // A user-cancelled run must surface immediately, never be retried.
+      if (currentAgentAbortSignal()?.aborted) {
+        throw error;
+      }
       if (attempt >= MAX_RETRIES || !isRetryableError(error)) {
         throw error;
       }
@@ -106,7 +112,24 @@ export async function withRetry<T>(
         delayMs: delay,
         error: lastError.message.slice(0, 200)
       });
-      await sleep(delay);
+      const abortSignal = currentAgentAbortSignal();
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          clearTimeout(timer);
+          abortSignal?.removeEventListener("abort", onAbort);
+          reject(error);
+        };
+        const timer = setTimeout(() => {
+          abortSignal?.removeEventListener("abort", onAbort);
+          resolve();
+        }, delay);
+        if (!abortSignal) return;
+        if (abortSignal.aborted) {
+          onAbort();
+          return;
+        }
+        abortSignal.addEventListener("abort", onAbort);
+      });
     }
   }
   throw lastError ?? new RouteError(`${operationName} failed after retries`, 502);
@@ -143,14 +166,34 @@ export function openAiCompatibleChatBody(
   body: Record<string, unknown>,
   preferredTemperature: number
 ): Record<string, unknown> {
-  if (!shouldSendCustomTemperature(provider, baseUrl, model)) return body;
-  return { ...body, temperature: preferredTemperature };
+  const withThinking = { ...body, ...nativeThinkingChatExtras(provider, model) };
+  if (!shouldSendCustomTemperature(provider, baseUrl, model)) return withThinking;
+  return { ...withThinking, temperature: preferredTemperature };
 }
 
 export function withoutTemperature(body: Record<string, unknown>): Record<string, unknown> {
   const next = { ...body };
   delete next.temperature;
   return next;
+}
+
+export function withoutNativeThinking(body: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...body };
+  delete next.enable_thinking;
+  delete next.thinking;
+  delete next.reasoning_effort;
+  delete next.reasoning;
+  return next;
+}
+
+export function isThinkingRequestError(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return /enable_thinking|reasoning_effort|\bthinking\b/.test(message) && /unsupported|unknown|invalid|unrecognized|not\s+support|unexpected/.test(message);
+}
+
+export function isContextOverflowError(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return /context[_ ]?length|context window|maximum context|too many tokens|prompt is too long|context_length_exceeded|reduce the length|exceeds? the (?:model|max(?:imum)?) (?:context|token)|request too large|exceeded.*token/i.test(message);
 }
 
 export function isTemperatureRequestError(error: unknown): boolean {

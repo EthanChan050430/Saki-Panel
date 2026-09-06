@@ -78,6 +78,7 @@ import {
 } from "lucide-react";
 import type {
   CurrentUser,
+  ManagedIncident,
   ManagedInstance,
   PanelAppearanceSettings,
   SakiModelOption
@@ -86,6 +87,7 @@ import type {
   PanelRoute,
   SakiInstanceFileDragPayload,
   SakiInstanceFileDropRequest,
+  SakiOpenFileRequest,
   SakiPanelContext,
   SakiPromptSeed,
   ViewMode
@@ -116,6 +118,7 @@ import { AuditView } from "./views/AuditView.js";
 import { AboutView } from "./views/AboutView.js";
 import { SettingsView } from "./views/SettingsView.js";
 import { IncidentBell } from "./IncidentInbox.js";
+import { AgentMonitorBell } from "./AgentMonitorBell.js";
 import { cssImageUrl } from "./utils/appearance.js";
 import { parseHashRoute, routeIcon, updateHashRoute, validViews } from "./utils/route.js";
 
@@ -151,6 +154,7 @@ export function Workspace({
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(initialRoute.instanceId);
   const [refreshTick, setRefreshTick] = useState(0);
   const [sakiInstance, setSakiInstance] = useState<ManagedInstance | null>(null);
+  const [sakiOpenFileRequest, setSakiOpenFileRequest] = useState<SakiOpenFileRequest | null>(null);
   const [sakiSeed, setSakiSeed] = useState<SakiPromptSeed | null>(null);
   const [sakiFileDragActive, setSakiFileDragActive] = useState(false);
   const [sakiFileDropRequest, setSakiFileDropRequest] = useState<SakiInstanceFileDropRequest | null>(null);
@@ -469,15 +473,52 @@ export function Workspace({
     }
   }, [activeView, availableViews, hasAnyAccessibleView]);
 
-  const selectView = useCallback((view: ViewMode) => {
+  const selectView = useCallback((view: ViewMode, instanceIdOverride?: string | null) => {
     if (!availableViews.includes(view)) return;
     setActiveView(view);
-    const nextInstanceId = view === "instances" ? selectedInstanceId : null;
+    const nextInstanceId =
+      view === "instances"
+        ? instanceIdOverride !== undefined
+          ? instanceIdOverride
+          : selectedInstanceId
+        : null;
     updateHashRoute({ view, instanceId: nextInstanceId });
     if (window.matchMedia("(max-width: 760px)").matches) {
       hideSidebar();
     }
   }, [availableViews, hideSidebar, selectedInstanceId]);
+
+  // Cache of the latest instance list reported by InstancesView, so incident
+  // clicks can bind Saki to the correct instance without an extra round-trip.
+  const instancesCacheRef = useRef<ManagedInstance[]>([]);
+  const handleInstancesLoaded = useCallback((list: ManagedInstance[]) => {
+    instancesCacheRef.current = list;
+  }, []);
+
+  const openIncidentInWorkspace = useCallback(
+    async (incident: ManagedIncident) => {
+      let instance = instancesCacheRef.current.find((item) => item.id === incident.instanceId) ?? null;
+      if (!instance) {
+        try {
+          const list = await api.instances(token);
+          instancesCacheRef.current = list;
+          instance = list.find((item) => item.id === incident.instanceId) ?? null;
+        } catch {
+          // keep instance as null; Saki will open without a stale instance binding
+        }
+      }
+      selectView("instances", incident.instanceId);
+      setSelectedInstanceId(incident.instanceId);
+      setSakiInstance(instance);
+      openSaki({
+        message: "",
+        contextTitle: `值班：${incident.instanceName}`,
+        contextText: incident.summary ?? "",
+        mode: "agent"
+      });
+    },
+    [openSaki, selectView, token]
+  );
 
   return (
     <>
@@ -583,7 +624,7 @@ export function Workspace({
           </div>
         </aside>
 
-        <main className="workspace view-transition-enter" key={hasAnyAccessibleView ? effectiveView : "access-empty"}>
+        <main className="workspace">
           <header className="topbar">
             <button
               ref={floatingSidebarToggleRef}
@@ -628,18 +669,29 @@ export function Workspace({
               </div>
               <div className="topbar-actions">
                 {canUseSaki ? (
+                  <AgentMonitorBell
+                    token={token}
+                    onLogout={onLogout}
+                    onOpenTask={(task, instance) => {
+                      if (instance) {
+                        selectView("instances");
+                        setSelectedInstanceId(instance.id);
+                        setSakiInstance(instance);
+                      }
+                      // Open the Saki panel without seeding any prompt; the chat's
+                      // active-task recovery reconnects to the running task stream.
+                      // For global-session tasks, clear any stale instance focus so
+                      // the reconnect queries the global context instead.
+                      openSaki({ message: "", mode: "agent", clearInstance: !instance });
+                    }}
+                  />
+                ) : null}
+                {canUseSaki ? (
                   <IncidentBell
                     token={token}
                     onLogout={onLogout}
                     onOpenIncident={(incident) => {
-                      selectView("instances");
-                      setSelectedInstanceId(incident.instanceId);
-                      openSaki({
-                        message: "",
-                        contextTitle: `值班：${incident.instanceName}`,
-                        contextText: incident.summary ?? "",
-                        mode: "agent"
-                      });
+                      void openIncidentInWorkspace(incident);
                     }}
                   />
                 ) : null}
@@ -707,6 +759,7 @@ export function Workspace({
             </div>
           </header>
 
+          <div className="workspace-view-content view-transition-enter" key={hasAnyAccessibleView ? effectiveView : "access-empty"}>
           {!hasAnyAccessibleView ? (
             <AccessEmptyView user={user} onOpenAccount={() => setAccountOpen(true)} />
           ) : effectiveView === "dashboard" ? (
@@ -724,12 +777,15 @@ export function Workspace({
               refreshTick={refreshTick}
               onOpenTemplates={() => selectView("templates")}
               onInstanceFocus={setSakiInstance}
+              onInstancesLoaded={handleInstancesLoaded}
               onAskSaki={canUseSaki ? openSaki : undefined}
               onSakiFileDragChange={setSakiFileDragActive}
               onSakiInstanceFileDrop={canUseSaki ? attachInstanceFileToSaki : undefined}
               darkMode={darkMode}
               initialInstanceId={selectedInstanceId}
               onSelectInstance={setSelectedInstanceId}
+              openFileRequest={sakiOpenFileRequest}
+              onOpenFileRequestConsumed={() => setSakiOpenFileRequest(null)}
             />
           ) : effectiveView === "nodes" ? (
             <NodesView token={token} onLogout={onLogout} refreshTick={refreshTick} />
@@ -759,6 +815,7 @@ export function Workspace({
               darkMode={darkMode}
             />
           )}
+          </div>
         </main>
       </div>
       <UserAccountModal
@@ -799,6 +856,18 @@ export function Workspace({
           }}
           pullDragRequest={sakiPullDrag}
           onPullDragConsumed={() => setSakiPullDrag(null)}
+          onOpenWorkspaceFile={(path, line) => {
+            const instanceId = sakiInstance?.id ?? selectedInstanceId;
+            if (!instanceId) return;
+            selectView("instances");
+            setSelectedInstanceId(instanceId);
+            setSakiOpenFileRequest({
+              instanceId,
+              path,
+              ...(typeof line === "number" ? { line } : {}),
+              nonce: Date.now()
+            });
+          }}
         />
       ) : null}
       <PointsUsageModal

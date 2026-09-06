@@ -235,6 +235,8 @@ export interface ManagedNode {
   createdAt: string;
   updatedAt: string;
   latestMetric?: NodeMetricSnapshot | null;
+  createdById?: string | null | undefined;
+  createdBy?: { id: string; username: string; displayName: string } | null | undefined;
 }
 
 export interface RegisterDaemonRequest {
@@ -462,6 +464,7 @@ export interface NodeEnrollmentTokenInfo {
   expiresAt: string;
   createdAt: string;
   isExpired: boolean;
+  createdById?: string | null | undefined;
 }
 
 export interface CreateEnrollmentTokenRequest {
@@ -1358,6 +1361,15 @@ export interface SakiCopilotLoginResponse {
   output?: string;
 }
 
+export interface SakiAntigravityAuthStatusResponse {
+  available: boolean;
+  authenticated: boolean;
+  hasLocalCredentials?: boolean;
+  accountEmail?: string;
+  endpoint?: string;
+  message?: string;
+}
+
 export type DatabaseEngine = "sqlite" | "mysql" | "postgres" | "redis" | "mariadb" | "generic";
 
 export interface DiscoveredDatabase {
@@ -1392,6 +1404,15 @@ export interface DatabaseVisualizerInstance {
   engine: DatabaseEngine;
   description?: string | null | undefined;
   config: DatabaseVisualizerConfig;
+  createdByUserId?: string | null | undefined;
+  createdByUsername?: string | null | undefined;
+  createdByDisplayName?: string | null | undefined;
+  createdByRole?: InstanceOwnerRole | null | undefined;
+  assignedToUserId?: string | null | undefined;
+  assignedToUsername?: string | null | undefined;
+  assignedToDisplayName?: string | null | undefined;
+  assignedToRole?: InstanceOwnerRole | null | undefined;
+  assignees?: InstanceAssignedUser[] | undefined;
   createdAt: string;
   updatedAt: string;
 }
@@ -1402,6 +1423,8 @@ export interface CreateDatabaseVisualizerRequest {
   engine?: DatabaseEngine | undefined;
   description?: string | null | undefined;
   config: DatabaseVisualizerConfig;
+  assignedToUserId?: string | null | undefined;
+  assignedToUserIds?: string[] | null | undefined;
 }
 
 export interface UpdateDatabaseVisualizerRequest {
@@ -1410,6 +1433,8 @@ export interface UpdateDatabaseVisualizerRequest {
   engine?: DatabaseEngine | undefined;
   description?: string | null | undefined;
   config?: DatabaseVisualizerConfig | undefined;
+  assignedToUserId?: string | null | undefined;
+  assignedToUserIds?: string[] | null | undefined;
 }
 
 export interface DatabaseTableSummary {

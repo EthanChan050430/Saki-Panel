@@ -4,14 +4,33 @@ import { panelPaths } from "./config.js";
 import { prisma } from "./db.js";
 import { ensureLegacyInstanceAssignments } from "./instance-access.js";
 import { hashPassword } from "./security.js";
+import { recoverStuckWatchIncidents } from "./watch/incidents.js";
+import { startWatchMaintenance } from "./watch/detector.js";
 import fs from "node:fs/promises";
 
 export async function ensureBootstrapData(): Promise<void> {
   await fs.mkdir(panelPaths.dataDir, { recursive: true });
 
+  // Add legacy columns only when missing; probing first keeps startup logs clean
+  // (a failed ALTER would still be reported by Prisma even when caught).
   try {
-    await prisma.$executeRawUnsafe(`ALTER TABLE users ADD COLUMN favorability INTEGER NOT NULL DEFAULT 0;`);
-  } catch {}
+    const columns = await prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info(users);`);
+    if (!columns.some((column) => column.name === "favorability")) {
+      await prisma.$executeRawUnsafe(`ALTER TABLE users ADD COLUMN favorability INTEGER NOT NULL DEFAULT 0;`);
+    }
+
+    const nodeColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info(nodes);`);
+    if (!nodeColumns.some((column) => column.name === "createdById")) {
+      await prisma.$executeRawUnsafe(`ALTER TABLE nodes ADD COLUMN createdById TEXT;`);
+    }
+
+    const tokenColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info(node_enrollment_tokens);`);
+    if (!tokenColumns.some((column) => column.name === "createdById")) {
+      await prisma.$executeRawUnsafe(`ALTER TABLE node_enrollment_tokens ADD COLUMN createdById TEXT;`);
+    }
+  } catch (error) {
+    console.warn("column check skipped:", error instanceof Error ? error.message : error);
+  }
 
   for (const code of permissions) {
     await prisma.permission.upsert({
@@ -216,4 +235,26 @@ export async function ensureBootstrapData(): Promise<void> {
   });
 
   await ensureLegacyInstanceAssignments();
+
+  try {
+    await prisma.node.updateMany({
+      where: { createdById: null },
+      data: { createdById: adminUser.id }
+    });
+    await prisma.nodeEnrollmentToken.updateMany({
+      where: { createdById: null },
+      data: { createdById: adminUser.id }
+    });
+  } catch (error) {
+    console.warn("Legacy node ownership migration skipped:", error instanceof Error ? error.message : error);
+  }
+
+  // 面板重启后恢复卡死的 watch incident（中间态全是内存驱动，重启后无法自恢复），
+  // 并启动 watch 内存态（崩溃采样/冷却/租约）的周期清扫。
+  try {
+    await recoverStuckWatchIncidents();
+    startWatchMaintenance();
+  } catch (error) {
+    console.warn("Watch incident recovery skipped:", error instanceof Error ? error.message : error);
+  }
 }

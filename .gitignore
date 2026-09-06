@@ -85,5 +85,6 @@ temp_verify.ps1
 _new_db_styles.css
 *.traineddata
 scratch/
+.tmp-screenshots/
 
 

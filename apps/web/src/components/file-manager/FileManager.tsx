@@ -61,7 +61,8 @@ import type {
   FileToast,
   FindMatchRange,
   SakiInstanceFileDragPayload,
-  SakiInstanceFileDropRequest
+  SakiInstanceFileDropRequest,
+  SakiOpenFileRequest
 } from "../../types/app.js";
 import { api, ApiError, type UploadProgressUpdate } from "../../api.js";
 import { CodeEditor, type CodeEditorHandle, type FindRange, languageFromFileName } from "../../CodeEditor.js";
@@ -100,7 +101,9 @@ export function FileManager({
   onSakiFileDragChange,
   onSakiInstanceFileDrop,
   darkMode,
-  onClose
+  onClose,
+  openFileRequest = null,
+  onOpenFileRequestConsumed
 }: {
   token: string;
   instance: ManagedInstance | null;
@@ -108,11 +111,14 @@ export function FileManager({
   onSakiInstanceFileDrop?: ((payload: SakiInstanceFileDragPayload) => void) | undefined;
   darkMode: boolean;
   onClose?: () => void;
+  openFileRequest?: SakiOpenFileRequest | null;
+  onOpenFileRequestConsumed?: () => void;
 }) {
   const instanceId = instance?.id ?? null;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const codeEditorRef = useRef<CodeEditorHandle | null>(null);
+  const pendingRevealLineRef = useRef<number | null>(null);
   const conflictResolveRef = useRef<((choice: FileConflictChoice | null) => void) | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const directoryLoadRequestRef = useRef(0);
@@ -1517,6 +1523,36 @@ export function FileManager({
     }
   }
 
+  useEffect(() => {
+    if (!openFileRequest?.path || !instanceId) return;
+    if (openFileRequest.instanceId && openFileRequest.instanceId !== instanceId) return;
+    const normalized = openFileRequest.path.replace(/\\/g, "/").replace(/^\.\//, "");
+    pendingRevealLineRef.current = openFileRequest.line ?? null;
+    void loadDirectory(parentFilePath(normalized));
+    void openEntry({
+      name: normalized.split("/").pop() || normalized,
+      path: normalized,
+      type: "file",
+      size: 0,
+      modifiedAt: ""
+    });
+    onOpenFileRequestConsumed?.();
+  }, [openFileRequest?.nonce, instanceId]);
+
+  useEffect(() => {
+    const line = pendingRevealLineRef.current;
+    if (!line || !editorPath) return;
+    if (editorMode !== "edit") {
+      setEditorMode("edit");
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      codeEditorRef.current?.revealLine(line);
+      pendingRevealLineRef.current = null;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [editorPath, editorContent, editorMode]);
+
   async function saveEditor() {
     if (!instanceId || !editorPath || !editorCanEdit) return;
     setSaving(true);
@@ -1617,7 +1653,7 @@ export function FileManager({
     setError("");
 
     const deletedPath = entry.path;
-    const parentPath = parentFilePath(deletedPath);
+    const parentPath = parentFilePath(deletedPath);
     setEntries((prev) => prev.filter((e) => e.path !== deletedPath && !e.path.startsWith(`${deletedPath}/`)));
     setTreeData((prev) => {
       const next = { ...prev };

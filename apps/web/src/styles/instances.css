@@ -300,6 +300,26 @@
   border: 1px solid rgba(255, 255, 255, 0.75);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.95) !important;
   transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* 屏幕过矮卡片被压缩时，卡片内部内容可纵向滚动 */
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+
+.instance-side-card::-webkit-scrollbar {
+  width: 4px;
+}
+
+.instance-side-card::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+.instance-side-card::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
 }
 
 .instance-side-card:hover {
@@ -358,6 +378,16 @@
 [data-theme="dark"] .instance-program-badge {
   background: rgba(255, 255, 255, 0.08);
   color: #aeaeb2;
+}
+
+.instance-program-badge.watch-on {
+  background: rgba(20, 184, 166, 0.12);
+  color: #0d9488;
+}
+
+[data-theme="dark"] .instance-program-badge.watch-on {
+  background: rgba(45, 212, 191, 0.16);
+  color: #2dd4bf;
 }
 
 .instance-summary-table {
@@ -1188,7 +1218,8 @@
   background: rgba(0, 0, 0, 0.5) !important;
   backdrop-filter: blur(16px) saturate(180%) !important;
   -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
-  animation: glassModalOverlayIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+  will-change: opacity !important;
+  animation: glassModalOverlayIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
 }
 
 .glass-modal-container {
@@ -1201,6 +1232,7 @@
   -webkit-backdrop-filter: blur(40px) saturate(210%) brightness(105%) !important;
   border: 1.5px solid rgba(255, 255, 255, 0.95) !important;
   box-shadow: 0 32px 80px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(255, 255, 255, 0.4), inset 0 1.5px 1px rgba(255, 255, 255, 1) !important;
+  will-change: opacity, transform !important;
   animation: glassModalContainerIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
   overflow: hidden !important;
   color: #1d1d1f !important;
@@ -1227,6 +1259,13 @@
   max-width: 94vw !important;
   height: auto !important;
   max-height: 90vh !important;
+}
+
+.watch-policy-loading-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-secondary, #86868b);
 }
 
 .instance-proxy-modal {

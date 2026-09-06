@@ -520,6 +520,7 @@ export function workflowEventChatText(event: SakiChatStreamEvent): string | null
 
 export function workflowStatusText(step: LocalSakiWorkflowStep): string | null {
   if (step.status !== "running" && step.status !== "pending") return null;
+  if (step.stage === "thinking") return step.message || "正在深度思考...";
   const tool = step.tool?.toLowerCase();
   if (!tool) return step.message || "思考中...";
   const call = step.call || step.message || "";
@@ -570,9 +571,12 @@ export function workflowStatusText(step: LocalSakiWorkflowStep): string | null {
 }
 
 export function extractArgFromCall(call: string, argName: string): string | null {
+  if (!call) return null;
   try {
-    const match = call.match(new RegExp(`"${argName}"\\s*:\\s*"([^"]*)"`));
-    return match?.[1] ?? null;
+    const jsonMatch = call.match(new RegExp(`"${argName}"\\s*:\\s*"([^"]*)"`));
+    if (jsonMatch?.[1]) return jsonMatch[1];
+    const plainMatch = call.match(new RegExp(`(?:^|,\\s*)${argName}\\s*:\\s*([^,]+)`));
+    return plainMatch?.[1]?.trim() || null;
   } catch {
     return null;
   }
@@ -599,16 +603,28 @@ export function mergeSakiFinalText(current: string, finalText: string): string {
 
 export function upsertSakiTimelineText(
   timeline: LocalSakiTimelineItem[] | undefined,
-  item: { id: string; content: string; source: LocalSakiTimelineTextSource; createdAt?: string }
+  item: {
+    id: string;
+    content: string;
+    source: LocalSakiTimelineTextSource;
+    createdAt?: string;
+    thinking?: string;
+    thinkingDurationSec?: number;
+    thinkingStartedAt?: number;
+  }
 ): LocalSakiTimelineItem[] {
   const content = item.content.trim();
+  const thinking = item.thinking?.trim();
   const current = timeline ?? [];
-  if (!content) return current;
+  if (!content && !thinking) return current;
   const index = current.findIndex((entry) => entry.kind === "text" && entry.id === item.id);
   const nextItem: LocalSakiTimelineItem = {
     kind: "text",
     id: item.id,
     content,
+    ...(thinking ? { thinking } : {}),
+    ...(item.thinkingDurationSec ? { thinkingDurationSec: item.thinkingDurationSec } : {}),
+    ...(item.thinkingStartedAt ? { thinkingStartedAt: item.thinkingStartedAt } : {}),
     source: item.source,
     createdAt: item.createdAt ?? new Date().toISOString()
   };
@@ -618,7 +634,11 @@ export function upsertSakiTimelineText(
       ? {
           ...entry,
           content,
-          source: item.source
+          source: item.source,
+          ...(thinking ? { thinking: `${entry.thinking ?? ""}${thinking}`.trim() } : {}),
+          ...(item.thinkingDurationSec || entry.thinkingDurationSec
+            ? { thinkingDurationSec: item.thinkingDurationSec ?? entry.thinkingDurationSec }
+            : {})
         }
       : entry
   );
@@ -629,11 +649,16 @@ export function appendSakiTimelineDelta(timeline: LocalSakiTimelineItem[] | unde
   const current = timeline ?? [];
   const last = current.at(-1);
   if (last?.kind === "text" && last.source === "delta") {
+    const durationSec =
+      last.thinking && last.thinkingStartedAt && !last.thinkingDurationSec
+        ? Math.max(1, Math.round((Date.now() - last.thinkingStartedAt) / 1000))
+        : last.thinkingDurationSec;
     return [
       ...current.slice(0, -1),
       {
         ...last,
-        content: `${last.content}${text}`
+        content: `${last.content}${text}`,
+        ...(durationSec ? { thinkingDurationSec: durationSec } : {})
       }
     ];
   }
@@ -658,7 +683,8 @@ export function appendSakiTimelineThinking(timeline: LocalSakiTimelineItem[] | u
       ...current.slice(0, -1),
       {
         ...last,
-        thinking: `${last.thinking ?? ""}${text}`
+        thinking: `${last.thinking ?? ""}${text}`,
+        thinkingStartedAt: last.thinkingStartedAt ?? Date.now()
       }
     ];
   }
@@ -669,6 +695,7 @@ export function appendSakiTimelineThinking(timeline: LocalSakiTimelineItem[] | u
       id: `delta:${newClientId()}`,
       content: "",
       thinking: text,
+      thinkingStartedAt: Date.now(),
       source: "delta",
       createdAt: new Date().toISOString()
     }
@@ -678,16 +705,57 @@ export function appendSakiTimelineThinking(timeline: LocalSakiTimelineItem[] | u
 export function sealSakiTimelineDelta(timeline: LocalSakiTimelineItem[] | undefined): LocalSakiTimelineItem[] {
   const current = timeline ?? [];
   const last = current.at(-1);
-  if (last?.kind === "text" && last.source === "delta" && last.content.trim()) {
+  if (last?.kind === "text" && last.source === "delta" && (last.content.trim() || last.thinking?.trim())) {
+    const durationSec =
+      last.thinking && last.thinkingStartedAt && !last.thinkingDurationSec
+        ? Math.max(1, Math.round((Date.now() - last.thinkingStartedAt) / 1000))
+        : last.thinkingDurationSec;
     return [
       ...current.slice(0, -1),
       {
         ...last,
-        source: "final" as const
+        source: "final" as const,
+        ...(durationSec ? { thinkingDurationSec: durationSec } : {})
       }
     ];
   }
   return current;
+}
+
+export function upsertSakiTimelinePending(
+  timeline: LocalSakiTimelineItem[] | undefined,
+  item: { id: string; tool: string; call?: string; message: string; createdAt?: string }
+): LocalSakiTimelineItem[] {
+  const current = sealSakiTimelineDelta(timeline);
+  const id = `pending:${item.id}`;
+  const index = current.findIndex((entry) => entry.kind === "pending" && entry.id === id);
+  const nextItem: LocalSakiTimelineItem = {
+    kind: "pending",
+    id,
+    tool: item.tool,
+    ...(item.call ? { call: item.call } : {}),
+    message: item.message,
+    createdAt: current[index]?.createdAt ?? item.createdAt ?? new Date().toISOString()
+  };
+  if (index < 0) return [...current, nextItem];
+  return current.map((entry, entryIndex) => (entryIndex === index ? nextItem : entry));
+}
+
+export function settleSakiTimelinePending(
+  timeline: LocalSakiTimelineItem[] | undefined,
+  action: SakiAgentAction
+): LocalSakiTimelineItem[] {
+  const current = timeline ?? [];
+  const toolName = action.tool.toLowerCase();
+  let removed = false;
+  const withoutPending = current.filter((entry) => {
+    if (entry.kind !== "pending") return true;
+    if (removed) return true;
+    if (entry.tool.toLowerCase() !== toolName) return true;
+    removed = true;
+    return false;
+  });
+  return upsertSakiTimelineAction(withoutPending, action);
 }
 
 export function upsertSakiTimelineAction(timeline: LocalSakiTimelineItem[] | undefined, action: SakiAgentAction): LocalSakiTimelineItem[] {
@@ -705,7 +773,7 @@ export function upsertSakiTimelineAction(timeline: LocalSakiTimelineItem[] | und
 }
 
 export function mergeSakiTimelineActions(timeline: LocalSakiTimelineItem[] | undefined, actions: SakiAgentAction[] | undefined): LocalSakiTimelineItem[] {
-  return (actions ?? []).reduce<LocalSakiTimelineItem[]>((current, action) => upsertSakiTimelineAction(current, action), timeline ?? []);
+  return (actions ?? []).reduce<LocalSakiTimelineItem[]>((current, action) => settleSakiTimelinePending(current, action), timeline ?? []);
 }
 
 export function mergeSakiActionList(
@@ -757,10 +825,31 @@ export function mergeSakiFinalTimeline(timeline: LocalSakiTimelineItem[] | undef
   ];
 }
 
+function timelineTextIsVisible(entry: Extract<LocalSakiTimelineItem, { kind: "text" }>): boolean {
+  return Boolean(entry.content.trim() || entry.thinking?.trim());
+}
+
 export function renderableSakiTimeline(message: LocalSakiMessage): LocalSakiTimelineItem[] {
-  const timeline = (message.timeline ?? []).filter((entry) => entry.kind === "action" || entry.content.trim());
+  let timeline = (message.timeline ?? []).filter((entry) => {
+    if (entry.kind === "action" || entry.kind === "pending") return true;
+    return timelineTextIsVisible(entry);
+  });
   const visibleActions = visibleSakiActions(message.actions);
   if (timeline.length) {
+    const hasThinkingItem = timeline.some((entry) => entry.kind === "text" && entry.thinking?.trim());
+    if (!hasThinkingItem && message.thinking?.trim()) {
+      timeline = [
+        {
+          kind: "text",
+          id: `${message.id}:thinking`,
+          content: "",
+          thinking: message.thinking,
+          source: "final",
+          createdAt: message.createdAt ?? new Date().toISOString()
+        },
+        ...timeline
+      ];
+    }
     const timelineActionIds = new Set(timeline.filter((entry) => entry.kind === "action").map((entry) => entry.action.id));
     const missingActionItems: LocalSakiTimelineItem[] = visibleActions
       .filter((action) => !timelineActionIds.has(action.id))
@@ -773,11 +862,12 @@ export function renderableSakiTimeline(message: LocalSakiMessage): LocalSakiTime
     return missingActionItems.length ? [...timeline, ...missingActionItems] : timeline;
   }
   const fallback: LocalSakiTimelineItem[] = [];
-  if (message.content.trim()) {
+  if (message.content.trim() || message.thinking?.trim()) {
     fallback.push({
       kind: "text",
       id: `${message.id}:content`,
       content: message.content,
+      ...(message.thinking?.trim() ? { thinking: message.thinking } : {}),
       source: "final",
       createdAt: message.createdAt ?? new Date().toISOString()
     });
@@ -897,6 +987,11 @@ export function sakiActionTarget(action: SakiAgentAction): string {
   if (tool === "spawntask") return sakiActionStringArg(action, ["task"]);
   if (tool === "readskill") return sakiActionStringArg(action, ["skillId"]);
   if (tool === "listfiles") return sakiActionStringArg(action, ["path"]) || ".";
+  if (tool === "applypatch" || tool === "apply_patch" || tool === "applydiff") {
+    const patch = sakiActionStringArg(action, ["patch"]);
+    const match = patch.match(/(?:^\+\+\+ [ab]\/|\*\*\* (?:Add|Update|Delete) File:\s*)(.+)$/m);
+    return match?.[1]?.trim() || "patch";
+  }
   return sakiActionStringArg(action, ["path", "instanceId", "taskId", "action"]);
 }
 
@@ -950,8 +1045,62 @@ export function parseThinkingContent(
     hasThinking: Boolean(thinking),
     thinking,
     answer: text,
-    isThinkingActive
+    isThinkingActive: Boolean(isStreaming && thinking) || isThinkingActive
   };
+}
+
+export function SakiThinkingActionCard({
+  thinking,
+  streaming,
+  durationSec,
+  defaultExpanded = false
+}: {
+  thinking: string;
+  streaming?: boolean | undefined;
+  durationSec?: number | undefined;
+  defaultExpanded?: boolean | undefined;
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const displaySec = durationSec && durationSec > 0 ? durationSec : Math.max(1, Math.round(thinking.length / 80));
+
+  return (
+    <div className={`saki-action-row saki-thinking-action-row ${streaming ? "running" : ""}`}>
+      <div
+        className="saki-action-row-main"
+        role="button"
+        tabIndex={0}
+        onClick={() => setExpanded(!expanded)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setExpanded(!expanded);
+          }
+        }}
+      >
+        <span className="saki-action-icon">
+          {streaming ? <Loader2 size={13} className="status-spinner" /> : <Sparkles size={13} />}
+        </span>
+        <span className="saki-action-label">
+          <span style={{ fontWeight: 500 }}>
+            {streaming ? "Thinking..." : `Thought for ${displaySec}s`}
+          </span>
+        </span>
+        {streaming ? (
+          <span className="saki-action-status-dot saki-action-status-live" />
+        ) : (
+          <span className="saki-action-status-dot" style={{ backgroundColor: "#8b5cf6" }} />
+        )}
+        <span className="saki-action-expand">{expanded ? "▾" : "▸"}</span>
+      </div>
+      {expanded && thinking ? (
+        <div className="saki-action-detail">
+          <pre className="saki-action-observation saki-thinking-pre" style={{ maxHeight: "320px", whiteSpace: "pre-wrap" }}>
+            {thinking}
+          </pre>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function SakiThinkingContent({
@@ -963,13 +1112,13 @@ export function SakiThinkingContent({
   thinking?: string | undefined;
   streaming?: boolean | undefined;
 }) {
-  // Collapsed by default as requested!
-  const [expanded, setExpanded] = useState(false);
+  const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
 
   const { hasThinking, thinking, answer, isThinkingActive } = useMemo(
     () => parseThinkingContent(content, explicitThinking, streaming),
     [content, explicitThinking, streaming]
   );
+  const expanded = userExpanded ?? isThinkingActive;
 
   if (!hasThinking) {
     if (streaming) {
@@ -984,14 +1133,15 @@ export function SakiThinkingContent({
   }
 
   const charCount = thinking ? Math.max(1, thinking.length) : 0;
+  const preview = thinking.replace(/\s+/g, " ").trim();
 
   return (
     <div className="saki-message-with-thinking">
-      <div className={`saki-thinking-collapse ${expanded ? "is-expanded" : "is-collapsed"}`}>
+      <div className={`saki-thinking-collapse ${expanded ? "is-expanded" : "is-collapsed"} ${isThinkingActive ? "is-live" : ""}`}>
         <button
           type="button"
           className="saki-thinking-toggle"
-          onClick={() => setExpanded((prev) => !prev)}
+          onClick={() => setUserExpanded(!(userExpanded ?? isThinkingActive))}
           title={expanded ? "收起思考过程" : "展开思考过程"}
           aria-expanded={expanded}
         >
@@ -1021,6 +1171,8 @@ export function SakiThinkingContent({
               )}
             </div>
           </div>
+        ) : preview ? (
+          <p className="saki-thinking-preview">{preview.length > 140 ? `${preview.slice(0, 140)}…` : preview}</p>
         ) : null}
       </div>
 
@@ -1086,6 +1238,10 @@ export function sakiActionTitle(action: SakiAgentAction): string {
       return "替换文件内容";
     case "editlines":
       return "编辑文件行";
+    case "applypatch":
+    case "apply_patch":
+    case "applydiff":
+      return "应用补丁";
     case "mkdir":
       return "创建目录";
     case "deletepath":
@@ -1252,6 +1408,9 @@ export function SakiToolIcon({ action }: { action: SakiAgentAction }) {
       return <FilePlus size={16} />;
     case "replaceinfile":
     case "editlines":
+    case "applypatch":
+    case "apply_patch":
+    case "applydiff":
       return <Code2 size={16} />;
     case "mkdir":
       return <FolderPlus size={16} />;
@@ -1289,14 +1448,31 @@ export function SakiToolIcon({ action }: { action: SakiAgentAction }) {
   }
 }
 
+function sakiDiffPathFromLine(line: string): string | null {
+  const update = line.match(/^\*\*\*\s+(?:Add|Update|Delete) File:\s+(.+)$/);
+  if (update?.[1]) return update[1].trim().replace(/^[ab]\//, "");
+  const unified = line.match(/^(?:\+\+\+|---) [ab]\/(.+)$/);
+  if (unified?.[1] && unified[1] !== "/dev/null") return unified[1].trim();
+  return null;
+}
+
+function sakiDiffLineNumber(line: string): number | undefined {
+  const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)/);
+  if (!hunk?.[1]) return undefined;
+  const parsed = Number(hunk[1]);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 export function SakiToolActionCard({
   action,
   actionBusyId,
-  onDecision
+  onDecision,
+  onOpenPath
 }: {
   action: SakiAgentAction;
   actionBusyId: string | null;
   onDecision: (action: SakiAgentAction, decision: "approve" | "reject" | "rollback") => void;
+  onOpenPath?: ((path: string, line?: number) => void) | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
   const busy = actionBusyId === action.id;
@@ -1306,6 +1482,12 @@ export function SakiToolActionCard({
   const observation = action.observation.trim() || "没有返回内容。";
   const toolLower = action.tool.toLowerCase();
   const isCommand = toolLower === "runcommand" || toolLower === "sendcommand" || toolLower === "sendinput";
+  const diffText =
+    action.approval?.diff ||
+    ((toolLower === "applypatch" || toolLower === "apply_patch" || toolLower === "applydiff") &&
+    /^(--- |\+\+\+ |\*\*\*)/m.test(observation)
+      ? observation
+      : "");
   const isPending = action.status === "pending_approval";
   const isFailed = !action.ok || action.status === "failed" || action.status === "rejected";
   const statusColor = isPending ? "#f59e0b" : isFailed ? "#ef4444" : "#22c55e";
@@ -1315,7 +1497,24 @@ export function SakiToolActionCard({
       <div className="saki-action-row-main" onClick={() => setExpanded(!expanded)}>
         <span className="saki-action-icon"><SakiToolIcon action={action} /></span>
         <span className="saki-action-label">
-          {target ? <code>{compactContextText(target, 120)}</code> : <span>{sakiActionTitle(action)}</span>}
+          {target ? (
+            onOpenPath && !target.includes(" ") ? (
+              <button
+                type="button"
+                className="saki-action-path-link"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenPath(target);
+                }}
+              >
+                <code>{compactContextText(target, 120)}</code>
+              </button>
+            ) : (
+              <code>{compactContextText(target, 120)}</code>
+            )
+          ) : (
+            <span>{sakiActionTitle(action)}</span>
+          )}
           {meta ? <span className="saki-action-meta">{meta}</span> : null}
         </span>
         <span className="saki-action-status-dot" style={{ backgroundColor: statusColor }} />
@@ -1348,10 +1547,44 @@ export function SakiToolActionCard({
           ) : (
             <pre className="saki-action-observation">{compactContextText(observation, 5200)}</pre>
           )}
-          {action.approval?.diff ? (
+          {diffText ? (
             <div className="saki-action-diff">
               <div className="saki-action-diff-header">差异</div>
-              <pre>{compactContextText(action.approval.diff, 4000)}</pre>
+              <pre className="saki-action-diff-body">
+                {compactContextText(diffText, 6000)
+                  .split("\n")
+                  .map((line, index) => {
+                    const kind = line.startsWith("+++") || line.startsWith("---") || line.startsWith("***")
+                      ? "file"
+                      : line.startsWith("+")
+                        ? "add"
+                        : line.startsWith("-")
+                          ? "del"
+                          : line.startsWith("@@")
+                            ? "hunk"
+                            : "ctx";
+                    const path = sakiDiffPathFromLine(line);
+                    const hunkLine = sakiDiffLineNumber(line);
+                    const clickable = Boolean(onOpenPath && (path || (kind === "hunk" && hunkLine && target)));
+                    return (
+                      <span
+                        key={`${index}:${line.slice(0, 24)}`}
+                        className={`saki-diff-line saki-diff-${kind}${clickable ? " saki-diff-clickable" : ""}`}
+                        onClick={
+                          clickable
+                            ? (event) => {
+                                event.stopPropagation();
+                                onOpenPath?.(path || target, hunkLine);
+                              }
+                            : undefined
+                        }
+                      >
+                        {line}
+                        {"\n"}
+                      </span>
+                    );
+                  })}
+              </pre>
             </div>
           ) : null}
           {action.approval?.preview && !action.approval.diff ? (
@@ -1378,6 +1611,46 @@ export function SakiToolActionCard({
   );
 }
 
+export function SakiPendingToolCard({
+  tool,
+  call,
+  message
+}: {
+  tool: string;
+  call?: string | undefined;
+  message: string;
+}) {
+  const target =
+    extractArgFromCall(call ?? "", "path") ||
+    extractArgFromCall(call ?? "", "command") ||
+    extractArgFromCall(call ?? "", "query") ||
+    extractArgFromCall(call ?? "", "pattern") ||
+    extractArgFromCall(call ?? "", "url") ||
+    "";
+  const fakeAction = {
+    id: "",
+    tool,
+    args: {},
+    observation: "",
+    ok: true,
+    createdAt: new Date().toISOString()
+  } as SakiAgentAction;
+  return (
+    <div className="saki-action-row running">
+      <div className="saki-action-row-main">
+        <span className="saki-action-icon">
+          <Loader2 size={16} className="status-spinner" />
+        </span>
+        <span className="saki-action-label">
+          {target ? <code>{compactContextText(target, 120)}</code> : <span>{sakiActionTitle(fakeAction)}</span>}
+          <span className="saki-action-meta">{message || "进行中"}</span>
+        </span>
+        <span className="saki-action-status-dot saki-action-status-live" />
+      </div>
+    </div>
+  );
+}
+
 export function SakiStreamStatus({ workflow }: { workflow: LocalSakiWorkflowStep[] }) {
   const runningStep = [...workflow].reverse().find((step) => step.status === "running" || step.status === "pending");
   if (!runningStep) return null;
@@ -1392,7 +1665,7 @@ export function SakiStreamStatus({ workflow }: { workflow: LocalSakiWorkflowStep
     sendcommand: "⌨️", readmemory: "💾", writememory: "💾", plan: "📋",
     spawntask: "🔄", readskill: "📖", instancelogs: "📋"
   };
-  const icon = tool ? (iconMap[tool] ?? "⚙️") : "💭";
+  const icon = tool ? (iconMap[tool] ?? "⚙️") : runningStep.stage === "thinking" ? "💭" : "⚙️";
   return (
     <div className="saki-stream-status">
       <span className="saki-stream-status-icon">{icon}</span>

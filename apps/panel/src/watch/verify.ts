@@ -75,6 +75,16 @@ export async function verifyIncident(incidentId: string): Promise<void> {
   await updateIncident(incidentId, { status: "verifying" });
   suppressRestart(instance.id, Math.max(policy.verifyWaitSeconds + 15, 30) * 1000);
 
+  // 重启前记录日志游标：daemon 的日志环形缓冲在实例重启时不会清空，
+  // 验证只判定游标之后的新日志，避免修复前的 fatal/panic 旧日志造成误判。
+  let logCursor: number | null = null;
+  try {
+    const before = await readDaemonInstanceLogs(instance.node, instance.id, 200);
+    logCursor = before.lines.reduce((max, line) => Math.max(max, line.id), 0);
+  } catch {
+    logCursor = null; // 游标不可用时退回旧行为（判定全部日志）
+  }
+
   if (shouldStart) {
     try {
       const state = await startDaemonInstance(instance.node, specFromRow(instance));
@@ -87,14 +97,24 @@ export async function verifyIncident(incidentId: string): Promise<void> {
         }
       });
     } catch (error) {
-      const notes = userId ? await rollbackIncidentChanges(incidentId, userId) : [];
-      await updateIncident(incidentId, {
-        status: "rolled_back",
-        summary: `修复已写入，但重新启动失败：${error instanceof Error ? error.message : "unknown error"}。已尝试回滚。`,
-        resolvedAt: new Date()
-      });
+      console.error("watch verify: restart failed:", error instanceof Error ? error.stack ?? error.message : error);
+      if (userId) {
+        const notes = await rollbackIncidentChanges(incidentId, userId);
+        void notes;
+        await updateIncident(incidentId, {
+          status: "rolled_back",
+          summary: "修复已写入，但实例重新启动失败，已回滚这次修改。",
+          resolvedAt: new Date()
+        });
+      } else {
+        // 无操作用户时不执行回滚，也不得谎报 rolled_back。
+        await updateIncident(incidentId, {
+          status: "failed",
+          summary: "修复已写入，但实例重新启动失败；未能回滚（无操作用户），改动仍保留在磁盘上，请人工处理。",
+          resolvedAt: new Date()
+        });
+      }
       clearRestartLease(instance.id);
-      void notes;
       return;
     }
   }
@@ -103,9 +123,9 @@ export async function verifyIncident(incidentId: string): Promise<void> {
 
   try {
     const state = await readDaemonInstanceStatus(instance.node, instance.id, 4000);
-    const logs = await readDaemonInstanceLogs(instance.node, instance.id, 80);
-    const logText = logs.lines.map((line) => `[${line.stream}] ${line.text}`).join("\n");
-    const nextFingerprint = crashFingerprint(instance.id, state.exitCode ?? null, logText);
+    const logs = await readDaemonInstanceLogs(instance.node, instance.id, 200);
+    const freshLines = logCursor === null ? logs.lines : logs.lines.filter((line) => line.id > logCursor);
+    const logText = freshLines.map((line) => `[${line.stream}] ${line.text}`).join("\n");
     await prisma.instance.update({
       where: { id: instance.id },
       data: {
@@ -115,19 +135,45 @@ export async function verifyIncident(incidentId: string): Promise<void> {
       }
     });
 
-    const crashedAgain = state.status === "CRASHED" || state.status === "STOPPED";
-    const sameFingerprint = nextFingerprint === incident.fingerprint;
-    const fatalBurst = /(?:fatal|panic|cannot bind|address already in use|permission denied)/i.test(logText);
-
-    if (crashedAgain && (sameFingerprint || fatalBurst) && checkpoints.length > 0 && userId) {
-      await rollbackIncidentChanges(incidentId, userId);
+    // 验证窗口内实例处于 STOPPED：多半是用户手动停机。中止验证，
+    // 不回滚也不判失败，改动保留，等人工启动后确认。
+    if (state.status === "STOPPED") {
       await updateIncident(incidentId, {
-        status: "rolled_back",
-        summary: incident.diagnosis?.summary
-          ? `${incident.diagnosis.summary}。验证失败，已回滚这次修改。`
-          : "验证失败，已回滚这次修改。实例仍未恢复。",
-        resolvedAt: new Date()
+        status: "diagnosed",
+        summary: `${incident.diagnosis?.summary ?? incident.summary ?? "修改已应用。"} 验证期间实例处于停止状态（可能被手动停止），已跳过自动验证；改动已保留，请手动启动实例后确认。`
       });
+      clearRestartLease(instance.id);
+      return;
+    }
+
+    const crashedAgain = state.status === "CRASHED";
+    const strictFingerprint = crashFingerprint(instance.id, state.exitCode ?? null, logText);
+    // exitCode 任一侧为 null 时按无 exitCode 的指纹宽松比对，避免 null 差异导致"该回滚时不回滚"。
+    const relaxedFingerprint =
+      (state.exitCode ?? null) === null || (incident.exitCode ?? null) === null
+        ? crashFingerprint(incident.instanceId, null, logText) === crashFingerprint(incident.instanceId, null, incident.logTail)
+        : false;
+    const sameFingerprint = strictFingerprint === incident.fingerprint || relaxedFingerprint;
+    const fatalBurst = freshLines.length > 0 && /(?:fatal|panic|cannot bind|address already in use|permission denied)/i.test(logText);
+
+    if (crashedAgain && (sameFingerprint || fatalBurst) && checkpoints.length > 0) {
+      if (userId) {
+        await rollbackIncidentChanges(incidentId, userId);
+        await updateIncident(incidentId, {
+          status: "rolled_back",
+          summary: incident.diagnosis?.summary
+            ? `${incident.diagnosis.summary}。验证失败，已回滚这次修改。`
+            : "验证失败，已回滚这次修改。实例仍未恢复。",
+          resolvedAt: new Date()
+        });
+      } else {
+        // 无操作用户时不执行回滚，也不得谎报 rolled_back。
+        await updateIncident(incidentId, {
+          status: "failed",
+          summary: "验证未通过，实例再次崩溃；未能回滚（无操作用户），改动仍保留在磁盘上，请人工处理。",
+          resolvedAt: new Date()
+        });
+      }
       clearRestartLease(instance.id);
       return;
     }
@@ -149,9 +195,10 @@ export async function verifyIncident(incidentId: string): Promise<void> {
     });
     clearRestartLease(instance.id);
   } catch (error) {
+    console.error("watch verify failed:", error instanceof Error ? error.stack ?? error.message : error);
     await updateIncident(incidentId, {
       status: "failed",
-      summary: `验证阶段失败：${error instanceof Error ? error.message : "unknown error"}`
+      summary: "验证阶段出现异常，请人工检查实例状态。"
     });
     clearRestartLease(instance.id);
   }

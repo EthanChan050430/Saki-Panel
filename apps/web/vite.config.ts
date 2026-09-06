@@ -162,10 +162,24 @@ const panelPort = numberFromEnv(process.env.PANEL_PORT, 5479);
 const https = loadHttpsOptions(rootDir);
 const panelTarget = `${https ? "https" : "http"}://127.0.0.1:${panelPort}`;
 const devProxy = {
-  "/api": { target: panelTarget, changeOrigin: true },
+  "/api": {
+    target: panelTarget,
+    changeOrigin: true,
+    timeout: 0,
+    proxyTimeout: 0,
+    configure(proxy: { on: (event: string, listener: (...args: any[]) => void) => void }) {
+      proxy.on("proxyRes", (proxyRes: { headers: Record<string, string | string[] | undefined> }, req: { url?: string }) => {
+        const url = req.url ?? "";
+        if (url.includes("/stream") || url.includes("/appearance")) {
+          proxyRes.headers["cache-control"] = "no-cache, no-transform";
+          proxyRes.headers["x-accel-buffering"] = "no";
+        }
+      });
+    }
+  },
   "/ws": { target: panelTarget, ws: true, changeOrigin: true },
   "/health": { target: panelTarget, changeOrigin: true }
-} as const;
+};
 
 function manualChunks(id: string): string | undefined {
   const normalizedId = id.replace(/\\/g, "/");

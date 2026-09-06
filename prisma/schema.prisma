@@ -48,11 +48,14 @@ model User {
   createdInstances    Instance[]           @relation("InstanceCreator")
   assignedInstances   Instance[]           @relation("InstanceAssignee")
   instanceAssignments InstanceAssignment[]
+  createdNodes        Node[]               @relation("NodeCreator")
+  createdEnrollmentTokens NodeEnrollmentToken[] @relation("EnrollmentTokenCreator")
   accessKeys          UserAccessKey[]
   points              Int                  @default(0)
   unlimitedPoints     Boolean              @default(false)
   favorability        Int                  @default(0)
   pointRecords        PointRecord[]
+  sakiConversations   SakiConversation[]
 
   @@map("users")
 }
@@ -120,8 +123,11 @@ model Node {
   metrics    NodeMetric[]
   instances  Instance[]
   tasks      ScheduledTask[]
+  createdById String?
+  createdBy   User?           @relation("NodeCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([host, port])
+  @@index([createdById])
   @@map("nodes")
 }
 
@@ -155,8 +161,11 @@ model NodeEnrollmentToken {
   usedCount   Int      @default(0)
   expiresAt   DateTime
   createdAt   DateTime @default(now())
+  createdById String?
+  createdBy   User?    @relation("EnrollmentTokenCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([tokenHash])
+  @@index([createdById])
   @@map("node_enrollment_tokens")
 }
 
@@ -337,4 +346,22 @@ model PointRecord {
 
   @@index([userId, createdAt])
   @@map("point_records")
+}
+
+model SakiConversation {
+  id         String   @id
+  userId     String
+  contextKey String
+  title      String
+  label      String   @default("Saki")
+  detail     String   @default("")
+  instanceId String?
+  messages   String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, updatedAt])
+  @@index([userId, contextKey])
+  @@map("saki_conversations")
 }

@@ -18,8 +18,8 @@ const ssl = loadSslConfig(rootDir);
 const transportProtocol = ssl ? "https" : "http";
 const daemonPort = numberFromEnv(process.env.DAEMON_PORT, 5480);
 const panelPort = numberFromEnv(process.env.PANEL_PORT, 5479);
-const listenHost = process.env.DAEMON_HOST ?? "127.0.0.1";
-const defaultReachableHost = listenHost;
+const listenHost = process.env.DAEMON_HOST ?? "0.0.0.0";
+const defaultReachableHost = listenHost === "0.0.0.0" ? "127.0.0.1" : listenHost;
 
 function isLoopbackHostname(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";

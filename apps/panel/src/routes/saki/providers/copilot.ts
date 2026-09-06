@@ -19,6 +19,7 @@ import {
   uniqueModels
 } from "../types.js";
 import { buildDirectMessages, buildDirectSystemPrompt } from "../prompt.js";
+import { currentAgentTurnConversation, serializeTurnMessagesForPrompt } from "../agent-messages.js";
 import { withTurnUsage } from "./common.js";
 import { parseToolCallsFromText, requireChatModel } from "./catalog.js";
 
@@ -449,6 +450,10 @@ export async function saveCopilotToken(gitHubToken: string): Promise<SakiCopilot
 }
 
 export function copilotPromptFromMessages(input: SakiChatRequest, prompt: string): string {
+  const conversation = currentAgentTurnConversation();
+  if (conversation?.messages.length) {
+    return serializeTurnMessagesForPrompt(conversation);
+  }
   const messages = buildDirectMessages(input, prompt);
   return messages
     .map((message) => `${message.role.toUpperCase()}:\n${message.content}`)

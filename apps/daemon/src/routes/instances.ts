@@ -63,11 +63,23 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     if (!command) {
       throw new Error("command is required");
     }
-    const options: { workingDirectory?: string; timeoutMs?: number; input?: string } = {};
+    const options: { workingDirectory?: string; timeoutMs?: number; input?: string; signal?: AbortSignal } = {};
     if (typeof body.workingDirectory === "string") options.workingDirectory = body.workingDirectory;
     if (typeof body.timeoutMs === "number") options.timeoutMs = body.timeoutMs;
     if (typeof body.input === "string") options.input = body.input;
-    return instanceManager.runCommand(id, command, options);
+    const abort = new AbortController();
+    let finished = false;
+    const onClose = () => {
+      if (!finished) abort.abort();
+    };
+    request.raw.on("close", onClose);
+    options.signal = abort.signal;
+    try {
+      return await instanceManager.runCommand(id, command, options);
+    } finally {
+      finished = true;
+      request.raw.off("close", onClose);
+    }
   });
 
   app.get("/api/instances/:id/logs", { preHandler: authenticatePanelRequest }, async (request) => {
@@ -96,7 +108,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
 
   app.post("/api/instances/:id/shells", { preHandler: authenticatePanelRequest }, async (request) => {
     const { id } = request.params as { id: string };
-    const body = request.body as { workingDirectory?: string } | undefined;
+    const body = request.body as { workingDirectory?: string; label?: string } | undefined;
     if (body?.workingDirectory) {
       instanceManager.registerSpec({
         id,
@@ -109,12 +121,19 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
         restartMaxRetries: 0
       });
     }
-    return instanceManager.createShell(id);
+    return instanceManager.createShell(id, body?.workingDirectory, body?.label);
   });
 
   app.get("/api/instances/:id/shells", { preHandler: authenticatePanelRequest }, async (request) => {
     const { id } = request.params as { id: string };
-    return { instanceId: id, sessions: instanceManager.listShells(id) };
+    const shells = instanceManager.listShells(id);
+    return { instanceId: id, sessions: shells.map((s) => s.id), shells };
+  });
+
+  app.delete("/api/instances/:id/shells/:sid", { preHandler: authenticatePanelRequest }, async (request) => {
+    const { sid } = request.params as { id: string; sid: string };
+    instanceManager.closeShell(sid);
+    return { ok: true };
   });
 
   app.post("/api/instances/:id/shells/:sid/input", { preHandler: authenticatePanelRequest }, async (request) => {

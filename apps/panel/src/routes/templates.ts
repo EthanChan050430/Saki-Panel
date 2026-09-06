@@ -8,7 +8,8 @@ import type {
 } from "@webops/shared";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../db.js";
-import { requirePermission } from "../auth.js";
+import { loadCurrentUser, requirePermission } from "../auth.js";
+import { canAccessNode } from "../node-access.js";
 import {
   classifyInstanceUser,
   instanceAssignedUserIds,
@@ -140,8 +141,9 @@ export async function registerTemplateRoutes(app: FastifyInstance): Promise<void
       return;
     }
 
+    const user = await loadCurrentUser(request.user.sub);
     const node = await prisma.node.findUnique({ where: { id: body.nodeId } });
-    if (!node) {
+    if (!node || !user || !canAccessNode(user, node)) {
       reply.code(404).send({ message: "Node not found" });
       return;
     }

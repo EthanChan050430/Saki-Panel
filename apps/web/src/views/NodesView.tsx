@@ -40,6 +40,15 @@ import { MetricTile, NodeStatusPill, PageErrorToast } from "../components/common
 import { SakiEmptyState } from "../components/saki/SakiEmptyState.js";
 import { formatBytes, formatDate, formatNumber } from "../utils/path.js";
 
+function isPrivateOrLocalIp(host: string | undefined): boolean {
+  if (!host) return false;
+  const h = host.toLowerCase().trim();
+  if (h === "localhost" || h === "127.0.0.1" || h === "::1" || h.startsWith("127.")) return true;
+  if (h.startsWith("10.") || h.startsWith("192.168.")) return true;
+  if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(h)) return true;
+  return false;
+}
+
 export function NodesView({ token, onLogout, refreshTick }: { token: string; onLogout: () => void; refreshTick: number }) {
   const [nodes, setNodes] = useState<ManagedNode[]>([]);
   const [error, setError] = useState("");
@@ -437,6 +446,25 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
                 </div>
               ) : null}
 
+              {parsedKeyPayload && isPrivateOrLocalIp(parsedKeyPayload.host) && !keyHostOverride.trim() ? (
+                <div className="wide-field" style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: "8px",
+                  padding: "8px 12px",
+                  background: "rgba(245, 158, 11, 0.08)",
+                  border: "1px solid rgba(245, 158, 11, 0.28)",
+                  borderRadius: "10px",
+                  fontSize: "12px",
+                  color: "#d97706"
+                }}>
+                  <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: "2px" }} />
+                  <span>
+                    提示：检测到密钥预设地址为内网/局域网 IP (<code>{parsedKeyPayload.host}</code>)。如果本面板与目标机器不在同一局域网，请在下方“连接 IP / 域名”中填写该机器的<strong>公网 IP</strong> 或域名。
+                  </span>
+                </div>
+              ) : null}
+
               <label>
                 <span>连接 IP / 域名 (跨网段可选覆盖)</span>
                 <input
@@ -643,6 +671,11 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
                     <tr key={node.id}>
                       <td>
                         <strong>{node.name}</strong>
+                        {node.createdBy ? (
+                          <div style={{ fontSize: "11px", color: "var(--text-muted, #86868b)", marginTop: "2px" }}>
+                            归属: {node.createdBy.displayName || node.createdBy.username}
+                          </div>
+                        ) : null}
                       </td>
                       <td>{`${node.protocol}://${node.host}:${node.port}`}</td>
                       <td>

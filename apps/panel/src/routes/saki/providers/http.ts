@@ -3,6 +3,7 @@ import {
   compactDebugText,
   errorMessageFromJson,
   fetchWithTimeout,
+  linkAgentAbortSignal,
   logSakiModelEvent,
   RequestTimeoutError,
   RouteError,
@@ -14,15 +15,21 @@ import {
   defaultTemperatureOnlyModelKeys,
   isRetryableError,
   isTemperatureRequestError,
+  isThinkingRequestError,
   modelTemperatureKey,
   parseRetryAfterMs,
   shouldSendCustomTemperature,
   sleep,
   summarizeModelRequestBody,
   summarizeModelResponsePayload,
+  withoutNativeThinking,
   withoutTemperature,
   withRetry
 } from "./common.js";
+
+function bodyHasNativeThinking(body: Record<string, unknown>): boolean {
+  return "enable_thinking" in body || "thinking" in body || "reasoning_effort" in body || "reasoning" in body;
+}
 
 export async function doRequestJsonPayload(url: string, options: RequestInit, timeoutMs: number, requestId: string): Promise<unknown> {
   const startedAt = Date.now();
@@ -118,6 +125,7 @@ export async function doRequestStreamingPayload<T>(
     ...summarizeModelRequestBody(options.body)
   });
   const controller = new AbortController();
+  const unlinkAgentAbort = linkAgentAbortSignal(controller);
   let timedOut = false;
   const timeout = setTimeout(() => {
     timedOut = true;
@@ -132,6 +140,7 @@ export async function doRequestStreamingPayload<T>(
   } catch (error) {
     const message = timedOut ? new RequestTimeoutError(timeoutMs).message : error instanceof Error ? error.message : "request failed";
     clearTimeout(timeout);
+    unlinkAgentAbort();
     logSakiModelEvent("stream.error", {
       requestId,
       url: safeModelLogUrl(url),
@@ -202,6 +211,7 @@ export async function doRequestStreamingPayload<T>(
     return result;
   } finally {
     clearTimeout(timeout);
+    unlinkAgentAbort();
   }
 }
 
@@ -242,6 +252,15 @@ export async function requestOpenAiCompatibleJsonPayload(
   try {
     return await request(body);
   } catch (error) {
+    if (bodyHasNativeThinking(body) && isThinkingRequestError(error)) {
+      logSakiModelEvent("thinking.retry", {
+        provider,
+        model,
+        url: safeModelLogUrl(url),
+        retry: "without-thinking"
+      });
+      return request(withoutNativeThinking(body));
+    }
     if (!("temperature" in body) || !isTemperatureRequestError(error)) throw error;
     defaultTemperatureOnlyModelKeys.add(modelTemperatureKey(provider, baseUrl, model));
     logSakiModelEvent("temperature.retry", {
@@ -283,6 +302,15 @@ export async function requestOpenAiCompatibleStreamingPayload<T>(
       const withoutUsage = { ...body };
       delete withoutUsage.stream_options;
       return request(withoutUsage);
+    }
+    if (bodyHasNativeThinking(body) && isThinkingRequestError(error)) {
+      logSakiModelEvent("thinking.retry", {
+        provider,
+        model,
+        url: safeModelLogUrl(url),
+        retry: "without-thinking"
+      });
+      return request(withoutNativeThinking(body));
     }
     if (!("temperature" in body) || !isTemperatureRequestError(error)) throw error;
     defaultTemperatureOnlyModelKeys.add(modelTemperatureKey(provider, baseUrl, model));
@@ -339,6 +367,16 @@ export async function readServerSentEventData(response: Response, onData: (data:
   if (data) onData(data);
 }
 
+export function parseStreamJsonPayload(data: string): unknown | undefined {
+  try {
+    return JSON.parse(data) as unknown;
+  } catch {
+    // A single malformed SSE/NDJSON frame must not abort the whole model stream.
+    logSakiModelEvent("stream.bad_json", { preview: data.slice(0, 120) });
+    return undefined;
+  }
+}
+
 export async function readJsonLineData(response: Response, onJson: (payload: unknown) => void): Promise<void> {
   let buffer = "";
   await readUtf8Stream(response, (chunk) => {
@@ -349,10 +387,14 @@ export async function readJsonLineData(response: Response, onJson: (payload: unk
       const line = buffer.slice(0, boundary).trim();
       buffer = buffer.slice(boundary + 1);
       if (!line) continue;
-      onJson(JSON.parse(line) as unknown);
+      const payload = parseStreamJsonPayload(line);
+      if (payload !== undefined) onJson(payload);
     }
   });
   const line = buffer.trim();
-  if (line) onJson(JSON.parse(line) as unknown);
+  if (line) {
+    const payload = parseStreamJsonPayload(line);
+    if (payload !== undefined) onJson(payload);
+  }
 }
 

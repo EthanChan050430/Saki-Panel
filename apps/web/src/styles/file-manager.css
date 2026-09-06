@@ -1917,6 +1917,7 @@
   text-align: center;
   gap: 12px;
   box-sizing: border-box;
+  animation: fade-in-scale var(--duration-slow) var(--ease-out-expo) both;
 }
 
 .saki-empty-state.compact {
@@ -2182,7 +2183,12 @@
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   box-shadow: none;
-  transition: all var(--duration-slow) var(--ease-out-expo);
+  transition:
+    width var(--duration-slow) var(--ease-out-expo),
+    height var(--duration-slow) var(--ease-out-expo),
+    transform var(--duration-slow) var(--ease-out-expo),
+    opacity var(--duration-slow) var(--ease-out-expo),
+    bottom var(--duration-slow) var(--ease-out-expo);
   will-change: height, transform, opacity, width;
 }
 
@@ -2224,7 +2230,12 @@ body.saki-selection-capture-active .saki-launcher {
   opacity: 0;
   transform: translateX(-50%) translateY(32px) scale(0.95);
   pointer-events: none;
-  transition: all var(--duration-slow) var(--ease-out-expo);
+  transition:
+    width var(--duration-slow) var(--ease-out-expo),
+    height var(--duration-slow) var(--ease-out-expo),
+    transform var(--duration-slow) var(--ease-out-expo),
+    opacity var(--duration-slow) var(--ease-out-expo),
+    bottom var(--duration-slow) var(--ease-out-expo);
 }
 
 .saki-panel.visible {

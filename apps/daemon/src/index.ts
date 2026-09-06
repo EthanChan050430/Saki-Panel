@@ -62,3 +62,12 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
+
+// A stray rejection (websocket races, pty callbacks, panel push failures) must not
+// kill the daemon and every managed instance with it. Log and keep running.
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled rejection:", reason instanceof Error ? reason.stack ?? reason.message : reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception:", error instanceof Error ? error.stack ?? error.message : error);
+});

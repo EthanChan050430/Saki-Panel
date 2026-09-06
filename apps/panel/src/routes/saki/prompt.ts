@@ -107,9 +107,12 @@ export interface DirectChatMessage {
 }
 
 export interface DirectProviderMessage {
-  role: DirectChatMessage["role"];
+  role: "system" | "user" | "assistant" | "tool";
   content: unknown;
-  images?: string[];
+  images?: string[] | undefined;
+  tool_call_id?: string | undefined;
+  name?: string | undefined;
+  tool_calls?: unknown[] | undefined;
 }
 
 export function buildDirectMessages(input: SakiChatRequest, prompt: string, systemPrompt?: string): DirectChatMessage[] {
@@ -137,143 +140,54 @@ function compactAgentSystemPrompt(): string {
 
 Rules:
 - Treat the selected instance working directory as the only project.
-- Do not read whole large files. Use searchFiles / outlineFile / readSymbol, then readFile with startLine and lineCount<=40.
-- Edit existing files with editLines or replaceInFile. writeFile is for NEW files only.
-- After edits call diagnoseCode, then respond.
-- If no tool is needed, call respond or answer in plain text.
+- Locate with searchFiles / findFiles, then read only the needed window.
+- Edit existing files with applyPatch (unified diff). writeFile is for NEW files only.
+- After code edits, diagnoseCode once if it is cheap, then stop.
+- If the task is done, reply in the user's language with no further tool calls.
 
 ${xmlToolFormatReminder()}
 
-Core tools: listFiles, readFile, searchFiles, findFiles, outlineFile, readSymbol, statFile, writeFile, replaceInFile, editLines, runCommand, diagnoseCode, searchSkills, readSkill, respond.`;
+Core tools: searchFiles, findFiles, readFile, applyPatch, writeFile, runCommand, diagnoseCode.`;
 }
 
 export function buildStaticAgentSystemPrompt(profile?: SakiModelProfile): string {
   if (profile?.compactPrompt) return compactAgentSystemPrompt();
-  return `You are Saki, an expert AI coding Agent in Saki Panel. Complete tasks efficiently by calling tools. Never claim an action was done unless a tool observation confirms it.
+  return `You are Saki, a coding Agent in Saki Panel. Complete the user's task with tools. Never claim work was done unless a tool observation confirms it.
 
-Treat the selected instance working directory as the only project. Do not assume this is the Saki Panel source repo. Be fast, precise, and decisive.
+Workspace: only the selected instance working directory. Do not assume this is the Saki Panel source repo.
 
-SPEED RULES FOR LARGE CODE (MANDATORY):
-- NEVER read a whole large file. Blind readFile on big files is blocked and returns an outline only.
-- Locate first: searchFiles / findFiles / outlineFile / readSymbol. searchFiles already includes 2 lines of context and exact line numbers.
-- After a search hit, edit immediately with replaceInFile or editLines. Do not re-read the file unless the match is ambiguous.
-- If you must read, use readFile({ path, startLine, lineCount: 40 }) once. Never page startLine += 40 through a file.
-- Batch independent searches/outlines in one turn.
-- After any file edit, call diagnoseCode before respond. Failed diagnostics must be fixed first.
-- Do not call getEnvironmentInfo unless you need OS/runtime versions. It is cached; do not re-probe.
-- Do not spawnTask for single-file or known-path work. spawnTask is research-only and cannot edit.
-- Prefer searchSkills over listSkills. Prefer searchWeb + browse over crawl/researchWeb.
-- Live app stdin uses sendInput. Shell commands always use runCommand.
-- CONTINUATION / RESUME PROTOCOL:
-  * When continuing a task (e.g. user says "继续" or a follow-up step), you ALREADY have the previous findings, file paths, and line numbers in your working notes and memory.
-  * NEVER re-scan the workspace or re-read files you already inspected. Proceed directly to the next planned action (editing or verification).
-- SURGICAL CODE-EDIT RULES:
-  * For EDITING existing code: prefer editLines({ path, startLine, endLine, replacement }) with exact line numbers.
-  * For multiple files or multi-section refactors: use batchEdit({ edits: [...] }) to apply all edits in a single step!
-  * For small unique strings: use replaceInFile({ path, oldText, newText }).
-  * For NEW files only: use writeFile({ path, content }). NEVER rewrite an existing file with writeFile.
-- VERIFICATION & SELF-REVIEW:
-  * After editing code files, call diagnoseCode() to verify syntax and typecheck.
-  * Use gitDiff() or gitStatus() to self-review your unified diff before delivering the final response.
-- FILE PROBING & SYMBOL EXTRACTION:
-  * Extract complete function/component code in 1 step: readSymbol({ path, symbol }).
-  * Check existence, size, or line count using statFile({ path }) before reading large files.
-  * Extract structural map with line numbers: outlineFile({ path }).
-- MULTI-STEP TASKS & TODOs:
-  * For tasks with 2+ steps, call manageTodos({ todos: "- [x] Done\\n- [ ] Next" }) to track progress cleanly.
-- RESEARCH DELEGATION:
-  * For broad multi-file exploration only, call spawnTask({ task }). Sub-agents inspect; they cannot edit.
-- In Plan mode, do not write files or change state; return a plan only.
-- If no tool call is needed, return a final answer via respond or direct text.
+How to work:
+- Search first (searchFiles / findFiles). Read only the window you need.
+- Edit existing files with applyPatch using a unified diff against current file contents. writeFile is for NEW files only.
+- replaceInFile is fine for a unique string. Avoid rewriting whole files.
+- Batch independent reads/searches in one turn.
+- After code edits, diagnoseCode once if it is cheap. Do not run test suites.
+- If the task is done, answer in the user's language and stop. Do not keep calling tools.
+- The user may insert a follow-up while you are working. Treat it as the new instruction.
+- In Plan mode, do not write files or change state.
 
-Core tools (always available):
-- listFiles, readFile (path, startLine, lineCount<=80), statFile, outlineFile, readSymbol, findSymbols
-- searchFiles, findFiles
-- writeFile (NEW files), replaceInFile, editLines (preferred), batchEdit
-- runCommand, diagnoseCode (after edits; never npm test), gitStatus, gitDiff
-- searchSkills, readSkill, manageTodos, instanceLogs, reportProgress, respond
-- searchWeb, browse (when web search is enabled)
+Visible progress:
+- Put long reasoning in native thinking / <think>.
+- Before a tool batch, write 1-3 short sentences in the user's language.
 
-Situational tools are advertised when the request needs them (instances, live stdin/shells, schedules, archives, memory, env, crawl, spawnTask). Use the native function list you were given.
-
----
-
-OUTPUT FORMAT (ALWAYS USE THIS):
-
-When native tool calling is available, use it directly.
-
-When native tool calling is NOT available, use XML tool_call tags with child parameter tags. Do NOT use JSON inside XML.
-
-Single tool call:
-<tool_call name="toolName">
-<paramName>value</paramName>
-</tool_call>
-
-Track task checklist / TODOs:
-<tool_call name="manageTodos">
-<todos>
-- [x] Locate bug with searchFiles
-- [ ] Fix lines with editLines
-- [ ] Verify diagnostics
-</todos>
-</tool_call>
-
-Outline a file (extract structure and line numbers instantly):
-<tool_call name="outlineFile">
-<path>src/app.ts</path>
-</tool_call>
-
-Find symbol definition (Go-to-Definition):
-<tool_call name="findSymbols">
-<query>runSakiAgent</query>
-</tool_call>
-
-Read complete function / component definition in 1 step:
-<tool_call name="readSymbol">
-<path>apps/web/src/App.tsx</path>
-<symbol>SakiToolActionCard</symbol>
-</tool_call>
-
-Search code / files (grep):
-<tool_call name="searchFiles">
-<pattern>handleRequest</pattern>
-</tool_call>
-
-Read a focused line range:
-<tool_call name="readFile">
-<path>src/app.ts</path>
-<startLine>25</startLine>
-<lineCount>35</lineCount>
-</tool_call>
-
-Edit lines in an existing file:
-<tool_call name="editLines">
-<path>src/app.ts</path>
-<startLine>10</startLine>
-<endLine>14</endLine>
-<replacement>
-function calculate() {
-  return 42;
+${xmlToolFormatReminder()}`;
 }
-</replacement>
-</tool_call>
 
-Run diagnostics / typecheck:
-<tool_call name="diagnoseCode">
-</tool_call>
+export function buildAgentWorkspacePrefix(runtime: SakiAgentRuntime): string {
+  const workspace = runtime.context.workspace;
+  const permissionMode = effectiveSakiAgentPermissionMode(runtime.input);
+  const commandEnvironment = renderCommandEnvironment(runtime.context.instance);
+  return `Active workspace:
+- Instance: ${workspace?.instanceName ?? "none selected"}
+- ID: ${workspace?.instanceId ?? "none"}
+- Node: ${workspace?.nodeName ?? "none"}
+- Working dir: ${workspace?.workingDirectory ?? "none"}
+- Status: ${workspace?.status ?? "unknown"}
+- Last exit: ${workspace?.lastExitCode ?? "none"}
+- Permission: ${sakiPermissionModeLabel(permissionMode)} — ${sakiPermissionModeBehavior(permissionMode)}
 
-Final text response:
-<tool_call name="respond">
-<text>I have completed the requested changes.</text>
-</tool_call>
-
-Rules:
-- Always use <tool_call name="...">...</tool_call> format.
-- Each parameter must be in its own child tag (e.g. <path>...</path>, <content>...</content>).
-- Raw text and multi-line code are placed directly inside parameter tags without any quotes or JSON escaping.
-- You may output multiple <tool_call>...</tool_call> blocks to batch independent read operations.
-- Never use Markdown code fences around <tool_call> blocks.
-- Never add commentary before or after tool calls unless calling respond.`;
+Command env:
+${commandEnvironment}`;
 }
 
 export function buildDynamicAgentUserContext(runtime: SakiAgentRuntime, isContinuation: boolean = false): string {
@@ -332,6 +246,27 @@ ${dynamicContext}${errorText}
 Request: ${runtime.input.message}`;
 }
 
+export function buildAgentUserTurn(runtime: SakiAgentRuntime): string {
+  const additionalContext = combinedSakiContextText(runtime.input);
+  const errorText = runtime.input.panelError ? `\n\nError: ${redactSensitiveText(runtime.input.panelError)}` : "";
+  const skillText = runtime.skills.length
+    ? runtime.skills.map((skill) => `- ${skill.id}: ${skill.name} - ${skill.description ?? ""}`).join("\n")
+    : "";
+  const workingFiles = getRecentWorkingFiles(runtime.userId, runtime.context.workspace?.instanceId ?? null);
+  const workingFilesText = workingFiles.length
+    ? `\nActive working files:\n${workingFiles.map((file) => `- ${file}`).join("\n")}`
+    : "";
+  const contextBlock = additionalContext ? `\n\nContext${runtime.input.contextTitle ? ` (${runtime.input.contextTitle})` : ""}:\n${additionalContext}` : "";
+  const skillsBlock = skillText ? `\n\nSkills:\n${skillText}` : "";
+  return `${contextBlock}${workingFilesText}${skillsBlock}${errorText}
+
+Request: ${runtime.input.message}`.trim();
+}
+
+export function buildAgentGitNote(gitSummary: string): string {
+  return `Current git status (ephemeral snapshot, not part of the cached workspace prefix):\n${gitSummary.trim()}`;
+}
+
 export function buildAgentContinuationPrompt(runtime: SakiAgentRuntime, sessionGoal?: string): string {
   const staticPrompt = runtime.systemPromptOverride || buildStaticAgentSystemPrompt(sakiModelProfile(runtime.config.provider, runtime.config.model));
   const dynamicContext = buildDynamicAgentUserContext(runtime, true);
@@ -346,6 +281,6 @@ export function buildAgentContinuationPrompt(runtime: SakiAgentRuntime, sessionG
 ${dynamicContext}
 
 [CONTINUATION]:
-Prior observations already contain paths and line numbers. Do not re-search or re-read whole files.
-Edit or verify next. After edits, diagnoseCode then respond.${goalText}`;
+Prior tool results already contain paths and current file contents. Do not re-search or re-read whole files.
+If the user is asking a question, answer it. If work remains, applyPatch or verify next. When done, reply in plain text and stop.${goalText}`;
 }

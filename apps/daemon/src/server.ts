@@ -19,7 +19,8 @@ export async function createDaemonServer() {
 
   await app.register(websocket, {
     options: {
-      maxPayload: 1024 * 64
+      // Full-screen TUIs (agy, claude, vim, htop) emit large ANSI frames.
+      maxPayload: 8 * 1024 * 1024
     }
   });
 

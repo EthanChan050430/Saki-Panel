@@ -100,6 +100,31 @@ export async function clearIdentity(): Promise<void> {
   }
 }
 
+async function getPublicIp(timeoutMs = 1500): Promise<string | null> {
+  const ipEndpoints = [
+    "https://api.ipify.org",
+    "https://icanhazip.com",
+    "https://ifconfig.me/ip"
+  ];
+  for (const endpoint of ipEndpoints) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const res = await fetch(endpoint, { signal: controller.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        const text = (await res.text()).trim();
+        if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(text)) {
+          return text;
+        }
+      }
+    } catch {
+      // Continue to next endpoint
+    }
+  }
+  return null;
+}
+
 function getReachableIp(): string {
   const interfaces = os.networkInterfaces();
   for (const name of Object.keys(interfaces)) {
@@ -125,9 +150,14 @@ export async function getOrCreateDaemonNodeKey(overrideHost?: string, overridePo
 
   let host = overrideHost?.trim() || daemonConfig.publicHost;
   if (!overrideHost && (host === "127.0.0.1" || host === "0.0.0.0" || host === "localhost")) {
-    const detected = getReachableIp();
-    if (detected !== "127.0.0.1") {
-      host = detected;
+    const publicIp = await getPublicIp(1500);
+    if (publicIp) {
+      host = publicIp;
+    } else {
+      const detected = getReachableIp();
+      if (detected !== "127.0.0.1") {
+        host = detected;
+      }
     }
   }
 

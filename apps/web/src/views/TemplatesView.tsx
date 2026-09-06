@@ -212,7 +212,7 @@ export function TemplatesView({ token, onLogout, refreshTick }: { token: string;
             </label>
             <label className="checkbox-field">
               <input type="checkbox" checked={form.autoStart} onChange={(event) => setForm((current) => ({ ...current, autoStart: event.target.checked }))} />
-              自启动
+              <span>自启动</span>
             </label>
             <label>
               重启策略

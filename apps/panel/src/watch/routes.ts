@@ -10,7 +10,7 @@ import {
   listIncidents,
   updateIncident
 } from "./incidents.js";
-import { startIncidentEventStream } from "./notify.js";
+import { startIncidentEventStream, setIncidentVisibilityResolver } from "./notify.js";
 import { readWatchPolicy, upsertWatchPolicy } from "./policy.js";
 import { cancelWatchIncident, confirmWatchDiagnosis, maybeFinishWatchIncident, pendingActionsForIncident } from "./runner.js";
 import { rollbackIncidentChanges } from "./verify.js";
@@ -22,6 +22,9 @@ async function visibleInstanceIds(userId: string): Promise<string[]> {
 }
 
 export async function registerWatchRoutes(app: FastifyInstance): Promise<void> {
+  // SSE 推送前按订阅者动态刷新可见实例集合（30s 缓存），避免权限变更后长期推送越权数据。
+  setIncidentVisibilityResolver((userId) => visibleInstanceIds(userId));
+
   app.get("/api/incidents", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
     const ids = await visibleInstanceIds(request.user.sub);
     const incidents = ids.length ? await listIncidents(ids, 50) : [];
@@ -101,12 +104,21 @@ export async function registerWatchRoutes(app: FastifyInstance): Promise<void> {
       return { ok: true, incident: await getIncident(id) };
     }
     const pending = ownedPending;
+    // 逐项应用并收集结果：单个失败不抛出 500，避免掩盖前面已生效的变更。
+    const results: Array<{ actionId: string; ok: boolean; message?: string }> = [];
     let lastResponse = null;
     for (const action of pending) {
-      lastResponse = await approvePendingSakiAction(request, action.id);
+      try {
+        lastResponse = await approvePendingSakiAction(request, action.id);
+        results.push({ actionId: action.id, ok: true });
+      } catch (error) {
+        console.error("approve watch action failed:", error instanceof Error ? error.stack ?? error.message : error);
+        results.push({ actionId: action.id, ok: false, message: "该变更应用失败，已跳过；其余变更不受影响。" });
+      }
     }
     return {
-      ok: true,
+      ok: results.every((result) => result.ok),
+      results,
       incident: await getIncident(id),
       ...(lastResponse ? { response: lastResponse.response, action: lastResponse.action } : {})
     };

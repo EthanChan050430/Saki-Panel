@@ -5,4 +5,5 @@ export * from "./copilot.js";
 export * from "./openai.js";
 export * from "./anthropic.js";
 export * from "./ollama.js";
+export * from "./antigravity.js";
 export * from "./dispatcher.js";

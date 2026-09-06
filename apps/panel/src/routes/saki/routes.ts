@@ -28,10 +28,12 @@ import {
   prepareSakiChatInvocation
 } from "./chat.js";
 import { readEffectiveSakiConfig, saveSakiConfig } from "./config.js";
+import { startAppearanceEventStream } from "./appearance-events.js";
 import { executeSakiAgentTool } from "./executor.js";
 import { emitAgentFinalText, runSakiAgent } from "./loop.js";
 import { assertUserHasSpendablePoints, recordAgentTokenUsage } from "../../points.js";
 import {
+  checkAntigravityAuthStatus,
   readCopilotAuthStatus,
   readCopilotLoginState,
   saveCopilotToken,
@@ -46,14 +48,18 @@ import {
   saveSakiSkill,
   toSkillSummary
 } from "./skills.js";
+import { prisma } from "../../db.js";
 import { createSakiAgentEvents, startSakiEventStream } from "./stream.js";
 import {
   cancelActiveSakiTask,
+  cancelRunningSakiTasksForContext,
   createActiveSakiTask,
+  enqueueSakiTaskSteer,
   emitActiveSakiTaskEvent,
   finishActiveSakiTask,
   getActiveSakiTask,
   getActiveSakiTaskById,
+  listSakiActiveTasks,
   formatSessionFollowUpContext,
   getSessionAgentMemory,
   toSakiActiveTaskSummary
@@ -76,6 +82,12 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/saki/appearance", async () => {
     const config = await readEffectiveSakiConfig();
     return config.appearance;
+  });
+
+  app.get("/api/saki/appearance/stream", async (request, reply) => {
+    const config = await readEffectiveSakiConfig();
+    const stream = startAppearanceEventStream(request, reply);
+    stream.send("appearance", { appearance: config.appearance as unknown as Record<string, unknown> });
   });
 
   app.get("/api/saki/status", { preHandler: requireAnyPermission(sakiUsePermissions) }, async () => {
@@ -126,6 +138,11 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
       }
     });
     return result;
+  });
+
+  app.get("/api/saki/antigravity/status", { preHandler: requirePermission("saki.configure") }, async () => {
+    const config = await readEffectiveSakiConfig();
+    return checkAntigravityAuthStatus(config);
   });
 
   app.get("/api/saki/skills", { preHandler: requirePermission("saki.skills") }, async (request) => {
@@ -293,6 +310,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     const taskAbortController = new AbortController();
 
     if (isAgent) {
+      cancelRunningSakiTasksForContext(request.user.sub, instanceKeyId);
       createActiveSakiTask(taskId, request.user.sub, instanceKeyId, modelInput, taskAbortController);
     }
 
@@ -353,7 +371,8 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
             userId: request.user.sub,
             permissions: request.user.permissions,
             config,
-            abortController: taskAbortController
+            abortController: taskAbortController,
+            taskId
           },
           events,
           resumeState,
@@ -420,6 +439,14 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     } finally {
       stream.end();
     }
+  });
+
+  app.get("/api/saki/active-tasks", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    const tasks = listSakiActiveTasks(request.user.sub);
+    return {
+      tasks: tasks.map(toSakiActiveTaskSummary),
+      runningCount: tasks.filter((task) => task.status === "running").length
+    };
   });
 
   app.get("/api/saki/active-task", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
@@ -490,6 +517,24 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     return { ok: cancelled };
   });
 
+  app.post("/api/saki/tasks/:taskId/steer", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    const { taskId } = request.params as { taskId: string };
+    const task = getActiveSakiTaskById(taskId);
+    if (!task || task.userId !== request.user.sub) {
+      throw new RouteError("Task not found.", 404);
+    }
+    const body = objectValue(request.body) ?? {};
+    const message = trimString(body.message);
+    if (!message) {
+      throw new RouteError("Steer message is required.", 400);
+    }
+    const ok = enqueueSakiTaskSteer(taskId, message);
+    if (!ok) {
+      throw new RouteError("Task is not running.", 409);
+    }
+    return { ok: true };
+  });
+
   app.post("/api/saki/chat", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
     const prepared = await prepareSakiChatInvocation(request, request.body as Partial<SakiChatRequest>);
     const { modelInput, context, skills } = prepared;
@@ -557,6 +602,74 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
       await auditSakiChatResponse(request, prepared, fallback, "FAILURE", reason);
       return fallback;
     }
+  });
+
+  app.get("/api/saki/conversations", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    const rows = await prisma.sakiConversation.findMany({
+      where: { userId: request.user.sub },
+      orderBy: { updatedAt: "desc" },
+      take: 80
+    });
+    return rows.map((r) => {
+      let parsedMessages: any[] = [];
+      try {
+        parsedMessages = JSON.parse(r.messages);
+      } catch {}
+      return {
+        id: r.id,
+        contextKey: r.contextKey,
+        label: r.label,
+        detail: r.detail,
+        instanceId: r.instanceId,
+        title: r.title,
+        messages: parsedMessages,
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString()
+      };
+    });
+  });
+
+  app.put("/api/saki/conversations/:id", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as any;
+    if (!body || typeof body !== "object") {
+      throw new RouteError("Invalid conversation data.", 400);
+    }
+    const record = await prisma.sakiConversation.upsert({
+      where: { id },
+      create: {
+        id,
+        userId: request.user.sub,
+        contextKey: typeof body.contextKey === "string" ? body.contextKey : "global",
+        title: typeof body.title === "string" ? body.title : "新对话",
+        label: typeof body.label === "string" ? body.label : "Saki",
+        detail: typeof body.detail === "string" ? body.detail : "",
+        instanceId: typeof body.instanceId === "string" ? body.instanceId : null,
+        messages: JSON.stringify(Array.isArray(body.messages) ? body.messages : [])
+      },
+      update: {
+        ...(typeof body.title === "string" ? { title: body.title } : {}),
+        ...(typeof body.label === "string" ? { label: body.label } : {}),
+        ...(typeof body.detail === "string" ? { detail: body.detail } : {}),
+        ...(Array.isArray(body.messages) ? { messages: JSON.stringify(body.messages) } : {})
+      }
+    });
+    return { ok: true, id: record.id };
+  });
+
+  app.delete("/api/saki/conversations/:id", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    const { id } = request.params as { id: string };
+    await prisma.sakiConversation.deleteMany({
+      where: { id, userId: request.user.sub }
+    });
+    return { ok: true };
+  });
+
+  app.delete("/api/saki/conversations", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    await prisma.sakiConversation.deleteMany({
+      where: { userId: request.user.sub }
+    });
+    return { ok: true };
   });
 }
 

@@ -19,7 +19,8 @@ import type {
 } from "@webops/shared";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../db.js";
-import { requireAnyPermission, requirePermission } from "../auth.js";
+import { loadCurrentUser, requireAnyPermission, requirePermission } from "../auth.js";
+import { canAccessNode } from "../node-access.js";
 import {
   classifyInstanceUser,
   instanceAssignedUserIds,
@@ -37,6 +38,7 @@ import { findDangerousCommandReason } from "../security.js";
 import {
   applyDaemonClashSubscription,
   createDaemonInstanceShell,
+  deleteDaemonInstanceShell,
   fetchDaemonClashSubscription,
   killDaemonInstance,
   listDaemonInstanceFiles,
@@ -773,8 +775,9 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
         return;
       }
 
+      const currentUser = await loadCurrentUser(request.user.sub);
       const node = await prisma.node.findUnique({ where: { id: nodeId } });
-      if (!node) {
+      if (!node || !currentUser || !canAccessNode(currentUser, node)) {
         reply.code(404).send({ message: "Node not found" });
         return;
       }
@@ -836,8 +839,9 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       return;
     }
 
+    const currentUser = await loadCurrentUser(request.user.sub);
     const node = await prisma.node.findUnique({ where: { id: nodeId } });
-    if (!node) {
+    if (!node || !currentUser || !canAccessNode(currentUser, node)) {
       reply.code(404).send({ message: "Node not found" });
       return;
     }
@@ -952,8 +956,9 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
         return;
       }
       if (trimmedNodeId !== existing.nodeId) {
+        const currentUser = await loadCurrentUser(request.user.sub);
         const node = await prisma.node.findUnique({ where: { id: trimmedNodeId } });
-        if (!node) {
+        if (!node || !currentUser || !canAccessNode(currentUser, node)) {
           reply.code(404).send({ message: "Node not found" });
           return;
         }
@@ -1336,8 +1341,8 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       return;
     }
     try {
-      const body = request.body as { workingDirectory?: string } | undefined;
-      const result = await createDaemonInstanceShell(instance.node, id, body?.workingDirectory);
+      const body = request.body as { workingDirectory?: string; label?: string } | undefined;
+      const result = await createDaemonInstanceShell(instance.node, id, body?.workingDirectory, body?.label);
       return result;
     } catch (error) {
       reply.code(502).send({ message: error instanceof Error ? error.message : "Daemon request failed" });
@@ -1353,6 +1358,20 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     }
     try {
       return await listDaemonInstanceShells(instance.node, id);
+    } catch (error) {
+      reply.code(502).send({ message: error instanceof Error ? error.message : "Daemon request failed" });
+    }
+  });
+
+  app.delete("/api/instances/:id/shells/:sid", { preHandler: requirePermission("terminal.view") }, async (request, reply) => {
+    const { id, sid } = request.params as { id: string; sid: string };
+    const instance = await loadInstance(request, id);
+    if (!instance) {
+      await sendNotFound(reply);
+      return;
+    }
+    try {
+      return await deleteDaemonInstanceShell(instance.node, id, sid);
     } catch (error) {
       reply.code(502).send({ message: error instanceof Error ? error.message : "Daemon request failed" });
     }

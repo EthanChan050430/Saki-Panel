@@ -53,10 +53,11 @@ function parseClientMessage(raw: WebSocket.RawData): TerminalClientMessage | nul
       return msg;
     }
     if (parsed?.type === "resize" && typeof parsed.cols === "number" && typeof parsed.rows === "number") {
+      if (!Number.isFinite(parsed.cols) || !Number.isFinite(parsed.rows)) return null;
       const msg: TerminalClientMessage = {
         type: "resize",
-        cols: Math.max(10, Math.min(parsed.cols, 500)),
-        rows: Math.max(5, Math.min(parsed.rows, 200))
+        cols: Math.max(10, Math.min(Math.floor(parsed.cols), 500)),
+        rows: Math.max(5, Math.min(Math.floor(parsed.rows), 200))
       };
       if (parsed.sessionId != null) (msg as { sessionId?: string }).sessionId = parsed.sessionId;
       return msg;
@@ -154,6 +155,14 @@ async function authenticateTerminalUser(
   return user;
 }
 
+function stripTerminalEscapeSequences(input: string): string {
+  return input
+    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "") // OSC ... BEL / ST
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "") // CSI sequences
+    .replace(/\u001b[@-_]/g, "") // two-byte escapes
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ""); // remaining control chars except \t \r \n
+}
+
 function inputPreview(input: string): string {
   return input
     .replace(/\r/g, "")
@@ -176,6 +185,17 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
     let instanceId: string | null = null;
     let authInProgress = false;
     const pendingMessages: TerminalClientMessage[] = [];
+    const maxPendingMessages = 256;
+    // Tracks (protocol, host) pairs already tried for this session so a dead or
+    // misconfigured daemon cannot trigger an endless http<->https retry loop.
+    const daemonConnectAttempts = new Set<string>();
+
+    const queuePending = (message: TerminalClientMessage) => {
+      pendingMessages.push(message);
+      if (pendingMessages.length > maxPendingMessages) {
+        pendingMessages.splice(0, pendingMessages.length - maxPendingMessages);
+      }
+    };
 
     const flushPending = () => {
       if (!user) return;
@@ -219,26 +239,27 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
 
       socket.on("close", () => {
         if (daemonSocket === socket) {
+          pendingMessages.length = 0;
           closeWithError(browserSocket, "Daemon terminal disconnected", 1011);
         }
       });
 
       socket.on("error", (error) => {
-        if (!opened && shouldRetryWebSocketAsHttp(error, activeProtocol)) {
-          socket.removeAllListeners("close");
-          connectDaemonSocket("http", hostOverride, sid, instance);
-          return;
+        if (!opened) {
+          const retryAttempts: Array<[string, string | undefined]> = [];
+          if (shouldRetryWebSocketAsHttp(error, activeProtocol)) retryAttempts.push(["http", hostOverride]);
+          if (shouldRetryWebSocketAsHttps(error, activeProtocol)) retryAttempts.push(["https", hostOverride]);
+          if (shouldRetryWebSocketOnLoopback(error, activeHost)) retryAttempts.push([protocolOverride ?? instance.node.protocol, "127.0.0.1"]);
+          for (const [nextProtocol, nextHost] of retryAttempts) {
+            const attemptKey = `${nextProtocol}://${nextHost ?? instance.node.host}:${instance.node.port}`;
+            if (daemonConnectAttempts.has(attemptKey)) continue;
+            daemonConnectAttempts.add(attemptKey);
+            socket.removeAllListeners("close");
+            connectDaemonSocket(nextProtocol, nextHost, sid, instance);
+            return;
+          }
         }
-        if (!opened && shouldRetryWebSocketAsHttps(error, activeProtocol)) {
-          socket.removeAllListeners("close");
-          connectDaemonSocket("https", hostOverride, sid, instance);
-          return;
-        }
-        if (!opened && shouldRetryWebSocketOnLoopback(error, activeHost)) {
-          socket.removeAllListeners("close");
-          connectDaemonSocket(protocolOverride, "127.0.0.1", sid, instance);
-          return;
-        }
+        pendingMessages.length = 0;
         request.log.error(error);
         closeWithError(browserSocket, error instanceof Error ? error.message : "Daemon terminal error", 1011);
       });
@@ -266,6 +287,7 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
         user = authenticatedUser;
         instanceId = instance.id;
         authInProgress = false;
+        daemonConnectAttempts.add(`${instance.node.protocol}://${instance.node.host}:${instance.node.port}`);
         connectDaemonSocket(undefined, undefined, sessionId, instance);
       } catch (e) {
         authInProgress = false;
@@ -284,7 +306,7 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
         if (daemonSocket && daemonSocket.readyState === WebSocket.OPEN) {
           daemonSocket.send(JSON.stringify(message));
         } else {
-          pendingMessages.push(message);
+          queuePending(message);
         }
         return;
       }
@@ -294,38 +316,46 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
           send(browserSocket, { type: "error", message: "Terminal input permission denied" });
           return;
         }
-        if (message.data.length > 4096) {
+        if (message.data.length > 100000) {
           send(browserSocket, { type: "error", message: "Terminal input is too large" });
           return;
         }
-        const commandPreview = inputPreview(message.data);
-        const blocked = findDangerousCommandReason(commandPreview);
-        if (blocked) {
-          send(browserSocket, { type: "error", message: blocked });
-          void writeAuditLog({
-            request,
-            userId: user.id,
-            action: "security.command_blocked",
-            resourceType: "instance",
-            resourceId: instanceId,
-            payload: {
-              inputPreview: commandPreview,
-              inputLength: message.data.length,
-              reason: blocked
-            },
-            result: "FAILURE"
-          }).catch((error: unknown) => {
-            request.log.error(error);
-          });
-          return;
+        const isRawPtyInput = message.echo === false || message.data.includes("\u001b");
+        // Submissions (anything containing Enter) are always screened, even from raw
+        // PTY input. ANSI escape sequences are stripped first so that bracketed paste
+        // markers or arrow-key bytes cannot smuggle a dangerous command past the check.
+        const isSubmission = /[\r\n]/.test(message.data);
+        if (!isRawPtyInput || isSubmission) {
+          const screened = isRawPtyInput ? stripTerminalEscapeSequences(message.data) : message.data;
+          const commandPreview = inputPreview(screened);
+          const blocked = findDangerousCommandReason(commandPreview);
+          if (blocked) {
+            send(browserSocket, { type: "error", message: blocked });
+            void writeAuditLog({
+              request,
+              userId: user.id,
+              action: "security.command_blocked",
+              resourceType: "instance",
+              resourceId: instanceId,
+              payload: {
+                inputPreview: commandPreview,
+                inputLength: message.data.length,
+                reason: blocked
+              },
+              result: "FAILURE"
+            }).catch((error: unknown) => {
+              request.log.error(error);
+            });
+            return;
+          }
         }
         if (!daemonSocket || daemonSocket.readyState !== WebSocket.OPEN || !instanceId) {
-          pendingMessages.push(message);
+          queuePending(message);
           return;
         }
 
         daemonSocket.send(JSON.stringify(message));
-        if (message.data.includes("\n") || message.data.includes("\r") || message.data.length > 8) {
+        if (!isRawPtyInput && (message.data.includes("\n") || message.data.includes("\r") || message.data.length > 8)) {
           void writeAuditLog({
             request,
             userId: user.id,
@@ -367,7 +397,7 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
       }
 
       if (authInProgress) {
-        pendingMessages.push(message);
+        queuePending(message);
         return;
       }
 

@@ -16,10 +16,11 @@ import type {
 import type { Prisma } from "@prisma/client";
 import { panelConfig } from "../config.js";
 import { prisma } from "../db.js";
-import { requirePermission } from "../auth.js";
-import { testDaemonHealth } from "../daemon-client.js";
+import { loadCurrentUser, requirePermission } from "../auth.js";
+import { fetchDaemonStatus, testDaemonHealth } from "../daemon-client.js";
 import { generateSecretToken, hashToken, tokenLast4 } from "../security.js";
 import { writeAuditLog } from "../audit.js";
+import { canAccessNode, nodeVisibilityWhere } from "../node-access.js";
 
 function normalizeProtocol(value: unknown): "http" | "https" | null {
   return value === "http" || value === "https" ? value : null;
@@ -81,6 +82,8 @@ export function toManagedNode(node: {
   lastSeenAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  createdById?: string | null;
+  createdBy?: { id: string; username: string; displayName: string } | null;
   metrics?: Array<Parameters<typeof toMetricSnapshot>[0]>;
 }): ManagedNode {
   const derivedStatus = isOffline(node.lastSeenAt) ? "OFFLINE" : node.status;
@@ -101,15 +104,34 @@ export function toManagedNode(node: {
     lastSeenAt: node.lastSeenAt?.toISOString() ?? null,
     createdAt: node.createdAt.toISOString(),
     updatedAt: node.updatedAt.toISOString(),
-    latestMetric: node.metrics?.[0] ? toMetricSnapshot(node.metrics[0]) : null
+    latestMetric: node.metrics?.[0] ? toMetricSnapshot(node.metrics[0]) : null,
+    createdById: node.createdById ?? null,
+    createdBy: node.createdBy
+      ? {
+          id: node.createdBy.id,
+          username: node.createdBy.username,
+          displayName: node.createdBy.displayName
+        }
+      : null
   };
 }
 
 export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/api/nodes", { preHandler: requirePermission("node.view") }, async () => {
+  app.get("/api/nodes", { preHandler: requirePermission("node.view") }, async (request) => {
+    const user = await loadCurrentUser(request.user.sub);
+    if (!user) return [];
+
+    const query = request.query as { all?: string };
+    const showAll = query.all === "true" || query.all === "1";
+    const where = nodeVisibilityWhere(user, showAll);
+
     const nodes = await prisma.node.findMany({
+      where,
       orderBy: { createdAt: "desc" },
       include: {
+        createdBy: {
+          select: { id: true, username: true, displayName: true }
+        },
         metrics: {
           orderBy: { createdAt: "desc" },
           take: 1
@@ -146,9 +168,13 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
         tags: normalizeOptionalText(body.tags) ?? null,
         tokenHash: hashToken(nodeToken),
         tokenLast4: tokenLast4(nodeToken),
-        status: "UNKNOWN"
+        status: "UNKNOWN",
+        createdById: request.user.sub
       },
       include: {
+        createdBy: {
+          select: { id: true, username: true, displayName: true }
+        },
         metrics: {
           orderBy: { createdAt: "desc" },
           take: 1
@@ -173,16 +199,25 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
 
   app.put("/api/nodes/:id", { preHandler: requirePermission("node.update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
+    const user = await loadCurrentUser(request.user.sub);
+    if (!user) {
+      reply.code(401).send({ message: "Unauthorized" });
+      return;
+    }
+
     const existing = await prisma.node.findUnique({
       where: { id },
       include: {
+        createdBy: {
+          select: { id: true, username: true, displayName: true }
+        },
         metrics: {
           orderBy: { createdAt: "desc" },
           take: 1
         }
       }
     });
-    if (!existing) {
+    if (!existing || !canAccessNode(user, existing)) {
       reply.code(404).send({ message: "Node not found" });
       return;
     }
@@ -218,6 +253,9 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
         ...(body.tags !== undefined ? { tags: normalizeOptionalText(body.tags) ?? null } : {})
       },
       include: {
+        createdBy: {
+          select: { id: true, username: true, displayName: true }
+        },
         metrics: {
           orderBy: { createdAt: "desc" },
           take: 1
@@ -239,8 +277,14 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete("/api/nodes/:id", { preHandler: requirePermission("node.delete") }, async (request, reply) => {
     const { id } = request.params as { id: string };
+    const user = await loadCurrentUser(request.user.sub);
+    if (!user) {
+      reply.code(401).send({ message: "Unauthorized" });
+      return;
+    }
+
     const node = await prisma.node.findUnique({ where: { id } });
-    if (!node) {
+    if (!node || !canAccessNode(user, node)) {
       reply.code(404).send({ message: "Node not found" });
       return;
     }
@@ -268,8 +312,14 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/nodes/:id/test", { preHandler: requirePermission("node.test") }, async (request, reply) => {
     const { id } = request.params as { id: string };
+    const user = await loadCurrentUser(request.user.sub);
+    if (!user) {
+      reply.code(401).send({ message: "Unauthorized" });
+      return;
+    }
+
     const node = await prisma.node.findUnique({ where: { id } });
-    if (!node) {
+    if (!node || !canAccessNode(user, node)) {
       reply.code(404).send({ message: "Node not found" });
       return;
     }
@@ -290,10 +340,12 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
         action: "node.test",
         resourceType: "node",
         resourceId: node.id,
-        result: ok ? "SUCCESS" : "FAILURE"
+        result: ok ? "SUCCESS" : "FAILURE",
+        payload: response.error ? { error: response.error } : undefined
       });
-      return { ok, statusCode: response.statusCode };
+      return { ok, statusCode: response.statusCode, error: response.error };
     } catch (error) {
+      const errMsg = error instanceof Error ? error.message : "Unknown error";
       await prisma.node.update({
         where: { id: node.id },
         data: { status: "OFFLINE" }
@@ -304,15 +356,25 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
         action: "node.test",
         resourceType: "node",
         resourceId: node.id,
-        payload: { error: error instanceof Error ? error.message : "Unknown error" },
+        payload: { error: errMsg },
         result: "FAILURE"
       });
-      return { ok: false, error: error instanceof Error ? error.message : "Unknown error" };
+      return { ok: false, error: errMsg };
     }
   });
   // Enrollment Tokens (Join Tokens)
-  app.get("/api/nodes/enrollment-tokens", { preHandler: requirePermission("node.view") }, async (): Promise<NodeEnrollmentTokenInfo[]> => {
+  app.get("/api/nodes/enrollment-tokens", { preHandler: requirePermission("node.view") }, async (request): Promise<NodeEnrollmentTokenInfo[]> => {
+    const user = await loadCurrentUser(request.user.sub);
+    const where: Prisma.NodeEnrollmentTokenWhereInput = user?.isSuperAdmin
+      ? {
+          OR: [
+            { createdById: request.user.sub },
+            { createdById: null }
+          ]
+        }
+      : { createdById: request.user.sub };
     const tokens = await prisma.nodeEnrollmentToken.findMany({
+      where,
       orderBy: { createdAt: "desc" }
     });
     const now = Date.now();
@@ -326,7 +388,8 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       usedCount: t.usedCount,
       expiresAt: t.expiresAt.toISOString(),
       createdAt: t.createdAt.toISOString(),
-      isExpired: t.expiresAt.getTime() < now || t.usedCount >= t.maxUsage
+      isExpired: t.expiresAt.getTime() < now || t.usedCount >= t.maxUsage,
+      createdById: t.createdById
     }));
   });
 
@@ -346,7 +409,8 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
         tags: normalizeOptionalText(body.tags) ?? null,
         maxUsage,
         usedCount: 0,
-        expiresAt
+        expiresAt,
+        createdById: request.user.sub
       }
     });
 
@@ -371,13 +435,21 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
         usedCount: created.usedCount,
         expiresAt: created.expiresAt.toISOString(),
         createdAt: created.createdAt.toISOString(),
-        isExpired: false
+        isExpired: false,
+        createdById: created.createdById
       }
     };
   });
 
-  app.delete("/api/nodes/enrollment-tokens/:id", { preHandler: requirePermission("node.create") }, async (request) => {
+  app.delete("/api/nodes/enrollment-tokens/:id", { preHandler: requirePermission("node.create") }, async (request, reply) => {
     const { id } = request.params as { id: string };
+    const user = await loadCurrentUser(request.user.sub);
+    const tokenRecord = await prisma.nodeEnrollmentToken.findUnique({ where: { id } });
+    if (!tokenRecord || (tokenRecord.createdById ? tokenRecord.createdById !== request.user.sub : !user?.isSuperAdmin)) {
+      reply.code(404).send({ message: "Token not found" });
+      return;
+    }
+
     await prisma.nodeEnrollmentToken.deleteMany({ where: { id } });
     await writeAuditLog({
       request,
@@ -388,11 +460,13 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
     });
     return { ok: true };
   });
+
   // Node Secret Rotation & Join Commands
   app.post("/api/nodes/:id/token/rotate", { preHandler: requirePermission("node.update") }, async (request, reply): Promise<RotateNodeTokenResponse | void> => {
     const { id } = request.params as { id: string };
+    const user = await loadCurrentUser(request.user.sub);
     const node = await prisma.node.findUnique({ where: { id } });
-    if (!node) {
+    if (!node || !user || !canAccessNode(user, node)) {
       reply.code(404).send({ message: "Node not found" });
       return;
     }
@@ -424,8 +498,9 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/nodes/:id/join-command", { preHandler: requirePermission("node.view") }, async (request, reply): Promise<NodeJoinCommandResponse | void> => {
     const { id } = request.params as { id: string };
+    const user = await loadCurrentUser(request.user.sub);
     const node = await prisma.node.findUnique({ where: { id } });
-    if (!node) {
+    if (!node || !user || !canAccessNode(user, node)) {
       reply.code(404).send({ message: "Node not found" });
       return;
     }
@@ -441,7 +516,8 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
         tags: node.tags,
         maxUsage: 1,
         usedCount: 0,
-        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        createdById: request.user.sub
       }
     });
 
@@ -458,8 +534,15 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       dockerCommand
     };
   });
+
   // Connect Node By Key (Daemon Pairing Key)
   app.post("/api/nodes/connect-key", { preHandler: requirePermission("node.create") }, async (request, reply): Promise<ConnectNodeByKeyResponse | void> => {
+    const user = await loadCurrentUser(request.user.sub);
+    if (!user) {
+      reply.code(401).send({ message: "Unauthorized" });
+      return;
+    }
+
     const body = request.body as ConnectNodeByKeyRequest;
     if (!body?.key?.trim()) {
       reply.code(400).send({ message: "请提供节点机器专属密钥 (Node Key)" });
@@ -488,43 +571,31 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
     const effectivePort = body.portOverride || payload.port;
 
     // Ping the daemon to ensure it is actually running and credentials match!
-    const daemonUrl = `${payload.protocol || "http"}://${effectiveHost}:${effectivePort}/api/status`;
-    let pingOk = false;
-    let nodeStatusData: { os?: string | undefined; arch?: string | undefined; version?: string | undefined } = {};
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch(daemonUrl, {
-        signal: controller.signal,
-        headers: {
-          "x-node-id": payload.nodeId || "",
-          "x-panel-token": hashToken(payload.token)
-        }
-      });
-      clearTimeout(timeoutId);
-      if (res.ok) {
-        pingOk = true;
-        const data = await res.json() as { metrics?: { system?: { platform?: string; arch?: string; version?: string } } };
-        if (data?.metrics?.system) {
-          nodeStatusData = {
-            os: data.metrics.system.platform,
-            arch: data.metrics.system.arch,
-            version: data.metrics.system.version
-          };
-        }
-      }
-    } catch {
-      // Could be unreachable or network error
-    }
+    const testResult = await fetchDaemonStatus({
+      id: payload.nodeId || "temp",
+      protocol: payload.protocol || "http",
+      host: effectiveHost,
+      port: effectivePort,
+      tokenHash: hashToken(payload.token)
+    }, 6000);
 
-    if (!pingOk) {
+    if (!testResult.ok) {
+      let diagnosticHelp = "";
+      const errLower = (testResult.error || "").toLowerCase();
+      if (errLower.includes("econnrefused")) {
+        diagnosticHelp = "（连接被拒绝：目标机器可能未启动 saki-daemon，或云服务器防火墙/安全组未放行 5480 端口）";
+      } else if (errLower.includes("etimedout") || errLower.includes("timed out")) {
+        diagnosticHelp = "（连接超时：请确认目标机器公网 IP 是否正确，以及安全组入方向是否放行对应端口）";
+      } else if (errLower.includes("enotfound")) {
+        diagnosticHelp = "（无法解析域名或主机名：请检查 IP 或域名拼写）";
+      }
       reply.code(400).send({
-        message: `无法连接到该机器的 Daemon 节点 (${effectiveHost}:${effectivePort})。请确认目标机器上已启动 saki-daemon，且网络/防火墙端口已开放。若两台机器跨公网，请在“连接地址/IP”中填写该机器的公网 IP 或域名。`
+        message: `无法连接到目标机器 Daemon (${effectiveHost}:${effectivePort})：${testResult.error || "连接失败"}${diagnosticHelp}。若跨服务器/跨公网连接，请在“连接 IP / 域名”中填写该机器的公网 IP。`
       });
       return;
     }
 
-    // Connect and persist the node in Panel database
+    const nodeStatusData = testResult.statusData ?? {};
     const nodeName = body.name?.trim() || payload.name?.trim() || `Node-${effectiveHost}`;
     const tokenHashValue = hashToken(payload.token);
     const tokenLast4Value = tokenLast4(payload.token);
@@ -537,6 +608,13 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       });
     }
 
+    if (existingNode && existingNode.createdById && existingNode.createdById !== request.user.sub) {
+      reply.code(409).send({
+        message: `该节点已由其他账号（${existingNode.name}）连接绑定。每个账号的节点面板完全隔离，如需重新绑定请先在原账号移除该节点。`
+      });
+      return;
+    }
+
     let savedNode;
     if (existingNode) {
       savedNode = await prisma.node.update({
@@ -545,11 +623,12 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
           name: nodeName,
           host: effectiveHost,
           port: effectivePort,
-          protocol: payload.protocol,
+          protocol: testResult.effectiveProtocol,
           tokenHash: tokenHashValue,
           tokenLast4: tokenLast4Value,
           status: "ONLINE",
           lastSeenAt: new Date(),
+          createdById: request.user.sub,
           groupName: normalizeOptionalText(body.groupName) ?? existingNode.groupName,
           tags: normalizeOptionalText(body.tags) ?? existingNode.tags,
           os: nodeStatusData.os ?? existingNode.os,
@@ -557,6 +636,9 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
           version: nodeStatusData.version ?? existingNode.version
         },
         include: {
+          createdBy: {
+            select: { id: true, username: true, displayName: true }
+          },
           metrics: {
             take: 1,
             orderBy: { createdAt: "desc" }
@@ -564,15 +646,16 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
         }
       });
     } else {
-      const createData: Prisma.NodeCreateInput = {
+      const createData: Prisma.NodeUncheckedCreateInput = {
         name: nodeName,
         host: effectiveHost,
         port: effectivePort,
-        protocol: payload.protocol,
+        protocol: testResult.effectiveProtocol,
         tokenHash: tokenHashValue,
         tokenLast4: tokenLast4Value,
         status: "ONLINE",
         lastSeenAt: new Date(),
+        createdById: request.user.sub,
         groupName: normalizeOptionalText(body.groupName) ?? null,
         tags: normalizeOptionalText(body.tags) ?? null,
         os: nodeStatusData.os ?? null,
@@ -585,6 +668,9 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       savedNode = await prisma.node.create({
         data: createData,
         include: {
+          createdBy: {
+            select: { id: true, username: true, displayName: true }
+          },
           metrics: {
             take: 1,
             orderBy: { createdAt: "desc" }

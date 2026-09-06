@@ -8,6 +8,7 @@ import {
   ClipboardList,
   Clock,
   Coins,
+  Database,
   Edit3,
   Infinity as InfinityIcon,
   KeyRound,
@@ -33,6 +34,7 @@ import {
 import type {
   CurrentUser,
   CreateUserRequest,
+  DatabaseVisualizerInstance,
   InstanceAssignee,
   ManagedInstance,
   ManagedRole,
@@ -85,6 +87,7 @@ export function UsersView({
   const [roles, setRoles] = useState<ManagedRole[]>([]);
   const [assignableUsers, setAssignableUsers] = useState<InstanceAssignee[]>([]);
   const [instances, setInstances] = useState<ManagedInstance[]>([]);
+  const [databases, setDatabases] = useState<DatabaseVisualizerInstance[]>([]);
   const [assignmentTargetUser, setAssignmentTargetUser] = useState<InstanceAssignee | null>(null);
   const [assignmentDraftIds, setAssignmentDraftIds] = useState<string[]>([]);
   const [selectedRoleId, setSelectedRoleId] = useState("");
@@ -127,16 +130,18 @@ export function UsersView({
   const refresh = useCallback(async () => {
     setError("");
     try {
-      const [nextUsers, nextRoles, nextAssignees, nextInstances] = await Promise.all([
+      const [nextUsers, nextRoles, nextAssignees, nextInstances, nextDatabases] = await Promise.all([
         canManageAccounts ? api.users(token) : Promise.resolve([]),
         currentUser.permissions.includes("role.view") ? api.roles(token) : Promise.resolve([]),
         canAssignInstances ? api.instanceAssignees(token) : Promise.resolve([]),
-        canAssignInstances ? api.instances(token) : Promise.resolve([])
+        canAssignInstances ? api.instances(token) : Promise.resolve([]),
+        canAssignInstances ? api.listDatabases(token).then((res) => res.databases) : Promise.resolve([])
       ]);
       setUsers(nextUsers);
       setRoles(nextRoles);
       setAssignableUsers(nextAssignees);
       setInstances(nextInstances);
+      setDatabases(nextDatabases);
       setSelectedRoleId((current) => current || nextRoles[0]?.id || "");
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
@@ -392,7 +397,9 @@ export function UsersView({
 
   function openAssignmentModal(user: InstanceAssignee) {
     setAssignmentTargetUser(user);
-    setAssignmentDraftIds(instances.filter((instance) => isInstanceAssignedTo(instance, user.id)).map((instance) => instance.id));
+    const assignedInstIds = instances.filter((instance) => isInstanceAssignedTo(instance, user.id)).map((instance) => instance.id);
+    const assignedDbIds = databases.filter((db) => isInstanceAssignedTo(db, user.id)).map((db) => db.id);
+    setAssignmentDraftIds([...assignedInstIds, ...assignedDbIds]);
   }
 
   function toggleAssignmentDraft(instanceId: string, checked: boolean) {
@@ -424,6 +431,24 @@ export function UsersView({
       );
       const updatedById = new Map(updatedInstances.map((instance) => [instance.id, instance]));
       setInstances((current) => current.map((instance) => updatedById.get(instance.id) ?? instance));
+
+      const dbUpdates = databases.filter((db) => {
+        const currentlyAssignedToTarget = isInstanceAssignedTo(db, assignmentTargetUser.id);
+        const shouldAssignToTarget = draftIds.has(db.id);
+        return currentlyAssignedToTarget !== shouldAssignToTarget;
+      });
+      const updatedDbs = await Promise.all(
+        dbUpdates.map((db) => {
+          const currentAssigneeIds = instanceAssignedUsers(db).map((user) => user.userId);
+          const assignedToUserIds = draftIds.has(db.id)
+            ? [...new Set([...currentAssigneeIds, assignmentTargetUser.id])]
+            : currentAssigneeIds.filter((userId) => userId !== assignmentTargetUser.id);
+          return api.updateDatabase(token, db.id, { assignedToUserIds });
+        })
+      );
+      const updatedDbById = new Map(updatedDbs.map((res) => [res.database.id, res.database]));
+      setDatabases((current) => current.map((db) => updatedDbById.get(db.id) ?? db));
+
       setAssignmentTargetUser(null);
       setAssignmentDraftIds([]);
     } catch (err) {
@@ -470,7 +495,7 @@ export function UsersView({
               <div className="assignment-instance-summary">
                 <div>
                   <strong>{assignmentDraftIds.length} {t("users.assignment.selected")}</strong>
-                  <span>{instances.length} {t("users.assignment.available")}</span>
+                  <span>{instances.length + databases.length} {t("users.assignment.available")}</span>
                 </div>
               </div>
               <div className="assignment-instance-grid assignment-picker-grid">
@@ -497,7 +522,30 @@ export function UsersView({
                     </label>
                   );
                 })}
-                {instances.length === 0 ? <div className="empty-state">{t("users.assignment.empty")}</div> : null}
+                {databases.map((db) => {
+                  const checked = assignmentDraftIds.includes(db.id);
+                  return (
+                    <label className={`assignment-instance-row db-assignment-row ${checked ? "active" : ""}`} key={`db-${db.id}`}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={savingAssignment}
+                        onChange={(event) => toggleAssignmentDraft(db.id, event.target.checked)}
+                      />
+                      <span className="assignment-instance-icon db-icon">
+                        <Database size={16} />
+                      </span>
+                      <span className="assignment-instance-copy">
+                        <strong>{db.name}</strong>
+                        <small>
+                          {db.engine.toUpperCase()} 数据库可视化 · {db.nodeName ?? db.nodeId}
+                        </small>
+                      </span>
+                      <span className="assignment-instance-owner">{instanceAssigneeLabel(db)}</span>
+                    </label>
+                  );
+                })}
+                {instances.length === 0 && databases.length === 0 ? <div className="empty-state">{t("users.assignment.empty")}</div> : null}
               </div>
               <div className="assignment-actions">
                 <button

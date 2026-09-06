@@ -19,7 +19,9 @@ export const defaultPanelAppearance: PanelAppearanceSettings = {
 
 export const defaultStartCommand = "npm run start";
 export const defaultSakiRequestTimeoutMs = 120000;
-export const sakiStreamIdleFallbackMs = 25000;
+// Last-resort hang detector. Heartbeats arrive every ~8s, so this must be
+// well above a missed beat or a long tool/model turn without tokens.
+export const sakiStreamIdleFallbackMs = 90000;
 
 export const sakiArtAssets = {
   avatar: "/assets/head.png",

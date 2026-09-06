@@ -1,5 +1,43 @@
-import React from "react";
+import React, { createContext, useContext } from "react";
 import type { MarkdownBlock } from "../../types/app.js";
+
+export const SakiPathOpenContext = createContext<((path: string, line?: number) => void) | undefined>(undefined);
+
+const workspaceRefPattern =
+  /^([A-Za-z0-9_./\\-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|cs|json|md|css|html|vue|svelte|toml|ya?ml))(?::(\d+))?$/i;
+const workspaceRefInTextPattern =
+  /(?<![A-Za-z0-9_./])([A-Za-z0-9_./\\-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|cs|json|md|css|html|vue|svelte|toml|ya?ml):(\d+))/gi;
+
+function parseWorkspaceRef(raw: string): { path: string; line?: number } | null {
+  const match = raw.trim().match(workspaceRefPattern);
+  if (!match?.[1]) return null;
+  const path = match[1].replace(/\\/g, "/");
+  const line = match[2] ? Number(match[2]) : undefined;
+  return {
+    path,
+    ...(Number.isInteger(line) && line && line > 0 ? { line } : {})
+  };
+}
+
+function renderPathButton(
+  label: string,
+  ref: { path: string; line?: number },
+  key: string,
+  onOpenPath: ((path: string, line?: number) => void) | undefined
+): React.ReactNode {
+  if (!onOpenPath) return <code key={key}>{label}</code>;
+  return (
+    <button
+      key={key}
+      type="button"
+      className="saki-md-path"
+      title={`打开 ${ref.path}${ref.line ? `:${ref.line}` : ""}`}
+      onClick={() => onOpenPath(ref.path, ref.line)}
+    >
+      <code>{label}</code>
+    </button>
+  );
+}
 
 function isMarkdownBoundary(line: string): boolean {
   const trimmed = line.trim();
@@ -96,17 +134,49 @@ function safeMarkdownHref(rawHref: string): string | null {
   }
 }
 
-function renderInlineMarkdown(text: string, keyPrefix: string): React.ReactNode[] {
+function renderPlainWithPathRefs(
+  text: string,
+  keyPrefix: string,
+  onOpenPath: ((path: string, line?: number) => void) | undefined
+): React.ReactNode[] {
+  if (!onOpenPath || !text) return [text];
+  const nodes: React.ReactNode[] = [];
+  let cursor = 0;
+  workspaceRefInTextPattern.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = workspaceRefInTextPattern.exec(text))) {
+    if (match.index > cursor) nodes.push(text.slice(cursor, match.index));
+    const ref = parseWorkspaceRef(match[1] ?? "");
+    if (ref) {
+      nodes.push(renderPathButton(match[0], ref, `${keyPrefix}-ref-${match.index}`, onOpenPath));
+    } else {
+      nodes.push(match[0]);
+    }
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < text.length) nodes.push(text.slice(cursor));
+  return nodes.length ? nodes : [text];
+}
+
+function renderInlineMarkdown(
+  text: string,
+  keyPrefix: string,
+  onOpenPath?: ((path: string, line?: number) => void) | undefined
+): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   const pattern = /(`([^`]+)`|\*\*([^*]+)\*\*|\[([^\]]+)\]\(([^)\s]+)\))/g;
   let cursor = 0;
   let match: RegExpExecArray | null;
 
   while ((match = pattern.exec(text))) {
-    if (match.index > cursor) nodes.push(text.slice(cursor, match.index));
+    if (match.index > cursor) {
+      nodes.push(...renderPlainWithPathRefs(text.slice(cursor, match.index), `${keyPrefix}-${match.index}`, onOpenPath));
+    }
     const token = match[0];
     if (token.startsWith("`")) {
-      nodes.push(<code key={`${keyPrefix}-code-${match.index}`}>{match[2] ?? ""}</code>);
+      const code = match[2] ?? "";
+      const ref = parseWorkspaceRef(code);
+      nodes.push(ref ? renderPathButton(code, ref, `${keyPrefix}-code-${match.index}`, onOpenPath) : <code key={`${keyPrefix}-code-${match.index}`}>{code}</code>);
     } else if (token.startsWith("**")) {
       nodes.push(<strong key={`${keyPrefix}-strong-${match.index}`}>{match[3] ?? ""}</strong>);
     } else {
@@ -124,37 +194,38 @@ function renderInlineMarkdown(text: string, keyPrefix: string): React.ReactNode[
     cursor = match.index + token.length;
   }
 
-  if (cursor < text.length) nodes.push(text.slice(cursor));
+  if (cursor < text.length) nodes.push(...renderPlainWithPathRefs(text.slice(cursor), `${keyPrefix}-tail`, onOpenPath));
   return nodes;
 }
 
-function renderInlineLines(text: string, keyPrefix: string): React.ReactNode[] {
+function renderInlineLines(text: string, keyPrefix: string, onOpenPath?: ((path: string, line?: number) => void) | undefined): React.ReactNode[] {
   return text.split("\n").flatMap((line, index) => {
-    const nodes = renderInlineMarkdown(line, `${keyPrefix}-${index}`);
+    const nodes = renderInlineMarkdown(line, `${keyPrefix}-${index}`, onOpenPath);
     return index === 0 ? nodes : [<br key={`${keyPrefix}-br-${index}`} />, ...nodes];
   });
 }
 
 function MarkdownContent({ content }: { content: string }) {
+  const onOpenPath = useContext(SakiPathOpenContext);
   const blocks = parseMarkdownBlocks(content);
   return (
     <div className="saki-markdown">
       {blocks.map((block, index) => {
         if (block.type === "heading") {
-          const children = renderInlineMarkdown(block.text, `heading-${index}`);
+          const children = renderInlineMarkdown(block.text, `heading-${index}`, onOpenPath);
           if (block.level <= 1) return <h3 key={index}>{children}</h3>;
           if (block.level === 2) return <h4 key={index}>{children}</h4>;
           return <h5 key={index}>{children}</h5>;
         }
         if (block.type === "quote") {
-          return <blockquote key={index}>{renderInlineLines(block.text, `quote-${index}`)}</blockquote>;
+          return <blockquote key={index}>{renderInlineLines(block.text, `quote-${index}`, onOpenPath)}</blockquote>;
         }
         if (block.type === "list") {
           const ListTag = block.ordered ? "ol" : "ul";
           return (
             <ListTag key={index}>
               {block.items.map((item, itemIndex) => (
-                <li key={itemIndex}>{renderInlineLines(item, `list-${index}-${itemIndex}`)}</li>
+                <li key={itemIndex}>{renderInlineLines(item, `list-${index}-${itemIndex}`, onOpenPath)}</li>
               ))}
             </ListTag>
           );
@@ -169,7 +240,7 @@ function MarkdownContent({ content }: { content: string }) {
             </div>
           );
         }
-        return <p key={index}>{renderInlineLines(block.text, `paragraph-${index}`)}</p>;
+        return <p key={index}>{renderInlineLines(block.text, `paragraph-${index}`, onOpenPath)}</p>;
       })}
     </div>
   );

@@ -4,9 +4,28 @@ import { WebSocket } from "ws";
 import { authenticatePanelRequest } from "../daemon-auth.js";
 import { instanceManager } from "../instance-manager.js";
 
+const terminalDataChunkChars = 16 * 1024;
+
 function send(socket: WebSocket, payload: TerminalServerMessage): void {
   if (socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify(payload));
+  }
+}
+
+function sendPtyData(socket: WebSocket, data: string): void {
+  if (!data || socket.readyState !== WebSocket.OPEN) return;
+  if (data.length <= terminalDataChunkChars) {
+    send(socket, { type: "data", data });
+    return;
+  }
+  for (let index = 0; index < data.length; ) {
+    let end = Math.min(index + terminalDataChunkChars, data.length);
+    const last = data.charCodeAt(end - 1);
+    if (last >= 0xd800 && last <= 0xdbff && end < data.length) {
+      end += 1;
+    }
+    send(socket, { type: "data", data: data.slice(index, end) });
+    index = end;
   }
 }
 
@@ -30,10 +49,11 @@ function parseClientMessage(raw: WebSocket.RawData): TerminalClientMessage | nul
       };
     }
     if (parsed.type === "resize" && typeof parsed.cols === "number" && typeof parsed.rows === "number") {
+      if (!Number.isFinite(parsed.cols) || !Number.isFinite(parsed.rows)) return null;
       return {
         type: "resize",
-        cols: parsed.cols,
-        rows: parsed.rows,
+        cols: Math.max(10, Math.min(Math.floor(parsed.cols), 500)),
+        rows: Math.max(5, Math.min(Math.floor(parsed.rows), 200)),
         ...(parsed.sessionId ? { sessionId: parsed.sessionId } : {})
       };
     }
@@ -66,7 +86,7 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
       });
 
       const unsubscribe = instanceManager.subscribe(id, {
-        onData: (data) => send(socket, { type: "data", data }),
+        onData: (data) => sendPtyData(socket, data),
         onLog: (line) => {
           if (line.stream === "system") {
             send(socket, { type: "line", line });
@@ -96,7 +116,10 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
       try {
         shellUnsubscribe = instanceManager.subscribeShell(activeSessionId, {
           onData: (text: string) => {
-            send(socket, { type: "data", data: text });
+            sendPtyData(socket, text);
+          },
+          onExit: (exit) => {
+            sendPtyData(socket, `\r\n\x1b[33m[Shell session ended (code ${exit?.code ?? 0})]\x1b[0m\r\n`);
           }
         });
       } catch (e) {

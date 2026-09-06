@@ -13,7 +13,10 @@ import {
 } from "lucide-react";
 import type {
   CurrentUser,
+  DatabaseVisualizerInstance,
+  InstanceAssignedUser,
   InstanceAssignee,
+  InstanceOwnerRole,
   InstanceStatus,
   ManagedInstance,
   ManagedNode,
@@ -182,11 +185,13 @@ function userDisplayLabel(displayName?: string | null, username?: string | null)
   return displayName || username || "未设置";
 }
 
-function instanceCreatorLabel(instance: ManagedInstance): string {
+type AssignableEntity = ManagedInstance | DatabaseVisualizerInstance;
+
+function instanceCreatorLabel(instance: AssignableEntity): string {
   return userDisplayLabel(instance.createdByDisplayName, instance.createdByUsername);
 }
 
-function instanceAssignedUsers(instance: ManagedInstance): NonNullable<ManagedInstance["assignees"]> {
+function instanceAssignedUsers(instance: AssignableEntity): InstanceAssignedUser[] {
   if (instance.assignees?.length) return instance.assignees;
   if (!instance.assignedToUserId) return [];
   return [
@@ -200,8 +205,13 @@ function instanceAssignedUsers(instance: ManagedInstance): NonNullable<ManagedIn
 }
 
 function primaryAssigneeFields(
-  assignees: NonNullable<ManagedInstance["assignees"]>
-): Pick<ManagedInstance, "assignedToUserId" | "assignedToUsername" | "assignedToDisplayName" | "assignedToRole"> {
+  assignees: InstanceAssignedUser[]
+): {
+  assignedToUserId: string | null;
+  assignedToUsername: string | null;
+  assignedToDisplayName: string | null;
+  assignedToRole: InstanceOwnerRole | null;
+} {
   const primary = assignees[0] ?? null;
   return {
     assignedToUserId: primary?.userId ?? null,
@@ -211,11 +221,11 @@ function primaryAssigneeFields(
   };
 }
 
-function isInstanceAssignedTo(instance: ManagedInstance, userId: string): boolean {
+function isInstanceAssignedTo(instance: AssignableEntity, userId: string): boolean {
   return instanceAssignedUsers(instance).some((user) => user.userId === userId);
 }
 
-function instanceAssigneeLabel(instance: ManagedInstance): string {
+function instanceAssigneeLabel(instance: AssignableEntity): string {
   const assignees = instanceAssignedUsers(instance);
   if (assignees.length === 0) return userDisplayLabel(null, null);
   if (assignees.length <= 2) {
@@ -224,7 +234,7 @@ function instanceAssigneeLabel(instance: ManagedInstance): string {
   return `${userDisplayLabel(assignees[0]?.displayName, assignees[0]?.username)} +${assignees.length - 1}`;
 }
 
-function instanceAssigneeTitle(instance: ManagedInstance): string {
+function instanceAssigneeTitle(instance: AssignableEntity): string {
   const assignees = instanceAssignedUsers(instance);
   if (assignees.length === 0) return `负责人 · ${ownerRoleLabel(instance.assignedToRole)}`;
   return assignees

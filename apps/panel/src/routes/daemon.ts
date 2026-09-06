@@ -64,6 +64,7 @@ export async function registerDaemonRoutes(app: FastifyInstance): Promise<void> 
       maxUsage: number;
       usedCount: number;
       expiresAt: Date;
+      createdById: string | null;
     } | null = null;
 
     if (safeEqual(trimmedToken, panelConfig.daemonRegistrationToken)) {
@@ -103,15 +104,21 @@ export async function registerDaemonRoutes(app: FastifyInstance): Promise<void> 
       return;
     }
 
+    // Smart host resolution: if body.host is loopback but caller comes from a remote IP, use caller IP
+    const callerIp = request.ip;
+    const isCallerRemote = Boolean(callerIp && callerIp !== "127.0.0.1" && callerIp !== "::1" && callerIp !== "localhost");
+    const isBodyHostLoopback = body.host === "127.0.0.1" || body.host === "localhost" || body.host === "::1";
+    const effectiveHost = isBodyHostLoopback && isCallerRemote ? callerIp : body.host;
+
     const nodeToken = generateSecretToken();
-    const existing = await findRegistrationNode(body.name, body.host, body.port);
+    const existing = await findRegistrationNode(body.name, effectiveHost, body.port);
 
     const node = existing
       ? await prisma.node.update({
           where: { id: existing.id },
           data: {
             protocol: body.protocol,
-            host: body.host,
+            host: effectiveHost,
             port: body.port,
             os: body.os ?? existing.os,
             arch: body.arch ?? existing.arch,
@@ -119,13 +126,14 @@ export async function registerDaemonRoutes(app: FastifyInstance): Promise<void> 
             tokenHash: hashToken(nodeToken),
             tokenLast4: tokenLast4(nodeToken),
             status: "ONLINE",
-            lastSeenAt: new Date()
+            lastSeenAt: new Date(),
+            createdById: enrollmentRecord?.createdById ?? existing.createdById
           }
         })
       : await prisma.node.create({
           data: {
             name: body.name,
-            host: body.host,
+            host: effectiveHost,
             port: body.port,
             protocol: body.protocol,
             os: body.os ?? null,
@@ -136,7 +144,8 @@ export async function registerDaemonRoutes(app: FastifyInstance): Promise<void> 
             tokenHash: hashToken(nodeToken),
             tokenLast4: tokenLast4(nodeToken),
             status: "ONLINE",
-            lastSeenAt: new Date()
+            lastSeenAt: new Date(),
+            createdById: enrollmentRecord?.createdById ?? null
           }
         });
 

@@ -90,6 +90,7 @@ import type {
   CurrentUser,
   PanelAppearanceSettings,
   RegistrationIdentity,
+  SakiAntigravityAuthStatusResponse,
   SakiConfigResponse,
   SakiCopilotAuthStatusResponse,
   SakiCopilotLoginResponse,
@@ -139,6 +140,7 @@ const providerBaseUrlDefaults: Record<string, string> = {
   deepseek: "https://api.deepseek.com/v1",
   zhipu: "https://open.bigmodel.cn/api/paas/v4",
   gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
+  antigravity: "http://localhost:8080/v1",
   minimax: "https://api.minimaxi.com/v1",
   anthropic: "https://api.anthropic.com/v1",
   moonshot: "https://api.moonshot.cn/v1",
@@ -156,6 +158,7 @@ const modelProviderOptions = [
   { value: "ollama", label: "Ollama" },
   { value: "lmstudio", label: "LM Studio" },
   { value: "copilot", label: "GitHub Copilot" },
+  { value: "antigravity", label: "Antigravity CLI" },
   { value: "openai", label: "OpenAI Compatible" },
   { value: "deepseek", label: "DeepSeek" },
   { value: "zhipu", label: "Zhipu" },
@@ -173,7 +176,7 @@ function isLocalProvider(provider: string): boolean {
 }
 
 function needsCloudApiFields(provider: string): boolean {
-  return !isLocalProvider(provider) && provider !== "copilot";
+  return !isLocalProvider(provider) && provider !== "copilot" && provider !== "antigravity";
 }
 
 function defaultProviderConfig(provider: string): SakiProviderConfig {
@@ -302,6 +305,8 @@ export function SettingsView({
   const [copilotAuthStatus, setCopilotAuthStatus] = useState<SakiCopilotAuthStatusResponse | null>(null);
   const [copilotLoginState, setCopilotLoginState] = useState<SakiCopilotLoginResponse | null>(null);
   const [copilotBusy, setCopilotBusy] = useState<"status" | "login" | null>(null);
+  const [antigravityStatus, setAntigravityStatus] = useState<SakiAntigravityAuthStatusResponse | null>(null);
+  const [antigravityBusy, setAntigravityBusy] = useState(false);
   const [skillBusy, setSkillBusy] = useState<string | null>(null);
   const [skillDetailLoading, setSkillDetailLoading] = useState(false);
   const [error, setError] = useState("");
@@ -406,12 +411,17 @@ export function SettingsView({
 
   function changeProvider(provider: string) {
     setModelOptions([]);
+    if (provider === "copilot") {
+      void refreshCopilotAuthStatus(true);
+    } else if (provider === "antigravity") {
+      void refreshAntigravityStatus(true);
+    }
     setForm((current) => {
       const nextConfig = providerConfigFromForm(current, provider);
       return {
         ...current,
         provider,
-        model: nextConfig.model ?? "",
+        model: nextConfig.model ?? (provider === "antigravity" ? "gemini-3.8-flash" : ""),
         ollamaUrl: nextConfig.ollamaUrl ?? localProviderUrlDefaults[provider as keyof typeof localProviderUrlDefaults] ?? "",
         baseUrl: nextConfig.baseUrl ?? providerBaseUrlDefaults[provider] ?? "",
         apiKey: nextConfig.apiKey ?? ""
@@ -503,6 +513,33 @@ export function SettingsView({
       setCopilotBusy(null);
     }
   }
+
+  const refreshAntigravityStatus = useCallback(async (silent = false) => {
+    if (!silent) {
+      setError("");
+      setNotice("");
+      setAntigravityBusy(true);
+    }
+    try {
+      const status = await api.sakiAntigravityStatus(token);
+      setAntigravityStatus(status);
+      if (!silent) {
+        setNotice(status.message || "Antigravity 状态检测完成。");
+      }
+      return status;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onLogout();
+        return null;
+      }
+      if (!silent) {
+        setError(err instanceof Error ? err.message : "Antigravity 状态检测失败");
+      }
+      return null;
+    } finally {
+      if (!silent) setAntigravityBusy(false);
+    }
+  }, [onLogout, token]);
 
   async function detectModels(silent = false) {
     const provider = form.provider;
@@ -1244,6 +1281,75 @@ export function SettingsView({
                       </div>
                     ) : null}
                   </div>
+                ) : null}
+
+                {form.provider === "antigravity" ? (
+                  <>
+                    <div className="copilot-auth-panel wide-field">
+                      <div className="copilot-auth-status">
+                        <div className={`copilot-auth-badge ${antigravityStatus?.authenticated ? "authenticated" : "pending"}`}>
+                          {antigravityStatus?.authenticated ? <CheckCircle2 size={18} /> : <TerminalIcon size={18} />}
+                          <span>{antigravityStatus?.authenticated ? "已就绪" : "未连接"}</span>
+                        </div>
+                        <div className="copilot-auth-copy">
+                          <strong>Antigravity CLI / 代理连接状态</strong>
+                          <span>
+                            {antigravityStatus?.message || "自动检测本地 Antigravity 凭据 (~/.gemini) 或代理网关。"}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="copilot-auth-actions">
+                        <button
+                          className="ghost-button"
+                          disabled={antigravityBusy || loading}
+                          type="button"
+                          onClick={() => void refreshAntigravityStatus(false)}
+                        >
+                          <RefreshCw size={15} className={antigravityBusy ? "animate-spin" : ""} />
+                          <span>{antigravityBusy ? "检测中" : "检查状态"}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="settings-form-row">
+                      <label className="settings-field">
+                        <span className="settings-field-label">Antigravity 代理 Base URL</span>
+                        <input
+                          className="settings-input"
+                          value={form.baseUrl}
+                          onChange={(event) => {
+                            updateActiveProviderConfig({ baseUrl: event.target.value });
+                          }}
+                          placeholder="http://localhost:8080/v1"
+                        />
+                        <span className="settings-field-hint">本地 Antigravity 代理/网关服务地址（默认为 http://localhost:8080/v1）</span>
+                      </label>
+
+                      <label className="settings-field">
+                        <span className="settings-field-label">API Key / Token (可选)</span>
+                        <div className="settings-input-with-action">
+                          <input
+                            className="settings-input"
+                            type={showApiKey ? "text" : "password"}
+                            value={form.apiKey}
+                            onChange={(event) => {
+                              updateActiveProviderConfig({ apiKey: event.target.value });
+                            }}
+                            placeholder="留空自动使用本地 ~/.gemini 凭据"
+                          />
+                          <button
+                            type="button"
+                            className="settings-inline-action-btn icon-only"
+                            onClick={() => setShowApiKey((s) => !s)}
+                            title={showApiKey ? "隐藏 API Key" : "显示 API Key"}
+                          >
+                            {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                          </button>
+                        </div>
+                        <span className="settings-field-hint">如需覆盖本地 OAuth 凭据，可在此手动填写 Token 或 API Key</span>
+                      </label>
+                    </div>
+                  </>
                 ) : null}
               </div>
             </div>

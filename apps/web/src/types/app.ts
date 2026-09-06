@@ -60,6 +60,8 @@ export type LocalSakiTimelineItem =
       id: string;
       content: string;
       thinking?: string;
+      thinkingDurationSec?: number;
+      thinkingStartedAt?: number;
       source: LocalSakiTimelineTextSource;
       createdAt: string;
     }
@@ -67,6 +69,14 @@ export type LocalSakiTimelineItem =
       kind: "action";
       id: string;
       action: SakiAgentAction;
+      createdAt: string;
+    }
+  | {
+      kind: "pending";
+      id: string;
+      tool: string;
+      call?: string;
+      message: string;
       createdAt: string;
     };
 
@@ -81,6 +91,8 @@ export interface LocalSakiMessage extends SakiChatMessage {
   rollbackGroupExpanded?: boolean;
   streaming?: boolean | undefined;
   thinking?: string | undefined;
+  thinkingDurationSec?: number | undefined;
+  thinkingStartedAt?: number | undefined;
   usage?: {
     tokensUsed: number;
     pointsUsed: number;
@@ -96,12 +108,26 @@ export interface SakiSubmitOverride {
   contextText?: string | null;
   mode?: SakiChatMode;
   attachments?: SakiInputAttachment[];
+  steer?: boolean;
 }
 
 export interface SakiSelectionCapture {
   source: "page" | "terminal";
   title: string;
   text: string;
+}
+
+export interface SakiOpenFileRequest {
+  instanceId: string;
+  path: string;
+  line?: number;
+  nonce: number;
+}
+
+export interface SakiFollowUpJob {
+  id: string;
+  message: string;
+  attachments?: SakiInputAttachment[];
 }
 
 export interface SakiInstanceFileDragPayload {

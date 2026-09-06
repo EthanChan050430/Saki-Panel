@@ -2343,19 +2343,12 @@
    ========================================================================== */
 
 .instance-card.database-instance-card {
-  border-left: 3px solid #6366f1;
+  border-left: none;
   position: relative;
 }
 
 .db-card-signal {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #6366f1;
-  box-shadow: 0 0 8px rgba(99, 102, 241, 0.8);
+  display: none !important;
 }
 
 .instance-card-icon.db-icon-badge {
@@ -2473,7 +2466,7 @@
 }
 
 .instance-list-row.database-list-row {
-  border-left: 3px solid #6366f1;
+  border-left: none;
 }
 
 .instance-list-icon.db-icon-badge {
@@ -2494,21 +2487,16 @@
   height: calc(100vh - 72px);
   width: 100%;
   position: relative;
-  background:
-    radial-gradient(ellipse at 15% 10%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
-    radial-gradient(ellipse at 85% 90%, rgba(168, 85, 247, 0.07) 0%, transparent 50%),
-    radial-gradient(ellipse at 50% 50%, rgba(59, 130, 246, 0.04) 0%, transparent 70%),
-    rgba(248, 250, 252, 0.85);
-  backdrop-filter: blur(40px) saturate(180%);
-  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  animation: view-enter var(--duration-page) var(--ease-out-expo);
 }
 
 [data-theme="dark"] .database-view-layout {
-  background:
-    radial-gradient(ellipse at 15% 10%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
-    radial-gradient(ellipse at 85% 90%, rgba(168, 85, 247, 0.12) 0%, transparent 50%),
-    radial-gradient(ellipse at 50% 50%, rgba(59, 130, 246, 0.06) 0%, transparent 70%),
-    rgba(15, 23, 42, 0.85);
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 .database-view-header-bar {

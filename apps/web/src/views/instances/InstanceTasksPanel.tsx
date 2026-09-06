@@ -256,7 +256,7 @@ export function InstanceTasksPanel({
               checked={form.enabled}
               onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))}
             />
-            {t("tasks.enabled")}
+            <span>{t("tasks.enabled")}</span>
           </label>
           <button className="primary-button form-submit" disabled={creating} type="submit">
             <Clock size={18} />

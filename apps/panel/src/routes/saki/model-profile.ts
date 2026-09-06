@@ -54,12 +54,47 @@ export function sakiModelProfile(provider: unknown, model?: string | null): Saki
 }
 
 export function xmlToolFormatReminder(): string {
-  return `If you need a tool, output clean XML (no JSON wrapper, no markdown fences):
+  return `If native tools are unavailable, output clean XML (no JSON wrapper, no markdown fences):
 <tool_call name="toolName">
 <paramName>value</paramName>
 </tool_call>
-If the task is complete:
-<tool_call name="respond">
-<text>final answer</text>
-</tool_call>`;
+If the task is complete, reply in plain text with no tool calls.`;
+}
+
+const nativeThinkingModelPattern =
+  /(?:^|[^a-z0-9])(?:r1|reasoner|thinking|qwq|qwen3|glm-4\.5|glm-4\.6|glm-z1|deepseek-r1|o1|o3|o4|gpt-5|claude-3-7|claude-sonnet-4|claude-opus-4|claude-haiku-4|claude-4|gemini-2\.5|kimi-k1|k2)(?:[^a-z0-9]|$)/i;
+
+export function sakiModelWantsNativeThinking(provider: unknown, model?: string | null): boolean {
+  const modelId = (model ?? "").toLowerCase();
+  if (!modelId) return false;
+  const family = sakiModelProfile(provider, model).family;
+  if (family === "claude") return /claude-(3-7|sonnet-4|opus-4|haiku-4|4-)/i.test(modelId);
+  return nativeThinkingModelPattern.test(modelId);
+}
+
+export function anthropicSupportsThinking(model?: string | null): boolean {
+  return /claude-(3-7|sonnet-4|opus-4|haiku-4|4-)/i.test(model ?? "");
+}
+
+export function nativeThinkingChatExtras(provider: unknown, model?: string | null): Record<string, unknown> {
+  if (!sakiModelWantsNativeThinking(provider, model)) return {};
+  const family = sakiModelProfile(provider, model).family;
+  const providerId = normalizeProviderId(provider);
+  const modelId = (model ?? "").toLowerCase();
+
+  if (family === "glm") return { thinking: { type: "enabled" } };
+  if (family === "qwen") return { enable_thinking: true };
+  if (family === "deepseek") return {};
+  if (family === "gpt") {
+    if (providerId === "openai" && /(?:^|[^a-z0-9])(o[1-4]|gpt-5)(?:[^a-z0-9]|$)/.test(modelId)) {
+      return { reasoning_effort: "medium" };
+    }
+    if (/qwen|qwq/.test(modelId)) return { enable_thinking: true };
+    if (/glm/.test(modelId)) return { thinking: { type: "enabled" } };
+    if (/thinking|reasoner|r1/.test(modelId) && providerId !== "openai") return { enable_thinking: true };
+    return {};
+  }
+  if (family === "claude") return {};
+  if (/qwen|qwq|thinking|reasoner|r1/.test(modelId)) return { enable_thinking: true };
+  return {};
 }

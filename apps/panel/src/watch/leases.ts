@@ -21,6 +21,18 @@ export function restartLeaseUntil(instanceId: string): string | null {
   return new Date(until).toISOString();
 }
 
+export function restartLeaseInstanceIds(): string[] {
+  return [...leases.keys()];
+}
+
+export function retainRestartLeases(validInstanceIds: Set<string>): void {
+  for (const instanceId of leases.keys()) {
+    if (!validInstanceIds.has(instanceId)) {
+      leases.delete(instanceId);
+    }
+  }
+}
+
 export function listActiveRestartLeases(): Array<{ instanceId: string; suppressUntil: string }> {
   const now = Date.now();
   const active: Array<{ instanceId: string; suppressUntil: string }> = [];

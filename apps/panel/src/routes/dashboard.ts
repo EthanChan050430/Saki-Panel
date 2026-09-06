@@ -3,7 +3,8 @@ import type { DashboardOverview } from "@webops/shared";
 import { PANEL_VERSION } from "@webops/shared";
 import { panelConfig } from "../config.js";
 import { prisma } from "../db.js";
-import { requirePermission } from "../auth.js";
+import { loadCurrentUser, requirePermission } from "../auth.js";
+import { nodeVisibilityWhere } from "../node-access.js";
 
 function average(values: number[]): number {
   if (values.length === 0) return 0;
@@ -16,9 +17,13 @@ function lastSeenIsOnline(lastSeenAt: Date | null): boolean {
 }
 
 export async function registerDashboardRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/api/dashboard/overview", { preHandler: requirePermission("dashboard.view") }, async () => {
+  app.get("/api/dashboard/overview", { preHandler: requirePermission("dashboard.view") }, async (request) => {
+    const user = await loadCurrentUser(request.user.sub);
+    const nodeWhere = user ? nodeVisibilityWhere(user) : {};
+
     const [nodes, historyMetrics, recentOperations, recentLogins] = await Promise.all([
       prisma.node.findMany({
+        where: nodeWhere,
         include: {
           metrics: {
             orderBy: { createdAt: "desc" },

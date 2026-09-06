@@ -17,6 +17,7 @@ import type {
   DatabaseEngine,
   DatabaseVisualizerConfig,
   DatabaseVisualizerInstance,
+  InstanceAssignee,
   ManagedNode
 } from "@webops/shared";
 import { api, ApiError } from "../../api.js";
@@ -44,6 +45,14 @@ export function EditDatabaseModal({
   const [databaseName, setDatabaseName] = useState(database.config.database || "");
   const [pathValue, setPathValue] = useState(database.config.path || "");
   const [isReadOnly, setIsReadOnly] = useState(Boolean(database.config.isReadOnly));
+  const [assignees, setAssignees] = useState<InstanceAssignee[]>([]);
+  const [assignedToUserId, setAssignedToUserId] = useState<string>(database.assignedToUserId || "");
+
+  React.useEffect(() => {
+    api.instanceAssignees(token)
+      .then((list) => setAssignees(list))
+      .catch(() => {});
+  }, [token]);
 
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message?: string } | null>(null);
@@ -86,6 +95,8 @@ export function EditDatabaseModal({
         nodeId,
         name: name.trim(),
         description: description.trim() || undefined,
+        assignedToUserId: assignedToUserId || null,
+        assignedToUserIds: assignedToUserId ? [assignedToUserId] : [],
         config: {
           host: database.engine !== "sqlite" ? (host.trim() || undefined) : undefined,
           port: database.engine !== "sqlite" ? (port ? Number(port) : undefined) : undefined,
@@ -229,13 +240,30 @@ export function EditDatabaseModal({
               />
             </label>
 
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+            {assignees.length > 0 && (
+              <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13, fontWeight: 600 }}>
+                分配负责人
+                <select
+                  value={assignedToUserId}
+                  onChange={(e) => setAssignedToUserId(e.target.value)}
+                >
+                  <option value="">未指定负责人 (仅管理员可见)</option>
+                  {assignees.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.displayName || user.username} (@{user.username})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            <label className="checkbox-field">
               <input
                 type="checkbox"
                 checked={isReadOnly}
                 onChange={(e) => setIsReadOnly(e.target.checked)}
               />
-              启用只读保护模式
+              <span>启用只读保护模式 (禁止任何写操作)</span>
             </label>
           </div>
 

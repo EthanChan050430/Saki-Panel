@@ -53,3 +53,12 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
+
+// Keep the panel alive through stray async failures (websocket races, provider
+// stream errors); log them instead of crashing every connected session.
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled rejection:", reason instanceof Error ? reason.stack ?? reason.message : reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception:", error instanceof Error ? error.stack ?? error.message : error);
+});

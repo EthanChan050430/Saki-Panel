@@ -49,6 +49,8 @@
 .points-modal-backdrop,
 .admin-points-backdrop {
   z-index: 500;
+  will-change: opacity;
+  animation: glassModalOverlayIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 /* 模态框通用排版 */
@@ -64,6 +66,8 @@
   flex-direction: column;
   max-height: 88vh;
   border: 1px solid rgba(0, 0, 0, 0.08);
+  will-change: opacity, transform;
+  animation: glassModalContainerIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 [data-theme="dark"] .points-usage-modal,
