@@ -936,7 +936,7 @@ export function InstancesView({
               <div>
                 <h2 style={{ margin: 0, fontSize: 16 }}>同步远程节点用户实例</h2>
                 <p style={{ margin: 0, fontSize: 12, opacity: 0.8 }}>
-                  支持输入专属访问密钥自动验证，或通过已连接节点的本地数据库直接免密一键导入
+                  支持输入专属密钥或直接从节点导入实例
                 </p>
               </div>
             </div>
@@ -1016,8 +1016,7 @@ export function InstancesView({
             </select>
           </label>
 
-          {/* Direct Node Database Discovery Banner & 1-Click Import Cards */}
-          {loadingRemoteUsers ? (
+                    {loadingRemoteUsers ? (
             <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "var(--text-muted, #86868b)", padding: "4px 0" }}>
               <Loader2 size={13} className="spin" />
               <span>正在探测节点本地数据库与用户实例...</span>
@@ -1034,7 +1033,7 @@ export function InstancesView({
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <span style={{ fontSize: "12px", fontWeight: 600, color: "#3b82f6", display: "flex", alignItems: "center", gap: "5px" }}>
                   <Database size={13} />
-                  节点数据库直连可用（可直接一键导入用户实例）：
+                  发现节点用户实例：
                 </span>
               </div>
               <div style={{ display: "grid", gap: "6px" }}>
@@ -1073,8 +1072,7 @@ export function InstancesView({
             </div>
           ) : null}
 
-          {/* Diagnostic Fallback Available Users */}
-          {errorAvailableUsers.length > 0 && nodeRemoteUsers.length === 0 ? (
+                    {errorAvailableUsers.length > 0 && nodeRemoteUsers.length === 0 ? (
             <div style={{
               padding: "10px 12px",
               borderRadius: "8px",
@@ -1105,7 +1103,7 @@ export function InstancesView({
           <div style={{ position: "relative", textAlign: "center", margin: "4px 0" }}>
             <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1, background: "rgba(255, 255, 255, 0.1)" }} />
             <span style={{ position: "relative", padding: "0 10px", background: "var(--card-bg, #1a1b26)", fontSize: "11px", color: "var(--text-muted, #86868b)" }}>
-              或者手动输入专属密钥进行验证
+              或通过专属密钥导入
             </span>
           </div>
 
@@ -1121,7 +1119,7 @@ export function InstancesView({
               style={{ width: "100%", padding: "8px 12px", borderRadius: "8px", fontFamily: "monospace", fontSize: "12px" }}
             />
             <span style={{ fontSize: "11px", color: "var(--text-muted, #86868b)", marginTop: "4px", display: "block" }}>
-              提示：输入密钥后系统将自动优先通过已连接节点的本地数据库快速校验并拉取实例
+              输入目标机器生成的专属密钥拉取实例
             </span>
           </label>
 

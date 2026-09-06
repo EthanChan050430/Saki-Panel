@@ -1,29 +1,3 @@
-// Frontend WebSocket client for the panel's global event bus.
-//
-// Design goals:
-//   - Single shared WebSocket for all subscribers (no N connections per page).
-//   - Automatic reconnect with exponential backoff, stops on logout.
-//   - Lightweight pub/sub; subscribers MUST call the returned unsubscribe fn.
-//   - Works even when no event is ever received (cleanup on unmount is still required).
-//
-// Usage:
-//   import { GlobalEventProvider, useGlobalEvent } from "./GlobalEventContext";
-//
-//   function App() {
-//     return (
-//       <GlobalEventProvider>
-//         <Workspace />
-//       </GlobalEventProvider>
-//     );
-//   }
-//
-//   function SomeView() {
-//     useGlobalEvent("INSTANCE_STATE_CHANGED", (event) => {
-//       console.log("instance changed", event.data);
-//     });
-//     // ...
-//   }
-
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
 

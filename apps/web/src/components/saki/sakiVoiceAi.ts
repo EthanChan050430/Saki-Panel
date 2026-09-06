@@ -17,9 +17,7 @@ export interface AiVoiceProgress {
 
 type ProgressListener = (progress: AiVoiceProgress) => void;
 
-/**
- * 二阶 IIR 滤波器（用于端侧共振峰声学塑形）
- */
+
 class BiquadResonator {
   private b0 = 1;
   private b1 = 0;
@@ -76,10 +74,7 @@ class BiquadResonator {
   }
 }
 
-/**
- * 高精度 WSOLA（Waveform Similarity Overlap-Add）时间拉伸
- * 相比朴素 OLA，WSOLA 使用互相关寻找最优相位对齐点，彻底消除金属蜂鸣和相位失真
- */
+
 function wsolaTimeStretch(input: Float32Array, stretchFactor: number): Float32Array {
   if (stretchFactor <= 1.02 || input.length < 512) return input;
 
@@ -95,8 +90,7 @@ function wsolaTimeStretch(input: Float32Array, stretchFactor: number): Float32Ar
   let inPos = 0;
   let outPos = 0;
 
-  // 第一帧直接写入
-  for (let i = 0; i < winSize && i < input.length; i++) {
+    for (let i = 0; i < winSize && i < input.length; i++) {
     output[i] = (input[i] ?? 0) * (window[i] ?? 0);
   }
   outPos += hopOut;
@@ -107,8 +101,7 @@ function wsolaTimeStretch(input: Float32Array, stretchFactor: number): Float32Ar
     let bestOffset = 0;
     let maxCorr = -1e9;
 
-    // 在 searchRadius 范围内寻找与前一帧重叠部分波形相似度最高的对齐偏移
-    for (let offset = -searchRadius; offset <= searchRadius; offset += 2) {
+        for (let offset = -searchRadius; offset <= searchRadius; offset += 2) {
       const candIn = nominalIn + offset;
       if (candIn < 0 || candIn + winSize >= input.length) continue;
 
@@ -131,8 +124,7 @@ function wsolaTimeStretch(input: Float32Array, stretchFactor: number): Float32Ar
     inPos += hopInNominal;
   }
 
-  // 归一化重叠增益
-  const normGain = hopOut / (winSize * 0.5);
+    const normGain = hopOut / (winSize * 0.5);
   const finalOut = new Float32Array(Math.min(outLen, outPos));
   for (let i = 0; i < finalOut.length; i++) {
     finalOut[i] = (output[i] ?? 0) * normGain;
@@ -140,9 +132,7 @@ function wsolaTimeStretch(input: Float32Array, stretchFactor: number): Float32Ar
   return finalOut;
 }
 
-/**
- * 带有基频跟踪的音高变换（Pitch Shift）
- */
+
 function sakiPitchShift(input: Float32Array, ratio: number, periodSamples: number): Float32Array {
   if (Math.abs(ratio - 1) < 0.02 || input.length < 128) return input;
 
@@ -178,10 +168,7 @@ function sakiPitchShift(input: Float32Array, ratio: number, periodSamples: numbe
   return out;
 }
 
-/**
- * Saki 专属角色声学特征渲染器
- * 模拟端侧神经网络声码器的声门脉冲塑形与短声道元音共鸣
- */
+
 function sakiAcousticTransform(samples: Float32Array, sampleRate: number): Float32Array {
   if (samples.length < 256) return samples;
 
@@ -190,35 +177,24 @@ function sakiAcousticTransform(samples: Float32Array, sampleRate: number): Float
   const assumedF0 = f0 && f0 >= 65 && f0 <= 380 ? f0 : 130;
   const isMale = assumedF0 < 175;
 
-  // 1. Saki 专属基频锚定（设定在 396Hz / G#4 二次元元气萌音核心点）
-  const TARGET_SAKI_F0 = 396.0;
+    const TARGET_SAKI_F0 = 396.0;
   const targetRatio = TARGET_SAKI_F0 / assumedF0;
   const pitchRatio = Math.min(3.5, Math.max(1.18, targetRatio));
 
-  // 2. 声道长度缩短（Vocal Tract Length Normalization: 模拟 11.5cm 幼态声道）
-  const tractShrinkRatio = isMale ? 1.36 : 1.22;
+    const tractShrinkRatio = isMale ? 1.36 : 1.22;
   const psolaRatio = Math.max(1.02, pitchRatio / tractShrinkRatio);
 
-  // 时域重采样上移共振峰
-  const formed = resampleByRatio(normalized, tractShrinkRatio);
-  // 使用高质量 WSOLA 拉伸回原始语速
-  const timeRestored = wsolaTimeStretch(formed, tractShrinkRatio);
+    const formed = resampleByRatio(normalized, tractShrinkRatio);
+    const timeRestored = wsolaTimeStretch(formed, tractShrinkRatio);
 
-  // 精准 PSOLA 变调
-  const period = sampleRate / Math.max(70, assumedF0 * tractShrinkRatio);
+    const period = sampleRate / Math.max(70, assumedF0 * tractShrinkRatio);
   const pitched = sakiPitchShift(timeRestored, psolaRatio, period);
 
-  // 3. Saki 专属 5 级级联共振峰滤波器网络
-  // 3.1 切除成年男性胸腔低沉共振 (180Hz 陷波)
-  const notch180 = BiquadResonator.notch(180, 2.5, sampleRate);
-  // 3.2 F1 第一共振峰增强（1020Hz：元气明亮元音核心）
-  const formantF1 = BiquadResonator.peak(1020, 2.0, isMale ? 5.2 : 3.8, sampleRate);
-  // 3.3 F2 第二共振峰增强（2750Hz：前舌音咬字清晰甜美感）
-  const formantF2 = BiquadResonator.peak(2750, 1.8, isMale ? 4.5 : 3.2, sampleRate);
-  // 3.4 F3 第三共振峰增强（3950Hz：二次元声线独有的明亮光泽）
-  const formantF3 = BiquadResonator.peak(3950, 1.6, 3.5, sampleRate);
-  // 3.5 高频空气感泛音（8200Hz）
-  const airPresence = BiquadResonator.peak(8200, 1.2, 2.8, sampleRate);
+      const notch180 = BiquadResonator.notch(180, 2.5, sampleRate);
+    const formantF1 = BiquadResonator.peak(1020, 2.0, isMale ? 5.2 : 3.8, sampleRate);
+    const formantF2 = BiquadResonator.peak(2750, 1.8, isMale ? 4.5 : 3.2, sampleRate);
+    const formantF3 = BiquadResonator.peak(3950, 1.6, 3.5, sampleRate);
+    const airPresence = BiquadResonator.peak(8200, 1.2, 2.8, sampleRate);
 
   const outLen = pitched.length;
   const rendered = new Float32Array(outLen);
@@ -226,8 +202,7 @@ function sakiAcousticTransform(samples: Float32Array, sampleRate: number): Float
   for (let i = 0; i < outLen; i++) {
     let s = pitched[i] ?? 0;
 
-    // 微颤音注入（5.2Hz 极其细微的生命力震颤，消灭机械呆板感）
-    const vibrato = 1 + 0.0035 * Math.sin((2 * Math.PI * 5.2 * i) / sampleRate);
+        const vibrato = 1 + 0.0035 * Math.sin((2 * Math.PI * 5.2 * i) / sampleRate);
     s *= vibrato;
 
     // 级联滤波

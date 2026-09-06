@@ -882,8 +882,7 @@ async function fetchInstancesFromNodeDatabase(
           displayName: (firstKeyRow as any).displayName ? String((firstKeyRow as any).displayName) : null
         };
       } else {
-        // Key hash didn't match! Query active keys and users for diagnosis
-        const allKeysQuery = await executeDaemonDatabaseQuery(node, {
+                const allKeysQuery = await executeDaemonDatabaseQuery(node, {
           path: dbPath,
           sql: `SELECT uak.keyLast4, u.id, u.username, u.displayName, count(i.id) as instanceCount
                 FROM user_access_keys uak
@@ -1012,8 +1011,7 @@ async function upsertSyncedInstances(node: any, remoteList: any[], currentUserId
 
 export async function registerInstanceRoutes(app: FastifyInstance): Promise<void> {
   
-  // Get list of users with instances from a node's local panel database
-  app.get(
+    app.get(
     "/api/instances/node-remote-users/:nodeId",
     { preHandler: requirePermission("instance.create") },
     async (request, reply) => {
@@ -1090,8 +1088,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
 
       let nodeDbDiagnostic: { mismatchReason?: string | undefined; availableUsers?: RemoteNodeUserSummary[] | undefined } | null = null;
 
-      // 1. Direct Node Database Sync via connected Daemon
-      const dbPath = await findNodePanelDatabasePath(node);
+            const dbPath = await findNodePanelDatabasePath(node);
       if (dbPath) {
         const dbResult = await fetchInstancesFromNodeDatabase(node, dbPath, {
           userKey: userKey || undefined,
@@ -1127,8 +1124,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
           } satisfies SyncInstancesByUserKeyResponse;
         }
 
-        // If targetUserId was selected and failed
-        if (targetUserId && !userKey) {
+                if (targetUserId && !userKey) {
           reply.code(400).send({
             ok: false,
             syncedCount: 0,
@@ -1144,8 +1140,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
         };
       }
 
-      // 2. HTTP API fallback (if userKey was provided)
-      if (!userKey) {
+            if (!userKey) {
         reply.code(400).send({
           ok: false,
           syncedCount: 0,

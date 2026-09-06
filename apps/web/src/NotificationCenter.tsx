@@ -1,24 +1,3 @@
-// Global notification/toast center.
-//
-// Provides:
-//   1. Imperative `pushNotification(level, message, opts?)` for any component.
-//   2. Automatic subscription to global events from the WebSocket bus — e.g.
-//      INSTANCE_STATE_CHANGED → toast, NODE_OFFLINE → banner.
-//   3. Render-less hook: useNotificationCenter() to get notifications list.
-//
-// Usage:
-//   // In App.tsx:
-//   <GlobalEventProvider>
-//     <NotificationProvider>
-//       <Workspace />
-//       <NotificationBar />
-//     </NotificationProvider>
-//   </GlobalEventProvider>
-//
-//   // In any component:
-//   const { pushNotification } = useNotificationCenter();
-//   pushNotification("info", "Instance started", { durationMs: 4000 });
-
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Info, XCircle, X } from "lucide-react";
 import { useGlobalEvent } from "./GlobalEventContext.js";

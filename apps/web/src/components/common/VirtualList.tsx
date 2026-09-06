@@ -1,24 +1,3 @@
-// Fixed-height virtual list for rendering large collections O(visible) nodes.
-//
-// MVP scopes:
-//   - Fixed row height (computed once from first rendered row).
-//   - No dynamic height measurement, no item reuse pools.
-//   - Window margin of 2 rows above/below to reduce flicker on fast scroll.
-//   - Root container MUST have an explicit height (flex child or fixed px).
-//
-// Usage:
-//   <VirtualList
-//     items={bigArray}
-//     estimatedRowHeight={36}
-//     renderItem={(item, index) => <Row key={item.id} item={item} index={index} />}
-//   />
-//
-// Integration notes:
-//   - Scroll happens on the component's own root div; parent should not
-//     overflow: auto on the same axis or scrolling will fight for events.
-//   - Focus management is the caller's responsibility; VirtualList does not
-//     attach to the tab sequence.
-
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 interface VirtualListProps<T> {

@@ -10,7 +10,6 @@ import { prisma } from "../db.js";
 import { readWatchPolicy } from "./policy.js";
 import { getIncident } from "./incidents.js";
 
-// 同一 incident 同一类事件的出站通知节流（内存态，避免每次状态抖动都写库）。
 const notifyThrottleMs = 60 * 1000;
 const notifyThrottle = new Map<string, number>();
 
@@ -181,8 +180,6 @@ async function deliverToChannel(
   }
 }
 
-// 出站通知主入口：按实例 watch policy 的 notifyChannelIds 找到订阅了该事件的启用渠道并发送。
-// 任何失败都只记录（delivery 行 + 日志），绝不向上抛出，避免影响 SSE 推送链路。
 export async function dispatchIncidentNotification(incident: ManagedIncident, kind: NotificationEventKind): Promise<void> {
   try {
     const policy = await readWatchPolicy(incident.instanceId);
@@ -199,8 +196,7 @@ export async function dispatchIncidentNotification(incident: ManagedIncident, ki
     const lastSent = notifyThrottle.get(throttleKey) ?? 0;
     if (now - lastSent < notifyThrottleMs) return;
     notifyThrottle.set(throttleKey, now);
-    // 防御性清理，避免节流表无界增长。
-    if (notifyThrottle.size > 5000) {
+        if (notifyThrottle.size > 5000) {
       for (const [key, ts] of notifyThrottle) {
         if (now - ts > 60 * 60 * 1000) notifyThrottle.delete(key);
       }
@@ -213,7 +209,6 @@ export async function dispatchIncidentNotification(incident: ManagedIncident, ki
   }
 }
 
-// 渠道测试消息：不经过策略/节流，直接发送并记录一条 kind=test 的 delivery。
 export async function testNotificationChannel(channelId: string): Promise<{ ok: boolean; error?: string }> {
   const channel = await prisma.notificationChannel.findUnique({ where: { id: channelId } });
   if (!channel) return { ok: false, error: "渠道不存在" };
@@ -225,7 +220,6 @@ export async function testNotificationChannel(channelId: string): Promise<{ ok: 
   return deliverToChannel(channel, "test", payload);
 }
 
-// 升级扫描：open/awaiting_approval 超过策略 escalationMinutes 未处理且未升级过的 incident，
 // 发送 escalation 通知并标记 escalatedAt（只升级一次）。
 const escalationScanIntervalMs = 60 * 1000;
 let escalationScannerStarted = false;

@@ -1,17 +1,3 @@
-// Panel-side global event bus. Every state mutation inside the panel (instance
-// start/stop, watch incident created, Saki task finished, node heartbeat
-// offline, etc.) broadcasts a structured event here so all connected browser
-// sessions (multi-tab, multi-device) stay in sync without polling.
-//
-// The bus has two transports:
-//   1. In-process EventEmitter — local subscribers (React hooks, background jobs).
-//   2. WebSocket push to every connected browser session via /ws/events.
-//
-// Lifecycle rules:
-//   - Subscribers MUST call unsubscribe() on unmount to avoid listener leaks.
-//   - Broadcasts are best-effort (fire-and-forget to WebSocket); dropped events
-//     are acceptable because browsers already poll key endpoints on focus.
-
 import EventEmitter from "node:events";
 import type { FastifyInstance } from "fastify";
 import type { WebSocket as NodeWebSocket } from "ws";
@@ -54,10 +40,8 @@ class PanelGlobalEventBus {
 
   broadcast(type: string, data?: unknown): void {
     const event: GlobalEvent = { type, timestamp: Date.now(), data };
-    // Local subscribers (React hooks etc.)
-    this.emitter.emit(type, event);
-    // WebSocket — best-effort
-    if (this.sockets.size === 0) return;
+        this.emitter.emit(type, event);
+        if (this.sockets.size === 0) return;
     const payload = JSON.stringify(event);
     for (const socket of Array.from(this.sockets)) {
       if (socket.readyState !== WebSocket.OPEN) {
@@ -67,8 +51,7 @@ class PanelGlobalEventBus {
       try {
         socket.send(payload);
       } catch {
-        // Socket died; leave it for the client to reconnect.
-        this.sockets.delete(socket);
+                this.sockets.delete(socket);
       }
     }
   }
@@ -78,8 +61,7 @@ export const globalEventBus = new PanelGlobalEventBus();
 
 export function registerGlobalEventSocket(app: FastifyInstance): void {
   app.get("/ws/events", { websocket: true }, (socket, request) => {
-    // Auth: require a valid panel JWT in query or Authorization header.
-    // This keeps events private to authenticated sessions only.
+        // This keeps events private to authenticated sessions only.
     const authHeader = (request.headers["authorization"] as string) ?? "";
     const queryToken = typeof request.query === "object" && request.query !== null && "token" in request.query
       ? (request.query as { token?: string }).token

@@ -3,16 +3,13 @@ import { prisma } from "../db.js";
 import { readDaemonInstanceLogs } from "../daemon-client.js";
 import { truncateLogTail } from "./incidents.js";
 
-// 诊断证据包采集：每个来源独立 try/catch，失败只记 note，绝不让证据采集阻断诊断主流程。
-// 采集结果持久化到 incident.evidenceJson，供 toManagedIncident 透出与诊断上下文注入复用。
 export async function collectWatchEvidence(incident: ManagedIncident): Promise<WatchEvidence> {
   const notes: string[] = [];
   const evidence: WatchEvidence = {
     collectedAt: new Date().toISOString()
   };
 
-  // 日志尾部：优先从 daemon 实时刷新（崩溃后可能又有新输出），失败则退回 incident 上已存的 logTail。
-  try {
+    try {
     const instance = await prisma.instance.findUnique({
       where: { id: incident.instanceId },
       include: { node: true }
@@ -29,8 +26,7 @@ export async function collectWatchEvidence(incident: ManagedIncident): Promise<W
     notes.push(`实时日志拉取失败（${error instanceof Error ? error.message : String(error)}），使用事件上保存的日志。`);
   }
 
-  // 崩溃历史：同实例最近 10 条 incident（含本次），用于判断复发模式。
-  try {
+    try {
     const history = await prisma.incident.findMany({
       where: { instanceId: incident.instanceId },
       orderBy: { lastOccurredAt: "desc" },
@@ -46,8 +42,7 @@ export async function collectWatchEvidence(incident: ManagedIncident): Promise<W
     notes.push(`崩溃历史查询失败：${error instanceof Error ? error.message : String(error)}`);
   }
 
-  // 节点资源：最近一次上报的 cpu/memory/disk 百分比。
-  try {
+    try {
     const metric = await prisma.nodeMetric.findFirst({
       where: { nodeId: incident.nodeId },
       orderBy: { createdAt: "desc" }
@@ -65,8 +60,7 @@ export async function collectWatchEvidence(incident: ManagedIncident): Promise<W
     notes.push(`节点资源指标查询失败：${error instanceof Error ? error.message : String(error)}`);
   }
 
-  // 最近变更：该实例最近 5 条操作日志（重启、改配置、文件编辑等）。
-  try {
+    try {
     const logs = await prisma.operationLog.findMany({
       where: { resourceType: "instance", resourceId: incident.instanceId },
       orderBy: { createdAt: "desc" },
@@ -94,7 +88,6 @@ export async function collectWatchEvidence(incident: ManagedIncident): Promise<W
   return evidence;
 }
 
-// 把证据包渲染成紧凑的文本段落注入诊断上下文；recurrenceCount 用于提示复发根因。
 export function formatWatchEvidenceSection(evidence: WatchEvidence, recurrenceCount: number): string {
   const lines: string[] = ["[EVIDENCE]"];
   if (evidence.crashHistory && evidence.crashHistory.length > 0) {

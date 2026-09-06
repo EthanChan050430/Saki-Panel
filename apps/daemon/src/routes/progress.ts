@@ -1,8 +1,3 @@
-// Daemon progress task endpoints.
-// Clients poll GET /api/progress/tasks/:id after kicking off a long-running
-// operation. Each daemon route that opts in must call progressReporter.start()
-// before the work begins and complete()/fail() when it ends.
-
 import type { FastifyInstance } from "fastify";
 import { progressReporter, type ProgressTask } from "../progress-reporter.js";
 

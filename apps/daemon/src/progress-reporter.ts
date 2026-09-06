@@ -1,17 +1,3 @@
-// In-memory progress tracker for long-running daemon operations.
-//
-// Design goals:
-//   - Each long-running task gets a unique ID; clients poll /api/progress/tasks/:id.
-//   - Tasks auto-expire (default 2h) to avoid leaking memory.
-//   - Best-effort: a dropped poll means the client just misses one update; the
-//     task stays alive until the operation completes or times out.
-//
-// Lifecycle:
-//   1. Operation starts → reporter.start(taskId, { label, totalUnits? })
-//   2. Operation calls reporter.update(taskId, { workedUnits?, percentage?, message? })
-//   3. Operation finishes/rejects → reporter.complete(taskId, result) or reporter.fail(taskId, error)
-//   4. Client polling /api/progress/tasks/:id sees final state and stops.
-
 export type ProgressTaskState = "running" | "completed" | "failed";
 
 export interface ProgressTask {
@@ -41,7 +27,6 @@ class ProgressReporter {
   private ensureSweepRunning() {
     if (this.sweepTimer) return;
     this.sweepTimer = setInterval(() => this.sweep(), SWEEP_INTERVAL_MS);
-    // Allow this timer to keep the process alive only while tasks exist.
     this.sweepTimer.unref?.();
   }
 
