@@ -15,7 +15,11 @@ High-risk work waits for your OK. Crashes get a fingerprint, a reviewed patch, a
 [![Fastify](https://img.shields.io/badge/Fastify-5-000000.svg)](https://fastify.dev/)
 [![Node](https://img.shields.io/badge/Node-%3E%3D18-339933.svg)](https://nodejs.org/)
 
-[Saki](#saki) · [Watch](#saki-watch) · [Panel](#panel) · [Quick Start](#quick-start) · [Architecture](#architecture) · [Deploy](#deploy)
+<p>
+  <b>English</b> · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+[Why Saki?](#why-saki) · [Saki](#saki) · [Watch](#saki-watch) · [Panel](#panel) · [Quick Start](#quick-start) · [Architecture](#architecture) · [Deploy](#deploy)
 
 </div>
 
@@ -30,6 +34,28 @@ You can tell it:
 - *Update the Minecraft server. Back up the world first.*
 
 Local models via [Ollama](https://ollama.com/) or [LM Studio](https://lmstudio.ai/) work with no API key. Cloud providers and GitHub Copilot are optional.
+
+## Why Saki Panel? (Comparison with Alternatives)
+
+Existing tools are great at what they do: **MCSManager** excels at lightweight game hosting, **1Panel** manages Linux web servers, **Pterodactyl** dominates commercial multi-tenant game hosting, and **aaPanel** handles traditional web stacks.
+
+However, they all remain **passive, manual tools**. When a process crashes at 3 AM, they either restart it blindly into a crash loop or wait for a human to dig through thousands of lines of logs.
+
+| Dimension | **MCSManager** | **1Panel** | **Pterodactyl** | **aaPanel** | **Saki Panel** 🚀 |
+|:---|:---:|:---:|:---:|:---:|:---:|
+| **AI Ops Agent** | ❌ None, manual only | ⚠️ Basic chatbot / app store only | ❌ None | ⚠️ Cloud-only external widget | **✅ In-workspace SRE agent: inspects live logs, files, CPU/RAM, and runs scoped tools** |
+| **Crash Self-Healing** | Blind restart loop, manual log digging | Basic Docker restart policy | Basic container restart policy | Process manager restart loop | **✅ Saki Watch: Fingerprints errors, drafts patches, waits for OK, auto-rollback on recurring crash** |
+| **Local LLM & Privacy** | ❌ None | Manual external container setup | ❌ None | Commercial cloud API only | **✅ Zero-config Ollama & LM Studio (100% offline & private, zero API key needed)** |
+| **Safety & Guardrails** | Standard RBAC | Linux/Docker permissions | Docker container sandbox | Standard root execution | **✅ 4-level risk approvals, mandatory confirmation on high-risk writes, daemon-level command blockers** |
+| **Supported Workloads** | Processes, Docker, Game servers | Docker & Web stacks | Docker containers only | Heavy web hosting (LNMP/LAMP) | **✅ 9 native types (CLI, Node, Python, JAR, Docker/Compose, plus Minecraft & Steam)** |
+| **Game Server Experience** | ✅ Tailored for game servers | Needs generic Docker, lacks game consoles | ✅ Dedicated game server eggs | Basic shell terminal | **✅ Native Minecraft console color parsing, Steam dedicated servers, pinpoint crash diagnosis** |
+| **Cluster & Multi-Node** | Panel + Daemon | Single-node by default, multi-node in enterprise | Panel + Wings (powerful) | Paid cloud central manager | **✅ Panel + Ultra-light Node Daemon, instant token pairing, zero complex networking** |
+| **Setup & Complexity** | Easy (Node.js) | Easy (Go + Docker) | Complex (PHP/Laravel + MySQL + Redis + Go Wings) | Easy, but modifies host environment | **Simple & Fast (Fastify 5 + React 19 + SQLite, snappy & lightweight)** |
+
+> **Summary:**
+> - If you need commercial, multi-tenant game server hosting with strict billing: **Pterodactyl** is the industry standard.
+> - If you primarily need a traditional Linux web server with Nginx reverse proxies: **1Panel** is solid.
+> - If you want an **AI-native server panel with a 24/7 autonomous SRE**, versatile support for processes/Docker/games, and safe self-healing rollbacks: **Saki Panel is built for you**.
 
 ## Screenshots
 
