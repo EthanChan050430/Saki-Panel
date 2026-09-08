@@ -86,5 +86,12 @@ _new_db_styles.css
 *.traineddata
 scratch/
 .tmp-*/
+bin/
+dist-package/
+cmd/
+scripts/create-release-assets.mjs
+saki-panel*
+*.bat
+releases/
 
 

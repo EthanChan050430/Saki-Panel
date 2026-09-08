@@ -8,6 +8,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+if [ -f "./saki-panel" ]; then
+    chmod +x ./saki-panel 2>/dev/null || true
+    exec ./saki-panel "$@"
+fi
+
 echo "🌸 🌸 Saki Panel - Starting..."
 echo ""
 

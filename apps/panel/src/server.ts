@@ -1,4 +1,9 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import jwt from "@fastify/jwt";
 import websocket from "@fastify/websocket";
 import multipart from "@fastify/multipart";
@@ -117,6 +122,55 @@ export async function createPanelServer() {
           : "Internal Server Error";
     reply.code(statusCode).send({ message });
   });
+
+  // Serve Web UI SPA if apps/web/dist exists
+  const webDistCandidates = [
+    path.resolve(process.cwd(), "apps/web/dist"),
+    path.resolve(process.cwd(), "dist/web"),
+    path.resolve(__dirname, "../../web/dist"),
+    path.resolve(__dirname, "../../../apps/web/dist")
+  ];
+  const webDistPath = webDistCandidates.find((candidate) => fs.existsSync(candidate));
+  if (webDistPath) {
+    const mimeTypes: Record<string, string> = {
+      ".html": "text/html; charset=utf-8",
+      ".js": "application/javascript; charset=utf-8",
+      ".mjs": "application/javascript; charset=utf-8",
+      ".css": "text/css; charset=utf-8",
+      ".json": "application/json; charset=utf-8",
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".gif": "image/gif",
+      ".svg": "image/svg+xml",
+      ".webp": "image/webp",
+      ".ico": "image/x-icon",
+      ".woff": "font/woff",
+      ".woff2": "font/woff2",
+      ".ttf": "font/ttf"
+    };
+
+    app.setNotFoundHandler(async (request, reply) => {
+      const urlPath = request.url.split("?")[0] || "/";
+      if (
+        request.method === "GET" &&
+        !urlPath.startsWith("/api") &&
+        !urlPath.startsWith("/saki") &&
+        !urlPath.startsWith("/ws")
+      ) {
+        let filePath = path.join(webDistPath, urlPath);
+        if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+          filePath = path.join(webDistPath, "index.html");
+        }
+        if (fs.existsSync(filePath)) {
+          const ext = path.extname(filePath).toLowerCase();
+          const contentType = mimeTypes[ext] || "application/octet-stream";
+          return reply.type(contentType).send(fs.createReadStream(filePath));
+        }
+      }
+      reply.code(404).send({ message: "Not Found" });
+    });
+  }
 
   return app;
 }

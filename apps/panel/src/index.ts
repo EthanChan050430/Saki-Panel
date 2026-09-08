@@ -22,8 +22,14 @@ async function runSchemaSync(): Promise<void> {
     if (stdout) console.log(stdout);
     if (stderr) console.error(stderr);
   } catch (error) {
-    console.error("Prisma schema sync failed:", error instanceof Error ? error.message : error);
-    throw error;
+    console.warn("Prisma schema push via npx skipped/failed:", error instanceof Error ? error.message : error);
+    try {
+      await prisma.$queryRawUnsafe("SELECT 1;");
+      console.log("Existing database verified, continuing startup.");
+    } catch {
+      console.error("Database is inaccessible and schema push failed.");
+      throw error;
+    }
   }
 }
 
