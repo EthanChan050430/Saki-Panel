@@ -14,7 +14,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6.svg)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/)
 [![Fastify](https://img.shields.io/badge/Fastify-5-000000.svg)](https://fastify.dev/)
-[![Node](https://img.shields.io/badge/Node-%3E%3D18-339933.svg)](https://nodejs.org/)
+[![Node](https://img.shields.io/badge/Node-%3E%3D22.13-339933.svg)](https://nodejs.org/)
 
 <p>
   <a href="README.md">English</a> · <b>简体中文</b>
@@ -47,15 +47,15 @@
 
 但它们都有一个共同的痛点：**全都是“纯手工”面板**。半夜服务挂了只能无脑循环重启，排查错误服主/运维必须自己人肉翻几百行 log，出了故障也没有带后悔药的自动回滚机制。
 
-| 对比维度 | **MCSManager** | **1Panel** | **Pterodactyl (翼龙)** | **宝塔 / aaPanel** | **Saki Panel** 🚀 |
+| 对比维度 | **MCSManager** | **1Panel** | **Pterodactyl (翼龙)** | **宝塔 / aaPanel** | **Saki Panel** |
 |:---|:---:|:---:|:---:|:---:|:---:|
-| **AI 运维 Agent** | ❌ 无 AI 能力，全靠人工排查 | ⚠️ 仅应用商店/简单问答，无法同工作区诊断 | ❌ 无 AI 支持 | ⚠️ 商业外挂问答框，日志数据全上传 | **✅ 原生驻守工作区：直接看日志、读配置、生成修复补丁** |
-| **崩溃排障与自愈** | 仅异常硬重启，模组报错全靠猜 | 依赖 Docker restart 策略 | 仅容器重启策略 | 仅 Supervisor 等进程守护硬启 | **✅ Saki Watch：提取错误指纹、定位根因、人工过目补丁、再崩自动回滚** |
-| **本地大模型 / 隐私** | ❌ 无 | 需自行搭容器再手动调 API | ❌ 无 | 依赖云端商业 API，强制手机号实名 | **✅ 原生直连 Ollama & LM Studio，0 成本断网可用，隐私不出内网** |
-| **安全风控与防逃逸** | 基础用户权限，无操作风险审核 | 基础 Linux / 容器权限 | 严格 Docker 沙盒，但无命令级审查 | 无分级风控，root 跑脚本易翻车 | **✅ 4 级风险审批机制，高危写操作必弹窗确认，底层硬拦截高危危险命令** |
-| **支持的实例负载** | 通用进程、Docker、游戏服 | 偏重 Docker 容器与 Web 建站 | 必须运行在 Docker 容器内 | 偏重建站（LNMP/LAMP 依赖较重） | **✅ 通吃 9 种类型（CLI 进程、Node、Python、JAR、Docker/Compose、游戏服）** |
-| **游戏服专属体验** | ✅ 原生体验极佳，专为服主打造 | 需自建 Docker 镜像，缺专用控制台优化 | ✅ 专为开服设计（Eggs 模板生态完善） | 体验较差，仅普通终端 | **✅ 原生支持 Minecraft 控制台色彩代码、Steam 专用服、崩溃报错精准解析** |
-| **多节点与集群架构** | Panel + Daemon 分布式 | 早期仅单机，多机需商业版/独立部署 | Panel + Wings 分布式（功能强大） | 多机需付费购买宝塔云控 | **✅ Panel + 超轻量 Node Daemon，密钥秒级安全配对，开箱即用** |
+| **AI 运维 Agent** | 无（纯手工排查） | 仅应用市场/简单问答，无法同工作区诊断 | 无 | 商业外挂问答框，日志数据上传云端 | **原生驻守工作区：直接读日志/配置并执行修复补丁** |
+| **崩溃排障与自愈** | 仅异常硬重启，模组报错全靠猜 | 依赖 Docker restart 策略 | 仅容器重启策略 | 仅 Supervisor 等进程守护硬启 | **Saki Watch：提取错误指纹、定位根因、人工过目补丁、再崩自动回滚** |
+| **本地大模型 / 隐私** | 无 | 需自行搭容器再手动调 API | 无 | 依赖云端商业 API，强制手机号实名 | **原生直连 Ollama & LM Studio，零成本断网可用，隐私不出内网** |
+| **安全风控与防逃逸** | 基础用户权限，无操作风险审核 | 基础 Linux / 容器权限 | 严格 Docker 沙盒，但无命令级审查 | 无分级风控，root 跑脚本易翻车 | **4 级风险审批机制，高危写操作弹窗确认，底层硬拦截高危命令** |
+| **支持的实例负载** | 通用进程、Docker、游戏服 | 偏重 Docker 容器与 Web 建站 | 必须运行在 Docker 容器内 | 偏重建站（LNMP/LAMP 依赖较重） | **通吃 9 种类型（CLI 进程、Node、Python、JAR、Docker/Compose、游戏服）** |
+| **游戏服专属体验** | 专为服主打造，原生体验好 | 需自建 Docker 镜像，缺专用控制台优化 | 专为开服设计（Eggs 模板生态完善） | 体验较差，仅普通终端 | **原生支持 Minecraft 控制台彩色代码、Steam 专用服、崩溃报错精准解析** |
+| **多节点与集群架构** | Panel + Daemon 分布式 | 早期仅单机，多机需商业版/独立部署 | Panel + Wings 分布式（功能强大） | 多机需付费购买宝塔云控 | **Panel + 超轻量 Node Daemon，密钥秒级配对，开箱即用** |
 | **部署与上手成本** | 简单（Node.js / 一键脚本） | 简单（Go 二进制 + Docker） | 极繁琐（PHP+Laravel+MySQL+Redis+Go Wings） | 简单，但深度修改宿主机底层环境 | **简单快速（Fastify 5 + React 19 + SQLite，极轻量丝滑）** |
 
 > **选型建议：**
@@ -136,7 +136,7 @@ SAKI_OLLAMA_URL=http://localhost:11434
 ## 快速上手
 
 ### 环境准备
-- Node.js ≥ 18
+- Node.js ≥ 22.13
 - npm ≥ 9
 
 ### 4 步本地跑起来
