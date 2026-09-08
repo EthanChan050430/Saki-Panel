@@ -9,8 +9,23 @@ export function isVideoSource(source?: string | null): boolean {
   return /\.(mp4|webm|ogg|mov|m4v)$/i.test(urlWithoutParams);
 }
 
+function sanitizeAppearanceSrc(source: string): string {
+  const trimmed = source.trim().replace(/[\u0000-\u001F\u007F]/g, "");
+  if (!trimmed) return "";
+  if (trimmed.startsWith("/assets/")) return trimmed;
+  if (trimmed.startsWith("data:image/") && !/^data:image\/svg\+xml/i.test(trimmed)) return trimmed;
+  if (trimmed.startsWith("data:video/")) return trimmed;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === "https:" || parsed.protocol === "http:") return trimmed;
+  } catch {
+    // ignore
+  }
+  return "";
+}
+
 function migrateBundledAssetSrc(source: string): string {
-  const trimmed = source.trim();
+  const trimmed = sanitizeAppearanceSrc(source);
   if (!trimmed.startsWith("/assets/")) return trimmed;
   if (trimmed.endsWith(".png")) return `${trimmed.slice(0, -4)}.webp`;
   if (trimmed.endsWith("/background_room.jpg")) return trimmed.replace(/\.jpg$/i, ".webp");
@@ -23,20 +38,22 @@ export function normalizePanelAppearance(input?: Partial<PanelAppearanceSettings
     ...(input ?? {}),
     appTitle: input?.appTitle?.trim() || defaultPanelAppearance.appTitle,
     appSubtitle: input?.appSubtitle ?? defaultPanelAppearance.appSubtitle,
-    appLogoSrc: migrateBundledAssetSrc(input?.appLogoSrc?.trim() || defaultPanelAppearance.appLogoSrc),
-    sidebarLogoSrc: migrateBundledAssetSrc(input?.sidebarLogoSrc?.trim() || defaultPanelAppearance.sidebarLogoSrc),
-    loginCoverSrc: migrateBundledAssetSrc(input?.loginCoverSrc?.trim() || defaultPanelAppearance.loginCoverSrc),
-    backgroundSrc: migrateBundledAssetSrc(input?.backgroundSrc?.trim() || defaultPanelAppearance.backgroundSrc),
-    mobileBackgroundSrc: migrateBundledAssetSrc(input?.mobileBackgroundSrc?.trim() || defaultPanelAppearance.mobileBackgroundSrc),
-    darkBackgroundSrc: migrateBundledAssetSrc(input?.darkBackgroundSrc?.trim() || defaultPanelAppearance.darkBackgroundSrc),
-    mobileDarkBackgroundSrc: migrateBundledAssetSrc(
-      input?.mobileDarkBackgroundSrc?.trim() || defaultPanelAppearance.mobileDarkBackgroundSrc
-    )
+    appLogoSrc: migrateBundledAssetSrc(input?.appLogoSrc?.trim() || "") || defaultPanelAppearance.appLogoSrc,
+    sidebarLogoSrc: migrateBundledAssetSrc(input?.sidebarLogoSrc?.trim() || "") || defaultPanelAppearance.sidebarLogoSrc,
+    loginCoverSrc: migrateBundledAssetSrc(input?.loginCoverSrc?.trim() || "") || defaultPanelAppearance.loginCoverSrc,
+    backgroundSrc: migrateBundledAssetSrc(input?.backgroundSrc?.trim() || "") || defaultPanelAppearance.backgroundSrc,
+    mobileBackgroundSrc:
+      migrateBundledAssetSrc(input?.mobileBackgroundSrc?.trim() || "") || defaultPanelAppearance.mobileBackgroundSrc,
+    darkBackgroundSrc: migrateBundledAssetSrc(input?.darkBackgroundSrc?.trim() || "") || defaultPanelAppearance.darkBackgroundSrc,
+    mobileDarkBackgroundSrc:
+      migrateBundledAssetSrc(input?.mobileDarkBackgroundSrc?.trim() || "") || defaultPanelAppearance.mobileDarkBackgroundSrc
   };
 }
 
 export function cssImageUrl(source: string): string {
-  return `url("${source.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}")`;
+  const safe = sanitizeAppearanceSrc(source).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  if (!safe) return "none";
+  return `url("${safe}")`;
 }
 
 export function getEffectiveBackgroundSources(appearance: PanelAppearanceSettings, darkMode: boolean) {

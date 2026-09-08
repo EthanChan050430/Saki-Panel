@@ -47,6 +47,7 @@ export function ElegantCursor() {
     let glowX = -500;
     let glowY = -500;
     let isHovering = false;
+    let isAgentInput = false;
     let isVisible = false;
     let rafId = 0;
     let lastMoveTime = 0;
@@ -144,7 +145,7 @@ export function ElegantCursor() {
       const dy = mouseY - prevMouseY;
       const dist = Math.hypot(dx, dy);
 
-      if (dist > 5 && stardusts.length < maxStardust && Math.random() < 0.28) {
+      if (!isAgentInput && dist > 5 && stardusts.length < maxStardust && Math.random() < 0.28) {
         const angle = Math.atan2(dy, dx) + Math.PI + (Math.random() - 0.5) * 0.8;
         const speed = 0.3 + Math.random() * 1.1;
         stardusts.push({
@@ -166,6 +167,10 @@ export function ElegantCursor() {
       if (lastMoveTime - lastHoverCheck > 80) {
         lastHoverCheck = lastMoveTime;
         const target = e.target as HTMLElement | null;
+        isAgentInput = Boolean(
+          target?.closest(".saki-input-container, .saki-composer") &&
+          !target?.closest('button, [role="button"], .icon-button, .saki-chip, .saki-model-btn')
+        );
         isHovering = Boolean(
           target?.closest(
             'button, a, input, textarea, select, [role="button"], label, .icon-button, .link-button, .tab-item, summary, .clickable, .saki-chip, .saki-model-btn, .saki-permission-btn'
@@ -225,10 +230,25 @@ export function ElegantCursor() {
 
         if (isVisible && glowX > -100 && glowY > -100) {
           const breathing = recentlyMoved ? Math.sin(time) * 8 : 0;
-          const baseRadius = (isHovering ? 200 : 160) + breathing;
+          const baseRadius = (isAgentInput ? 115 : isHovering ? 200 : 160) + breathing;
           const grad = ctx.createRadialGradient(glowX, glowY, 0, glowX, glowY, baseRadius);
 
-          if (isDark) {
+          if (isAgentInput) {
+            // Refined soft white glass specular sheen
+            if (isDark) {
+              const coreAlpha = 0.07;
+              const midAlpha = 0.025;
+              grad.addColorStop(0, `rgba(255, 255, 255, ${coreAlpha})`);
+              grad.addColorStop(0.45, `rgba(235, 242, 255, ${midAlpha})`);
+              grad.addColorStop(1, "rgba(255, 255, 255, 0)");
+            } else {
+              const coreAlpha = 0.11;
+              const midAlpha = 0.035;
+              grad.addColorStop(0, `rgba(255, 255, 255, ${coreAlpha})`);
+              grad.addColorStop(0.45, `rgba(255, 248, 252, ${midAlpha})`);
+              grad.addColorStop(1, "rgba(255, 255, 255, 0)");
+            }
+          } else if (isDark) {
             const coreAlpha = isHovering ? 0.18 : 0.12;
             const midAlpha = isHovering ? 0.08 : 0.05;
             grad.addColorStop(0, `rgba(255, 155, 200, ${coreAlpha})`);
@@ -247,7 +267,16 @@ export function ElegantCursor() {
           ctx.arc(glowX, glowY, baseRadius, 0, Math.PI * 2);
           ctx.fill();
 
-          if (isHovering) {
+          if (isAgentInput) {
+            // Subtle, pure translucent glass glint highlight
+            const glintGrad = ctx.createRadialGradient(mouseX, mouseY, 0, mouseX, mouseY, 20);
+            glintGrad.addColorStop(0, isDark ? "rgba(255, 255, 255, 0.12)" : "rgba(255, 255, 255, 0.22)");
+            glintGrad.addColorStop(1, "rgba(255, 255, 255, 0)");
+            ctx.fillStyle = glintGrad;
+            ctx.beginPath();
+            ctx.arc(mouseX, mouseY, 20, 0, Math.PI * 2);
+            ctx.fill();
+          } else if (isHovering) {
             const glintGrad = ctx.createRadialGradient(mouseX, mouseY, 0, mouseX, mouseY, 32);
             glintGrad.addColorStop(0, isDark ? "rgba(255, 180, 215, 0.22)" : "rgba(255, 150, 190, 0.18)");
             glintGrad.addColorStop(1, "rgba(255, 255, 255, 0)");

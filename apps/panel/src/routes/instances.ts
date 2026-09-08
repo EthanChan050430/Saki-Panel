@@ -241,6 +241,13 @@ function isWindowsNode(node: { os?: string | null }): boolean {
   return /\bwin(?:dows|32)?\b/i.test(node.os ?? "");
 }
 
+function isUnsafeWorkingDirectory(value: string): boolean {
+  const normalized = value.replace(/\\/g, "/").trim();
+  if (!normalized) return true;
+  if (normalized.startsWith("/") || /^[A-Za-z]:/.test(normalized) || normalized.startsWith("//")) return true;
+  return normalized.split("/").some((piece) => piece === "..");
+}
+
 function entryKey(name: string): string {
   return name.toLowerCase();
 }
@@ -1342,6 +1349,11 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     }
 
     const id = randomUUID();
+    const workingDirectory = body.workingDirectory?.trim() || `instances/${id}`;
+    if (isUnsafeWorkingDirectory(workingDirectory)) {
+      reply.code(400).send({ message: "workingDirectory must be a relative path inside the daemon workspace" });
+      return;
+    }
     const initialAssignedUserIds = assignedUserIds ?? [];
     const instance = await prisma.instance.create({
       data: {
@@ -1349,7 +1361,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
         nodeId,
         name,
         type: body.type ?? "generic_command",
-        workingDirectory: body.workingDirectory?.trim() || `instances/${id}`,
+        workingDirectory,
         startCommand,
         stopCommand: body.stopCommand?.trim() || null,
         description: body.description?.trim() || null,
@@ -1401,6 +1413,10 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       body.workingDirectory === undefined ? existing.workingDirectory : trimmedString(body.workingDirectory);
     if (!nextWorkingDirectory) {
       reply.code(400).send({ message: "workingDirectory cannot be empty" });
+      return;
+    }
+    if (isUnsafeWorkingDirectory(nextWorkingDirectory)) {
+      reply.code(400).send({ message: "workingDirectory must be a relative path inside the daemon workspace" });
       return;
     }
     const nextStartCommand =

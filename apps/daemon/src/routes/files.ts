@@ -7,6 +7,8 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import type { FastifyInstance } from "fastify";
 import type { MultipartFile } from "@fastify/multipart";
 import type {
@@ -36,6 +38,22 @@ import { authenticatePanelRequest } from "../daemon-auth.js";
 import { assertSafeRegex } from "../regex-utils.js";
 
 const maxEditableFileBytes = 1024 * 1024;
+
+function createSizeLimitStream(maxBytes: number): Transform {
+  let seen = 0;
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      seen += chunk.length;
+      if (seen > maxBytes) {
+        callback(
+          new Error(`File transfer size exceeds the ${Math.round(maxBytes / (1024 * 1024))} MB limit`)
+        );
+        return;
+      }
+      callback(null, chunk);
+    }
+  });
+}
 const outlinePatterns = [
   /^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+([a-zA-Z0-9_$]+)/,
   /^\s*(?:export\s+)?class\s+([a-zA-Z0-9_$]+)/,
@@ -244,11 +262,14 @@ async function resolveInstanceRoot(workingDirectory: string | undefined): Promis
   const workspaceRoot = path.resolve(daemonPaths.workspaceDir);
   await fs.mkdir(workspaceRoot, { recursive: true });
 
-  const root = path.isAbsolute(workingDirectory!) 
-    ? path.resolve(workingDirectory!) 
-    : path.resolve(workspaceRoot, value);
+  const root = path.isAbsolute(value) ? path.resolve(value) : path.resolve(workspaceRoot, value);
 
   await fs.mkdir(root, { recursive: true });
+  const realWorkspaceRoot = await fs.realpath(workspaceRoot);
+  const realRoot = await fs.realpath(root);
+  if (!isInside(realWorkspaceRoot, realRoot)) {
+    throw new Error("workingDirectory escapes the daemon workspace root");
+  }
   return root;
 }
 
@@ -1212,11 +1233,15 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
         throw new Error("Target file already exists");
       }
 
-      const buffer = await data.toBuffer();
-      if (buffer.byteLength > maxTransferBytes) {
-        throw new Error(`File transfer size exceeds the ${Math.round(maxTransferBytes / (1024 * 1024))} MB limit`);
+      const writeStream = fsSync.createWriteStream(resolved.target);
+      try {
+        await pipeline(data.file, createSizeLimitStream(daemonConfig.maxTransferBytes), writeStream);
+      } catch (err) {
+        try {
+          await fs.unlink(resolved.target);
+        } catch {}
+        throw err;
       }
-      await fs.writeFile(resolved.target, buffer);
       return toFileEntry(resolved.root, resolved.target, path.basename(resolved.target));
     }
 
@@ -1232,6 +1257,40 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
 
     const buffer = decodeBase64Content(body.contentBase64);
     await fs.writeFile(resolved.target, buffer);
+    return toFileEntry(resolved.root, resolved.target, path.basename(resolved.target));
+  });
+
+  app.post("/api/instances/:id/files/upload-raw", { preHandler: authenticatePanelRequest }, async (request, reply) => {
+    const rawPath = request.headers["x-file-path"];
+    const filePath = typeof rawPath === "string" ? decodeURIComponent(rawPath) : "";
+    const rawWd = request.headers["x-working-directory"];
+    const workingDirectory = typeof rawWd === "string" && rawWd ? decodeURIComponent(rawWd) : undefined;
+    const overwrite = String(request.headers["x-overwrite"] ?? "true") !== "false";
+
+    if (!filePath) {
+      reply.code(400).send({ message: "x-file-path header is required" });
+      return;
+    }
+
+    const resolved = await resolveTarget(workingDirectory, filePath);
+    if (!overwrite && (await pathExists(resolved.target))) {
+      reply.code(409).send({ message: "Target file already exists" });
+      return;
+    }
+
+    const bodyStream =
+      request.body && typeof request.body === "object" && "pipe" in (request.body as object)
+        ? (request.body as NodeJS.ReadableStream)
+        : request.raw;
+    const writeStream = fsSync.createWriteStream(resolved.target);
+    try {
+      await pipeline(bodyStream, createSizeLimitStream(daemonConfig.maxTransferBytes), writeStream);
+    } catch (err) {
+      try {
+        await fs.unlink(resolved.target);
+      } catch {}
+      throw err;
+    }
     return toFileEntry(resolved.root, resolved.target, path.basename(resolved.target));
   });
 

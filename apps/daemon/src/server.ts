@@ -34,6 +34,12 @@ export async function createDaemonServer() {
     }
   });
 
+  // Pass the raw body stream through so /files/upload-raw can pipe to disk
+  // without Fastify buffering the whole payload or rejecting octet-stream.
+  app.addContentTypeParser("application/octet-stream", (_request, payload, done) => {
+    done(null, payload);
+  });
+
   // /health is intentionally open for load-balancer probing. It returns no sensitive details.
   app.get("/health", async () => ({ ok: true }));
 

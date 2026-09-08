@@ -67,20 +67,23 @@ function canAccessDatabaseInstance(
     inst.name.includes("WebOps 系统数据库") ||
     inst.name.includes("WebOps 核心数据库");
 
-  // Explicit assignment always takes highest precedence
-  if (inst.assignees?.some((a) => a.userId === profile.userId)) return true;
-  if (inst.assignedToUserId === profile.userId) return true;
-  if (inst.createdByUserId === profile.userId) return true;
-
-  // Super admin can access all instances
+  // Super admin can access all instances, including the panel system database.
   if (profile.role === "super_admin") {
     return true;
   }
 
-  // System internal database (dev.db) is never shown to regular users or admins without explicit assignment
+  // System internal database (dev.db) is never accessible by creating a visualizer
+  // that points at it — only explicit assignment or super_admin.
   if (isSystemDb) {
+    if (inst.assignees?.some((a) => a.userId === profile.userId)) return true;
+    if (inst.assignedToUserId === profile.userId) return true;
     return false;
   }
+
+  // Explicit assignment always takes highest precedence
+  if (inst.assignees?.some((a) => a.userId === profile.userId)) return true;
+  if (inst.assignedToUserId === profile.userId) return true;
+  if (inst.createdByUserId === profile.userId) return true;
 
   if (profile.role === "admin") {
     if (!inst.createdByRole || inst.createdByRole === "user") return true;
@@ -112,6 +115,69 @@ async function safeDaemonCall<T>(
     reply.code(400).send({ ok: false, statusCode: 400, message, error: message });
     return;
   }
+}
+
+const MUTATING_SQL =
+  /\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|REPLACE|GRANT|REVOKE|RENAME|ATTACH|DETACH|CALL|LOAD|COPY|MERGE|UPSERT|VACUUM|REINDEX|HANDLER|LOCK|UNLOCK|INTO\s+OUTFILE|INTO\s+DUMPFILE|LOAD_FILE)\b/i;
+
+function stripSqlCommentsAndLiterals(sql: string): string {
+  let out = "";
+  let i = 0;
+  while (i < sql.length) {
+    const c = sql[i];
+    const n = sql[i + 1];
+    if (c === "/" && n === "*") {
+      const end = sql.indexOf("*/", i + 2);
+      i = end === -1 ? sql.length : end + 2;
+      out += " ";
+      continue;
+    }
+    if ((c === "-" && n === "-") || c === "#") {
+      const end = sql.indexOf("\n", i + 1);
+      i = end === -1 ? sql.length : end;
+      out += " ";
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      const quote = c;
+      i += 1;
+      while (i < sql.length) {
+        if (sql[i] === "\\" ) {
+          i += 2;
+          continue;
+        }
+        if (sql[i] === quote) {
+          if (sql[i + 1] === quote) {
+            i += 2;
+            continue;
+          }
+          i += 1;
+          break;
+        }
+        i += 1;
+      }
+      out += " '' ";
+      continue;
+    }
+    out += c;
+    i += 1;
+  }
+  return out;
+}
+
+function isReadOnlySql(sql: string): boolean {
+  const stripped = stripSqlCommentsAndLiterals(sql).trim();
+  if (!stripped) return true;
+  const parts = stripped.split(";").map((part) => part.trim()).filter(Boolean);
+  return parts.every((part) => {
+    if (!/^(SELECT|SHOW|DESCRIBE|DESC|EXPLAIN|WITH|PRAGMA|VALUES)\b/i.test(part)) {
+      return false;
+    }
+    if (/^PRAGMA\b/i.test(part) && /=/.test(part)) {
+      return false;
+    }
+    return !MUTATING_SQL.test(part);
+  });
 }
 
 const dbVisualizersFile = path.resolve(process.cwd(), "data", "panel", "database-visualizers.json");
@@ -151,47 +217,34 @@ async function writeVisualizers(items: DatabaseVisualizerInstance[]): Promise<vo
   await fs.writeFile(dbVisualizersFile, JSON.stringify(items, null, 2), "utf8");
 }
 
-async function resolveNodeCredentials(nodeId: string): Promise<DaemonNodeCredentials | null> {
-  if (nodeId === "local" || nodeId === "panel") {
-    // Return first active online node, or local daemon default
-    const online = await prisma.node.findFirst({
-      where: { status: "ONLINE" },
-      orderBy: { updatedAt: "desc" }
-    });
-    if (online) {
-      return {
-        id: online.id,
-        protocol: online.protocol,
-        host: online.host,
-        port: online.port,
-        tokenHash: online.tokenHash,
-        os: online.os
-      };
-    }
-    const anyNode = await prisma.node.findFirst({ orderBy: { createdAt: "asc" } });
-    if (anyNode) {
-      return {
-        id: anyNode.id,
-        protocol: anyNode.protocol,
-        host: anyNode.host,
-        port: anyNode.port,
-        tokenHash: anyNode.tokenHash,
-        os: anyNode.os
-      };
-    }
-    return null;
-  }
-
-  const node = await prisma.node.findUnique({ where: { id: nodeId } });
-  if (!node) return null;
-  return {
+async function resolveNodeCredentials(nodeId: string, userId?: string): Promise<DaemonNodeCredentials | null> {
+  const user = userId ? await loadCurrentUser(userId) : null;
+  const toCreds = (node: { id: string; protocol: string; host: string; port: number; tokenHash: string; os: string | null }): DaemonNodeCredentials => ({
     id: node.id,
     protocol: node.protocol,
     host: node.host,
     port: node.port,
     tokenHash: node.tokenHash,
     os: node.os
-  };
+  });
+
+  if (nodeId === "local" || nodeId === "panel") {
+    const online = await prisma.node.findMany({
+      where: { status: "ONLINE" },
+      orderBy: { updatedAt: "desc" }
+    });
+    const visibleOnline = user ? online.find((n) => canAccessNode(user, n)) : online[0];
+    if (visibleOnline) return toCreds(visibleOnline);
+    const anyNodes = await prisma.node.findMany({ orderBy: { createdAt: "asc" } });
+    const visibleAny = user ? anyNodes.find((n) => canAccessNode(user, n)) : anyNodes[0];
+    if (visibleAny) return toCreds(visibleAny);
+    return null;
+  }
+
+  const node = await prisma.node.findUnique({ where: { id: nodeId } });
+  if (!node) return null;
+  if (user && !canAccessNode(user, node)) return null;
+  return toCreds(node);
 }
 
 export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void> {
@@ -289,6 +342,12 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
         return;
       }
       nodeName = node.name;
+    } else {
+      const localCreds = await resolveNodeCredentials(body.nodeId, request.user.sub);
+      if (!localCreds) {
+        reply.code(404).send({ message: "Node not found" });
+        return;
+      }
     }
 
     let assignedUserIds: string[] | undefined;
@@ -375,9 +434,19 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     }
 
     const target = current[index]!;
+    const profile = await loadInstanceAccessProfile(request.user.sub);
+    if (!canAccessDatabaseInstance(profile, target)) {
+      reply.code(403).send({ message: "无权访问该数据库可视化实例" });
+      return;
+    }
     let nodeName = target.nodeName;
     if (body.nodeId && body.nodeId !== target.nodeId) {
-      const node = await prisma.node.findUnique({ where: { id: body.nodeId } });
+      const creds = await resolveNodeCredentials(body.nodeId, request.user.sub);
+      if (!creds) {
+        reply.code(404).send({ message: "Node not found" });
+        return;
+      }
+      const node = await prisma.node.findUnique({ where: { id: creds.id } });
       nodeName = node?.name ?? body.nodeId;
     }
 
@@ -444,7 +513,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
 
     if (body.config) {
       try {
-        const creds = await resolveNodeCredentials(updated.nodeId);
+        const creds = await resolveNodeCredentials(updated.nodeId, request.user.sub);
         if (creds) {
           await requestDaemon(creds, "/api/databases/clear-cache", {
             method: "POST",
@@ -476,12 +545,18 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
   app.delete("/api/databases/:id", { preHandler: requirePermission("instance.delete") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const current = await readVisualizers();
-    const filtered = current.filter((item) => item.id !== id);
-    if (filtered.length === current.length) {
+    const target = current.find((item) => item.id === id);
+    if (!target) {
       reply.code(404).send({ message: "未找到指定的数据库可视化实例" });
       return;
     }
+    const profile = await loadInstanceAccessProfile(request.user.sub);
+    if (!canAccessDatabaseInstance(profile, target)) {
+      reply.code(403).send({ message: "无权访问该数据库可视化实例" });
+      return;
+    }
 
+    const filtered = current.filter((item) => item.id !== id);
     await writeVisualizers(filtered);
 
     await writeAuditLog({
@@ -513,7 +588,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
         throw err;
       }
     }
-    const creds = await resolveNodeCredentials(inst.nodeId);
+    const creds = await resolveNodeCredentials(inst.nodeId, userId);
     if (!creds) {
       const err: any = new Error(`未找到节点连接凭证 (nodeId: ${inst.nodeId})`);
       err.statusCode = 400;
@@ -557,7 +632,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       ...body
     }));
   });
-  app.post("/api/databases/:id/tables/insert", { preHandler: requirePermission("instance.view") }, async (request, reply) => {
+  app.post("/api/databases/:id/tables/insert", { preHandler: requirePermission("instance.update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as DatabaseInsertRowRequest;
     const { inst, creds } = await loadInstanceAndNode(id, request.user.sub);
@@ -582,7 +657,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     }
     return result;
   });
-  app.post("/api/databases/:id/tables/update", { preHandler: requirePermission("instance.view") }, async (request, reply) => {
+  app.post("/api/databases/:id/tables/update", { preHandler: requirePermission("instance.update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as DatabaseUpdateRowRequest;
     const { inst, creds } = await loadInstanceAndNode(id, request.user.sub);
@@ -607,7 +682,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     }
     return result;
   });
-  app.post("/api/databases/:id/tables/delete", { preHandler: requirePermission("instance.view") }, async (request, reply) => {
+  app.post("/api/databases/:id/tables/delete", { preHandler: requirePermission("instance.update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as DatabaseDeleteRowRequest;
     const { inst, creds } = await loadInstanceAndNode(id, request.user.sub);
@@ -632,7 +707,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     }
     return result;
   });
-  app.post("/api/databases/:id/tables/create", { preHandler: requirePermission("instance.view") }, async (request, reply) => {
+  app.post("/api/databases/:id/tables/create", { preHandler: requirePermission("instance.update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as DatabaseCreateTableRequest;
     const { inst, creds } = await loadInstanceAndNode(id, request.user.sub);
@@ -657,7 +732,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     }
     return result;
   });
-  app.post("/api/databases/:id/tables/drop", { preHandler: requirePermission("instance.view") }, async (request, reply) => {
+  app.post("/api/databases/:id/tables/drop", { preHandler: requirePermission("instance.delete") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as { tableName: string };
     const { inst, creds } = await loadInstanceAndNode(id, request.user.sub);
@@ -681,7 +756,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     }
     return result;
   });
-  app.post("/api/databases/:id/tables/truncate", { preHandler: requirePermission("instance.view") }, async (request, reply) => {
+  app.post("/api/databases/:id/tables/truncate", { preHandler: requirePermission("instance.update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as DatabaseTruncateTableRequest;
     const { inst, creds } = await loadInstanceAndNode(id, request.user.sub);
@@ -705,11 +780,11 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     }
     return result;
   });
-  app.post("/api/databases/:id/query", { preHandler: requirePermission("instance.view") }, async (request, reply) => {
+  app.post("/api/databases/:id/query", { preHandler: requirePermission("instance.update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as { sql: string; maxRows?: number };
     const { inst, creds } = await loadInstanceAndNode(id, request.user.sub);
-    if (inst.config.isReadOnly && /^\s*(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE)\b/i.test(body.sql)) {
+    if (inst.config.isReadOnly && !isReadOnlySql(body.sql ?? "")) {
       reply.code(403).send({ message: "只读模式下不允许执行写操作" });
       return;
     }
@@ -740,7 +815,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       ...body
     }));
   });
-  app.post("/api/databases/:id/import", { preHandler: requirePermission("instance.view") }, async (request, reply) => {
+  app.post("/api/databases/:id/import", { preHandler: requirePermission("instance.update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as DatabaseImportRequest;
     const { inst, creds } = await loadInstanceAndNode(id, request.user.sub);
@@ -756,7 +831,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
   app.post("/api/databases/test-connection", { preHandler: requirePermission("instance.view") }, async (request, reply) => {
     const body = request.body as { host?: string; port?: number; user?: string; password?: string; database?: string; engine?: DatabaseEngine; path?: string; nodeId?: string };
     const targetNodeId = body.nodeId || "local";
-    const targetNode = await resolveNodeCredentials(targetNodeId);
+    const targetNode = await resolveNodeCredentials(targetNodeId, request.user.sub);
     if (!targetNode) {
       reply.code(400).send({ ok: false, message: `未找到目标节点 (${targetNodeId})` });
       return;

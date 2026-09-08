@@ -82,11 +82,17 @@ export function startIncidentEventStream(
   if (typeof reply.raw.flushHeaders === "function") {
     reply.raw.flushHeaders();
   }
+  // 禁用 Nagle + 强制 flush — 确保心跳这种小包即时发出。
+  const sock = reply.raw.socket as unknown as NodeJS.Socket | null;
+  if (sock) {
+    try { (sock as unknown as { setNoDelay: (n: boolean) => void }).setNoDelay(true); } catch {}
+  }
 
   let ended = false;
   const flushRaw = () => {
-    const raw = reply.raw as typeof reply.raw & { flush?: () => void };
-    if (typeof raw.flush === "function") raw.flush();
+    if (sock && sock.writable) {
+      try { sock.write(""); } catch {}
+    }
   };
   const write = (chunk: string) => {
     if (ended || reply.raw.destroyed) return;
@@ -99,9 +105,10 @@ export function startIncidentEventStream(
       subscribers.delete(writer);
     }
   };
+  // 10 秒 heartbeat — 配合 keepAliveTimeout 120s，远低于中间层常见的 30-60s 空闲超时。
   const heartbeat = setInterval(() => {
     write(`event: heartbeat\ndata: ${JSON.stringify({ type: "heartbeat", ts: Date.now() })}\n\n`);
-  }, 15000);
+  }, 10_000);
   reply.raw.on("close", () => {
     ended = true;
     clearInterval(heartbeat);

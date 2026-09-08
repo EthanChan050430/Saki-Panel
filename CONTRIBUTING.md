@@ -2,7 +2,7 @@
 
 ## Setup
 
-Node.js ≥ 18 and npm ≥ 9.
+Node.js ≥ 22.13 and npm ≥ 9.
 
 ```bash
 git clone https://github.com/EthanChan050430/Saki-Panel.git

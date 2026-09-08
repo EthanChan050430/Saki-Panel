@@ -25,7 +25,7 @@ import type {
 } from "@webops/shared";
 import { daemonPaths } from "../config.js";
 import { authenticatePanelRequest } from "../daemon-auth.js";
-import { escapeDefaultValue } from "../sql-utils.js";
+import { escapeDefaultValue, escapeSqlType } from "../sql-utils.js";
 import { DaemonErrorCode, throwDaemonError } from "../errors.js";
 import * as mysql from "../mysql.js";
 import * as postgres from "../postgres.js";
@@ -56,9 +56,7 @@ function isInsideAny(target: string, roots: string[]): boolean {
 function allowedSqliteRoots(): string[] {
   const workspace = path.resolve(daemonPaths.workspaceDir);
   const daemonData = path.resolve(daemonPaths.dataDir);
-  const cwd = path.resolve(process.cwd());
-  const panelData = path.resolve(cwd, "data", "panel");
-  return Array.from(new Set([workspace, daemonData, cwd, panelData]));
+  return Array.from(new Set([workspace, daemonData]));
 }
 
 function resolveDbPath(inputPath: string): string {
@@ -348,7 +346,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       ok: true,
       databases: [...finalSqlite, ...serviceResults]
     };
-  });
+  });
   app.post("/api/databases/tables", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string };
 
@@ -409,7 +407,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
+  });
   app.post("/api/databases/tables/schema", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; tableName: string; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string };
     const tableName = body.tableName?.trim();
@@ -496,7 +494,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
+  });
   app.post("/api/databases/tables/rows", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string } & DatabaseRowsRequest;
 
@@ -553,9 +551,12 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       const params: SQLiteParam[] = [];
 
       if (body.filterColumn && body.filterValue !== undefined && body.filterValue !== "") {
-        const safeCol = `"${body.filterColumn.replace(/"/g, '""')}"`;
-        whereClauses.push(`${safeCol} LIKE ?`);
-        params.push(toSqlParam(`%${body.filterValue}%`));
+        const filterExists = colRows.some((col) => col.name === body.filterColumn);
+        if (filterExists) {
+          const safeCol = `"${body.filterColumn.replace(/"/g, '""')}"`;
+          whereClauses.push(`${safeCol} LIKE ?`);
+          params.push(toSqlParam(`%${body.filterValue}%`));
+        }
       }
 
       if (body.search?.trim()) {
@@ -577,9 +578,12 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       // Sorting
       let orderSql = "";
       if (body.sortBy) {
-        const safeSortCol = `"${body.sortBy.replace(/"/g, '""')}"`;
-        const sortDir = (body.sortOrder ?? "asc").toLowerCase() === "desc" ? "DESC" : "ASC";
-        orderSql = `ORDER BY ${safeSortCol} ${sortDir}`;
+        const sortExists = colRows.some((col) => col.name === body.sortBy);
+        if (sortExists) {
+          const safeSortCol = `"${body.sortBy.replace(/"/g, '""')}"`;
+          const sortDir = (body.sortOrder ?? "asc").toLowerCase() === "desc" ? "DESC" : "ASC";
+          orderSql = `ORDER BY ${safeSortCol} ${sortDir}`;
+        }
       } else {
         const pks = colRows.filter((c) => c.pk > 0).map((c) => `"${c.name.replace(/"/g, '""')}" ASC`);
         if (pks.length > 0) {
@@ -605,7 +609,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
+  });
   app.post("/api/databases/tables/insert", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string } & DatabaseInsertRowRequest;
 
@@ -653,7 +657,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
+  });
   app.post("/api/databases/tables/update", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string } & DatabaseUpdateRowRequest;
 
@@ -696,8 +700,14 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
         ...pkKeys.map((k) => toSqlParam(primaryKeys[k]))
       ];
 
-      const sql = `UPDATE "${tableName.replace(/"/g, '""')}" SET ${setClauses} WHERE ${whereClauses}`;
-      const result = db.prepare(sql).run(...sqlParams);
+      let result;
+      try {
+        const singleSql = `UPDATE "${tableName.replace(/"/g, '""')}" SET ${setClauses} WHERE rowid IN (SELECT rowid FROM "${tableName.replace(/"/g, '""')}" WHERE ${whereClauses} LIMIT 1)`;
+        result = db.prepare(singleSql).run(...sqlParams);
+      } catch {
+        const fallbackSql = `UPDATE "${tableName.replace(/"/g, '""')}" SET ${setClauses} WHERE ${whereClauses}`;
+        result = db.prepare(fallbackSql).run(...sqlParams);
+      }
 
       return {
         ok: true,
@@ -706,7 +716,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
+  });
   app.post("/api/databases/tables/delete", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string } & DatabaseDeleteRowRequest;
 
@@ -743,8 +753,14 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       const whereClauses = pkKeys.map((k) => `"${k.replace(/"/g, '""')}" = ?`).join(" AND ");
       const params: SQLiteParam[] = pkKeys.map((k) => toSqlParam(primaryKeys[k]));
 
-      const sql = `DELETE FROM "${tableName.replace(/"/g, '""')}" WHERE ${whereClauses}`;
-      const result = db.prepare(sql).run(...params);
+      let result;
+      try {
+        const singleSql = `DELETE FROM "${tableName.replace(/"/g, '""')}" WHERE rowid IN (SELECT rowid FROM "${tableName.replace(/"/g, '""')}" WHERE ${whereClauses} LIMIT 1)`;
+        result = db.prepare(singleSql).run(...params);
+      } catch {
+        const fallbackSql = `DELETE FROM "${tableName.replace(/"/g, '""')}" WHERE ${whereClauses}`;
+        result = db.prepare(fallbackSql).run(...params);
+      }
 
       return {
         ok: true,
@@ -753,7 +769,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
+  });
   app.post("/api/databases/tables/create", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string } & DatabaseCreateTableRequest;
 
@@ -779,7 +795,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     }
 
     const colDefs = columns.map((col) => {
-      let def = `"${col.name.replace(/"/g, '""')}" ${col.type || "TEXT"}`;
+      let def = `"${col.name.replace(/"/g, '""')}" ${escapeSqlType(col.type || "TEXT")}`;
       if (col.primaryKey) {
         def += " PRIMARY KEY";
         if (col.autoIncrement && (col.type || "").toUpperCase().includes("INT")) {
@@ -805,7 +821,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
+  });
   app.post("/api/databases/tables/drop", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; tableName: string; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string };
     const tableName = body.tableName?.trim();
@@ -843,7 +859,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
+  });
   app.post("/api/databases/tables/truncate", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; tableName: string; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string };
     const tableName = body.tableName?.trim();
@@ -878,7 +894,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
+  });
   app.post("/api/databases/query", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; sql: string; maxRows?: number; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string };
     const sql = body.sql?.trim();
@@ -963,7 +979,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
+  });
   app.post("/api/databases/export", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; tableName?: string; format: "csv" | "json" | "sql"; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string };
     const tableName = body.tableName?.trim();
@@ -1095,7 +1111,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
+  });
   app.post("/api/databases/import", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { path?: string; tableName?: string; format: "csv" | "json" | "sql"; content: string; mode?: "append" | "replace"; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string };
     const tableName = body.tableName?.trim();
@@ -1218,7 +1234,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     } finally {
       db.close();
     }
-  });
+  });
   app.post("/api/databases/test-connection", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { host?: string; port?: number; user?: string; password?: string; database?: string; engine?: DatabaseEngine; path?: string };
 
@@ -1244,7 +1260,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       return { ok: true, message: `SQLite 文件已就绪 (${path.basename(p)})` };
     }
     return { ok: false, message: `未找到指定路径的数据库文件: ${body.path || "未填路径"}` };
-  });
+  });
   app.post("/api/databases/stats", { preHandler: authenticatePanelRequest }, async (request) => {
     const body = request.body as { host?: string; port?: number; user?: string; password?: string; database?: string; engine?: DatabaseEngine; path?: string };
     const start = performance.now();

@@ -18,10 +18,7 @@ import { sakiArtAssets, tokenKey } from "../constants.js";
 import { panelLanguageOptions, type PanelLanguage, usePanelLanguage, usePanelT } from "../i18n/index.js";
 import {
   clearRememberedLogin,
-  isManualLogoutSuppressed,
-  readAutoLogin,
   readRememberedLogin,
-  saveAutoLogin,
   saveRememberedLogin,
   setManualLogoutSuppressed
 } from "../utils/auth.js";
@@ -45,48 +42,14 @@ export function LoginView({
   const [mode, setMode] = useState<AuthMode>("login");
   const [username, setUsername] = useState(rememberedLogin?.username ?? "admin");
   const [displayName, setDisplayName] = useState("");
-  const [password, setPassword] = useState(rememberedLogin?.password ?? "");
+  const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [rememberPassword, setRememberPassword] = useState(Boolean(rememberedLogin));
-  const [autoLogin, setAutoLogin] = useState(() => readAutoLogin() && Boolean(rememberedLogin));
+  const [rememberLogin, setRememberLogin] = useState(Boolean(rememberedLogin?.username));
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const isRegister = mode === "register";
-  const autoLoginAttemptedRef = useRef(false);
-
-  useEffect(() => {
-    if (autoLoginAttemptedRef.current) return;
-    if (mode !== "login") return;
-    if (isManualLogoutSuppressed()) return;
-    const saved = readRememberedLogin();
-    const isAuto = readAutoLogin();
-    if (isAuto && saved?.username && saved?.password) {
-      autoLoginAttemptedRef.current = true;
-      setLoading(true);
-      setError("");
-      api.login({
-        username: saved.username.trim(),
-        password: saved.password
-      })
-        .then((response) => {
-          saveRememberedLogin(saved.username.trim(), saved.password);
-          saveAutoLogin(true);
-          setManualLogoutSuppressed(false);
-          localStorage.setItem(tokenKey, response.token);
-          onLogin(response.token, response.user);
-        })
-        .catch((err) => {
-          saveAutoLogin(false);
-          setAutoLogin(false);
-          setError(err instanceof Error ? err.message : t("auth.errorLoginFailed"));
-        })
-        .finally(() => {
-          setLoading(false);
-        });
-    }
-  }, [mode, onLogin, t]);
 
   function switchMode(nextMode: AuthMode) {
     if (nextMode === mode) return;
@@ -134,12 +97,10 @@ export function LoginView({
             username: trimmedUsername,
             password
           });
-      if (rememberPassword) {
-        saveRememberedLogin(trimmedUsername, password);
-        saveAutoLogin(!isRegister && autoLogin);
+      if (rememberLogin) {
+        saveRememberedLogin(trimmedUsername);
       } else {
         clearRememberedLogin();
-        saveAutoLogin(false);
       }
       setManualLogoutSuppressed(false);
       localStorage.setItem(tokenKey, response.token);
@@ -370,44 +331,25 @@ export function LoginView({
               <label className="remember-password">
                 <input
                   type="checkbox"
-                  checked={rememberPassword}
+                  checked={rememberLogin}
                   onChange={(event) => {
                     const checked = event.target.checked;
-                    setRememberPassword(checked);
+                    setRememberLogin(checked);
                     if (!checked) {
                       clearRememberedLogin();
-                      setAutoLogin(false);
-                      saveAutoLogin(false);
                     }
                   }}
                 />
                 <span>{t("auth.rememberLogin")}</span>
-              </label>
-
-              <label className="remember-password auto-login-option">
-                <input
-                  type="checkbox"
-                  checked={autoLogin}
-                  onChange={(event) => {
-                    const checked = event.target.checked;
-                    setAutoLogin(checked);
-                    saveAutoLogin(checked);
-                    if (checked) {
-                      setRememberPassword(true);
-                      setManualLogoutSuppressed(false);
-                    }
-                  }}
-                />
-                <span>{t("auth.autoLogin")}</span>
               </label>
             </div>
           ) : (
             <label className="remember-password">
               <input
                 type="checkbox"
-                checked={rememberPassword}
+                checked={rememberLogin}
                 onChange={(event) => {
-                  setRememberPassword(event.target.checked);
+                  setRememberLogin(event.target.checked);
                   if (!event.target.checked) clearRememberedLogin();
                 }}
               />

@@ -1,5 +1,6 @@
 import * as http from "node:http";
 import * as https from "node:https";
+import { pipeline } from "node:stream/promises";
 import type {
   ArchiveInstancePathsRequest,
   ArchiveInstancePathsResponse,
@@ -624,6 +625,84 @@ export function uploadDaemonInstanceFile(
       workingDirectory,
       ...input
     })
+  });
+}
+
+export function streamUploadDaemonInstanceFile(
+  node: DaemonNodeCredentials,
+  instanceId: string,
+  workingDirectory: string,
+  filePath: string,
+  fileStream: NodeJS.ReadableStream,
+  overwrite = true,
+  timeoutMs = 600000
+): Promise<InstanceFileEntry> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(`${node.protocol}://${node.host}:${node.port}/api/instances/${instanceId}/files/upload-raw`);
+    const headers: http.OutgoingHttpHeaders = {
+      "x-node-id": node.id,
+      "x-panel-token": node.tokenHash,
+      "x-file-path": encodeURIComponent(filePath),
+      "x-working-directory": encodeURIComponent(workingDirectory),
+      "x-overwrite": overwrite ? "true" : "false",
+      "content-type": "application/octet-stream"
+    };
+
+    const requestOptions: https.RequestOptions = {
+      method: "POST",
+      hostname: url.hostname,
+      port: url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80,
+      path: `${url.pathname}${url.search}`,
+      headers,
+      timeout: timeoutMs,
+      ...(url.protocol === "https:" ? { rejectUnauthorized: false } : {})
+    };
+
+    const client = url.protocol === "https:" ? https : http;
+    const req = client.request(requestOptions, (res) => {
+      let body = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => {
+        body += chunk;
+      });
+      res.on("end", () => {
+        const status = res.statusCode ?? 500;
+        if (status >= 200 && status < 300) {
+          try {
+            resolve(JSON.parse(body) as InstanceFileEntry);
+          } catch {
+            resolve({} as InstanceFileEntry);
+          }
+        } else {
+          let message = body.trim();
+          try {
+            const payload = JSON.parse(body) as { message?: unknown; error?: unknown };
+            message =
+              typeof payload.message === "string"
+                ? payload.message
+                : typeof payload.error === "string"
+                  ? payload.error
+                  : message;
+          } catch {
+            // Keep raw
+          }
+          reject(new Error(`Daemon upload failed (${status}): ${message || res.statusMessage}`));
+        }
+      });
+    });
+
+    req.on("timeout", () => {
+      req.destroy(new Error(`Daemon upload request timed out after ${timeoutMs}ms`));
+    });
+
+    req.on("error", (err) => {
+      reject(err);
+    });
+
+    pipeline(fileStream, req).catch((err) => {
+      req.destroy(err);
+      reject(err);
+    });
   });
 }
 

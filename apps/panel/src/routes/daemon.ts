@@ -13,32 +13,11 @@ type HeartbeatNodeUpdate = HeartbeatRequest & {
 };
 
 async function findRegistrationNode(name: string, host: string, port: number) {
-  const candidates = await prisma.node.findMany({
-    where: {
-      name,
-      OR: [{ host }, { port }]
-    },
-    include: {
-      _count: {
-        select: {
-          instances: true
-        }
-      }
-    }
+  // Exact identity only. Matching on name+port (any host) let a registration
+  // token steal an existing node and rotate its daemon token.
+  return prisma.node.findFirst({
+    where: { name, host, port }
   });
-
-  return (
-    candidates.sort((left, right) => {
-      const instanceDelta = right._count.instances - left._count.instances;
-      if (instanceDelta !== 0) return instanceDelta;
-
-      const leftExact = left.host === host && left.port === port ? 1 : 0;
-      const rightExact = right.host === host && right.port === port ? 1 : 0;
-      if (leftExact !== rightExact) return rightExact - leftExact;
-
-      return right.updatedAt.getTime() - left.updatedAt.getTime();
-    })[0] ?? null
-  );
 }
 
 export async function registerDaemonRoutes(app: FastifyInstance): Promise<void> {

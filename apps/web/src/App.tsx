@@ -22,10 +22,6 @@ import { applyPanelAppearance, normalizePanelAppearance } from "./utils/appearan
 import { AppBackground } from "./components/common/AppBackground.js";
 import {
   isManualLogoutSuppressed,
-  readAutoLogin,
-  readRememberedLogin,
-  saveAutoLogin,
-  saveRememberedLogin,
   setManualLogoutSuppressed,
   tokenExpiresAt
 } from "./utils/auth.js";
@@ -38,14 +34,7 @@ import { NotificationProvider, NotificationBar } from "./NotificationCenter.js";
 export function App() {
   const [token, setToken] = useState(() => localStorage.getItem(tokenKey));
   const [user, setUser] = useState<CurrentUser | null>(null);
-  const [booting, setBooting] = useState(() => {
-    if (localStorage.getItem(tokenKey)) return true;
-    if (!isManualLogoutSuppressed() && readAutoLogin()) {
-      const saved = readRememberedLogin();
-      if (saved?.username && saved?.password) return true;
-    }
-    return false;
-  });
+  const [booting, setBooting] = useState(() => Boolean(localStorage.getItem(tokenKey)));
   const [appearance, setAppearance] = useState<PanelAppearanceSettings>(defaultPanelAppearance);
   const [language, setLanguage] = useState<PanelLanguage>(() => readPanelLanguage());
   const [darkMode, setDarkMode] = useState<boolean>(() => {
@@ -345,30 +334,6 @@ export function App() {
           localStorage.removeItem(tokenKey);
           if (!cancelled) {
             setToken(null);
-          }
-        }
-      }
-
-      if (!isManualLogoutSuppressed() && readAutoLogin()) {
-        const saved = readRememberedLogin();
-        if (saved?.username && saved?.password) {
-          try {
-            const response = await api.login({
-              username: saved.username.trim(),
-              password: saved.password
-            });
-            if (!cancelled) {
-              saveRememberedLogin(saved.username.trim(), saved.password);
-              saveAutoLogin(true);
-              localStorage.setItem(tokenKey, response.token);
-              setToken(response.token);
-              setUser(response.user);
-              setBooting(false);
-            }
-            return;
-          } catch {
-            // Auto login failed with saved credentials
-            saveAutoLogin(false);
           }
         }
       }

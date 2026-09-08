@@ -420,6 +420,15 @@ async function findInstanceByLookup(userId: string, lookup: string): Promise<Ins
   );
 }
 
+async function ensureAgentVisibleTask(userId: string, taskId: string) {
+  const task = await getScheduledTask(taskId);
+  if (!task) throw new RouteError("Task not found.", 404);
+  if (task.instanceId && !(await loadVisibleInstance(userId, task.instanceId))) {
+    throw new RouteError("Task not found.", 404);
+  }
+  return task;
+}
+
 async function resolveAgentInstance(runtime: SakiAgentRuntime, args: Record<string, unknown>): Promise<InstanceWithNode> {
   const lookup = stringArg(args, "instanceId") || stringArg(args, "id") || stringArg(args, "instance");
   if (lookup) {
@@ -1187,11 +1196,20 @@ export async function executeSakiAgentTool(
         const instance = lookup ? await findInstanceByLookup(runtime.userId, lookup) : null;
         if (lookup && !instance) throw new RouteError("Instance not found.", 404);
         const tasks = await listScheduledTasks(instance?.id);
-        observation = tasks.map((task) => `${task.id} | ${task.name} | ${task.type} | cron=${task.cron} | enabled=${task.enabled} | instance=${task.instanceName ?? task.instanceId ?? "-"}`).join("\n") || "No scheduled tasks found.";
+        const visibleInstanceIds = instance
+          ? new Set([instance.id])
+          : new Set((await listVisibleInstances(runtime.userId)).map((item) => item.id));
+        const visibleTasks = instance
+          ? tasks
+          : tasks.filter((task) => !task.instanceId || visibleInstanceIds.has(task.instanceId));
+        observation = visibleTasks.map((task) => `${task.id} | ${task.name} | ${task.type} | cron=${task.cron} | enabled=${task.enabled} | instance=${task.instanceName ?? task.instanceId ?? "-"}`).join("\n") || "No scheduled tasks found.";
       } else if (toolName === "createscheduledtask") {
         requireUserPermission(runtime.permissions, "task.create");
         const taskInput = taskRequestFromArgs(args);
         if (!taskInput.instanceId && runtime.context.instance?.id) taskInput.instanceId = runtime.context.instance.id;
+        if (taskInput.instanceId && !(await loadVisibleInstance(runtime.userId, taskInput.instanceId))) {
+          throw new RouteError("Instance not found.", 404);
+        }
         const task = await createScheduledTask(taskInput, runtime.userId);
         checkpoint = { id: checkpointId(), type: "createdTask", taskId: task.id, actionId: currentActionId, createdAt: new Date().toISOString() };
         await persistCheckpoint(runtime, checkpoint);
@@ -1199,8 +1217,8 @@ export async function executeSakiAgentTool(
       } else if (toolName === "updatescheduledtask") {
         requireUserPermission(runtime.permissions, "task.update");
         const taskId = stringArg(args, "taskId");
-        const existing = taskId ? await getScheduledTask(taskId) : null;
-        if (!existing) throw new RouteError("Task not found.", 404);
+        if (!taskId) throw new RouteError("updateScheduledTask requires a task id.", 400);
+        const existing = await ensureAgentVisibleTask(runtime.userId, taskId);
         checkpoint = {
           id: checkpointId(),
           type: "updatedTask",
@@ -1210,24 +1228,31 @@ export async function executeSakiAgentTool(
           createdAt: new Date().toISOString()
         };
         await persistCheckpoint(runtime, checkpoint);
-        const task = await updateScheduledTask(taskId, taskUpdateFromArgs(args));
+        const next = taskUpdateFromArgs(args);
+        if (next.instanceId && !(await loadVisibleInstance(runtime.userId, next.instanceId))) {
+          throw new RouteError("Instance not found.", 404);
+        }
+        const task = await updateScheduledTask(taskId, next);
         observation = `Success: updated task ${task.id} (${task.name}).`;
       } else if (toolName === "deletescheduledtask") {
         requireUserPermission(runtime.permissions, "task.delete");
         const taskId = stringArg(args, "taskId");
         if (!taskId) throw new RouteError("deleteScheduledTask requires a task id.", 400);
+        await ensureAgentVisibleTask(runtime.userId, taskId);
         await deleteScheduledTask(taskId);
         observation = `Success: deleted task ${taskId}.`;
       } else if (toolName === "runtask") {
         requireUserPermission(runtime.permissions, "task.run");
         const taskId = stringArg(args, "taskId");
         if (!taskId) throw new RouteError("runTask requires a task id.", 400);
+        await ensureAgentVisibleTask(runtime.userId, taskId);
         const run = await executeScheduledTask(taskId, { trigger: "manual", ...(runtime.request ? { request: runtime.request } : {}), userId: runtime.userId });
         observation = `Task run ${run.id}: ${run.status}\nOutput: ${run.output ?? "-"}\nError: ${run.error ?? "-"}`;
       } else if (toolName === "taskruns") {
         requireUserPermission(runtime.permissions, "task.view");
         const taskId = stringArg(args, "taskId");
         if (!taskId) throw new RouteError("taskRuns requires a task id.", 400);
+        await ensureAgentVisibleTask(runtime.userId, taskId);
         const runs = await listTaskRuns(taskId);
         observation = runs.map((run) => `${run.id} | ${run.status} | ${run.startedAt} | ${run.output ?? run.error ?? "-"}`).join("\n") || "No task runs found.";
       } else if (toolName === "searchfiles" || toolName === "grep" || toolName === "grepfiles" || toolName === "searchcode" || toolName === "codesearch") {

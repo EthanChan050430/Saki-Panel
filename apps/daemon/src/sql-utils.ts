@@ -96,6 +96,28 @@ function escapeSqlString(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+// Structured CREATE TABLE APIs interpolate the column type into DDL.
+// Only TYPE, TYPE(n), TYPE(n,m), and an optional UNSIGNED suffix are allowed.
+export function escapeSqlType(raw: unknown, fallback = "TEXT"): string {
+  const t = String(raw ?? "").trim();
+  const value = t || fallback;
+  if (value.length > 80) {
+    throwDaemonError(
+      DaemonErrorCode.DB_INVALID_DEFAULT,
+      `Unsupported SQL type: ${value.slice(0, 64)}`,
+      "Column types must be a simple SQL type such as TEXT, INTEGER, or VARCHAR(255)."
+    );
+  }
+  if (!/^[A-Za-z][A-Za-z0-9]*(?:\s*\(\s*\d+(?:\s*,\s*\d+)?\s*\))?(?:\s+UNSIGNED)?$/i.test(value)) {
+    throwDaemonError(
+      DaemonErrorCode.DB_INVALID_DEFAULT,
+      `Unsupported SQL type: ${value.slice(0, 64)}`,
+      "Column types must be a simple SQL type such as TEXT, INTEGER, or VARCHAR(255)."
+    );
+  }
+  return value.replace(/\s+/g, " ");
+}
+
 // Best-effort sanity check before we even cast. We are paranoid and reject
 // anything that looks like embedded SQL operators or comment markers.
 function looksLikeValidJsonExpression(s: string): boolean {

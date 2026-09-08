@@ -57,6 +57,7 @@ export function TableDataGrid({
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<string | undefined>(undefined);
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
@@ -64,7 +65,24 @@ export function TableDataGrid({
   const [showInsertModal, setShowInsertModal] = useState(false);
   const [editingRow, setEditingRow] = useState<Record<string, unknown> | null>(null);
 
-  const fetchRows = useCallback(async () => {
+  useEffect(() => {
+    setDataResponse(null);
+    setPage(1);
+    setSortBy(undefined);
+    setSortOrder("asc");
+    setEditingRow(null);
+    setShowInsertModal(false);
+  }, [selectedTable, database.id]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setSearch(searchInput.trim());
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
+  const fetchRows = useCallback(async (ignore?: { current: boolean }) => {
     if (!selectedTable) {
       setDataResponse(null);
       return;
@@ -80,16 +98,22 @@ export function TableDataGrid({
         sortBy,
         sortOrder
       });
+      if (ignore?.current) return;
       setDataResponse(res);
     } catch (err) {
+      if (ignore?.current) return;
       setError(err instanceof Error ? err.message : "获取行数据失败");
     } finally {
-      setLoading(false);
+      if (!ignore?.current) setLoading(false);
     }
   }, [token, database.id, selectedTable, page, pageSize, search, sortBy, sortOrder]);
 
   useEffect(() => {
-    void fetchRows();
+    const ignore = { current: false };
+    void fetchRows(ignore);
+    return () => {
+      ignore.current = true;
+    };
   }, [fetchRows]);
 
   const handleSort = (colName: string) => {
@@ -109,9 +133,12 @@ export function TableDataGrid({
     if (pkCols.length > 0) {
       pkCols.forEach((k) => (pks[k] = row[k]));
     } else {
-      // Fallback first column
-      const first = dataResponse.columns[0]?.name;
-      if (first) pks[first] = row[first];
+      // Fallback: match all columns to prevent mass-deletion of rows sharing the first column
+      dataResponse.columns.forEach((c) => {
+        if (row[c.name] !== undefined) {
+          pks[c.name] = row[c.name];
+        }
+      });
     }
 
     if (!window.confirm("确定要删除这条数据吗？此操作无法撤销。")) return;
@@ -180,16 +207,13 @@ export function TableDataGrid({
             <Search size={13} style={{ color: "#86868b" }} />
             <input
               placeholder={database.engine === "redis" ? "搜索键名 (如 user:*)..." : "全局搜索行内容..."}
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setPage(1);
-              }}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
             />
-            {search && (
+            {searchInput && (
               <button
                 type="button"
-                onClick={() => setSearch("")}
+                onClick={() => setSearchInput("")}
                 style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}
               >
                 <X size={12} />
@@ -382,12 +406,12 @@ export function TableDataGrid({
         </div>
       )}
 
-      {showInsertModal && dataResponse && (
+      {showInsertModal && selectedTable && (
         <InsertRowModal
           token={token}
           database={database}
           tableName={selectedTable}
-          columns={dataResponse.columns}
+          columns={dataResponse?.columns ?? []}
           onClose={() => setShowInsertModal(false)}
           onInserted={() => {
             setShowInsertModal(false);

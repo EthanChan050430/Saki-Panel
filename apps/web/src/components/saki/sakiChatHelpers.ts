@@ -12,6 +12,7 @@ import type {
   SakiInstanceFileDragPayload,
   SakiSelectionCapture
 } from "../../types/app.js";
+export type { LocalSakiMessage };
 import { formatBytes, imageMimeTypeFromPath, compactContextText } from "../../utils/path.js";
 import { newClientId } from "../../utils/id.js";
 import { sakiAttachmentHistoryText } from "./SakiComponents.js";
@@ -388,4 +389,82 @@ export async function fileToSakiAttachment(file: File, preferredKind: "image" | 
     ...(isLikelyTextAttachment(file) ? { text: await readSakiTextAttachment(file) } : {})
   };
 }
+
+export interface FavorabilityLevelInfo {
+  level: number;
+  title: string;
+  currentExp: number;
+  minExpForLevel: number;
+  maxExpForLevel: number;
+  levelProgress: number;
+  isMaxLevel: boolean;
+}
+
+export function getFavorabilityLevelInfo(totalExp: number, language?: string): FavorabilityLevelInfo {
+  const isEn = language === "en-US";
+  const isTw = language === "zh-TW";
+  const levelThresholds = [
+    { level: 1, title: isEn ? "Acquaintance" : isTw ? "初識" : "初识", minExp: 0, maxExp: 100 },
+    { level: 2, title: isEn ? "Rapport" : isTw ? "默契" : "默契", minExp: 100, maxExp: 250 },
+    { level: 3, title: isEn ? "Intimate" : isTw ? "親密" : "亲密", minExp: 250, maxExp: 500 },
+    { level: 4, title: isEn ? "Best Friends" : isTw ? "摯友" : "挚友", minExp: 500, maxExp: 900 },
+    { level: 5, title: isEn ? "Kindred Spirits" : isTw ? "心有靈犀" : "心有灵犀", minExp: 900, maxExp: 1400 },
+    { level: 6, title: isEn ? "Incomparable" : isTw ? "獨一無二" : "独一无二", minExp: 1400, maxExp: 2000 },
+    { level: 7, title: isEn ? "Galaxy Vow" : isTw ? "星河誓約" : "星河誓约", minExp: 2000, maxExp: 3000 },
+    { level: 8, title: isEn ? "Eternal Bond" : isTw ? "永恆羈絆" : "永恒羁绊", minExp: 3000, maxExp: 5000 }
+  ];
+
+  for (let i = 0; i < levelThresholds.length; i++) {
+    const tier = levelThresholds[i]!;
+    if (totalExp < tier.maxExp) {
+      const range = tier.maxExp - tier.minExp;
+      const gained = totalExp - tier.minExp;
+      const progress = Math.min(100, Math.max(0, Math.round((gained / range) * 100)));
+      return {
+        level: tier.level,
+        title: tier.title,
+        currentExp: totalExp,
+        minExpForLevel: tier.minExp,
+        maxExpForLevel: tier.maxExp,
+        levelProgress: progress,
+        isMaxLevel: false
+      };
+    }
+  }
+
+  return {
+    level: 8,
+    title: isEn ? "Eternal Bond" : isTw ? "永恆羈絆" : "永恒羁绊",
+    currentExp: totalExp,
+    minExpForLevel: 3000,
+    maxExpForLevel: 5000,
+    levelProgress: 100,
+    isMaxLevel: true
+  };
+}
+
+export type SakiModelPointsMultiplierMap = Record<string, number>;
+
+export function resolveSakiModelPointsMultiplier(
+  multipliers: Record<string, number> | null | undefined,
+  model: { id: string; provider?: string }
+): number {
+  if (!multipliers || typeof multipliers !== "object") return 1;
+  const modelId = (model.id || "").trim();
+  if (!modelId) return 1;
+  const provider = (model.provider || "").trim();
+  if (provider) {
+    const scoped = multipliers[`${provider}:${modelId}`];
+    if (scoped !== undefined && Number.isFinite(scoped)) return Math.max(0, scoped);
+  }
+  const direct = multipliers[modelId];
+  if (direct !== undefined && Number.isFinite(direct)) return Math.max(0, direct);
+  return 1;
+}
+
+export function formatSakiModelMultiplier(value: number): string {
+  const rounded = Math.round(value * 100) / 100;
+  return `${Number.isInteger(rounded) ? rounded.toFixed(1) : rounded}x`;
+}
+
 

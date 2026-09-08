@@ -127,28 +127,42 @@ export async function recordAgentTokenUsage(
   isUnlimited: boolean;
   remainingPoints: number;
 }> {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { points: true, unlimitedPoints: true }
-  });
-
-  if (!user) {
-    return { tokensUsed, pointsUsed: 0, isUnlimited: false, remainingPoints: 0 };
-  }
-
   const billedTokens = Math.max(0, Math.round(tokensUsed));
-  const isUnlimited = Boolean(user.unlimitedPoints);
   const rate = Number.isFinite(multiplier) && multiplier >= 0 ? multiplier : 1;
-  const pointsToDeduct = isUnlimited ? 0 : calculatePointsForTokens(billedTokens, rate);
 
   return await prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: { points: true, unlimitedPoints: true }
+    });
+
+    if (!user) {
+      return { tokensUsed: billedTokens, pointsUsed: 0, isUnlimited: false, remainingPoints: 0 };
+    }
+
+    const isUnlimited = Boolean(user.unlimitedPoints);
+    const pointsToDeduct = isUnlimited ? 0 : calculatePointsForTokens(billedTokens, rate);
+
     let nextBalance = user.points;
     if (!isUnlimited && pointsToDeduct > 0) {
-      nextBalance = Math.max(0, user.points - pointsToDeduct);
-      await tx.user.update({
+      const updated = await tx.user.update({
         where: { id: userId },
-        data: { points: nextBalance }
+        data: {
+          points: {
+            decrement: pointsToDeduct
+          }
+        },
+        select: { points: true }
       });
+      if (updated.points < 0) {
+        await tx.user.update({
+          where: { id: userId },
+          data: { points: 0 }
+        });
+        nextBalance = 0;
+      } else {
+        nextBalance = updated.points;
+      }
     }
 
     const rateDesc = rate !== 1 ? ` [${rate}x 乘区]` : "";
@@ -182,16 +196,16 @@ export async function adminUpdateUserPoints(
   operatorName: string,
   input: UpdateUserPointsRequest
 ): Promise<{ points: number; unlimitedPoints: boolean }> {
-  const targetUser = await prisma.user.findUnique({
-    where: { id: targetUserId },
-    select: { points: true, unlimitedPoints: true, username: true }
-  });
-
-  if (!targetUser) {
-    throw new Error("目标用户不存在");
-  }
-
   return await prisma.$transaction(async (tx) => {
+    const targetUser = await tx.user.findUnique({
+      where: { id: targetUserId },
+      select: { points: true, unlimitedPoints: true, username: true }
+    });
+
+    if (!targetUser) {
+      throw new Error("目标用户不存在");
+    }
+
     let nextPoints = targetUser.points;
     let nextUnlimited = Boolean(targetUser.unlimitedPoints);
     let delta = 0;
@@ -219,13 +233,24 @@ export async function adminUpdateUserPoints(
     } else if (input.action === "adjust") {
       const amount = Math.round(input.amount ?? 0);
       delta = amount;
-      nextPoints = Math.max(0, targetUser.points + amount);
       type = "admin_adjust";
       desc = input.note || `管理员 ${operatorName} ${amount >= 0 ? `增加 ${amount}` : `扣除 ${Math.abs(amount)}`} 积分`;
-      await tx.user.update({
+      const updated = await tx.user.update({
         where: { id: targetUserId },
-        data: { points: nextPoints }
+        data: {
+          points: amount >= 0 ? { increment: amount } : { decrement: Math.abs(amount) }
+        },
+        select: { points: true }
       });
+      if (updated.points < 0) {
+        await tx.user.update({
+          where: { id: targetUserId },
+          data: { points: 0 }
+        });
+        nextPoints = 0;
+      } else {
+        nextPoints = updated.points;
+      }
     }
 
     await tx.pointRecord.create({
@@ -275,30 +300,38 @@ export async function consumeUserPoints(
   pointsToDeduct: number,
   description = "投喂 Saki"
 ): Promise<{ points: number; unlimitedPoints: boolean }> {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { points: true, unlimitedPoints: true }
-  });
-
-  if (!user) {
-    throw new Error("用户不存在");
-  }
-
   const cost = Math.max(0, Math.round(pointsToDeduct));
-  const isUnlimited = Boolean(user.unlimitedPoints);
-
-  if (!isUnlimited && user.points < cost) {
-    throw new InsufficientPointsError("当前 Saki 积分不足");
-  }
 
   return await prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: { points: true, unlimitedPoints: true }
+    });
+
+    if (!user) {
+      throw new Error("用户不存在");
+    }
+
+    const isUnlimited = Boolean(user.unlimitedPoints);
+    if (!isUnlimited && user.points < cost) {
+      throw new InsufficientPointsError("当前 Saki 积分不足");
+    }
+
     let nextBalance = user.points;
     if (!isUnlimited && cost > 0) {
-      nextBalance = Math.max(0, user.points - cost);
-      await tx.user.update({
+      const updated = await tx.user.update({
         where: { id: userId },
-        data: { points: nextBalance }
+        data: {
+          points: {
+            decrement: cost
+          }
+        },
+        select: { points: true }
       });
+      if (updated.points < 0) {
+        throw new InsufficientPointsError("当前 Saki 积分不足");
+      }
+      nextBalance = updated.points;
     }
 
     await tx.pointRecord.create({

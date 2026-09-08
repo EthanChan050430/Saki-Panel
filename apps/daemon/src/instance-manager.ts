@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import * as fsSync from "node:fs";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
@@ -283,25 +284,22 @@ async function pathExists(targetPath: string): Promise<boolean> {
 async function ensureInsideWorkspace(targetPath: string): Promise<string> {
   const workspaceRoot = path.resolve(daemonPaths.workspaceDir);
   await fs.mkdir(workspaceRoot, { recursive: true });
-  const absoluteTarget = path.isAbsolute(targetPath);
-  const resolved = absoluteTarget ? path.resolve(targetPath) : path.resolve(workspaceRoot, targetPath);
-  const realWorkspaceRoot = absoluteTarget ? "" : await fs.realpath(workspaceRoot);
+  const resolved = path.isAbsolute(targetPath) ? path.resolve(targetPath) : path.resolve(workspaceRoot, targetPath);
+  const realWorkspaceRoot = await fs.realpath(workspaceRoot);
 
   const exists = await pathExists(resolved);
   if (exists) {
     const realTarget = await fs.realpath(resolved);
-    if (!absoluteTarget && !isInsidePath(realWorkspaceRoot, realTarget)) {
+    if (!isInsidePath(realWorkspaceRoot, realTarget)) {
       throw new Error("Path escapes the daemon workspace root");
     }
     return resolved;
   }
 
   await fs.mkdir(resolved, { recursive: true });
-  if (!absoluteTarget) {
-    const realParent = await fs.realpath(path.dirname(resolved));
-    if (!isInsidePath(realWorkspaceRoot, realParent)) {
-      throw new Error("Path escapes the daemon workspace root");
-    }
+  const realParent = await fs.realpath(path.dirname(resolved));
+  if (!isInsidePath(realWorkspaceRoot, realParent)) {
+    throw new Error("Path escapes the daemon workspace root");
   }
   return resolved;
 }
@@ -345,7 +343,11 @@ function commandLauncher(command: string): { file: string; args: string[] } {
       path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
       path.join(process.env.SystemRoot || "C:\\Windows", "System32", "pwsh.exe")
     ].find((p) => {
-      try { require("fs").accessSync(p); return true; } catch { return false; }
+      try {
+        return fsSync.existsSync(p);
+      } catch {
+        return false;
+      }
     });
     if (psPath) {
       return {
@@ -430,8 +432,7 @@ function createInteractiveShellPty(instanceId: string, cwd: string, label?: stri
     ];
     const ps = candidates.find((p) => {
       try {
-        require("fs").accessSync(p);
-        return true;
+        return fsSync.existsSync(p);
       } catch {
         return false;
       }

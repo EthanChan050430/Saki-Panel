@@ -77,6 +77,7 @@ export const panelConfig = {
   databaseUrl: process.env.DATABASE_URL ?? "file:../data/panel/dev.db",
   jwtSecret: process.env.JWT_SECRET ?? "dev-panel-secret-change-me",
   disableAuth: booleanFromEnv(process.env.DISABLE_AUTH),
+  trustProxy: booleanFromEnv(process.env.TRUST_PROXY, false),
   sessionTimeoutMinutes: numberFromEnv(process.env.SESSION_TIMEOUT_MINUTES, 120),
   adminUsername: process.env.ADMIN_USERNAME ?? "admin",
   adminPassword: process.env.ADMIN_PASSWORD ?? "admin123456",

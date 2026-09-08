@@ -1,4 +1,4 @@
-import type { FastifyReply, FastifyRequest } from "fastify";
+﻿import type { FastifyReply, FastifyRequest } from "fastify";
 import { resolvePanelCorsOrigin } from "../../cors.js";
 import type { SakiAgentRunEvents, SakiStreamWriter } from "./types.js";
 
@@ -26,12 +26,16 @@ export function startSakiEventStream(request: FastifyRequest, reply: FastifyRepl
   if (typeof reply.raw.flushHeaders === "function") {
     reply.raw.flushHeaders();
   }
+  // 禁用 Nagle + 强制 flush — 确保心跳这种小包即时发出。
+  const sock = reply.raw.socket as unknown as NodeJS.Socket | null;
+  if (sock) {
+    try { (sock as unknown as { setNoDelay: (n: boolean) => void }).setNoDelay(true); } catch {}
+  }
 
   let ended = false;
   const flushRaw = () => {
-    const raw = reply.raw as typeof reply.raw & { flush?: () => void };
-    if (typeof raw.flush === "function") {
-      raw.flush();
+    if (sock && sock.writable) {
+      try { sock.write(""); } catch {}
     }
   };
   const write = (chunk: string) => {
@@ -44,6 +48,7 @@ export function startSakiEventStream(request: FastifyRequest, reply: FastifyRepl
       clearInterval(heartbeat);
     }
   };
+  // 8 秒 heartbeat — chat SSE 流量较大但也需要持续保活。
   const heartbeat = setInterval(() => {
     const ts = Date.now();
     write(`event: heartbeat\ndata: ${JSON.stringify({ type: "heartbeat", ts })}\n\n`);

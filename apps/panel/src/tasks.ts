@@ -119,16 +119,51 @@ function nextMinuteBoundary(from: Date): Date {
   return next;
 }
 
-function parseMinutePart(value: string): number | null {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 59) return null;
-  return parsed;
-}
+function parseCronField(field: string, min: number, max: number): Set<number> | null {
+  const allowed = new Set<number>();
+  if (field === "*") {
+    for (let i = min; i <= max; i++) allowed.add(i);
+    return allowed;
+  }
+  const parts = field.split(",");
+  for (const part of parts) {
+    const stepParts = part.split("/");
+    if (stepParts.length > 2) return null;
+    const step = stepParts.length === 2 ? Number(stepParts[1]) : 1;
+    if (!Number.isInteger(step) || step <= 0) return null;
 
-function parseHourPart(value: string): number | null {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 23) return null;
-  return parsed;
+    const rangeStr = stepParts[0]!;
+    let start = min;
+    let end = max;
+    if (rangeStr === "*") {
+      start = min;
+      end = max;
+    } else if (rangeStr.includes("-")) {
+      const [sStr, eStr] = rangeStr.split("-");
+      start = Number(sStr);
+      end = Number(eStr);
+      if (!Number.isInteger(start) || !Number.isInteger(end) || start < min || end > max || start > end) {
+        return null;
+      }
+    } else {
+      const val = Number(rangeStr);
+      if (!Number.isInteger(val) || val < min || val > max) {
+        return null;
+      }
+      if (stepParts.length === 2) {
+        start = val;
+        end = max;
+      } else {
+        start = val;
+        end = val;
+      }
+    }
+
+    for (let i = start; i <= end; i += step) {
+      allowed.add(i);
+    }
+  }
+  return allowed.size > 0 ? allowed : null;
 }
 
 export function computeNextRunAt(cron: string, from = new Date()): string | null {
@@ -148,48 +183,69 @@ export function computeNextRunAt(cron: string, from = new Date()): string | null
     throw new Error("Schedule must be @every 5m, @manual, or a 5-field cron expression");
   }
 
-  const [minutePart, hourPart] = parts;
-  const base = nextMinuteBoundary(from);
+  const minutes = parseCronField(parts[0]!, 0, 59);
+  const hours = parseCronField(parts[1]!, 0, 23);
+  const doms = parseCronField(parts[2]!, 1, 31);
+  const months = parseCronField(parts[3]!, 1, 12);
+  const dows = parseCronField(parts[4]!, 0, 7);
 
-  if (minutePart === "*" && hourPart === "*") {
-    return base.toISOString();
+  if (!minutes || !hours || !doms || !months || !dows) {
+    throw new Error(`Invalid cron expression: ${cron}`);
   }
 
-  const stepMatch = minutePart?.match(/^\*\/(\d+)$/);
-  if (stepMatch && hourPart === "*") {
-    const step = Math.max(1, Math.min(Number(stepMatch[1]), 59));
-    const next = new Date(base);
-    while (next.getMinutes() % step !== 0) {
-      next.setMinutes(next.getMinutes() + 1);
+  // 7 is also Sunday in cron; in JS getDay() returns 0 for Sunday
+  if (dows.has(7)) dows.add(0);
+
+  const domWildcard = parts[2] === "*";
+  const dowWildcard = parts[4] === "*";
+
+  const current = nextMinuteBoundary(from);
+  const maxIterations = 5 * 366 * 24; // Up to 5 years
+  let iterations = 0;
+
+  while (iterations++ < maxIterations) {
+    const month = current.getMonth() + 1;
+    if (!months.has(month)) {
+      current.setMonth(current.getMonth() + 1, 1);
+      current.setHours(0, 0, 0, 0);
+      continue;
     }
-    return next.toISOString();
-  }
 
-  const minute = parseMinutePart(minutePart ?? "");
-  if (minute === null) {
-    throw new Error("Only *, */n, or a fixed minute are supported");
-  }
+    const dom = current.getDate();
+    const dow = current.getDay();
+    const domMatch = doms.has(dom);
+    const dowMatch = dows.has(dow);
+    const dayMatch =
+      domWildcard && dowWildcard
+        ? true
+        : !domWildcard && !dowWildcard
+          ? domMatch || dowMatch
+          : domWildcard
+            ? dowMatch
+            : domMatch;
 
-  if (hourPart === "*") {
-    const next = new Date(base);
-    next.setMinutes(minute, 0, 0);
-    if (next <= from) {
-      next.setHours(next.getHours() + 1);
+    if (!dayMatch) {
+      current.setDate(current.getDate() + 1);
+      current.setHours(0, 0, 0, 0);
+      continue;
     }
-    return next.toISOString();
+
+    const hour = current.getHours();
+    if (!hours.has(hour)) {
+      current.setHours(current.getHours() + 1, 0, 0, 0);
+      continue;
+    }
+
+    const minute = current.getMinutes();
+    if (!minutes.has(minute)) {
+      current.setMinutes(current.getMinutes() + 1);
+      continue;
+    }
+
+    return current.toISOString();
   }
 
-  const hour = parseHourPart(hourPart ?? "");
-  if (hour === null) {
-    throw new Error("Only * or a fixed hour are supported");
-  }
-
-  const next = new Date(base);
-  next.setHours(hour, minute, 0, 0);
-  if (next <= from) {
-    next.setDate(next.getDate() + 1);
-  }
-  return next.toISOString();
+  throw new Error(`Could not find next run time for cron expression: ${cron}`);
 }
 
 function normalizeEnabled(value: boolean | undefined): boolean {

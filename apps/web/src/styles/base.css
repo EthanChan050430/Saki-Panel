@@ -240,6 +240,17 @@
   font-weight: 500;
 }
 
+.small-button.primary {
+  background: linear-gradient(180deg, #6366f1, #4f46e5);
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.25);
+}
+
+.small-button.primary:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
 .primary-button.mini,
 .secondary-button.mini,
 .ghost-button.mini,

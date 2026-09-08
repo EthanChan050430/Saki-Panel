@@ -12,13 +12,13 @@ echo "🌸 🌸 Saki Panel - Starting..."
 echo ""
 
 if ! command -v node &> /dev/null; then
-    echo "❌ Node.js not found. Please install Node.js >= 18"
+    echo "❌ Node.js not found. Please install Node.js >= 22.13"
     exit 1
 fi
 
 NODE_VERSION=$(node -v | sed 's/v//' | cut -d. -f1)
-if [ "$NODE_VERSION" -lt 18 ]; then
-    echo "❌ Node.js version is too old. Please install Node.js >= 18+"
+if [ "$NODE_VERSION" -lt 22 ]; then
+    echo "❌ Node.js version is too old ($NODE_VERSION). Please install Node.js >= 22.13"
     exit 1
 fi
 

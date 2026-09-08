@@ -1,7 +1,7 @@
 import pg from "pg";
 const { Pool } = pg;
 import { PoolCache } from "./pool-cache.js";
-import { escapeDefaultValue } from "./sql-utils.js";
+import { escapeDefaultValue, escapeSqlType } from "./sql-utils.js";
 import { DaemonErrorCode, throwDaemonError } from "./errors.js";
 import type {
   DatabaseColumnInfo,
@@ -134,7 +134,7 @@ export async function listTables(cfg: PostgreSQLConnectionConfig): Promise<Datab
 export async function getTableSchema(cfg: PostgreSQLConnectionConfig, tableName: string): Promise<DatabaseTableSchema> {
   const pool = getPool(cfg);
   const client = await pool.connect();
-  try {
+  try {
     const colSql = `
       SELECT 
         column_name, 
@@ -146,7 +146,7 @@ export async function getTableSchema(cfg: PostgreSQLConnectionConfig, tableName:
       WHERE table_schema = 'public' AND table_name = $1
       ORDER BY ordinal_position ASC
     `;
-    const colRes = await client.query(colSql, [tableName]);
+    const colRes = await client.query(colSql, [tableName]);
     const pkSql = `
       SELECT kcu.column_name
       FROM information_schema.table_constraints tc
@@ -173,7 +173,7 @@ export async function getTableSchema(cfg: PostgreSQLConnectionConfig, tableName:
         primaryKey: isPk,
         autoIncrement: isAuto
       };
-    });
+    });
     const idxSql = `
       SELECT indexname, indexdef 
       FROM pg_indexes 
@@ -221,9 +221,12 @@ export async function queryRows(cfg: PostgreSQLConnectionConfig, req: DatabaseRo
     let pIndex = 1;
 
     if (filterColumn && filterValue !== undefined && filterValue !== "") {
-      whereClauses.push(`${escapeIdentifier(filterColumn)}::text ILIKE $${pIndex}`);
-      params.push(`%${filterValue}%`);
-      pIndex++;
+      const filterCol = columns.find((c) => c.name === filterColumn);
+      if (filterCol) {
+        whereClauses.push(`${escapeIdentifier(filterColumn)}::text ILIKE $${pIndex}`);
+        params.push(`%${filterValue}%`);
+        pIndex++;
+      }
     }
 
     if (search?.trim()) {
@@ -245,8 +248,11 @@ export async function queryRows(cfg: PostgreSQLConnectionConfig, req: DatabaseRo
     const total = parseInt(countRes.rows[0]?.total ?? "0", 10);
     let orderSql = "";
     if (sortBy) {
-      const dir = sortOrder.toLowerCase() === "desc" ? "DESC" : "ASC";
-      orderSql = `ORDER BY ${escapeIdentifier(sortBy)} ${dir}`;
+      const sortCol = columns.find((c) => c.name === sortBy);
+      if (sortCol) {
+        const dir = sortOrder.toLowerCase() === "desc" ? "DESC" : "ASC";
+        orderSql = `ORDER BY ${escapeIdentifier(sortBy)} ${dir}`;
+      }
     } else if (schema.primaryKeys.length > 0) {
       orderSql = `ORDER BY ${schema.primaryKeys.map((pk) => `${escapeIdentifier(pk)} ASC`).join(", ")}`;
     }
@@ -372,7 +378,7 @@ export async function createTable(cfg: PostgreSQLConnectionConfig, req: Database
     if (!columns || columns.length === 0) throw new Error("At least one column is required");
 
     const colDefs = columns.map((col) => {
-      let def = `${escapeIdentifier(col.name)} ${col.type || "TEXT"}`;
+      let def = `${escapeIdentifier(col.name)} ${escapeSqlType(col.type || "TEXT")}`;
       if (col.primaryKey) {
         def += " PRIMARY KEY";
       }

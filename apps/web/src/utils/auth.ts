@@ -18,19 +18,22 @@ export function readRememberedLogin(): RememberedLogin | null {
   try {
     const raw = window.localStorage.getItem(rememberedLoginKey);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<RememberedLogin>;
-    if (typeof parsed.username !== "string" || typeof parsed.password !== "string") return null;
+    const parsed = JSON.parse(raw) as Partial<RememberedLogin> & { password?: unknown };
+    if (typeof parsed.username !== "string") return null;
+    // Security cleanup: remove legacy plaintext password if present in localStorage
+    if ("password" in parsed) {
+      window.localStorage.setItem(rememberedLoginKey, JSON.stringify({ username: parsed.username }));
+    }
     return {
-      username: parsed.username,
-      password: parsed.password
+      username: parsed.username
     };
   } catch {
     return null;
   }
 }
 
-export function saveRememberedLogin(username: string, password: string): void {
-  window.localStorage.setItem(rememberedLoginKey, JSON.stringify({ username, password }));
+export function saveRememberedLogin(username: string): void {
+  window.localStorage.setItem(rememberedLoginKey, JSON.stringify({ username }));
 }
 
 export function clearRememberedLogin(): void {

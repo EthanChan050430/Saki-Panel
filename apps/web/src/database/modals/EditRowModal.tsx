@@ -24,7 +24,14 @@ export function EditRowModal({
   const [formData, setFormData] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
     for (const c of columns) {
-      init[c.name] = row[c.name] !== null && row[c.name] !== undefined ? String(row[c.name]) : "";
+      const value = row[c.name];
+      if (value === null || value === undefined) {
+        init[c.name] = "";
+      } else if (typeof value === "object") {
+        init[c.name] = JSON.stringify(value);
+      } else {
+        init[c.name] = String(value);
+      }
     }
     return init;
   });
@@ -44,12 +51,28 @@ export function EditRowModal({
       if (pkCols.length > 0) {
         pkCols.forEach((c) => (pks[c.name] = row[c.name]));
       } else {
-        const first = columns[0]?.name;
-        if (first) pks[first] = row[first];
+        // Fallback: match all columns to prevent mass-updating rows sharing the first column
+        columns.forEach((c) => {
+          if (row[c.name] !== undefined) {
+            pks[c.name] = row[c.name];
+          }
+        });
       }
 
       for (const [k, v] of Object.entries(formData)) {
-        vals[k] = v;
+        const col = columns.find((c) => c.name === k);
+        const type = (col?.type || "").toUpperCase();
+        if (v === "") {
+          vals[k] = null;
+        } else if (type.includes("JSON")) {
+          try {
+            vals[k] = JSON.parse(v);
+          } catch {
+            vals[k] = v;
+          }
+        } else {
+          vals[k] = v;
+        }
       }
 
       await api.updateDatabaseTableRow(token, database.id, {

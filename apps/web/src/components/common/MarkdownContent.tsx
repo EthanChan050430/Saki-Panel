@@ -256,7 +256,15 @@ function FilePreview({ content, kind }: { content: string; kind: "html" | "markd
   }
 
   if (kind === "html") {
-    return <iframe className="html-file-preview" sandbox="" srcDoc={content} title="HTML preview" />;
+    return (
+      <iframe
+        className="html-file-preview"
+        sandbox=""
+        referrerPolicy="no-referrer"
+        srcDoc={content}
+        title="HTML preview"
+      />
+    );
   }
 
   return (

@@ -53,21 +53,24 @@ export function DatabaseVisualizer({
     try {
       const res = await api.listDatabases(token);
       setDatabases(res.databases || []);
-      if (!activeDbId && res.databases && res.databases.length > 0) {
-        const first = res.databases[0]!.id;
-        setActiveDbId(first);
-        onSelectDatabase?.(first);
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "读取数据库实例失败");
     } finally {
       setLoading(false);
     }
-  }, [token, activeDbId, onSelectDatabase]);
+  }, [token]);
 
   useEffect(() => {
     void loadDatabases();
   }, [loadDatabases]);
+
+  useEffect(() => {
+    if (!activeDbId && databases.length > 0) {
+      const first = databases[0]!.id;
+      setActiveDbId(first);
+      onSelectDatabase?.(first);
+    }
+  }, [activeDbId, databases, onSelectDatabase]);
 
   const activeDatabase = useMemo(
     () => databases.find((d) => d.id === activeDbId) ?? databases[0] ?? null,

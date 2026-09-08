@@ -27,6 +27,7 @@ import {
   renameDaemonInstancePath,
   copyDaemonInstancePath,
   uploadDaemonInstanceFile,
+  streamUploadDaemonInstanceFile,
   writeDaemonInstanceFile
 } from "../daemon-client.js";
 
@@ -162,14 +163,14 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
           return;
         }
 
-        const fileBuffer = await data.toBuffer();
-        const contentBase64 = fileBuffer.toString("base64");
-
-        const response = await uploadDaemonInstanceFile(instance.node, id, instance.workingDirectory, {
-          path: filePath,
-          contentBase64,
+        const response = await streamUploadDaemonInstanceFile(
+          instance.node,
+          id,
+          instance.workingDirectory,
+          filePath,
+          data.file,
           overwrite
-        });
+        );
         await writeAuditLog({
           request,
           userId: request.user.sub,

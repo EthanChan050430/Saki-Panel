@@ -37,7 +37,7 @@ export interface SakiPanelContext {
 
 export interface RememberedLogin {
   username: string;
-  password: string;
+  password?: string;
 }
 
 export interface LocalSakiWorkflowStep {

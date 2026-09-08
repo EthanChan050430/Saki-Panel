@@ -1,12 +1,24 @@
 import type { FastifyInstance } from "fastify";
 import { panelConfig } from "../config.js";
 
+function safePanelUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return panelConfig.publicUrl;
+    if (url.username || url.password) return panelConfig.publicUrl;
+    if (/[$`\\;"'|]/.test(url.origin)) return panelConfig.publicUrl;
+    return url.origin;
+  } catch {
+    return panelConfig.publicUrl;
+  }
+}
+
 export async function registerJoinScriptRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/nodes/join.sh", async (request, reply) => {
     const query = request.query as { token?: string; name?: string; port?: string };
-    const defaultUrl = panelConfig.publicUrl || `http://${request.hostname}`;
-    const token = (query.token || "").replace(/["'\\]/g, "");
-    const name = (query.name || "").replace(/["'\\]/g, "");
+    const defaultUrl = safePanelUrl(panelConfig.publicUrl || `http://${request.hostname}`);
+    const token = (query.token || "").replace(/["'\\$`]/g, "");
+    const name = (query.name || "").replace(/["'\\$`]/g, "");
     const port = (query.port || "5480").replace(/[^0-9]/g, "") || "5480";
 
     const script = `#!/usr/bin/env bash
@@ -83,13 +95,13 @@ fi
 if ! command -v node &>/dev/null; then
   echo "[+] Node.js not detected. Installing Node.js..."
   if command -v apt-get &>/dev/null; then
-    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
     sudo apt-get install -y nodejs
   elif command -v yum &>/dev/null; then
-    curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+    curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -
     sudo yum install -y nodejs
   else
-    echo "[-] Please install Node.js 18+ manually on this machine."
+    echo "[-] Please install Node.js 22.13+ manually on this machine."
   fi
 fi
 
@@ -132,9 +144,9 @@ fi
 
   app.get("/api/nodes/join.ps1", async (request, reply) => {
     const query = request.query as { token?: string; name?: string; port?: string };
-    const defaultUrl = panelConfig.publicUrl || `http://${request.hostname}`;
-    const token = (query.token || "").replace(/["'\\]/g, "");
-    const name = (query.name || "").replace(/["'\\]/g, "");
+    const defaultUrl = safePanelUrl(panelConfig.publicUrl || `http://${request.hostname}`);
+    const token = (query.token || "").replace(/["'\\$`]/g, "");
+    const name = (query.name || "").replace(/["'\\$`]/g, "");
     const port = (query.port || "5480").replace(/[^0-9]/g, "") || "5480";
 
     const script = `# ==========================================================
@@ -183,7 +195,7 @@ try {
 } catch {}
 
 if (-not $NodeInstalled) {
-  Write-Host "[!] Node.js not detected. Please install Node.js 18+ from https://nodejs.org/" -ForegroundColor Yellow
+  Write-Host "[!] Node.js not detected. Please install Node.js 22.13+ from https://nodejs.org/" -ForegroundColor Yellow
 }
 
 # 3. Register with Panel

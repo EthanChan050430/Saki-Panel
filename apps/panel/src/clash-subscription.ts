@@ -1,5 +1,6 @@
 import http from "node:http";
 import tls from "node:tls";
+import dns from "node:dns/promises";
 import type { ClashSubscriptionProxy } from "@webops/shared";
 
 interface ClashProxyRecord {
@@ -294,19 +295,102 @@ function isPlaceholderSubscriptionBody(body: string): boolean {
   return text.length < 64 && /^(network is good|hello world|ok|success|pong|good)$/i.test(text);
 }
 
-function fetchTextDirect(url: string, headers: Record<string, string>, timeoutMs: number): Promise<string> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(url, { headers, signal: controller.signal, redirect: "follow" })
-    .then(async (response) => {
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return await response.text();
-    })
-    .finally(() => clearTimeout(timer));
+export function isPrivateOrBlockedHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().trim().replace(/^\[|\]$/g, "");
+  if (!host) return true;
+  const v4Mapped = host.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
+  if (v4Mapped) return isPrivateOrBlockedHost(v4Mapped[1]!);
+  if (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local") ||
+    host === "0.0.0.0" ||
+    host === "::" ||
+    host === "::1"
+  ) {
+    return true;
+  }
+  const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const octets = [Number(ipv4Match[1]), Number(ipv4Match[2]), Number(ipv4Match[3]), Number(ipv4Match[4])];
+    if (octets.some((o) => o > 255)) return true;
+    const [o0, o1] = octets;
+    if (o0 === 0) return true;
+    if (o0 === 127) return true;
+    if (o0 === 10) return true;
+    if (o0 === 172 && o1 !== undefined && o1 >= 16 && o1 <= 31) return true;
+    if (o0 === 192 && o1 === 168) return true;
+    if (o0 === 169 && o1 === 254) return true;
+  }
+  if (host.startsWith("fe80:") || host.startsWith("fc") || host.startsWith("fd")) {
+    return true;
+  }
+  return false;
 }
 
-function fetchTextViaHttpProxy(url: string, headers: Record<string, string>, proxyPort: number, timeoutMs: number): Promise<string> {
-  const target = new URL(url);
+export function assertSafeSubscriptionUrl(rawUrl: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error("订阅地址格式无效");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("订阅地址必须是 http 或 https 链接");
+  }
+  if (isPrivateOrBlockedHost(parsed.hostname)) {
+    throw new Error("订阅地址不能指向本地或私有内网地址");
+  }
+  return parsed;
+}
+
+async function assertSafeSubscriptionUrlResolved(rawUrl: string): Promise<URL> {
+  const parsed = assertSafeSubscriptionUrl(rawUrl);
+  try {
+    const { address } = await dns.lookup(parsed.hostname);
+    if (isPrivateOrBlockedHost(address)) {
+      throw new Error("订阅地址不能指向本地或私有内网地址");
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("订阅地址")) throw error;
+    throw new Error("无法解析订阅地址");
+  }
+  return parsed;
+}
+
+async function fetchTextDirect(url: string, headers: Record<string, string>, timeoutMs: number): Promise<string> {
+  let currentUrl = url;
+  await assertSafeSubscriptionUrlResolved(currentUrl);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    let redirects = 0;
+    while (redirects++ < 5) {
+      const response = await fetch(currentUrl, {
+        headers,
+        signal: controller.signal,
+        redirect: "manual"
+      });
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (!location) throw new Error("Redirect without location header");
+        const nextUrl = new URL(location, currentUrl).toString();
+        await assertSafeSubscriptionUrlResolved(nextUrl);
+        currentUrl = nextUrl;
+        continue;
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.text();
+    }
+    throw new Error("Too many redirects");
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchTextViaHttpProxy(url: string, headers: Record<string, string>, proxyPort: number, timeoutMs: number): Promise<string> {
+  const target = await assertSafeSubscriptionUrlResolved(url);
   const isHttps = target.protocol === "https:";
   const connectPath = `${target.hostname}:${target.port || (isHttps ? 443 : 80)}`;
   return new Promise((resolve, reject) => {
@@ -408,9 +492,7 @@ export function parseClashSubscriptionProxies(raw: string): ClashSubscriptionPro
 
 export async function fetchClashSubscriptionProxies(url: string): Promise<ClashSubscriptionProxy[]> {
   const trimmed = url.trim();
-  if (!/^https?:\/\//i.test(trimmed)) {
-    throw new Error("订阅地址必须是 http 或 https 链接");
-  }
+  await assertSafeSubscriptionUrlResolved(trimmed);
   const cached = subscriptionCache.get(trimmed);
   if (cached && Date.now() - cached.fetchedAt < cacheTtlMs) {
     return cached.proxies.map(summarizeProxy);

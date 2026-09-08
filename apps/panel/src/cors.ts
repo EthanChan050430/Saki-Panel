@@ -1,6 +1,8 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { panelConfig } from "./config.js";
 
 export const panelCorsMethods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"];
+const panelCorsHeaders = "authorization, content-type, x-api-key, x-user-key, x-requested-with";
 
 function firstHeaderValue(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0]?.trim() ?? "";
@@ -19,10 +21,19 @@ function normalizeOrigin(value: string | undefined): string | null {
   }
 }
 
+function isAllowedOrigin(origin: string): boolean {
+  if (panelConfig.corsOrigins.includes(origin)) return true;
+  if (panelConfig.corsOrigins.includes("*")) return true;
+  // Unconfigured installs are commonly opened via LAN IPs that are not
+  // WEB_ORIGIN. Keep that working unless an explicit origin list is set.
+  if (!panelConfig.hasExplicitCorsOrigins) return true;
+  return false;
+}
+
 export function resolvePanelCorsOrigin(request: FastifyRequest): string | false {
   const origin = normalizeOrigin(firstHeaderValue(request.headers.origin));
   if (!origin || origin === "*") return false;
-  return origin;
+  return isAllowedOrigin(origin) ? origin : false;
 }
 
 export function applyPanelCorsHeaders(request: FastifyRequest, reply: FastifyReply): void {
@@ -33,9 +44,6 @@ export function applyPanelCorsHeaders(request: FastifyRequest, reply: FastifyRep
   }
   reply.header("Access-Control-Allow-Credentials", "true");
   reply.header("Access-Control-Allow-Methods", panelCorsMethods.join(", "));
-  reply.header(
-    "Access-Control-Allow-Headers",
-    firstHeaderValue(request.headers["access-control-request-headers"]) || "authorization, content-type"
-  );
+  reply.header("Access-Control-Allow-Headers", panelCorsHeaders);
   reply.header("Access-Control-Max-Age", "86400");
 }

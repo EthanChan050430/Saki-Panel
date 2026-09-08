@@ -34,6 +34,7 @@ declare module "fastify" {
 
 export async function createPanelServer() {
   const app = Fastify({
+    trustProxy: panelConfig.trustProxy,
     bodyLimit: Math.ceil(panelConfig.maxTransferBytes * 1.5),
     ...(panelConfig.https ? { https: panelConfig.https } : {}),
     logger: {

@@ -230,6 +230,11 @@ import { SakiDessertDropGame } from "./SakiDessertDropGame.js";
 import { SakiAttachmentModal } from "./SakiAttachmentModal.js";
 import { SakiMentionMenu } from "./SakiMentionMenu.js";
 import { ChatLauncher } from "./chat/ChatLauncher.js";
+import { SakiVideoPane } from "./chat/SakiVideoPane.js";
+import { SakiHistoryDrawer } from "./chat/SakiHistoryDrawer.js";
+import { SakiMessagesList } from "./chat/SakiMessagesList.js";
+import { SakiComposer } from "./chat/SakiComposer.js";
+import { SakiChatDropdowns } from "./chat/SakiChatDropdowns.js";
 import { SakiVoiceEcho } from "./sakiVoice.js";
 import {
   clearRememberedSakiTerminalSelection,
@@ -3306,308 +3311,46 @@ export function SakiFloatingChat({
         ) : null}
 
         <div className="saki-messages-container">
-          <div
-            className={`saki-video-pane ${mobileActiveTab === "video" ? "mobile-show" : "mobile-hide"}`}
-            style={customRoomBg ? { backgroundImage: `url("${customRoomBg}")` } : undefined}
-          >
-            <input
-              ref={roomBgInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
-              style={{ display: "none" }}
-              onChange={handleCustomRoomBgUpload}
-            />
 
-            {/* Mini Game occupying the FULL saki-video-pane */}
-            {miniGameActive ? (
-              <SakiDessertDropGame
-                onClose={() => {
-                  setMiniGameActive(false);
-                  setSakiPokeMood(null);
-                }}
-                onFinish={(score, expReward) => {
-                  setMiniGameActive(false);
-                  handleMiniGameFinish(score, expReward);
-                }}
-              />
-            ) : null}
-
-            <div className="saki-video-header">
-              <div className="saki-video-header-left">
-                <button
-                  className="saki-video-settings-btn"
-                  type="button"
-                  title="装修房间 (自定义背景图)"
-                  aria-label="装修房间"
-                  onClick={() => roomBgInputRef.current?.click()}
-                >
-                  <Paintbrush size={15} />
-                </button>
-                {customRoomBg ? (
-                  <button
-                    className="saki-video-settings-btn mini"
-                    type="button"
-                    title="恢复默认房间装修"
-                    aria-label="恢复默认装修"
-                    onClick={() => {
-                      setCustomRoomBg(null);
-                      try {
-                        localStorage.removeItem("saki_custom_room_bg");
-                      } catch {}
-                    }}
-                  >
-                    <RefreshCw size={12} />
-                  </button>
-                ) : null}
-              </div>
-
-              {/* Aesthetic Floating Island Switcher (Mobile Only) */}
-              <div className="saki-mobile-island-switcher" role="tablist" aria-label="移动端视图切换">
-                <button
-                  type="button"
-                  className={`saki-island-pill ${mobileActiveTab === "video" ? "active" : ""}`}
-                  onClick={() => setMobileActiveTab("video")}
-                  role="tab"
-                  aria-selected={mobileActiveTab === "video"}
-                >
-                  <Sparkles size={12} />
-                  <span>陪伴</span>
-                </button>
-                <button
-                  type="button"
-                  className={`saki-island-pill ${mobileActiveTab === "chat" ? "active" : ""} ${chatPulseAlert && mobileActiveTab === "video" ? "has-pulse-alert" : ""}`}
-                  onClick={() => {
-                    setMobileActiveTab("chat");
-                    setChatPulseAlert(false);
-                  }}
-                  role="tab"
-                  aria-selected={mobileActiveTab === "chat"}
-                >
-                  <MessageSquare size={12} />
-                  <span>聊天</span>
-                  {chatPulseAlert && mobileActiveTab === "video" ? (
-                    <span className="saki-island-breathing-light" aria-label="输出完成" />
-                  ) : null}
-                </button>
-              </div>
-
-              <div className="saki-video-header-right">
-                {(() => {
-                  const favInfo = getFavorabilityLevelInfo(sakiFavorabilityExp);
-                  const isEn = language === "en-US";
-                  const isTw = language === "zh-TW";
-                  const favBadgeTitle = isEn
-                    ? `[Saki Affection Details]\nLevel: Lv.${favInfo.level} · ${favInfo.title}\nCurrent EXP: ${favInfo.currentExp} / ${favInfo.maxExpForLevel} EXP (${favInfo.levelProgress}%)\n${favInfo.isMaxLevel ? "Max affection level reached!" : `EXP needed for next level: ${favInfo.maxExpForLevel - favInfo.currentExp}`}`
-                    : isTw
-                    ? `【Saki 好感度詳情】\n等級: Lv.${favInfo.level} · ${favInfo.title}\n目前經驗: ${favInfo.currentExp} / ${favInfo.maxExpForLevel} EXP (${favInfo.levelProgress}%)\n${favInfo.isMaxLevel ? "已達最高好感度！" : `距離下一級還需 ${favInfo.maxExpForLevel - favInfo.currentExp} EXP`}`
-                    : `【Saki 好感度详情】\n等级: Lv.${favInfo.level} · ${favInfo.title}\n当前经验: ${favInfo.currentExp} / ${favInfo.maxExpForLevel} EXP (${favInfo.levelProgress}%)\n${favInfo.isMaxLevel ? "已达最高好感度！" : `距离下一级还需 ${favInfo.maxExpForLevel - favInfo.currentExp} EXP`}`;
-                  return (
-                    <div
-                      className="saki-video-favorability-badge"
-                      title={favBadgeTitle}
-                    >
-                      <div className={`saki-favorability-heart-wrap ${favorabilityPop ? "pop" : ""}`}>
-                        <Heart size={32} className="saki-favorability-heart fill-rose-500 text-rose-400" />
-                        <span className="saki-favorability-heart-level">{favInfo.level}</span>
-                      </div>
-
-                      <div className="saki-favorability-tooltip" role="tooltip">
-                        <div className="tooltip-title">{isEn ? "Affection " : isTw ? "好感度 " : "好感度 "}Lv.{favInfo.level} · {favInfo.title}</div>
-                        <div className="tooltip-exp-bar">
-                          <div className="tooltip-exp-fill" style={{ width: `${favInfo.levelProgress}%` }} />
-                        </div>
-                        <div className="tooltip-exp-nums">
-                          <span>{favInfo.currentExp} / {favInfo.maxExpForLevel} EXP</span>
-                          <span>{favInfo.levelProgress}%</span>
-                        </div>
-                      </div>
-
-                      {favorabilityPop ? (
-                        <span key={favorabilityPop.id} className="saki-favorability-gain-float">
-                          +{favorabilityPop.amount} EXP
-                        </span>
-                      ) : null}
-                    </div>
-                  );
-                })()}
-
-                <button
-                  className="saki-video-close-btn"
-                  type="button"
-                  title={language === "en-US" ? "Close Saki" : language === "zh-TW" ? "關閉 Saki" : "关闭 Saki"}
-                  aria-label={language === "en-US" ? "Close Saki" : language === "zh-TW" ? "關閉 Saki" : "关闭 Saki"}
-                  onClick={closeSakiPanel}
-                >
-                  <X size={15} />
-                </button>
-              </div>
-            </div>
-
-            <div className="saki-video-stage">
-              <div
-                ref={sakiCharacterRef}
-                className={`saki-video-character-wrap mood-${artMood} ${effectiveActivityMood ?? ""} ${isDragOverSaki ? "saki-drag-hover" : ""} ${sakiEchoState === "speaking" ? "saki-speaking" : ""} ${isSakiListening ? "saki-hearing" : ""}`}
-                onPointerDown={handleSakiCharacterPointerDown}
-                onPointerUp={handleSakiCharacterPointerUp}
-                onPointerCancel={handleSakiCharacterPointerCancel}
-                onLostPointerCapture={handleSakiCharacterPointerCancel}
-                onContextMenu={(event) => event.preventDefault()}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    handleSakiPoke();
-                  }
-                }}
-                title={language === "en-US" ? "Tap to poke, hold to speak" : language === "zh-TW" ? "點按戳戳，長按說話" : "点按戳戳，长按说话"}
-                role="button"
-                tabIndex={0}
-              >
-                {/* Feeding Target Indicator when dragging food */}
-                {draggingFood && draggingFood.isDragging ? (
-                  <div className={`saki-feed-target-indicator ${isDragOverSaki ? "ready" : ""}`}>
-                    <div className="target-pulse-ring">
-                      <Heart size={22} className="fill-rose-400 text-rose-400" />
-                    </div>
-                  </div>
-                ) : null}
-
-                {videoBubbleText ? (
-                  <div
-                    className={`saki-video-bubble ${isStreamingReply || (videoBubbleText && videoBubbleText.length > 25) ? "streaming-reply" : ""}`}
-                    aria-live="polite"
-                  >
-                    <div ref={videoBubbleRef} className="saki-video-bubble-content">
-                      {isStreamingReply || (videoBubbleText && videoBubbleText.length > 25) ? (
-                        <div className="saki-video-bubble-markdown">
-                          <MarkdownContent content={videoBubbleText} />
-                          {isStreamingReply ? (
-                            <span className="saki-bubble-typing-cursor">▌</span>
-                          ) : null}
-                        </div>
-                      ) : (
-                        <span style={{ unicodeBidi: "isolate" }}>{videoBubbleText}</span>
-                      )}
-                    </div>
-                  </div>
-                ) : null}
-                <SakiCharacterArt mood={artMood} activityMood={effectiveActivityMood} />
-                <div className="saki-video-carpet-shadow" aria-hidden="true" />
-              </div>
-            </div>
-
-            {feedMenuOpen ? (
-              <div className="saki-feed-drawer">
-                <div className="saki-feed-items">
-                  {getLocalizedFoodMenu(language).map((food) => {
-                    const canAfford = isUnlimitedPoints || numericSakiPoints >= food.cost;
-                    const isCurrentDragging = draggingFood?.food.id === food.id && draggingFood.isDragging;
-                    const isEn = language === "en-US";
-                    const isTw = language === "zh-TW";
-                    const costUnit = isEn ? " pt" : isTw ? " 點" : "分";
-                    const costTooltip = canAfford
-                      ? `${food.name} (${food.cost} ${isEn ? "pts" : isTw ? "積分" : "积分"})`
-                      : `${isEn ? "Insufficient points" : isTw ? "積分不足" : "积分不足"} (${food.cost})`;
-                    return (
-                      <button
-                        key={food.id}
-                        className={`saki-feed-card ${!canAfford ? "disabled" : ""} ${isCurrentDragging ? "dragging" : ""}`}
-                        type="button"
-                        title={costTooltip}
-                        onPointerDown={(e) => startFoodDrag(e, food)}
-                      >
-                        <div className="saki-feed-card-img-wrap">
-                          <img src={food.image} alt={food.name} draggable={false} />
-                        </div>
-                        <div className="saki-feed-card-info">
-                          <span className="food-name">{food.name}</span>
-                          <div className="food-meta">
-                            <span className="food-cost">{food.cost}{costUnit}</span>
-                            <span className="food-fav">+{food.favorability}</span>
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
-
-            {/* Dragging Food Floating Ghost */}
-            {draggingFood && draggingFood.isDragging ? (
-              <div
-                className={`saki-dragging-food-ghost ${isDragOverSaki ? "over-target" : ""}`}
-                style={{
-                  left: `${draggingFood.currentX}px`,
-                  top: `${draggingFood.currentY}px`
-                }}
-              >
-                <img src={draggingFood.food.image} alt={draggingFood.food.name} draggable={false} />
-              </div>
-            ) : null}
-
-            <div className="saki-video-controls" role="toolbar" aria-label="视频通话控制">
-              <button
-                className={`saki-video-btn ${listening ? "active pulse" : ""}`}
-                type="button"
-                title={listening ? "关闭麦克风 (停止语音识别)" : "开启麦克风 (语音输入)"}
-                aria-label="麦克风"
-                onClick={toggleSpeechInput}
-              >
-                {listening ? <Mic size={17} /> : <MicOff size={17} />}
-              </button>
-              <button
-                className={`saki-video-btn ${miniGameActive ? "active" : ""}`}
-                type="button"
-                title="星梦甜点接接乐 (小游戏赚取好感度与积分)"
-                aria-label="小游戏"
-                onClick={() => {
-                  setFeedMenuOpen(false);
-                  setMiniGameActive((prev) => {
-                    const next = !prev;
-                    setSakiPokeMood(next ? "gaming" : null);
-                    return next;
-                  });
-                }}
-              >
-                <Gamepad2 size={17} />
-              </button>
-              <button
-                className={`saki-video-btn ${feedMenuOpen ? "active" : ""}`}
-                type="button"
-                title="投喂 Saki (花费积分买食物提升好感度)"
-                aria-label="投喂食物"
-                onClick={() => {
-                  setFeedMenuOpen((prev) => !prev);
-                }}
-              >
-                <UtensilsCrossed size={17} />
-              </button>
-              <button
-                className={`saki-video-btn mobile-switch-to-chat ${chatPulseAlert && mobileActiveTab === "video" ? "pulse-alert" : ""}`}
-                type="button"
-                title="切换到聊天对话"
-                aria-label="切换到聊天"
-                onClick={() => {
-                  setMobileActiveTab("chat");
-                  setChatPulseAlert(false);
-                }}
-              >
-                <MessageSquare size={17} />
-                {chatPulseAlert && mobileActiveTab === "video" ? (
-                  <span className="saki-dock-breathing-dot" aria-hidden="true" />
-                ) : null}
-              </button>
-              <button
-                className="saki-video-btn hangup"
-                type="button"
-                title="挂断视频通话"
-                aria-label="挂断"
-                onClick={closeSakiPanel}
-              >
-                <PhoneOff size={17} />
-              </button>
-            </div>
-          </div>
+          <SakiVideoPane
+            mobileActiveTab={mobileActiveTab}
+            setMobileActiveTab={setMobileActiveTab}
+            customRoomBg={customRoomBg}
+            setCustomRoomBg={setCustomRoomBg}
+            roomBgInputRef={roomBgInputRef}
+            handleCustomRoomBgUpload={handleCustomRoomBgUpload}
+            miniGameActive={miniGameActive}
+            setMiniGameActive={setMiniGameActive}
+            setSakiPokeMood={setSakiPokeMood}
+            handleMiniGameFinish={handleMiniGameFinish}
+            chatPulseAlert={chatPulseAlert}
+            setChatPulseAlert={setChatPulseAlert}
+            sakiFavorabilityExp={sakiFavorabilityExp}
+            favorabilityPop={favorabilityPop}
+            language={language}
+            closeSakiPanel={closeSakiPanel}
+            sakiCharacterRef={sakiCharacterRef}
+            artMood={artMood}
+            effectiveActivityMood={effectiveActivityMood}
+            isDragOverSaki={isDragOverSaki}
+            sakiEchoState={sakiEchoState}
+            isSakiListening={isSakiListening}
+            handleSakiCharacterPointerDown={handleSakiCharacterPointerDown}
+            handleSakiCharacterPointerUp={handleSakiCharacterPointerUp}
+            handleSakiCharacterPointerCancel={handleSakiCharacterPointerCancel}
+            handleSakiPoke={handleSakiPoke}
+            draggingFood={draggingFood}
+            videoBubbleText={videoBubbleText}
+            isStreamingReply={isStreamingReply}
+            videoBubbleRef={videoBubbleRef}
+            feedMenuOpen={feedMenuOpen}
+            setFeedMenuOpen={setFeedMenuOpen}
+            isUnlimitedPoints={isUnlimitedPoints}
+            numericSakiPoints={numericSakiPoints}
+            startFoodDrag={startFoodDrag}
+            listening={listening}
+            toggleSpeechInput={toggleSpeechInput}
+          />
 
           <div className={`saki-messages-inner ${mobileActiveTab === "chat" ? "mobile-show" : "mobile-hide"}`}>
             <div className="saki-header">
@@ -3673,37 +3416,16 @@ export function SakiFloatingChat({
               </div>
             </div>
 
-          {historyOpen && messagesExpanded ? (
-            <aside className="saki-history-panel" aria-label="Saki history">
-              <div className="saki-history-heading">
-                <span>历史记录</span>
-                <button className="icon-button mini" type="button" title="关闭" onClick={() => setHistoryOpen(false)}>
-                  <X size={14} />
-                </button>
-              </div>
-              <button className="small-button saki-history-new" type="button" onClick={startNewConversation}>
-                <Plus size={14} />
-                新对话
-              </button>
-              <div className="saki-history-list">
-                {storedConversations.length === 0 ? (
-                  <p>暂无历史对话</p>
-                ) : (
-                  storedConversations.map((conversation) => (
-                    <div className={conversation.id === activeConversationId ? "saki-history-item active" : "saki-history-item"} key={conversation.id}>
-                      <button type="button" onClick={() => loadConversation(conversation)}>
-                        <strong>{conversation.title}</strong>
-                        <span>{conversation.label} · {formatDate(conversation.updatedAt)}</span>
-                      </button>
-                      <button className="icon-button mini danger-action" type="button" title="删除" onClick={() => deleteConversation(conversation.id)}>
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            </aside>
-          ) : null}
+          <SakiHistoryDrawer
+            isOpen={historyOpen && messagesExpanded}
+            activeConversationId={activeConversationId}
+            storedConversations={storedConversations}
+            onClose={() => setHistoryOpen(false)}
+            onNewConversation={startNewConversation}
+            onLoadConversation={loadConversation}
+            onDeleteConversation={deleteConversation}
+            formatDate={formatDate}
+          />
 
           {panelError ? (
             <div className="saki-error-context">
@@ -3754,571 +3476,90 @@ export function SakiFloatingChat({
             </div>
           ) : null}
 
-          <div className="saki-messages" ref={sakiMessagesRef} onScroll={handleSakiMessagesScroll}>
-            {messages.map((message) => {
-              const actionItems = visibleSakiActions(message.actions);
-              const fileRollbackActions = actionItems.filter(isSakiFileRollbackAction);
-              const rollbackableFileActions = fileRollbackActions.filter(isSakiRollbackableFileEdit);
-              const timelineItems = message.role === "assistant" ? renderableSakiTimeline(message) : [];
-              return (
-                <div className={`saki-message saki-message-${message.role}`} key={message.id}>
-                  <div className="saki-message-meta">
-                    {message.role === "assistant" ? (
-                      <img className="saki-message-avatar" src={sakiArtAssets.avatar} alt="" />
-                    ) : null}
-                    <span>{message.role === "assistant" ? "Saki" : "你"}</span>
-                    {message.source === "local-fallback" ? <em>fallback</em> : null}
-                  </div>
-                  {message.role === "user" ? (
-                    <div className="saki-user-message-wrapper">
-                      <div className="saki-user-message-actions">
-                        <button
-                          className="saki-user-action-btn rollback-btn"
-                          type="button"
-                          title="回退到此对话并撤销所有修改"
-                          disabled={Boolean(actionBusyId)}
-                          onClick={() => void rollbackUserTurn(message.id)}
-                        >
-                          {actionBusyId === `rollback_user:${message.id}` ? (
-                            <Loader2 size={12} className="status-spinner" />
-                          ) : (
-                            <CornerUpLeft size={12} />
-                          )}
-                          <span>回退</span>
-                        </button>
-                        <button
-                          className="saki-user-action-btn copy-btn"
-                          type="button"
-                          title="复制提问内容"
-                          onClick={() => void copyUserMessage(message.id, message.content)}
-                        >
-                          {copiedUserMessageId === message.id ? (
-                            <Check size={12} style={{ color: "#10b981" }} />
-                          ) : (
-                            <Copy size={12} />
-                          )}
-                          <span>{copiedUserMessageId === message.id ? "已复制" : "复制"}</span>
-                        </button>
-                      </div>
-                      <div className="saki-message-body">
-                        <MarkdownContent content={message.content} />
-                      </div>
-                    </div>
-                  ) : message.role === "assistant" && timelineItems.length > 0 ? (
-                    <div className="saki-message-timeline">
-                      {timelineItems.map((item) => {
-                        if (item.kind === "pending") {
-                          return (
-                            <div className="saki-tool-timeline-item" key={item.id}>
-                              <SakiPendingToolCard tool={item.tool} {...(item.call ? { call: item.call } : {})} message={item.message} />
-                            </div>
-                          );
-                        }
-                        if (item.kind === "action") {
-                          return (
-                            <div className="saki-tool-timeline-item" key={item.id}>
-                              <SakiToolActionCard
-                                action={item.action}
-                                actionBusyId={actionBusyId}
-                                onDecision={(targetAction, decision) => void decideAction(targetAction, decision)}
-                                onOpenPath={onOpenWorkspaceFile ? openWorkspacePath : undefined}
-                              />
-                            </div>
-                          );
-                        }
-                        const parsed = parseThinkingContent(item.content, item.thinking, Boolean(message.streaming && item.source === "delta"));
-                        const hasThinking = Boolean(parsed.thinking);
-                        const hasAnswer = Boolean(parsed.answer.trim());
-                        const isThinkingStreaming = Boolean(message.streaming && item.source === "delta" && !hasAnswer);
-                        const durationSec = item.thinkingDurationSec ?? message.thinkingDurationSec;
-
-                        return (
-                          <div key={item.id} className="saki-timeline-text-item">
-                            {hasThinking ? (
-                              <div className="saki-tool-timeline-item" style={{ margin: "2px 0 4px 0" }}>
-                                <SakiThinkingActionCard
-                                  thinking={parsed.thinking}
-                                  streaming={isThinkingStreaming}
-                                  durationSec={durationSec}
-                                />
-                              </div>
-                            ) : null}
-                            {hasAnswer ? (
-                              <div className={`saki-message-body saki-message-body-${item.source}`}>
-                                {message.streaming && item.source === "delta" ? (
-                                  <div className="saki-stream-raw-wrap">
-                                    <span className="saki-stream-raw">{parsed.answer}</span>
-                                    <span className="saki-stream-cursor" />
-                                  </div>
-                                ) : (
-                                  <MarkdownContent content={parsed.answer} />
-                                )}
-                              </div>
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                      {message.streaming && message.workflow?.length ? <SakiStreamStatus workflow={message.workflow} /> : null}
-                      {fileRollbackActions.length > 1 ? (
-                        <div className="saki-rollback-bulk">
-                          <span>
-                            {rollbackableFileActions.length} / {fileRollbackActions.length} 个文件改动可回滚
-                          </span>
-                          <button
-                            className="small-button"
-                            type="button"
-                            disabled={Boolean(actionBusyId) || rollbackableFileActions.length === 0}
-                            onClick={() => void rollbackAllFileActions(message.id, fileRollbackActions)}
-                          >
-                            {actionBusyId === `rollback_all:${message.id}` ? <Loader2 size={14} className="status-spinner" /> : <CornerUpLeft size={14} />}
-                            全部回滚
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : message.role === "assistant" && message.streaming && !message.content && !message.thinking ? (
-                    <div className="saki-message-body">
-                      <p className="saki-stream-placeholder">等待模型响应...</p>
-                    </div>
-                  ) : message.role === "assistant" && (message.content || message.thinking) ? (
-                    (() => {
-                      const parsed = parseThinkingContent(message.content, message.thinking, Boolean(message.streaming));
-                      const hasThinking = Boolean(parsed.thinking);
-                      const hasAnswer = Boolean(parsed.answer.trim());
-                      const isThinkingStreaming = Boolean(message.streaming && !hasAnswer);
-                      return (
-                        <div className="saki-message-assistant-content">
-                          {hasThinking ? (
-                            <div className="saki-tool-timeline-item" style={{ margin: "2px 0 4px 0" }}>
-                              <SakiThinkingActionCard
-                                thinking={parsed.thinking}
-                                streaming={isThinkingStreaming}
-                                durationSec={message.thinkingDurationSec}
-                              />
-                            </div>
-                          ) : null}
-                          {hasAnswer ? (
-                            <div className="saki-message-body">
-                              {message.streaming ? (
-                                <div className="saki-stream-raw-wrap">
-                                  <span className="saki-stream-raw">{parsed.answer}</span>
-                                  <span className="saki-stream-cursor" />
-                                </div>
-                              ) : (
-                                <MarkdownContent content={parsed.answer} />
-                              )}
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })()
-                  ) : message.role === "assistant" ? (
-                    <div className="saki-message-body saki-message-body-failed">
-                      <div className="saki-message-failed-notice">
-                        <AlertTriangle size={14} className="saki-failed-icon" />
-                        <span>{message.source === "local-fallback" ? "Agent 执行中断或未完成" : "未收到 Agent 回应"}</span>
-                      </div>
-                    </div>
-                  ) : null}
-                  {message.role === "assistant" && message.usage ? (
-                    <div className="saki-token-usage-text">
-                      {message.usage.isUnlimited
-                        ? `消耗 Token: ${message.usage.tokensUsed.toLocaleString()}`
-                        : `消耗 Token: ${message.usage.tokensUsed.toLocaleString()} · 消耗积分: ${message.usage.pointsUsed.toLocaleString()}`}
-                    </div>
-                  ) : null}
-                  {message.attachments?.length ? (
-                    <div className="saki-message-attachments">
-                      {message.attachments.map((attachment, index) => (
-                        <SakiAttachmentChip attachment={attachment} key={attachment.id ?? `${attachment.name}-${index}`} onClick={() => setPreviewingAttachment({ attachment, editable: false })} />
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-            {loading && !hasStreamingAssistant ? (
-              <div className="saki-message saki-message-assistant">
-                <div className="saki-message-meta">
-                  <img className="saki-message-avatar" src={sakiArtAssets.avatar} alt="" />
-                  <span>Saki</span>
-                </div>
-                <p className="saki-thinking-bubble">
-                  <img src={sakiArtAssets.thinkingGif} alt="" />
-                  <span>思考中...</span>
-                </p>
-              </div>
-            ) : null}
-          </div>
+          <SakiMessagesList
+            messagesRef={sakiMessagesRef}
+            onScroll={handleSakiMessagesScroll}
+            messages={messages}
+            loading={loading}
+            hasStreamingAssistant={hasStreamingAssistant}
+            avatar={sakiArtAssets.avatar}
+            thinkingGif={sakiArtAssets.thinkingGif}
+            actionBusyId={actionBusyId}
+            copiedUserMessageId={copiedUserMessageId}
+            onRollbackUserTurn={rollbackUserTurn}
+            onCopyUserMessage={copyUserMessage}
+            onDecideAction={decideAction}
+            onOpenPath={onOpenWorkspaceFile ? openWorkspacePath : undefined}
+            onRollbackAllFileActions={rollbackAllFileActions}
+            onPreviewAttachment={(preview) => setPreviewingAttachment(preview)}
+          />
         </div>
       </div>
 
-      <form className="saki-composer" onSubmit={(event) => void submit(event)}>
-        <input
-          ref={imageInputRef}
-          className="hidden-file-input"
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
-          multiple
-          onChange={(event) => {
-            const files = Array.from(event.target.files ?? []);
-            event.currentTarget.value = "";
-            void addFilesToComposer(files, "image");
-          }}
-        />
-        <input
-          ref={attachmentInputRef}
-          className="hidden-file-input"
-          type="file"
-          multiple
-          onChange={(event) => {
-            const files = Array.from(event.target.files ?? []);
-            event.currentTarget.value = "";
-            void addFilesToComposer(files, "file");
-          }}
-        />
-        <div className="saki-composer-expand-hint">
-          <button
-            type="button"
-            className="saki-composer-expand-btn"
-            title={messagesExpanded ? "折叠对话" : "展开对话"}
-            aria-label={messagesExpanded ? "折叠对话" : "展开对话"}
-            aria-expanded={messagesExpanded}
-            onClick={() => setMessagesExpanded((current) => !current)}
-          >
-            {messagesExpanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-          </button>
-        </div>
-        {!messagesExpanded && (
-          <div className="saki-mini-chat-wrapper">
-            {(messages.length > 1 || loading) && (
-              <div className="saki-mini-chat">
-                <div className="saki-mini-chat-inner">
-                  {messages.filter(m => m.id !== "saki-welcome").map((message) => {
-                    const parsed = parseThinkingContent(message.content, message.thinking, Boolean(message.streaming));
-                    const hasThinking = Boolean(parsed.thinking);
-                    const hasAnswer = Boolean(parsed.answer.trim());
-                    const isThinkingStreaming = Boolean(message.streaming && !hasAnswer);
-                    return (
-                      <div className={`saki-message saki-message-${message.role} mini-mode`} key={message.id}>
-                        {hasThinking ? (
-                          <div className="saki-tool-timeline-item" style={{ margin: "2px 0 4px 0" }}>
-                            <SakiThinkingActionCard
-                              thinking={parsed.thinking}
-                              streaming={isThinkingStreaming}
-                              durationSec={message.thinkingDurationSec}
-                            />
-                          </div>
-                        ) : null}
-                        {hasAnswer ? (
-                          <div className="saki-message-body">
-                            {message.streaming ? (
-                              <div className="saki-stream-raw-wrap">
-                                <span className="saki-stream-raw">{parsed.answer}</span>
-                                <span className="saki-stream-cursor" />
-                              </div>
-                            ) : (
-                              <MarkdownContent content={parsed.answer} />
-                            )}
-                          </div>
-                        ) : null}
-                        {!hasAnswer && !hasThinking && message.streaming ? (
-                          <div className="saki-message-body">
-                            <p className="saki-stream-placeholder">等待模型响应...</p>
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                  {loading && !hasStreamingAssistant && (
-                    <div className="saki-message saki-message-assistant mini-mode">
-                      <p className="saki-thinking-bubble">
-                        <img src={sakiArtAssets.thinkingGif} alt="" />
-                        <span>思考中...</span>
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-        <div className="saki-input-container">
-          {mentionMenuOpen ? (
-            <SakiMentionMenu
-              candidates={mentionCandidates}
-              activeIndex={mentionIndex}
-              onHover={setMentionIndex}
-              onSelect={applyMention}
-            />
-          ) : null}
-          {!messagesExpanded && (
-            <div
-              className={`saki-input-peep ${loading ? "is-loading" : ""} ${sakiFileHoverActive ? "is-dropping" : ""}`}
-              onClick={() => setMessagesExpanded(true)}
-              title="点击展开与 Saki 的完整对话"
-              role="button"
-              tabIndex={0}
-            >
-              <img
-                src={sakiArtAssets.shuru}
-                alt="Saki"
-                className="saki-input-peep-img saki-peep-light"
-                draggable={false}
-              />
-              <img
-                src={sakiArtAssets.shuruBlack}
-                alt="Saki"
-                className="saki-input-peep-img saki-peep-dark"
-                draggable={false}
-              />
-            </div>
-          )}
-          <div className="saki-input-main-row">
-            <div className="saki-input-leading">
-              <button
-                className={`saki-add-btn ${sakiAddMenuOpen ? "active" : ""}`}
-                type="button"
-                title="添加图片 / 文件"
-                onClick={() => setSakiAddMenuOpen(!sakiAddMenuOpen)}
-                ref={sakiAddBtnRef}
-              >
-                <Plus size={16} />
-              </button>
-            </div>
-            <textarea
-              ref={composerTextareaRef}
-              value={draft}
-              onChange={(event) => {
-                setDraft(event.target.value);
-                setMentionDismissedStart(null);
-                syncMentionCaret(event.currentTarget);
-              }}
-              onClick={(event) => syncMentionCaret(event.currentTarget)}
-              onSelect={(event) => syncMentionCaret(event.currentTarget)}
-              onKeyUp={(event) => syncMentionCaret(event.currentTarget)}
-              onBlur={() => {
-                const active = activeSakiMentionQuery(draft, mentionCaret);
-                if (active) setMentionDismissedStart(active.start);
-              }}
-              onKeyDown={(event) => {
-                if (mentionMenuOpen && mentionCandidates.length > 0) {
-                  if (event.key === "ArrowDown") {
-                    event.preventDefault();
-                    setMentionIndex((current) => (current + 1) % mentionCandidates.length);
-                    return;
-                  }
-                  if (event.key === "ArrowUp") {
-                    event.preventDefault();
-                    setMentionIndex((current) => (current - 1 + mentionCandidates.length) % mentionCandidates.length);
-                    return;
-                  }
-                  if ((event.key === "Enter" || event.key === "Tab") && !event.ctrlKey && !event.metaKey && !event.nativeEvent.isComposing) {
-                    const selected = mentionCandidates[mentionIndex] ?? mentionCandidates[0];
-                    if (selected) {
-                      event.preventDefault();
-                      applyMention(selected);
-                      return;
-                    }
-                  }
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    setMentionDismissedStart(activeSakiMentionQuery(draft, mentionCaret)?.start ?? null);
-                    return;
-                  }
-                }
-                if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
-                  event.preventDefault();
-                  if (!loading && (draft.trim() || attachments.length > 0)) {
-                    void submit();
-                  }
-                }
-              }}
-              onPaste={handleComposerPaste}
-              placeholder={
-                attachments.some(isSakiImageAttachment)
-                  ? "输入 @ 引用已上传的参考图"
-                  : mode === "agent" && permissionMode === "plan"
-                  ? "让 Saki 先阅读项目并给出执行计划"
-                  : contextText
-                  ? "针对已附加的上下文继续追问"
-                  : auditSearchActive
-                    ? "让 Saki 查找审计日志"
-                    : instance
-                      ? "问 Saki 当前实例里的问题"
-                      : "问 Saki"
-              }
-              rows={1}
-            />
-          </div>
-          {attachments.length > 0 ? (
-            <div className="saki-attachment-tray">
-              {attachments.map((attachment, index) => (
-                <SakiAttachmentChip
-                  attachment={attachment}
-                  key={attachment.id ?? `${attachment.name}-${index}`}
-                  removable
-                  onClick={() => setPreviewingAttachment({ attachment, editable: true })}
-                  onRemove={() =>
-                    setAttachments((current) => current.filter((item) => (item.id ?? item.name) !== (attachment.id ?? attachment.name)))
-                  }
-                />
-              ))}
-            </div>
-          ) : null}
-          {followUpQueue.length > 0 ? (
-            <div className="saki-followup-queue">
-              {followUpQueue.map((job, index) => (
-                <button
-                  key={job.id}
-                  type="button"
-                  className="saki-followup-chip"
-                  title="从队列移除"
-                  onClick={() => setFollowUpQueue((current) => current.filter((item) => item.id !== job.id))}
-                >
-                  <span>#{index + 1}</span>
-                  <span>{compactContextText(job.message, 48)}</span>
-                  <X size={11} />
-                </button>
-              ))}
-            </div>
-          ) : null}
-          {composerNotice ? <div className="saki-composer-notice">{composerNotice}</div> : null}
-          <div className="saki-input-toolbar">
-            <div className="saki-input-actions">
-                <button
-                  className={`icon-button mini ${listening ? "active" : ""}`}
-                  type="button"
-                  title={listening ? "停止语音输入" : "语音输入"}
-                  onClick={toggleSpeechInput}
-                >
-                  <Mic size={15} />
-                </button>
-                <button
-                  className={`icon-button mini ${annotationMode ? "active" : ""}`}
-                  type="button"
-                  title={annotationMode ? "取消注释选择" : "注释选中文本"}
-                  aria-pressed={annotationMode}
-                  disabled={loading}
-                  onClick={toggleSelectionAnnotation}
-                >
-                  <TextQuote size={15} />
-                </button>
-                <button
-                  className={`icon-button mini ${composerBusy === "image" ? "active" : ""}`}
-                  type="button"
-                  title="粘贴图片 / 选择图片"
-                  disabled={composerBusy !== null}
-                  onClick={() => void pasteImageFromClipboard()}
-                >
-                  <ImageIcon size={15} />
-                </button>
-                <button
-                  className={`icon-button mini ${composerBusy === "file" ? "active" : ""}`}
-                  type="button"
-                  title="上传文件"
-                  disabled={composerBusy !== null}
-                  onClick={() => openComposerFilePicker(attachmentInputRef.current)}
-                >
-                  <Paperclip size={15} />
-                </button>
-                <button
-                  className={`icon-button mini ${composerBusy === "screenshot" ? "active" : ""}`}
-                  type="button"
-                  title="网页截图"
-                  disabled={composerBusy !== null}
-                  onClick={() => void captureScreenAttachment()}
-                >
-                  <Camera size={15} />
-                </button>
-              </div>
-              <div className="saki-toolbar-controls">
-                {/* Mode Selector: Icon-only Chat vs Agent */}
-                <div className="saki-mode-icon-group" role="group" aria-label="对话/智能体模式切换">
-                  {canUseChat ? (
-                    <button
-                      className={`saki-mode-icon-btn ${mode === "chat" ? "active" : ""}`}
-                      type="button"
-                      title="对话模式"
-                      onClick={() => selectSakiMode("chat")}
-                    >
-                      <MessageSquare size={14} />
-                    </button>
-                  ) : null}
-                  {canUseAgent ? (
-                    <button
-                      className={`saki-mode-icon-btn ${mode === "agent" ? "active" : ""}`}
-                      type="button"
-                      title="智能体模式"
-                      onClick={() => selectSakiMode("agent")}
-                    >
-                      <Wrench size={14} />
-                    </button>
-                  ) : null}
-                </div>
-
-                {/* Permission Dropdown Selector (Active when in Agent mode, Icon Only) */}
-                {canUseAgent && mode === "agent" ? (
-                  <div className="saki-permission-selector" ref={permissionSelectorRef}>
-                    <button
-                      className="saki-permission-btn icon-only"
-                      type="button"
-                      title={`权限模式: ${sakiPermissionModeLabel(permissionMode)} (${sakiPermissionModeTitle(permissionMode)})`}
-                      onClick={() => setPermissionDropdownOpen(!permissionDropdownOpen)}
-                    >
-                      {permissionMode === "acceptEdits" ? (
-                        <CheckCircle2 size={14} className="perm-icon accept" />
-                      ) : permissionMode === "ask" ? (
-                        <Shield size={14} className="perm-icon ask" />
-                      ) : permissionMode === "plan" ? (
-                        <Eye size={14} className="perm-icon plan" />
-                      ) : (
-                        <XOctagon size={14} className="perm-icon bypass" />
-                      )}
-                      <ChevronDown size={10} className="perm-arrow" />
-                    </button>
-                  </div>
-                ) : null}
-
-                {/* Model Selector */}
-                <div className="saki-model-selector" ref={modelSelectorRef}>
-                  <button className="saki-model-btn" type="button" onClick={() => setModelDropdownOpen(!modelDropdownOpen)}>
-                    <Zap size={12} />
-                    <span className="saki-model-full-name">{currentModelName || availableModels.find(m => m.id === currentModelId)?.label || currentModelId}</span>
-                    <span className="saki-model-short-name">{(() => {
-                      const raw = currentModelName || availableModels.find(m => m.id === currentModelId)?.label || currentModelId;
-                      // Extract short name: take last segment after slash/colon, then first token before dash+version
-                      const seg = raw.split(/[/:]/).pop() || raw;
-                      return seg.split(/[-\s]/).slice(0, 2).join("-");
-                    })()}</span>
-                    <ChevronDown size={10} />
-                  </button>
-                </div>
-                {/* Send button in toolbar */}
-                {loading && draft.trim() ? (
-                  <button
-                    className="saki-steer-btn"
-                    type="button"
-                    title="插入当前任务，当前步骤后生效"
-                    onClick={() => void submit(undefined, { message: draft, steer: true })}
-                  >
-                    插入
-                  </button>
-                ) : null}
-                <button
-                  className={`primary-button send-btn ${loading && !draft.trim() ? "stop" : ""}`}
-                  type={loading && !draft.trim() ? "button" : "submit"}
-                  title={loading && draft.trim() ? "加入队列，当前任务结束后开始" : loading ? "停止生成" : "Ctrl+Enter 发送"}
-                  aria-label={loading && draft.trim() ? "加入队列" : loading ? "停止生成" : "Ctrl+Enter 发送"}
-                  disabled={!loading && !draft.trim() && attachments.length === 0}
-                  onClick={loading && !draft.trim() ? stopSakiGeneration : undefined}
-                >
-                  {loading && !draft.trim() ? <Square size={13} /> : <ArrowRight size={15} />}
-                </button>
-              </div>
-            </div>
-        </div>
-      </form>
+      <SakiComposer
+        onSubmit={submit}
+        imageInputRef={imageInputRef}
+        attachmentInputRef={attachmentInputRef}
+        onAddFiles={addFilesToComposer}
+        messagesExpanded={messagesExpanded}
+        onToggleMessagesExpanded={() => setMessagesExpanded((current) => !current)}
+        messages={messages}
+        loading={loading}
+        hasStreamingAssistant={hasStreamingAssistant}
+        artShuru={sakiArtAssets.shuru}
+        artShuruBlack={sakiArtAssets.shuruBlack}
+        thinkingGif={sakiArtAssets.thinkingGif}
+        sakiFileHoverActive={sakiFileHoverActive}
+        mentionMenuOpen={mentionMenuOpen}
+        mentionCandidates={mentionCandidates}
+        mentionIndex={mentionIndex}
+        onMentionIndexChange={setMentionIndex}
+        onApplyMention={applyMention}
+        onSyncMentionCaret={syncMentionCaret}
+        onMentionDismissedStart={setMentionDismissedStart}
+        mentionCaret={mentionCaret}
+        sakiAddMenuOpen={sakiAddMenuOpen}
+        sakiAddBtnRef={sakiAddBtnRef}
+        onToggleAddMenu={() => setSakiAddMenuOpen(!sakiAddMenuOpen)}
+        composerTextareaRef={composerTextareaRef}
+        draft={draft}
+        onDraftChange={(val) => setDraft(val)}
+        onComposerPaste={handleComposerPaste}
+        attachments={attachments}
+        onPreviewAttachment={(preview) => setPreviewingAttachment(preview)}
+        onRemoveAttachment={(attachment) =>
+          setAttachments((current) => current.filter((item) => (item.id ?? item.name) !== (attachment.id ?? attachment.name)))
+        }
+        followUpQueue={followUpQueue}
+        onRemoveFollowUp={(id) => setFollowUpQueue((current) => current.filter((item) => item.id !== id))}
+        composerNotice={composerNotice}
+        listening={listening}
+        onToggleSpeechInput={toggleSpeechInput}
+        annotationMode={annotationMode}
+        onToggleSelectionAnnotation={toggleSelectionAnnotation}
+        composerBusy={composerBusy}
+        onPasteImageFromClipboard={pasteImageFromClipboard}
+        onOpenComposerFilePicker={(input) => openComposerFilePicker(input)}
+        onCaptureScreenAttachment={captureScreenAttachment}
+        canUseChat={canUseChat}
+        canUseAgent={canUseAgent}
+        mode={mode}
+        onSelectMode={selectSakiMode}
+        permissionSelectorRef={permissionSelectorRef}
+        permissionDropdownOpen={permissionDropdownOpen}
+        onTogglePermissionDropdown={() => setPermissionDropdownOpen(!permissionDropdownOpen)}
+        permissionMode={permissionMode}
+        modelSelectorRef={modelSelectorRef}
+        modelDropdownOpen={modelDropdownOpen}
+        onToggleModelDropdown={() => setModelDropdownOpen(!modelDropdownOpen)}
+        currentModelName={currentModelName}
+        currentModelId={currentModelId}
+        availableModels={availableModels}
+        onStopSakiGeneration={stopSakiGeneration}
+        contextText={contextText}
+        auditSearchActive={Boolean(auditSearchActive)}
+        hasActiveInstance={Boolean(instance)}
+      />
     {previewingAttachment ? (
         <SakiAttachmentModal
           attachment={previewingAttachment.attachment}
@@ -4351,152 +3592,35 @@ export function SakiFloatingChat({
       ) : null}
         </SakiPathOpenContext.Provider>
     </section>
-    {sakiAddMenuOpen && sakiAddBtnRef.current ? (
-      createPortal(
-        <div
-          ref={sakiAddMenuRef}
-          className="saki-add-menu"
-          style={{
-            position: "fixed",
-            left: sakiAddBtnRef.current.getBoundingClientRect().left,
-            bottom: window.innerHeight - sakiAddBtnRef.current.getBoundingClientRect().top + 6,
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button
-            className="saki-add-menu-item"
-            type="button"
-            disabled={composerBusy !== null}
-            onClick={() => { setSakiAddMenuOpen(false); void pasteImageFromClipboard(); }}
-          >
-            <ImageIcon size={16} />
-            <span>粘贴图片</span>
-          </button>
-          <button
-            className="saki-add-menu-item"
-            type="button"
-            disabled={composerBusy !== null}
-            onClick={() => { setSakiAddMenuOpen(false); openComposerFilePicker(attachmentInputRef.current); }}
-          >
-            <Paperclip size={16} />
-            <span>上传文件</span>
-          </button>
-          <button
-            className="saki-add-menu-item"
-            type="button"
-            disabled={composerBusy !== null}
-            onClick={() => { setSakiAddMenuOpen(false); void captureScreenAttachment(); }}
-          >
-            <Camera size={16} />
-            <span>网页截图</span>
-          </button>
-        </div>,
-        document.body
-      )
-    ) : null}
-    {permissionDropdownOpen && permissionSelectorRef.current ? (
-      createPortal(
-        <div
-          ref={permissionDropdownRef}
-          className="saki-model-dropdown saki-permission-dropdown glass-panel"
-          style={{
-            position: "fixed",
-            left: permissionSelectorRef.current.getBoundingClientRect().left,
-            bottom: window.innerHeight - permissionSelectorRef.current.getBoundingClientRect().top + 8,
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="saki-dropdown-title">智能体权限模式</div>
-          {(
-            [
-              { id: "acceptEdits", label: "自动接受", desc: "自动执行安全文件编辑", icon: CheckCircle2, colorClass: "accept" },
-              { id: "ask", label: "询问确认", desc: "每次文件修改均需确认", icon: Shield, colorClass: "ask" },
-              { id: "plan", label: "仅规划", desc: "只输出执行方案，不落盘修改", icon: Eye, colorClass: "plan" },
-              { id: "bypassPermissions", label: "跳过审查", desc: "绕过所有确认全速自动执行", icon: XOctagon, colorClass: "bypass" },
-            ] as const
-          ).map((opt) => {
-            const IconComponent = opt.icon;
-            const isActive = permissionMode === opt.id;
-            return (
-              <button
-                key={opt.id}
-                className={`saki-perm-dropdown-option ${isActive ? "active" : ""}`}
-                type="button"
-                onClick={() => {
-                  setPermissionMode(opt.id);
-                  setPermissionDropdownOpen(false);
-                }}
-              >
-                <div className={`perm-opt-icon ${opt.colorClass}`}>
-                  <IconComponent size={15} />
-                </div>
-                <div className="perm-opt-text">
-                  <div className="perm-opt-label">{opt.label}</div>
-                  <div className="perm-opt-desc">{opt.desc}</div>
-                </div>
-                {isActive ? <Check size={14} className="perm-opt-check" /> : null}
-              </button>
-            );
-          })}
-        </div>,
-        document.body
-      )
-    ) : null}
-    {modelDropdownOpen && modelSelectorRef.current ? (
-      createPortal(
-        <div
-          ref={modelDropdownRef}
-          className="saki-model-dropdown"
-          style={{
-            position: "fixed",
-            left: modelSelectorRef.current.getBoundingClientRect().left,
-            bottom: window.innerHeight - modelSelectorRef.current.getBoundingClientRect().top + 8,
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-        >
-          {availableModels.map((model) => {
-            const supportsVision = sakiListedModelSupportsVision(model);
-            const multiplier = resolveSakiModelPointsMultiplier(modelPointsMultipliers, model);
-            const isEn = language === "en-US";
-            const isTw = language === "zh-TW";
-            const multiplierText =
-              multiplier === 0
-                ? isEn ? "Free" : isTw ? "免費" : "免费"
-                : formatSakiModelMultiplier(multiplier);
-            return (
-            <button
-              key={model.id}
-              className={`saki-model-option ${model.id === currentModelId ? "active" : ""}`}
-              type="button"
-              onClick={() => {
-                setModelDropdownOpen(false);
-                void selectModel(model.id);
-              }}
-            >
-              <span className="saki-model-option-name">{model.label || model.id}</span>
-              <span className="saki-model-option-meta">
-                <span
-                  className={`saki-model-multiplier ${multiplier === 0 ? "free" : multiplier !== 1 ? "custom" : ""}`}
-                  title={isEn ? "Points cost multiplier" : isTw ? "積分消耗乘區" : "积分消耗乘区"}
-                >
-                  {multiplierText}
-                </span>
-                {supportsVision ? (
-                  <span className="saki-model-vision-icon" title="支持视觉" aria-label="支持视觉">
-                    <ScanEye size={14} />
-                  </span>
-                ) : null}
-              </span>
-            </button>
-            );
-          })}
-        </div>,
-        document.body
-      )
-    ) : null}
+    <SakiChatDropdowns
+      sakiAddMenuOpen={sakiAddMenuOpen}
+      sakiAddBtnRef={sakiAddBtnRef}
+      sakiAddMenuRef={sakiAddMenuRef}
+      composerBusy={composerBusy}
+      onCloseAddMenu={() => setSakiAddMenuOpen(false)}
+      onPasteImage={() => void pasteImageFromClipboard()}
+      onUploadFile={() => openComposerFilePicker(attachmentInputRef.current)}
+      onCaptureScreen={() => void captureScreenAttachment()}
+      permissionDropdownOpen={permissionDropdownOpen}
+      permissionSelectorRef={permissionSelectorRef}
+      permissionDropdownRef={permissionDropdownRef}
+      permissionMode={permissionMode}
+      onSelectPermissionMode={(nextMode) => {
+        setPermissionMode(nextMode);
+        setPermissionDropdownOpen(false);
+      }}
+      modelDropdownOpen={modelDropdownOpen}
+      modelSelectorRef={modelSelectorRef}
+      modelDropdownRef={modelDropdownRef}
+      availableModels={availableModels}
+      currentModelId={currentModelId}
+      modelPointsMultipliers={modelPointsMultipliers}
+      language={language}
+      onSelectModel={(modelId) => {
+        setModelDropdownOpen(false);
+        void selectModel(modelId);
+      }}
+    />
     </>
   );
 }

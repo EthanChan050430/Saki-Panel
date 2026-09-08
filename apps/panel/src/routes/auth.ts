@@ -11,6 +11,20 @@ const loginFailures = new Map<string, { count: number; blockedUntil?: number; fi
 const maxLoginFailures = 5;
 const loginWindowMs = 10 * 60 * 1000;
 const loginBlockMs = 10 * 60 * 1000;
+const maxLoginFailureEntries = 10000;
+
+function pruneLoginFailures(now = Date.now()): void {
+  for (const [key, state] of loginFailures.entries()) {
+    const expired = (!state.blockedUntil || state.blockedUntil <= now) && (now - state.firstFailureAt > loginWindowMs);
+    if (expired) {
+      loginFailures.delete(key);
+    }
+  }
+}
+
+const cleanupTimer = setInterval(() => pruneLoginFailures(), 5 * 60 * 1000);
+cleanupTimer.unref();
+
 const registrationRoleNames: Record<RegistrationIdentity, string[]> = {
   none: [],
   user: ["user"],
@@ -29,6 +43,13 @@ function loginIsBlocked(key: string): boolean {
 
 function recordLoginFailure(key: string): void {
   const now = Date.now();
+  if (loginFailures.size > maxLoginFailureEntries) {
+    pruneLoginFailures(now);
+    if (loginFailures.size > maxLoginFailureEntries) {
+      const keysToDelete = Array.from(loginFailures.keys()).slice(0, 1000);
+      for (const k of keysToDelete) loginFailures.delete(k);
+    }
+  }
   const current = loginFailures.get(key);
   const state =
     current && now - current.firstFailureAt <= loginWindowMs
