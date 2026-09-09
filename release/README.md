@@ -1,4 +1,4 @@
-# Saki Panel v3.2.0 Release
+# Saki Panel v3.3.0 Release
 
 🌸 **Saki Panel** - The First AI-Powered Server Management Panel
 
@@ -7,14 +7,14 @@
 ### 方式一：原生可执行文件（推荐，开箱即用）
 
 #### Windows 用户
-解压 `saki-panel-v3.2-windows-x64.zip`，直接双击运行：
+解压 `saki-panel-v3.3-windows-x64.zip`，直接双击运行：
 ```bash
 saki-panel.exe
 ```
 内置独立运行时与静态服务，无需额外安装或配置任何环境，双击即可直接启动全部服务。
 
 #### Linux 用户
-解压 `saki-panel-v3.2-linux-x64.tar.gz`，赋予权限并运行：
+解压 `saki-panel-v3.3-linux-x64.tar.gz`，赋予权限并运行：
 ```bash
 chmod +x saki-panel
 ./saki-panel
