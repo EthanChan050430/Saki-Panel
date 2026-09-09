@@ -1256,7 +1256,7 @@
 }
 
 @media (max-width: 600px) {
-  /* ================= 超窄屏（≤600px）顶栏：精致统一玻璃胶囊微调 ================= */
+  /* 超窄屏（≤600px）顶栏 */
   .topbar {
     height: 42px !important;
     padding: 0 6px 0 6px !important;
@@ -1683,7 +1683,7 @@
   background: rgba(255, 255, 255, 0.2);
 }
 
-/* Desktop: inline + add button — no background, no border, always top-left */
+/* Desktop: inline + add button */
 .saki-input-leading {
   position: relative;
   display: inline-flex;
@@ -2106,7 +2106,6 @@
   box-shadow: 0 4px 12px rgba(255, 117, 172, 0.14);
 }
 
-/* 附件移除按钮：背景与边框全透明，仅保留图标，悬停保持透明 */
 .saki-attachment-remove-btn,
 .saki-attachment-chip .saki-attachment-remove-btn,
 .saki-input-container .saki-attachment-chip .saki-attachment-remove-btn,
@@ -2607,7 +2606,7 @@
     height: 102px;
   }
 
-  .saki-panel {
+  .saki-panel:not(.fullscreen) {
     right: 10px;
     bottom: 10px;
     width: calc(100vw - 20px);
@@ -2757,6 +2756,12 @@
 
 .operation-row:hover {
   background: rgba(255, 255, 255, 0.5);
+}
+
+.recent-instance-row {
+  transition:
+    background var(--duration-fast) var(--ease-smooth),
+    transform var(--duration-fast) var(--ease-out-expo);
 }
 
 tbody tr {
@@ -3443,11 +3448,32 @@ tbody tr:hover {
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
+.saki-assistant-message-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-3px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
 .saki-message-user:hover .saki-user-message-actions,
-.saki-user-message-wrapper:focus-within .saki-user-message-actions {
+.saki-user-message-wrapper:focus-within .saki-user-message-actions,
+.saki-message-assistant:hover .saki-assistant-message-actions,
+.saki-message-assistant:focus-within .saki-assistant-message-actions {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
+}
+
+@media (hover: none) {
+  .saki-assistant-message-actions {
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
 }
 
 .saki-user-action-btn {
@@ -3477,10 +3503,17 @@ tbody tr:hover {
   transform: translateY(-1px);
 }
 
-.saki-user-action-btn.rollback-btn:hover:not(:disabled) {
+.saki-user-action-btn.rollback-btn:hover:not(:disabled),
+.saki-user-action-btn.delete-btn:hover:not(:disabled) {
   color: #e11d48;
   border-color: rgba(225, 29, 72, 0.25);
   background: #fff1f2;
+}
+
+.saki-user-action-btn.retry-btn:hover:not(:disabled) {
+  color: #2563eb;
+  border-color: rgba(37, 99, 235, 0.25);
+  background: #eff6ff;
 }
 
 .saki-user-action-btn:disabled {
@@ -3502,10 +3535,17 @@ tbody tr:hover {
   border-color: rgba(255, 255, 255, 0.25);
 }
 
-[data-theme="dark"] .saki-user-action-btn.rollback-btn:hover:not(:disabled) {
+[data-theme="dark"] .saki-user-action-btn.rollback-btn:hover:not(:disabled),
+[data-theme="dark"] .saki-user-action-btn.delete-btn:hover:not(:disabled) {
   color: #fb7185;
   border-color: rgba(244, 63, 94, 0.35);
   background: rgba(244, 63, 94, 0.18);
+}
+
+[data-theme="dark"] .saki-user-action-btn.retry-btn:hover:not(:disabled) {
+  color: #93c5fd;
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(37, 99, 235, 0.2);
 }
 
 /* Failed / No-Response Assistant Message */

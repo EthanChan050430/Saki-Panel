@@ -94,20 +94,35 @@ export async function registerWatchRoutes(app: FastifyInstance): Promise<void> {
   setIncidentVisibilityResolver((userId) => visibleInstanceIds(userId));
 
   app.get("/api/incidents", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
-    const ids = await visibleInstanceIds(request.user.sub);
-    const incidents = ids.length ? await listIncidents(ids, 50) : [];
-    return {
-      incidents,
-      openCount: await countOpenIncidents(ids)
-    };
+    try {
+      const ids = await visibleInstanceIds(request.user.sub);
+      const incidents = ids.length ? await listIncidents(ids, 50) : [];
+      const openCount = ids.length ? await countOpenIncidents(ids) : 0;
+      return {
+        incidents,
+        openCount
+      };
+    } catch (error) {
+      request.log.error(error, "Failed to load incidents");
+      return {
+        incidents: [],
+        openCount: 0
+      };
+    }
   });
 
   app.get("/api/incidents/stream", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request, reply) => {
-    const ids = await visibleInstanceIds(request.user.sub);
-    const stream = startIncidentEventStream(request, reply, ids);
-    stream.send("counts", { openCount: await countOpenIncidents(ids) });
-    const incidents = ids.length ? await listIncidents(ids, 20) : [];
-    stream.send("snapshot", { incidents, openCount: await countOpenIncidents(ids) });
+    try {
+      const ids = await visibleInstanceIds(request.user.sub);
+      const stream = startIncidentEventStream(request, reply, ids);
+      const openCount = ids.length ? await countOpenIncidents(ids) : 0;
+      stream.send("counts", { openCount });
+      const incidents = ids.length ? await listIncidents(ids, 20) : [];
+      stream.send("snapshot", { incidents, openCount });
+    } catch (error) {
+      request.log.error(error, "Failed to start incident event stream");
+      reply.code(500).send({ message: "Failed to start incident stream" });
+    }
   });
 
   app.get("/api/incidents/:id", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request, reply) => {

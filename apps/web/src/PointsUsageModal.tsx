@@ -125,7 +125,7 @@ export function PointsUsageModal({
         {error ? <div className="form-error" style={{ margin: "0 24px 16px" }}>{error}</div> : null}
 
         <div className="points-modal-body">
-          {/* 3 张概览卡片 */}
+          {/* 概览卡片 */}
           <div className="points-stats-grid">
             <div className="points-stat-card">
               <div className="points-stat-icon-wrap points-icon-amber">

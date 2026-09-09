@@ -1,4 +1,4 @@
-export const PANEL_VERSION = "3.2.0";
+export const PANEL_VERSION = "3.3";
 
 export const noRolePermissionRoleName = "__no_role__";
 
@@ -200,10 +200,12 @@ export interface PanelAppearanceSettings {
   appLogoSrc: string;
   sidebarLogoSrc: string;
   loginCoverSrc: string;
+  defaultAvatarSrc: string;
   backgroundSrc: string;
   mobileBackgroundSrc: string;
   darkBackgroundSrc: string;
   mobileDarkBackgroundSrc: string;
+  showServerTime?: boolean;
 }
 
 export interface NodeMetricSnapshot {
@@ -852,6 +854,23 @@ export interface SaveTemplateFromInstanceRequest {
   /** override stop command (defaults to instance.stopCommand) */
   stopCommand?: string | null;
   workingDirectoryPrefix?: string;
+}
+
+export interface CreateCustomTemplateRequest {
+  name: string;
+  description?: string;
+  type?: InstanceType;
+  defaultStartCommand?: string;
+  defaultStopCommand?: string | null;
+  defaultWorkingDirectoryPrefix?: string;
+  ports?: Array<{ port: number; description: string }>;
+  envs?: Array<{ key: string; value: string }>;
+  autoStart?: boolean;
+  restartPolicy?: RestartPolicy;
+  restartMaxRetries?: number;
+  runAsUser?: string | null;
+  memoryLimit?: number | null;
+  cpuLimit?: number | null;
 }
 
 export interface UpdateTemplateRequest {

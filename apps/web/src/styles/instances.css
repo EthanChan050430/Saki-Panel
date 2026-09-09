@@ -577,7 +577,6 @@
   100% { transform: scale(1.25) translateY(0); }
 }
 
-/* ALL action icon circles are completely transparent with NO background or border */
 .quick-action-square-btn .action-icon-circle {
   width: 32px;
   height: 32px;

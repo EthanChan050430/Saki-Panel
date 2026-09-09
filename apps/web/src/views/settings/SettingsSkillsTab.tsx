@@ -12,6 +12,7 @@ import {
   PowerOff,
   Search,
   Save,
+  Sparkles,
   Trash2,
   X
 } from "lucide-react";
@@ -449,13 +450,29 @@ export const SettingsSkillsTab = memo(function SettingsSkillsTab({
                   placeholder="# Skill instructions"
                 />
               </label>
-              <label className="saki-skill-form-field saki-skill-form-checkbox">
-                <input
-                  type="checkbox"
-                  checked={skillDraft.enabled}
-                  onChange={(event) => setSkillDraft((current) => ({ ...current, enabled: event.target.checked }))}
-                />
-                <span>Enabled</span>
+              <label className={`saki-skill-form-field saki-skill-form-checkbox saki-skill-detail-checkbox ${skillDraft.enabled ? "is-enabled" : ""}`}>
+                <div className="saki-skill-checkbox-meta">
+                  <div className="saki-skill-checkbox-title-row">
+                    <Sparkles size={15} className="saki-skill-checkbox-icon" />
+                    <strong className="saki-skill-checkbox-title">启用此 Skill</strong>
+                    <span className={`saki-skill-status-tag ${skillDraft.enabled ? "enabled" : "disabled"}`}>
+                      {skillDraft.enabled ? "创建后立即生效" : "默认处于禁用状态"}
+                    </span>
+                  </div>
+                  <span className="saki-skill-checkbox-desc">
+                    {skillDraft.enabled
+                      ? "创建成功后即刻加入 Saki 可用技能池，并在任务与对话中按需调度"
+                      : "暂不载入执行环境，后续可在右侧详情面板随时手动开启"}
+                  </span>
+                </div>
+                <div className="saki-skill-custom-switch">
+                  <input
+                    type="checkbox"
+                    checked={skillDraft.enabled}
+                    onChange={(event) => setSkillDraft((current) => ({ ...current, enabled: event.target.checked }))}
+                  />
+                  <span className="saki-skill-switch-slider" />
+                </div>
               </label>
             </div>
             <div className="saki-skill-form-actions">
@@ -689,13 +706,29 @@ export const SettingsSkillsTab = memo(function SettingsSkillsTab({
                   />
                 </label>
 
-                <label className="saki-skill-detail-field saki-skill-detail-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={skillEditDraft.enabled}
-                    onChange={(event) => setSkillEditDraft((current) => ({ ...current, enabled: event.target.checked }))}
-                  />
-                  <span>Enabled</span>
+                <label className={`saki-skill-detail-field saki-skill-detail-checkbox ${skillEditDraft.enabled ? "is-enabled" : ""}`}>
+                  <div className="saki-skill-checkbox-meta">
+                    <div className="saki-skill-checkbox-title-row">
+                      <Sparkles size={15} className="saki-skill-checkbox-icon" />
+                      <strong className="saki-skill-checkbox-title">启用此 Skill</strong>
+                      <span className={`saki-skill-status-tag ${skillEditDraft.enabled ? "enabled" : "disabled"}`}>
+                        {skillEditDraft.enabled ? "活跃生效中" : "已禁用"}
+                      </span>
+                    </div>
+                    <span className="saki-skill-checkbox-desc">
+                      {skillEditDraft.enabled
+                        ? "Saki 将在对话、代码分析与自动化任务执行中自动识别并调用此 Skill"
+                        : "已暂停生效，Saki 不会加载或运行此 Skill 的指示与扩展能力"}
+                    </span>
+                  </div>
+                  <div className="saki-skill-custom-switch">
+                    <input
+                      type="checkbox"
+                      checked={skillEditDraft.enabled}
+                      onChange={(event) => setSkillEditDraft((current) => ({ ...current, enabled: event.target.checked }))}
+                    />
+                    <span className="saki-skill-switch-slider" />
+                  </div>
                 </label>
               </div>
 

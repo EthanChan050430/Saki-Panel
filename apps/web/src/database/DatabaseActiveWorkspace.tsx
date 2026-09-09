@@ -308,7 +308,7 @@ export function DatabaseActiveWorkspace({
 
       {/* RIGHT: Master Sidebar Cards Column */}
       <aside className="instance-sidebar-col database-sidebar-col">
-        {/* Card 1: 数据库概览 */}
+        {/* 数据库概览 */}
         <div className="glass-panel instance-side-card instance-summary-card">
           <div className="instance-summary-header">
             <div className="summary-title-row">
@@ -374,7 +374,7 @@ export function DatabaseActiveWorkspace({
           </div>
         </div>
 
-        {/* Card 2: 快捷操作九宫格 */}
+        {/* 快捷操作九宫格 */}
         <div className="glass-panel instance-side-card instance-actions-panel-card">
           <div className="quick-actions-square-grid">
             <button
@@ -491,7 +491,7 @@ export function DatabaseActiveWorkspace({
           </div>
         </div>
 
-        {/* Card 3: 实时探针与健康监控 */}
+        {/* 实时探针与健康监控 */}
         <DatabaseProbeCard token={token} database={database} />
       </aside>
 

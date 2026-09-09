@@ -942,14 +942,16 @@ export const defaultPanelAppearance: PanelAppearanceSettings = {
   appLogoSrc: "/assets/saki-panel-icon.webp",
   sidebarLogoSrc: "/assets/saki-panel-icon.webp",
   loginCoverSrc: "/assets/cover.webp",
+  defaultAvatarSrc: "/assets/head.webp",
   backgroundSrc: "/assets/background.webp",
   mobileBackgroundSrc: "/assets/background_mobile.webp",
   darkBackgroundSrc: "/assets/background_dark.webp",
-  mobileDarkBackgroundSrc: "/assets/background_mobile_dark.webp"
+  mobileDarkBackgroundSrc: "/assets/background_mobile_dark.webp",
+  showServerTime: true
 };
 
 export const maxAppearanceTextChars = 120;
-export const maxAppearanceImageSrcChars = 15_000_000;
+export const maxAppearanceImageSrcChars = 50_000_000;
 export const maxAppearanceMediaSrcChars = 100_000_000;
 export const maxSakiInputAttachments = 6;
 export const maxSakiAttachmentTextChars = 18000;
@@ -1278,17 +1280,18 @@ export function sanitizeAppearanceMediaSrc(value: unknown, fallback: string, all
   if (value === undefined) return fallback;
   const source = trimString(value);
   if (!source) return fallback;
+  const cleanSource = source.replace(/\s+/g, "");
   const maxLimit = allowVideo ? maxAppearanceMediaSrcChars : maxAppearanceImageSrcChars;
-  if (source.length > maxLimit) {
+  if (cleanSource.length > maxLimit) {
     throw new RouteError(allowVideo ? "Appearance media is too large." : "Appearance image is too large.", 400);
   }
   if (
-    /^https?:\/\//i.test(source) ||
-    (source.startsWith("/") && !source.startsWith("//")) ||
-    /^data:image\/(?:png|jpe?g|webp|gif);base64,[a-z0-9+/=]+$/i.test(source) ||
-    (allowVideo && /^data:video\/(?:mp4|webm|ogg|quicktime);base64,[a-z0-9+/=]+$/i.test(source))
+    /^https?:\/\//i.test(cleanSource) ||
+    (cleanSource.startsWith("/") && !cleanSource.startsWith("//")) ||
+    /^data:image\/(?:png|jpe?g|webp|gif|svg\+xml|x-icon|vnd\.microsoft\.icon|bmp|avif);base64,[a-z0-9+/=]+$/i.test(cleanSource) ||
+    (allowVideo && /^data:video\/(?:mp4|webm|ogg|quicktime);base64,[a-z0-9+/=]+$/i.test(cleanSource))
   ) {
-    return source;
+    return cleanSource;
   }
   throw new RouteError(
     allowVideo
@@ -1321,6 +1324,9 @@ export function sanitizePanelAppearance(
     appLogoSrc: migrateBundledAssetSrc(sanitizeAppearanceImageSrc(item.appLogoSrc, fallback.appLogoSrc)),
     sidebarLogoSrc: migrateBundledAssetSrc(sanitizeAppearanceImageSrc(item.sidebarLogoSrc, fallback.sidebarLogoSrc)),
     loginCoverSrc: migrateBundledAssetSrc(sanitizeAppearanceImageSrc(item.loginCoverSrc, fallback.loginCoverSrc)),
+    defaultAvatarSrc: migrateBundledAssetSrc(
+      sanitizeAppearanceImageSrc(item.defaultAvatarSrc, fallback.defaultAvatarSrc || defaultPanelAppearance.defaultAvatarSrc)
+    ),
     backgroundSrc: migrateBundledAssetSrc(sanitizeAppearanceMediaSrc(item.backgroundSrc, fallback.backgroundSrc, true)),
     mobileBackgroundSrc: migrateBundledAssetSrc(
       sanitizeAppearanceMediaSrc(item.mobileBackgroundSrc, fallback.mobileBackgroundSrc, true)
@@ -1328,7 +1334,8 @@ export function sanitizePanelAppearance(
     darkBackgroundSrc: migrateBundledAssetSrc(sanitizeAppearanceMediaSrc(item.darkBackgroundSrc, fallback.darkBackgroundSrc, true)),
     mobileDarkBackgroundSrc: migrateBundledAssetSrc(
       sanitizeAppearanceMediaSrc(item.mobileDarkBackgroundSrc, fallback.mobileDarkBackgroundSrc, true)
-    )
+    ),
+    showServerTime: typeof item.showServerTime === "boolean" ? item.showServerTime : fallback.showServerTime ?? true
   };
 }
 

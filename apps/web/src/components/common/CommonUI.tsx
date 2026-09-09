@@ -3,6 +3,8 @@ import {
   Activity,
   AlertTriangle,
   Bug,
+  CheckCircle2,
+  Maximize2,
   RefreshCw,
   Square,
   Terminal as TerminalIcon,
@@ -30,22 +32,36 @@ function MetricTile({
   icon,
   label,
   value,
-  tone
+  tone,
+  onClick
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
   tone: "teal" | "amber" | "blue" | "gray";
+  onClick?: () => void;
 }) {
-  return (
-    <div className={`metric-tile metric-${tone}`}>
+  const className = `metric-tile metric-${tone}${onClick ? " is-clickable" : ""}`;
+  const body = (
+    <>
       <div className="metric-icon">{icon}</div>
       <div>
         <span>{label}</span>
         <strong>{value}</strong>
       </div>
-    </div>
+      {onClick ? <Maximize2 className="metric-tile-expand" size={14} aria-hidden="true" /> : null}
+    </>
   );
+
+  if (onClick) {
+    return (
+      <button className={className} type="button" onClick={onClick} title={`查看${label}详情`}>
+        {body}
+      </button>
+    );
+  }
+
+  return <div className={className}>{body}</div>;
 }
 
 function NodeStatusPill({ status }: { status: ManagedNode["status"] }) {
@@ -305,6 +321,53 @@ function PageErrorToast({
   );
 }
 
+function PageNoticeToast({
+  notice,
+  onDismiss,
+  autoDismissMs = 4000
+}: {
+  notice: string | null | undefined;
+  onDismiss?: () => void;
+  autoDismissMs?: number;
+}) {
+  const [hovered, setHovered] = useState(false);
+
+  useEffect(() => {
+    if (!notice || !onDismiss || autoDismissMs <= 0 || hovered) return;
+    const timer = window.setTimeout(() => {
+      onDismiss();
+    }, autoDismissMs);
+    return () => window.clearTimeout(timer);
+  }, [notice, onDismiss, autoDismissMs, hovered]);
+
+  if (!notice) return null;
+
+  return (
+    <div
+      className="page-notice-toast"
+      role="status"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <div className="page-notice-icon" aria-hidden="true">
+        <CheckCircle2 size={16} />
+      </div>
+      <span className="page-notice-text">{notice}</span>
+      {onDismiss ? (
+        <button
+          type="button"
+          className="page-notice-close"
+          onClick={onDismiss}
+          title="关闭提示"
+          aria-label="关闭提示"
+        >
+          <X size={14} />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function AccessEmptyView({ user, onOpenAccount }: { user: CurrentUser; onOpenAccount: () => void }) {
   const hasNoPermissions = user.permissions.length === 0;
   const roleLabel = roleNamesDisplay(user.roleNames);
@@ -386,5 +449,6 @@ export {
   compactCommand,
   compactPathLabel,
   PageErrorToast,
+  PageNoticeToast,
   AccessEmptyView
 };

@@ -254,6 +254,16 @@ export function hasSakiInstanceFileDragData(dataTransfer: DataTransfer): boolean
   return Array.from(dataTransfer.types).includes(sakiInstanceFileDragMime);
 }
 
+export function hasNativeFileDragData(dataTransfer: DataTransfer | null): boolean {
+  if (!dataTransfer) return false;
+  return Array.from(dataTransfer.types).includes("Files");
+}
+
+export function hasAnyFileDragData(dataTransfer: DataTransfer | null): boolean {
+  if (!dataTransfer) return false;
+  return hasSakiInstanceFileDragData(dataTransfer) || hasNativeFileDragData(dataTransfer);
+}
+
 export function parseSakiInstanceFileDragPayload(dataTransfer: DataTransfer): SakiInstanceFileDragPayload | null {
   try {
     const raw = dataTransfer.getData(sakiInstanceFileDragMime);

@@ -2902,7 +2902,7 @@ export function FileManager({
               </div>
 
               <div className="mt-sheet-actions-grid">
-                {/* MT Core Feature 1: 复制到另一侧窗口 */}
+                {/* 复制到另一侧窗口 */}
                 <button
                   className="mt-action-grid-btn highlight"
                   type="button"
@@ -2916,7 +2916,7 @@ export function FileManager({
                   <span>复制到{activePane === "left" ? "右侧" : "左侧"}</span>
                 </button>
 
-                {/* MT Core Feature 2: 移动到另一侧窗口 */}
+                {/* 移动到另一侧窗口 */}
                 <button
                   className="mt-action-grid-btn highlight"
                   type="button"

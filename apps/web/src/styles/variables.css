@@ -547,11 +547,13 @@ button:disabled {
   padding: 10px 14px;
 }
 
-.page-notice {
+/* Inline account feedback fallback */
+.page-notice.account-feedback {
   padding: 12px 16px;
   border-color: rgba(52, 199, 89, 0.25);
   color: #248a3d;
   background: rgba(52, 199, 89, 0.1);
+  border-radius: 14px;
 }
 
 /* Elegant floating top-right toast popup for .page-error */
@@ -605,4 +607,108 @@ button:disabled {
   border-radius: 50%;
   background: rgba(239, 68, 68, 0.12);
   color: #ef4444;
+}
+
+/* Elegant floating top-right toast popup for .page-notice / .page-notice-toast */
+.page-notice-toast,
+.page-notice:not(.account-feedback) {
+  position: fixed !important;
+  top: 24px;
+  right: 24px;
+  z-index: 9999;
+  max-width: min(440px, calc(100vw - 48px));
+  min-width: 280px;
+  display: flex !important;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  margin: 0 !important;
+  border-radius: 16px;
+  font-size: 13px;
+  line-height: 1.45;
+  font-weight: 600;
+  color: #065f46;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  border: 1px solid rgba(16, 185, 129, 0.32);
+  box-shadow:
+    0 16px 36px rgba(16, 185, 129, 0.14),
+    0 4px 14px rgba(0, 0, 0, 0.05),
+    inset 0 1px 1px rgba(255, 255, 255, 0.95);
+  animation: page-error-slide-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  pointer-events: auto;
+  word-break: break-word;
+  user-select: text;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease, top 0.25s ease;
+}
+
+.page-notice-toast:hover,
+.page-notice:not(.account-feedback):hover {
+  box-shadow:
+    0 20px 44px rgba(16, 185, 129, 0.2),
+    0 6px 18px rgba(0, 0, 0, 0.08),
+    inset 0 1px 1px rgba(255, 255, 255, 1);
+  transform: translateY(-1px);
+}
+
+.page-notice-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(16, 185, 129, 0.14);
+  color: #10b981;
+}
+
+.page-notice-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.page-notice-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.page-notice-close:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #1e293b;
+}
+
+/* Stacking when both error toast and notice toast are visible */
+.page-error ~ .page-notice-toast,
+.page-error ~ .page-notice:not(.account-feedback) {
+  top: 84px !important;
+}
+
+@media (max-width: 720px) {
+  .page-notice-toast,
+  .page-notice:not(.account-feedback) {
+    top: 14px;
+    right: 12px;
+    left: 12px;
+    max-width: calc(100vw - 24px);
+    min-width: 0;
+    width: auto;
+  }
+
+  .page-error ~ .page-notice-toast,
+  .page-error ~ .page-notice:not(.account-feedback) {
+    top: 74px !important;
+  }
 }

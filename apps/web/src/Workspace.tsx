@@ -94,6 +94,7 @@ import type {
   ViewMode
 } from "./types/app.js";
 import { api, ApiError } from "./api.js";
+import { touchRecentInstance } from "./utils/recentInstances.js";
 import {
   panelLanguageOptions,
   type PanelLanguage,
@@ -106,6 +107,7 @@ import { AccountAvatar } from "./components/common/AccountAvatar.js";
 import { UserAccountModal } from "./components/common/UserAccountModal.js";
 import { AccessEmptyView } from "./components/common/CommonUI.js";
 import { PointsUsageModal } from "./PointsUsageModal.js";
+import { TopbarServerTimeBadge, ServerTimeModal } from "./components/common/ServerTimeModal.js";
 import { SakiFloatingChat } from "./components/saki/SakiFloatingChat.js";
 import { type SakiPullDragRequest } from "./components/saki/SakiComponents.js";
 import { coerceSakiMode } from "./components/saki/sakiChatHelpers.js";
@@ -159,6 +161,8 @@ export function Workspace({
   const [sakiOpenFileRequest, setSakiOpenFileRequest] = useState<SakiOpenFileRequest | null>(null);
   const [sakiSeed, setSakiSeed] = useState<SakiPromptSeed | null>(null);
   const [sakiFileDragActive, setSakiFileDragActive] = useState(false);
+  const [fileManagerOpen, setFileManagerOpen] = useState(false);
+  const globalFileDragDepthRef = useRef(0);
   const [sakiFileDropRequest, setSakiFileDropRequest] = useState<SakiInstanceFileDropRequest | null>(null);
   const [sakiCurrentModelId, setSakiCurrentModelId] = useState<string>("");
   const [sakiCurrentModelName, setSakiCurrentModelName] = useState<string>("");
@@ -175,6 +179,7 @@ export function Workspace({
   });
   const [sakiWakeCount, setSakiWakeCount] = useState(0);
   const [pointsUsageOpen, setPointsUsageOpen] = useState(false);
+  const [serverTimeModalOpen, setServerTimeModalOpen] = useState(false);
   const [sakiLauncherDragging, setSakiLauncherDragging] = useState(false);
   const [sakiPullDrag, setSakiPullDrag] = useState<SakiPullDragRequest | null>(null);
   const [sakiLieHolding, setSakiLieHolding] = useState(false);
@@ -392,21 +397,102 @@ export function Workspace({
   useEffect(() => {
     if (activeView !== "instances") {
       setSakiInstance(null);
-      setSakiFileDragActive(false);
+      setFileManagerOpen(false);
     }
   }, [activeView]);
 
   useEffect(() => {
-    function clearSakiFileDrag() {
+    if (selectedInstanceId) touchRecentInstance(selectedInstanceId);
+  }, [selectedInstanceId]);
+
+  useEffect(() => {
+    if (!canUseSaki || sakiLieMode || fileManagerOpen) {
+      globalFileDragDepthRef.current = 0;
+      setSakiFileDragActive(false);
+      return;
+    }
+
+    function hasFiles(event: DragEvent): boolean {
+      const types = event.dataTransfer?.types;
+      if (!types) return false;
+      return Array.from(types).includes("Files");
+    }
+
+    function isInsideFileManager(event: DragEvent): boolean {
+      if (fileManagerOpen) return true;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest?.(".file-manager, .file-manager-fullscreen-modal")) return true;
+      if (typeof document !== "undefined" && document.querySelector(".file-manager, .file-manager-fullscreen-modal")) {
+        return true;
+      }
+      return false;
+    }
+
+    function handleWindowDragEnter(event: DragEvent) {
+      if (!hasFiles(event)) return;
+      if (isInsideFileManager(event)) {
+        globalFileDragDepthRef.current = 0;
+        setSakiFileDragActive(false);
+        return;
+      }
+      globalFileDragDepthRef.current += 1;
+      setSakiFileDragActive(true);
+    }
+
+    function handleWindowDragOver(event: DragEvent) {
+      if (!hasFiles(event)) return;
+      if (isInsideFileManager(event)) return;
+
+      event.preventDefault();
+      if (event.dataTransfer) {
+        const target = event.target as HTMLElement | null;
+        if (target?.closest?.(".saki-launcher, .saki-panel")) {
+          event.dataTransfer.dropEffect = "copy";
+        } else {
+          event.dataTransfer.dropEffect = "none";
+        }
+      }
+    }
+
+    function handleWindowDragLeave(event: DragEvent) {
+      if (!hasFiles(event)) return;
+      globalFileDragDepthRef.current = Math.max(0, globalFileDragDepthRef.current - 1);
+      if (globalFileDragDepthRef.current === 0) {
+        setSakiFileDragActive(false);
+      }
+    }
+
+    function handleWindowDrop(event: DragEvent) {
+      globalFileDragDepthRef.current = 0;
+      setSakiFileDragActive(false);
+      if (!hasFiles(event)) return;
+      if (isInsideFileManager(event)) return;
+
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest?.(".saki-launcher, .saki-panel, input, textarea")) {
+        event.preventDefault();
+      }
+    }
+
+    function handleWindowDragEnd() {
+      globalFileDragDepthRef.current = 0;
       setSakiFileDragActive(false);
     }
-    window.addEventListener("dragend", clearSakiFileDrag);
-    window.addEventListener("drop", clearSakiFileDrag);
+
+    window.addEventListener("dragenter", handleWindowDragEnter);
+    window.addEventListener("dragover", handleWindowDragOver);
+    window.addEventListener("dragleave", handleWindowDragLeave);
+    window.addEventListener("drop", handleWindowDrop);
+    window.addEventListener("dragend", handleWindowDragEnd);
+
     return () => {
-      window.removeEventListener("dragend", clearSakiFileDrag);
-      window.removeEventListener("drop", clearSakiFileDrag);
+      window.removeEventListener("dragenter", handleWindowDragEnter);
+      window.removeEventListener("dragover", handleWindowDragOver);
+      window.removeEventListener("dragleave", handleWindowDragLeave);
+      window.removeEventListener("drop", handleWindowDrop);
+      window.removeEventListener("dragend", handleWindowDragEnd);
     };
-  }, []);
+  }, [canUseSaki, sakiLieMode, fileManagerOpen]);
 
   const hideSidebar = useCallback(() => {
     const activeElement = document.activeElement;
@@ -525,13 +611,18 @@ export function Workspace({
     [openSaki, selectView, token]
   );
 
+  const effectiveSidebarLogo =
+    appearance.sidebarLogoSrc && appearance.sidebarLogoSrc !== defaultPanelAppearance.sidebarLogoSrc
+      ? appearance.sidebarLogoSrc
+      : (appearance.appLogoSrc || defaultPanelAppearance.sidebarLogoSrc);
+
   return (
     <>
       <div className={`app-shell ${sidebarHidden ? "sidebar-hidden" : ""}`}>
         <aside id="workspace-sidebar" ref={sidebarRef} className="sidebar glass-sidebar" inert={sidebarHidden || undefined}>
           <div className="sidebar-brand">
             <div className="sidebar-logo">
-              <img className="app-logo-img sidebar-app-logo" src={appearance.sidebarLogoSrc || appearance.appLogoSrc} alt="" draggable={false} />
+              <img className="app-logo-img sidebar-app-logo" src={effectiveSidebarLogo} alt="" draggable={false} />
               <span>{appearance.sidebarTitle || appearance.appTitle}</span>
             </div>
             <div className="sidebar-brand-actions">
@@ -681,6 +772,9 @@ export function Workspace({
                 </h1>
               </div>
               <div className="topbar-actions">
+                {hasAnyAccessibleView && appearance.showServerTime !== false ? (
+                  <TopbarServerTimeBadge onOpenModal={() => setServerTimeModalOpen(true)} />
+                ) : null}
                 {canUseSaki ? (
                   <AgentMonitorBell
                     token={token}
@@ -782,6 +876,11 @@ export function Workspace({
               refreshTick={refreshTick}
               canViewNodes={canViewNodes}
               canTestNodes={canTestNodes}
+              canViewInstances={canOpenInstances}
+              onOpenInstance={(instanceId) => {
+                setSelectedInstanceId(instanceId);
+                selectView("instances", instanceId);
+              }}
             />
           ) : effectiveView === "instances" ? (
             <InstancesView
@@ -799,6 +898,7 @@ export function Workspace({
               onSelectInstance={setSelectedInstanceId}
               openFileRequest={sakiOpenFileRequest}
               onOpenFileRequestConsumed={() => setSakiOpenFileRequest(null)}
+              onFileManagerOpenChange={setFileManagerOpen}
             />
           ) : effectiveView === "nodes" ? (
             <NodesView token={token} onLogout={onLogout} refreshTick={refreshTick} />
@@ -848,6 +948,7 @@ export function Workspace({
           seed={sakiSeed}
           panelContext={panelContext}
           fileDragActive={sakiFileDragActive}
+          onClearFileDrag={() => setSakiFileDragActive(false)}
           instanceFileDropRequest={sakiFileDropRequest}
           canUseChat={canUseSakiChat}
           canUseAgent={canUseSakiAgent}
@@ -890,6 +991,11 @@ export function Workspace({
         open={pointsUsageOpen}
         onClose={() => setPointsUsageOpen(false)}
         darkMode={darkMode}
+      />
+      <ServerTimeModal
+        open={serverTimeModalOpen}
+        onClose={() => setServerTimeModalOpen(false)}
+        onOpenSettings={() => selectView("settings")}
       />
     </>
   );

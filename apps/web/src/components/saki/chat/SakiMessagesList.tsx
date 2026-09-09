@@ -4,7 +4,9 @@ import {
   Check,
   Copy,
   CornerUpLeft,
-  Loader2
+  Loader2,
+  RotateCw,
+  Trash2
 } from "lucide-react";
 import { MarkdownContent } from "../../common/MarkdownContent.js";
 import type { SakiAgentAction, SakiInputAttachment } from "@webops/shared";
@@ -15,6 +17,7 @@ import {
   SakiStreamStatus,
   SakiThinkingActionCard,
   SakiToolActionCard,
+  assistantVisibleText,
   isSakiFileRollbackAction,
   isSakiRollbackableFileEdit,
   parseThinkingContent,
@@ -32,12 +35,26 @@ export interface SakiMessagesListProps {
   thinkingGif: string;
   actionBusyId: string | null;
   copiedUserMessageId: string | null;
+  copiedAssistantMessageId?: string | null;
   onRollbackUserTurn: (messageId: string) => Promise<void> | void;
   onCopyUserMessage: (messageId: string, content: string) => Promise<void> | void;
+  onCopyAssistantMessage?: (messageId: string, content: string) => Promise<void> | void;
+  onRetryAssistantTurn?: (messageId: string) => Promise<void> | void;
+  onDeleteAssistantTurn?: (messageId: string) => Promise<void> | void;
   onDecideAction: (targetAction: SakiAgentAction, decision: "approve" | "reject" | "rollback") => Promise<void> | void;
   onOpenPath?: ((path: string, line?: number) => void) | undefined;
   onRollbackAllFileActions: (messageId: string, fileRollbackActions: SakiAgentAction[]) => Promise<void> | void;
   onPreviewAttachment: (preview: { attachment: SakiInputAttachment; editable: boolean }) => void;
+}
+
+function findPrecedingUserMessage(messages: LocalSakiMessage[], assistantId: string): LocalSakiMessage | null {
+  const index = messages.findIndex((message) => message.id === assistantId);
+  if (index <= 0) return null;
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    const candidate = messages[cursor];
+    if (candidate?.role === "user") return candidate;
+  }
+  return null;
 }
 
 export const SakiMessagesList = React.memo(function SakiMessagesList({
@@ -50,8 +67,12 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
   thinkingGif,
   actionBusyId,
   copiedUserMessageId,
+  copiedAssistantMessageId = null,
   onRollbackUserTurn,
   onCopyUserMessage,
+  onCopyAssistantMessage,
+  onRetryAssistantTurn,
+  onDeleteAssistantTurn,
   onDecideAction,
   onOpenPath,
   onRollbackAllFileActions,
@@ -64,6 +85,8 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
         const fileRollbackActions = actionItems.filter(isSakiFileRollbackAction);
         const rollbackableFileActions = fileRollbackActions.filter(isSakiRollbackableFileEdit);
         const timelineItems = message.role === "assistant" ? renderableSakiTimeline(message) : [];
+        const precedingUser = message.role === "assistant" ? findPrecedingUserMessage(messages, message.id) : null;
+        const showAssistantActions = Boolean(onCopyAssistantMessage) && message.role === "assistant" && message.id !== "saki-welcome" && !message.streaming;
 
         return (
           <div className={`saki-message saki-message-${message.role}`} key={message.id}>
@@ -258,6 +281,56 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
                     onClick={() => onPreviewAttachment({ attachment, editable: false })}
                   />
                 ))}
+              </div>
+            ) : null}
+
+            {showAssistantActions ? (
+              <div className="saki-assistant-message-actions">
+                <button
+                  className="saki-user-action-btn copy-btn"
+                  type="button"
+                  title="复制回复"
+                  onClick={() => void onCopyAssistantMessage?.(message.id, assistantVisibleText(message))}
+                >
+                  {copiedAssistantMessageId === message.id ? (
+                    <Check size={12} style={{ color: "#10b981" }} />
+                  ) : (
+                    <Copy size={12} />
+                  )}
+                  <span>{copiedAssistantMessageId === message.id ? "已复制" : "复制"}</span>
+                </button>
+                {precedingUser && onRetryAssistantTurn ? (
+                  <button
+                    className="saki-user-action-btn retry-btn"
+                    type="button"
+                    title="回滚本次代码改动并重新生成"
+                    disabled={Boolean(actionBusyId) || loading}
+                    onClick={() => void onRetryAssistantTurn(message.id)}
+                  >
+                    {actionBusyId === `retry:${message.id}` ? (
+                      <Loader2 size={12} className="status-spinner" />
+                    ) : (
+                      <RotateCw size={12} />
+                    )}
+                    <span>重试</span>
+                  </button>
+                ) : null}
+                {precedingUser && onDeleteAssistantTurn ? (
+                  <button
+                    className="saki-user-action-btn delete-btn"
+                    type="button"
+                    title="删除这轮对话（含提问）"
+                    disabled={Boolean(actionBusyId) || loading}
+                    onClick={() => void onDeleteAssistantTurn(message.id)}
+                  >
+                    {actionBusyId === `delete:${message.id}` ? (
+                      <Loader2 size={12} className="status-spinner" />
+                    ) : (
+                      <Trash2 size={12} />
+                    )}
+                    <span>删除</span>
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </div>

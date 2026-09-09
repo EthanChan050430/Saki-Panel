@@ -116,6 +116,16 @@ function errorStatus(error: unknown): number {
 }
 
 export async function registerSystemRoutes(app: FastifyInstance): Promise<void> {
+  app.get("/api/system/time", async () => {
+    const now = new Date();
+    return {
+      iso: now.toISOString(),
+      timestamp: now.getTime(),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      timezoneOffset: now.getTimezoneOffset()
+    };
+  });
+
   app.get("/api/system/session-settings", { preHandler: app.authenticate }, async () => {
     return readPanelSessionSettings();
   });

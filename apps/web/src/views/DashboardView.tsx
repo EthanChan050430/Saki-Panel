@@ -1,20 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Activity,
-  AlertTriangle,
+  ArrowRight,
+  ChevronRight,
   Cpu,
-  Database,
   HardDrive,
-  Layers,
   MemoryStick,
-  RefreshCw,
   Server,
-  Wifi,
-  Zap
+  Wifi
 } from "lucide-react";
 import {
-  Area,
-  AreaChart,
   CartesianGrid,
   Line,
   LineChart,
@@ -23,31 +17,68 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import type { DashboardOverview, ManagedNode } from "@webops/shared";
+import type { DashboardOverview, ManagedInstance, ManagedNode } from "@webops/shared";
 import { api, ApiError } from "../api.js";
-import { usePanelT } from "../i18n/index.js";
-import { MetricTile, NodeStatusPill, PageErrorToast } from "../components/common/CommonUI.js";
+import { usePanelLanguage } from "../i18n/index.js";
+import type { PanelLanguage } from "../i18n/translations.js";
+import {
+  InstanceStatusBadge,
+  InstanceStatusIcon,
+  instanceStatusMeta,
+  instanceTypeLabel,
+  MetricTile,
+  NodeStatusPill,
+  PageErrorToast
+} from "../components/common/CommonUI.js";
 import { SakiEmptyState } from "../components/saki/SakiEmptyState.js";
-import { formatBytes, formatDate, formatNumber, resourcesFromNodes } from "../utils/path.js";
+import { MetricDetailModal, type MetricDetailKind } from "../components/dashboard/MetricDetailModal.js";
+import { formatDate, formatNumber, resourcesFromNodes } from "../utils/path.js";
+import { readRecentInstances } from "../utils/recentInstances.js";
+
+const RECENT_INSTANCE_LIMIT = 8;
+
+function formatRelativeTime(value: string | null | undefined, language: PanelLanguage): string {
+  if (!value) return "-";
+  const diff = new Date(value).getTime() - Date.now();
+  if (!Number.isFinite(diff)) return "-";
+  const abs = Math.abs(diff);
+  const locale = language === "en-US" ? "en" : language === "zh-TW" ? "zh-Hant" : "zh-Hans";
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+  if (abs < 60_000) return rtf.format(0, "second");
+  if (abs < 3_600_000) return rtf.format(Math.round(diff / 60_000), "minute");
+  if (abs < 86_400_000) return rtf.format(Math.round(diff / 3_600_000), "hour");
+  return rtf.format(Math.round(diff / 86_400_000), "day");
+}
+
+function instanceActivityAt(instance: ManagedInstance, openedAt?: string): string {
+  return openedAt || instance.lastStartedAt || instance.updatedAt;
+}
 
 export function DashboardView({
   token,
   onLogout,
   refreshTick,
   canViewNodes,
-  canTestNodes
+  canTestNodes,
+  canViewInstances,
+  onOpenInstance
 }: {
   token: string;
   onLogout: () => void;
   refreshTick: number;
   canViewNodes: boolean;
   canTestNodes: boolean;
+  canViewInstances: boolean;
+  onOpenInstance: (instanceId: string | null) => void;
 }) {
+  const { language } = usePanelLanguage();
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
   const [nodes, setNodes] = useState<ManagedNode[]>([]);
+  const [instances, setInstances] = useState<ManagedInstance[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [testingNodeId, setTestingNodeId] = useState<string | null>(null);
+  const [metricDetail, setMetricDetail] = useState<MetricDetailKind | null>(null);
 
   const refresh = useCallback(async () => {
     setError("");
@@ -76,8 +107,22 @@ export function DashboardView({
       setNodes([]);
     }
 
+    if (canViewInstances) {
+      try {
+        setInstances(await api.instances(token));
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) {
+          onLogout();
+          return;
+        }
+        setError((current) => current || (err instanceof Error ? err.message : "实例数据加载失败"));
+      }
+    } else {
+      setInstances([]);
+    }
+
     setLoading(false);
-  }, [canViewNodes, onLogout, token]);
+  }, [canViewInstances, canViewNodes, onLogout, token]);
 
   useEffect(() => {
     void refresh();
@@ -144,6 +189,26 @@ export function DashboardView({
     return null;
   }, [nodes, overview]);
 
+  const recentInstances = useMemo(() => {
+    const visits = readRecentInstances();
+    const visitRank = new Map(visits.map((entry, index) => [entry.id, index]));
+    const openedAtById = new Map(visits.map((entry) => [entry.id, entry.openedAt]));
+    const visited = instances
+      .filter((instance) => visitRank.has(instance.id))
+      .sort((left, right) => (visitRank.get(left.id) ?? 0) - (visitRank.get(right.id) ?? 0));
+    const rest = instances
+      .filter((instance) => !visitRank.has(instance.id))
+      .sort((left, right) => {
+        const leftTime = new Date(left.lastStartedAt || left.updatedAt).getTime();
+        const rightTime = new Date(right.lastStartedAt || right.updatedAt).getTime();
+        return rightTime - leftTime;
+      });
+    return [...visited, ...rest].slice(0, RECENT_INSTANCE_LIMIT).map((instance) => ({
+      instance,
+      openedAt: openedAtById.get(instance.id)
+    }));
+  }, [instances]);
+
   const resources = displayStats?.resources ?? { cpuUsage: 0, memoryUsage: 0, diskUsage: 0 };
   const nodeCountValue =
     loading && !displayStats ? "-" : `${displayStats?.online ?? 0}/${displayStats?.total ?? 0}`;
@@ -159,10 +224,29 @@ export function DashboardView({
           label="在线节点"
           value={nodeCountValue}
           tone="teal"
+          onClick={() => setMetricDetail("nodes")}
         />
-        <MetricTile icon={<Cpu size={22} />} label="CPU" value={formatMetricValue(resources.cpuUsage)} tone="blue" />
-        <MetricTile icon={<MemoryStick size={22} />} label="内存" value={formatMetricValue(resources.memoryUsage)} tone="amber" />
-        <MetricTile icon={<HardDrive size={22} />} label="磁盘" value={formatMetricValue(resources.diskUsage)} tone="gray" />
+        <MetricTile
+          icon={<Cpu size={22} />}
+          label="CPU"
+          value={formatMetricValue(resources.cpuUsage)}
+          tone="blue"
+          onClick={() => setMetricDetail("cpu")}
+        />
+        <MetricTile
+          icon={<MemoryStick size={22} />}
+          label="内存"
+          value={formatMetricValue(resources.memoryUsage)}
+          tone="amber"
+          onClick={() => setMetricDetail("memory")}
+        />
+        <MetricTile
+          icon={<HardDrive size={22} />}
+          label="磁盘"
+          value={formatMetricValue(resources.diskUsage)}
+          tone="gray"
+          onClick={() => setMetricDetail("disk")}
+        />
       </section>
 
       <section className="content-grid">
@@ -186,25 +270,60 @@ export function DashboardView({
           </div>
         </div>
 
-        <div className="panel-block operations-block">
+        <div className="panel-block recent-instances-block">
           <div className="section-heading">
-            <h2>最近操作</h2>
+            <h2>最近实例</h2>
+            {canViewInstances ? (
+              <button className="recent-instances-all" type="button" onClick={() => onOpenInstance(null)}>
+                <span>查看全部</span>
+                <ArrowRight size={14} />
+              </button>
+            ) : null}
           </div>
-          <div className="operation-list">
-            {(overview?.recentOperations ?? []).map((item) => (
-              <div className="operation-row" key={item.id}>
-                <span>{item.action}</span>
-                <strong className={item.result === "SUCCESS" ? "success" : "failure"}>
-                  {item.result === "SUCCESS" ? "成功" : "失败"}
-                </strong>
-                <time>{formatDate(item.createdAt)}</time>
-              </div>
-            ))}
-            {(overview?.recentOperations?.length ?? 0) === 0 ? (
+          <div className="recent-instance-list">
+            {recentInstances.map(({ instance, openedAt }) => {
+              const meta = instanceStatusMeta(instance.status);
+              const activityAt = instanceActivityAt(instance, openedAt);
+              return (
+                <button
+                  className={`recent-instance-row ${meta.className}`}
+                  key={instance.id}
+                  type="button"
+                  onClick={() => onOpenInstance(instance.id)}
+                  title={`进入 ${instance.name}`}
+                >
+                  <span className={`recent-instance-icon ${meta.className}`} aria-hidden="true">
+                    <InstanceStatusIcon status={instance.status} size={18} />
+                  </span>
+                  <span className="recent-instance-copy">
+                    <strong>{instance.name}</strong>
+                    <small>
+                      {instanceTypeLabel(instance.type)}
+                      <span className="recent-instance-dot" aria-hidden="true">
+                        ·
+                      </span>
+                      {instance.nodeName || instance.nodeId}
+                    </small>
+                  </span>
+                  <span className="recent-instance-meta">
+                    <InstanceStatusBadge status={instance.status} compact />
+                    <time dateTime={activityAt} title={formatDate(activityAt)}>
+                      {formatRelativeTime(activityAt, language)}
+                    </time>
+                  </span>
+                  <ChevronRight className="recent-instance-chevron" size={16} aria-hidden="true" />
+                </button>
+              );
+            })}
+            {!loading && recentInstances.length === 0 ? (
               <SakiEmptyState
-                illustration="logs"
-                title="暂无操作记录"
-                description="近期系统运行平稳，暂无新的操作信号或审计记录产生"
+                illustration="instances"
+                title={canViewInstances ? "暂无实例" : "暂无实例权限"}
+                description={
+                  canViewInstances
+                    ? "创建或打开实例后，最近使用的会显示在这里"
+                    : "当前账号没有实例查看权限"
+                }
                 compact
               />
             ) : null}
@@ -280,6 +399,16 @@ export function DashboardView({
             </table>
           </div>
         </section>
+      ) : null}
+
+      {metricDetail ? (
+        <MetricDetailModal
+          kind={metricDetail}
+          overview={overview}
+          nodes={nodes}
+          clusterResources={resources}
+          onClose={() => setMetricDetail(null)}
+        />
       ) : null}
     </>
   );

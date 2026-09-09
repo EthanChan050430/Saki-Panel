@@ -25,6 +25,7 @@ import type {
   SyncInstancesByUserKeyRequest,
   SyncInstancesByUserKeyResponse,
   RemoteNodeUserSummary,
+  CreateCustomTemplateRequest,
   CreateInstanceFromTemplateRequest,
   DeleteTemplateResponse,
   SaveTemplateFromInstanceRequest,
@@ -1261,6 +1262,13 @@ export const api = {
   templates(token: string) {
     return requestJson<InstanceTemplate[]>("/api/templates", {}, token);
   },
+  createCustomTemplate(token: string, input: CreateCustomTemplateRequest) {
+    return requestJson<InstanceTemplate>(
+      "/api/templates",
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
   createInstanceFromTemplate(token: string, templateId: string, input: CreateInstanceFromTemplateRequest) {
     return requestJson<ManagedInstance>(
       `/api/templates/${templateId}/instances`,
@@ -1322,6 +1330,14 @@ export const api = {
   },
   sakiAppearance() {
     return requestJson<PanelAppearanceSettings>("/api/saki/appearance");
+  },
+  getSystemTime(token?: string) {
+    return requestJson<{
+      iso: string;
+      timestamp: number;
+      timezone: string;
+      timezoneOffset: number;
+    }>("/api/system/time", {}, token);
   },
   async sakiAppearanceStream(
     onEvent: (appearance: PanelAppearanceSettings) => void,

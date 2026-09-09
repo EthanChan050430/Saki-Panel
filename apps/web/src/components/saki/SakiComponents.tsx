@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -69,7 +69,7 @@ import type {
   LocalSakiWorkflowStep
 } from "../../types/app.js";
 import type { SakiChatStreamEvent, SakiChatWorkflowStatus } from "../../api.js";
-import { sakiArtAssets } from "../../constants.js";
+import { sakiArtAssets, sakiIdleLauncherAssets, sakiSpeakingAssets } from "../../constants.js";
 import { compactContextText, formatBytes } from "../../utils/path.js";
 import { newClientId } from "../../utils/id.js";
 import { MarkdownContent } from "../common/MarkdownContent.js";
@@ -125,7 +125,124 @@ export function sakiAttachmentHistoryText(attachments: SakiInputAttachment[] | u
 }
 
 export type SakiArtMood = "normal" | "thinking" | "worry";
-export type SakiActivityMood = "working" | "reading" | "checkfiles" | "upset" | "happy" | "OK" | "eating" | "gaming" | "hearing" | "speaking" | null;
+export type SakiActivityMood =
+  | "working"
+  | "reading"
+  | "checkfiles"
+  | "upset"
+  | "happy"
+  | "OK"
+  | "eating"
+  | "gaming"
+  | "hearing"
+  | "speaking"
+  | "waiting"
+  | "writing"
+  | "terminal"
+  | "search"
+  | "diagnose"
+  | "surprised"
+  | "pout"
+  | "sorry"
+  | "cry"
+  | "sleepy"
+  | "wink"
+  | "rollback"
+  | "blocked"
+  | "shy"
+  | "middlefinger"
+  | null;
+
+const SAKI_READ_TOOLS = new Set([
+  "readfile",
+  "outlinefile",
+  "instancelogs",
+  "readmemory",
+  "readskill",
+  "view_file",
+  "viewfile",
+  "read_file",
+  "cat",
+  "fileoutline",
+  "outline"
+]);
+const SAKI_LIST_TOOLS = new Set([
+  "listfiles",
+  "mkdir",
+  "listinstances",
+  "listtasks",
+  "listshells",
+  "listskills",
+  "taskruns"
+]);
+const SAKI_SEARCH_TOOLS = new Set([
+  "searchfiles",
+  "findfiles",
+  "searchweb",
+  "browse",
+  "crawl",
+  "researchweb",
+  "findsymbols",
+  "searchaudit",
+  "grep",
+  "glob",
+  "websearch",
+  "browseurl"
+]);
+const SAKI_WRITE_TOOLS = new Set([
+  "writefile",
+  "replaceinfile",
+  "editlines",
+  "applypatch",
+  "apply_patch",
+  "applydiff",
+  "uploadbase64",
+  "renamepath",
+  "archivepaths",
+  "extractarchive",
+  "patchfiles"
+]);
+const SAKI_TERMINAL_TOOLS = new Set([
+  "runcommand",
+  "sendinput",
+  "sendcommand",
+  "runinshell",
+  "sendshellinput",
+  "createshell",
+  "executecommand",
+  "terminal",
+  "shell",
+  "bash"
+]);
+const SAKI_DIAGNOSE_TOOLS = new Set([
+  "instanceaction",
+  "describeinstance",
+  "getinstance",
+  "updateinstancesettings",
+  "diagnosecode"
+]);
+
+export function sakiActivityMoodForTool(tool?: string | null, status?: string | null): SakiActivityMood {
+  const st = (status ?? "").toLowerCase();
+  if (st === "pending_approval") return "waiting";
+  if (st === "rejected") return "pout";
+  if (st === "rolled_back") return "rollback";
+  if (st === "failed") return "sorry";
+  const name = (tool ?? "").toLowerCase();
+  if (!name) return "working";
+  if (SAKI_READ_TOOLS.has(name)) return "reading";
+  if (SAKI_LIST_TOOLS.has(name)) return "checkfiles";
+  if (SAKI_SEARCH_TOOLS.has(name)) return "search";
+  if (SAKI_WRITE_TOOLS.has(name)) return "writing";
+  if (SAKI_TERMINAL_TOOLS.has(name)) return "terminal";
+  if (SAKI_DIAGNOSE_TOOLS.has(name)) return "diagnose";
+  if (name === "deletepath" || name === "deletescheduledtask") return "waiting";
+  return "working";
+}
+
+function pickSakiAsset(assets: readonly string[]): string {
+  return assets[Math.floor(Math.random() * assets.length)] ?? assets[0] ?? sakiArtAssets.normal;
+}
 export type SakiVoiceEchoState = "idle" | "hearing" | "speaking";
 export type SakiLauncherEdge = "left" | "right";
 export type SakiLauncherSizeMode = "current" | "expanded" | "attached";
@@ -338,7 +455,37 @@ export function getSakiActivityExpressionSrc(activityMood: SakiActivityMood): st
     case "hearing":
       return sakiArtAssets.listen;
     case "speaking":
+      return sakiArtAssets.speaking1;
+    case "waiting":
+      return sakiArtAssets.waiting;
+    case "writing":
+      return sakiArtAssets.writing;
+    case "terminal":
+      return sakiArtAssets.terminal;
+    case "search":
+      return sakiArtAssets.search;
+    case "diagnose":
+      return sakiArtAssets.diagnose;
+    case "surprised":
+      return sakiArtAssets.surprised;
+    case "pout":
+      return sakiArtAssets.pout;
+    case "sorry":
+      return sakiArtAssets.sorry;
+    case "cry":
+      return sakiArtAssets.cry;
+    case "sleepy":
+      return sakiArtAssets.sleepy;
+    case "wink":
+      return sakiArtAssets.wink;
+    case "rollback":
+      return sakiArtAssets.rollback;
+    case "blocked":
+      return sakiArtAssets.blocked;
+    case "shy":
       return sakiArtAssets.shy;
+    case "middlefinger":
+      return sakiArtAssets.middlefinger;
     default:
       return null;
   }
@@ -361,7 +508,26 @@ export function SakiCharacterArt({
   draggingExpressionSrc?: string | null;
   activityMood?: SakiActivityMood;
 }) {
-  const activityExpressionSrc = getSakiActivityExpressionSrc(activityMood);
+  const [idleLauncherSrc, setIdleLauncherSrc] = useState(() => pickSakiAsset(sakiIdleLauncherAssets));
+  const [speakingSrc, setSpeakingSrc] = useState(() => pickSakiAsset(sakiSpeakingAssets));
+
+  useEffect(() => {
+    if (!compact) return;
+    const id = window.setInterval(() => {
+      setIdleLauncherSrc(pickSakiAsset(sakiIdleLauncherAssets));
+    }, 48000);
+    return () => window.clearInterval(id);
+  }, [compact]);
+
+  useEffect(() => {
+    if (activityMood === "speaking") {
+      setSpeakingSrc(pickSakiAsset(sakiSpeakingAssets));
+    }
+  }, [activityMood]);
+
+  const activityExpressionSrc = activityMood === "speaking"
+    ? speakingSrc
+    : getSakiActivityExpressionSrc(activityMood);
   const expressionSrc = dragging && draggingExpressionSrc
     ? draggingExpressionSrc
     : activityExpressionSrc
@@ -372,7 +538,7 @@ export function SakiCharacterArt({
     ? sakiArtAssets.thinking
     : mood === "worry"
     ? sakiArtAssets.worry
-    : sakiArtAssets.files;
+    : sakiArtAssets.normal;
 
   if (compact) {
     if (dragging) {
@@ -418,7 +584,7 @@ export function SakiCharacterArt({
       <div className="saki-character-art compact" aria-hidden="true">
         <img
           className="saki-character-image saki-character-image-idle"
-          src={sakiArtAssets.launcher}
+          src={idleLauncherSrc}
           alt=""
           draggable={false}
         />
@@ -1084,6 +1250,17 @@ export function parseThinkingContent(
   };
 }
 
+export function assistantVisibleText(message: LocalSakiMessage): string {
+  const timeline = renderableSakiTimeline(message);
+  const parts = timeline
+    .filter((item): item is Extract<LocalSakiTimelineItem, { kind: "text" }> => item.kind === "text")
+    .map((item) => parseThinkingContent(item.content, item.thinking).answer.trim())
+    .filter(Boolean);
+  if (parts.length > 0) return parts.join("\n\n");
+  const parsed = parseThinkingContent(message.content, message.thinking).answer.trim();
+  return parsed || message.content.trim();
+}
+
 export function SakiThinkingActionCard({
   thinking,
   streaming,
@@ -1744,7 +1921,7 @@ export const sakiFoodMenu = [
     favorability: 60,
     desc: "特制萌猫便当，仅需 5 Saki 积分",
     greeting: "这...这是特制给我的猫咪便当吗？！太感动了，最喜欢你啦～ (｡♥‿♥｡)",
-    mood: "eating" as SakiActivityMood
+    mood: "shy" as SakiActivityMood
   }
 ];
 
@@ -1779,7 +1956,7 @@ export function getLocalizedFoodMenu(language?: string) {
         favorability: 60,
         desc: "Special kitty bento, only 5 Saki Points",
         greeting: "Is... is this cute kitty bento made specially for me?! I'm so touched, I love you so much～ (｡♥‿♥｡)",
-        mood: "eating" as SakiActivityMood
+        mood: "shy" as SakiActivityMood
       }
     ];
   }
@@ -1813,7 +1990,7 @@ export function getLocalizedFoodMenu(language?: string) {
         favorability: 60,
         desc: "特製萌貓便當，僅需 5 Saki 積分",
         greeting: "這...這是特製給我的貓咪便當嗎？！太感動了，最喜歡你啦～ (｡♥‿♥｡)",
-        mood: "eating" as SakiActivityMood
+        mood: "shy" as SakiActivityMood
       }
     ];
   }

@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useSyncExternalStore } from "react";
+import { getDefaultUserAvatarSrc, subscribeDefaultUserAvatarSrc } from "../../utils/appearance.js";
 
 export function accountInitials(displayName: string, username: string): string {
   const source = (displayName || username).trim();
@@ -19,9 +20,17 @@ export function AccountAvatar({
   username: string;
   className?: string;
 }) {
+  const fallbackSrc = useSyncExternalStore(subscribeDefaultUserAvatarSrc, getDefaultUserAvatarSrc);
+  const src = avatarDataUrl?.trim() || fallbackSrc;
+  const usingFallback = !avatarDataUrl?.trim();
+
   return (
     <span className={`account-avatar ${className}`}>
-      {avatarDataUrl ? <img src={avatarDataUrl} alt="" /> : <span>{accountInitials(displayName, username)}</span>}
+      {src ? (
+        <img className={usingFallback ? "is-fallback" : undefined} src={src} alt="" />
+      ) : (
+        <span>{accountInitials(displayName, username)}</span>
+      )}
     </span>
   );
 }
@@ -64,10 +73,63 @@ export async function avatarFileToDataUrl(file: File): Promise<string> {
   }
 }
 
-export async function appearanceMediaFileToDataUrl(file: File, allowVideo = false): Promise<string> {
+async function compressImageFile(file: File, maxEdge = 2560, quality = 0.88): Promise<string> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("图片解析失败"));
+      image.src = objectUrl;
+    });
+
+    let { naturalWidth: width, naturalHeight: height } = image;
+    if (!width || !height) {
+      throw new Error("图片尺寸无效");
+    }
+
+    if (width > maxEdge || height > maxEdge) {
+      if (width > height) {
+        height = Math.round((height * maxEdge) / width);
+        width = maxEdge;
+      } else {
+        width = Math.round((width * maxEdge) / height);
+        height = maxEdge;
+      }
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("浏览器无法处理图片");
+    }
+
+    context.drawImage(image, 0, 0, width, height);
+
+    let dataUrl = canvas.toDataURL("image/webp", quality);
+    if (!dataUrl.startsWith("data:image/webp")) {
+      const fileName = (file.name || "").toLowerCase();
+      dataUrl =
+        file.type === "image/png" || fileName.endsWith(".png")
+          ? canvas.toDataURL("image/png")
+          : canvas.toDataURL("image/jpeg", quality);
+    }
+    return dataUrl;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+export async function appearanceMediaFileToDataUrl(
+  file: File,
+  allowVideo = false,
+  maxEdge = 2560
+): Promise<string> {
   const fileName = (file.name || "").toLowerCase();
   const isVideoExt = /\.(mp4|webm|ogg|mov|m4v)$/i.test(fileName);
-  const isImageExt = /\.(png|jpe?g|webp|gif)$/i.test(fileName);
+  const isImageExt = /\.(png|jpe?g|webp|gif|svg|ico|bmp|avif)$/i.test(fileName);
   const isVideo = file.type.startsWith("video/") || isVideoExt;
   const isImage = file.type.startsWith("image/") || isImageExt;
 
@@ -75,13 +137,21 @@ export async function appearanceMediaFileToDataUrl(file: File, allowVideo = fals
     throw new Error(allowVideo ? "请选择图片或视频文件" : "请选择图片文件");
   }
 
-  if (isVideo) {
-    if (file.size > 50 * 1024 * 1024) {
-      throw new Error("视频大小不能超过 50MB");
-    }
-  } else {
-    if (file.size > 10 * 1024 * 1024) {
-      throw new Error("图片大小不能超过 10MB");
+  if (file.size > 50 * 1024 * 1024) {
+    throw new Error(isVideo ? "视频大小不能超过 50MB" : "图片大小不能超过 50MB");
+  }
+
+  const isSvg = fileName.endsWith(".svg") || file.type === "image/svg+xml";
+  const isGif = fileName.endsWith(".gif") || file.type === "image/gif";
+
+  // For images larger than 2MB that are not SVG or small GIF, compress via Canvas to WebP
+  if (isImage && !isSvg && (!isGif || file.size > 10 * 1024 * 1024) && typeof document !== "undefined") {
+    if (file.size > 2 * 1024 * 1024) {
+      try {
+        return await compressImageFile(file, maxEdge, 0.88);
+      } catch (e) {
+        console.warn("Canvas compression fallback to raw file reader:", e);
+      }
     }
   }
 
@@ -101,11 +171,25 @@ export async function appearanceMediaFileToDataUrl(file: File, allowVideo = fals
         }
       }
 
-      const validImage = /^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(result);
+      if (isImage && /^data:(?:application\/octet-stream|image\/[a-z0-9+.-]+)?;base64,/i.test(result)) {
+        if (!/^data:image\/(?:png|jpe?g|webp|gif|svg\+xml|x-icon|vnd\.microsoft\.icon|bmp|avif);base64,/i.test(result)) {
+          let mime = "image/png";
+          if (fileName.endsWith(".jpg") || fileName.endsWith(".jpeg")) mime = "image/jpeg";
+          else if (fileName.endsWith(".webp")) mime = "image/webp";
+          else if (fileName.endsWith(".gif")) mime = "image/gif";
+          else if (fileName.endsWith(".svg")) mime = "image/svg+xml";
+          else if (fileName.endsWith(".ico")) mime = "image/x-icon";
+          else if (fileName.endsWith(".bmp")) mime = "image/bmp";
+          else if (fileName.endsWith(".avif")) mime = "image/avif";
+          result = result.replace(/^data:[^;]*;base64,/, `data:${mime};base64,`);
+        }
+      }
+
+      const validImage = /^data:image\/(?:png|jpe?g|webp|gif|svg\+xml|x-icon|vnd\.microsoft\.icon|bmp|avif);base64,/i.test(result);
       const validVideo = allowVideo && /^data:video\/(?:mp4|webm|ogg|quicktime);base64,/i.test(result);
 
       if (!validImage && !validVideo) {
-        reject(new Error(allowVideo ? "仅支持 PNG、JPG、WebP、GIF 图片或 MP4、WebM、OGG 视频" : "仅支持 PNG、JPG、WebP 或 GIF 图片"));
+        reject(new Error(allowVideo ? "仅支持常见格式图片（PNG/JPG/WebP/GIF/SVG/ICO 等）或视频（MP4/WebM/OGG）" : "仅支持常见格式图片（PNG/JPG/WebP/GIF/SVG/ICO 等）"));
         return;
       }
       resolve(result);

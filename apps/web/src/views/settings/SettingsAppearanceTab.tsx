@@ -1,5 +1,6 @@
 import React, { memo, useRef, useState } from "react";
 import {
+  Clock,
   Image as ImageIcon,
   Moon,
   Paintbrush,
@@ -18,7 +19,7 @@ export interface SettingsAppearanceTabProps {
   appearance: PanelAppearanceSettings;
   onUpdateAppearance: (patch: Partial<PanelAppearanceSettings>) => void;
   onChooseAppearanceImage: (
-    field: "appLogoSrc" | "sidebarLogoSrc" | "loginCoverSrc",
+    field: "appLogoSrc" | "sidebarLogoSrc" | "loginCoverSrc" | "defaultAvatarSrc",
     event: React.ChangeEvent<HTMLInputElement>
   ) => void;
   onChooseAppearanceMedia: (
@@ -42,6 +43,7 @@ export const SettingsAppearanceTab = memo(function SettingsAppearanceTab({
   const appLogoInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarLogoInputRef = useRef<HTMLInputElement | null>(null);
   const loginCoverInputRef = useRef<HTMLInputElement | null>(null);
+  const defaultAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const backgroundInputRef = useRef<HTMLInputElement | null>(null);
   const mobileBackgroundInputRef = useRef<HTMLInputElement | null>(null);
   const darkBackgroundInputRef = useRef<HTMLInputElement | null>(null);
@@ -57,49 +59,56 @@ export const SettingsAppearanceTab = memo(function SettingsAppearanceTab({
         ref={appLogoInputRef}
         className="hidden-file-input"
         type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif"
+        accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/x-icon,image/vnd.microsoft.icon,image/bmp,image/avif,image/*"
         onChange={(event) => onChooseAppearanceImage("appLogoSrc", event)}
       />
       <input
         ref={sidebarLogoInputRef}
         className="hidden-file-input"
         type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif"
+        accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/x-icon,image/vnd.microsoft.icon,image/bmp,image/avif,image/*"
         onChange={(event) => onChooseAppearanceImage("sidebarLogoSrc", event)}
       />
       <input
         ref={loginCoverInputRef}
         className="hidden-file-input"
         type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif"
+        accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/x-icon,image/vnd.microsoft.icon,image/bmp,image/avif,image/*"
         onChange={(event) => onChooseAppearanceImage("loginCoverSrc", event)}
+      />
+      <input
+        ref={defaultAvatarInputRef}
+        className="hidden-file-input"
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/x-icon,image/vnd.microsoft.icon,image/bmp,image/avif,image/*"
+        onChange={(event) => onChooseAppearanceImage("defaultAvatarSrc", event)}
       />
       <input
         ref={backgroundInputRef}
         className="hidden-file-input"
         type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/ogg"
+        accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/x-icon,image/vnd.microsoft.icon,image/bmp,image/avif,image/*,video/mp4,video/webm,video/ogg"
         onChange={(event) => onChooseAppearanceMedia("backgroundSrc", event, true)}
       />
       <input
         ref={mobileBackgroundInputRef}
         className="hidden-file-input"
         type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/ogg"
+        accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/x-icon,image/vnd.microsoft.icon,image/bmp,image/avif,image/*,video/mp4,video/webm,video/ogg"
         onChange={(event) => onChooseAppearanceMedia("mobileBackgroundSrc", event, true)}
       />
       <input
         ref={darkBackgroundInputRef}
         className="hidden-file-input"
         type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/ogg"
+        accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/x-icon,image/vnd.microsoft.icon,image/bmp,image/avif,image/*,video/mp4,video/webm,video/ogg"
         onChange={(event) => onChooseAppearanceMedia("darkBackgroundSrc", event, true)}
       />
       <input
         ref={mobileDarkBackgroundInputRef}
         className="hidden-file-input"
         type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/ogg"
+        accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/x-icon,image/vnd.microsoft.icon,image/bmp,image/avif,image/*,video/mp4,video/webm,video/ogg"
         onChange={(event) => onChooseAppearanceMedia("mobileDarkBackgroundSrc", event, true)}
       />
 
@@ -176,6 +185,19 @@ export const SettingsAppearanceTab = memo(function SettingsAppearanceTab({
                   <Upload size={14} />
                   <span>上传</span>
                 </button>
+                {appearance?.loginCoverSrc &&
+                appearance.loginCoverSrc !== defaultPanelAppearance.loginCoverSrc ? (
+                  <button
+                    className="ghost-button mini reset-btn"
+                    type="button"
+                    onClick={() =>
+                      onUpdateAppearance({ loginCoverSrc: defaultPanelAppearance.loginCoverSrc })
+                    }
+                    title="恢复默认封面"
+                  >
+                    <RotateCcw size={13} />
+                  </button>
+                ) : null}
               </div>
             </div>
           </div>
@@ -210,6 +232,19 @@ export const SettingsAppearanceTab = memo(function SettingsAppearanceTab({
                   <Upload size={14} />
                   <span>上传</span>
                 </button>
+                {appearance?.appLogoSrc &&
+                appearance.appLogoSrc !== defaultPanelAppearance.appLogoSrc ? (
+                  <button
+                    className="ghost-button mini reset-btn"
+                    type="button"
+                    onClick={() =>
+                      onUpdateAppearance({ appLogoSrc: defaultPanelAppearance.appLogoSrc })
+                    }
+                    title="恢复默认图标"
+                  >
+                    <RotateCcw size={13} />
+                  </button>
+                ) : null}
               </div>
             </div>
           </div>
@@ -244,6 +279,66 @@ export const SettingsAppearanceTab = memo(function SettingsAppearanceTab({
                   <Upload size={14} />
                   <span>上传</span>
                 </button>
+                {appearance?.sidebarLogoSrc &&
+                appearance.sidebarLogoSrc !== defaultPanelAppearance.sidebarLogoSrc ? (
+                  <button
+                    className="ghost-button mini reset-btn"
+                    type="button"
+                    onClick={() =>
+                      onUpdateAppearance({ sidebarLogoSrc: defaultPanelAppearance.sidebarLogoSrc })
+                    }
+                    title="恢复默认侧边栏图标"
+                  >
+                    <RotateCcw size={13} />
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+
+          <div className="settings-asset-card">
+            <div className="settings-asset-preview-box square circle">
+              {appearance?.defaultAvatarSrc ? (
+                <img src={appearance.defaultAvatarSrc} alt="默认用户头像" />
+              ) : (
+                <div className="settings-asset-empty">
+                  <ImageIcon size={24} />
+                  <span>默认头像</span>
+                </div>
+              )}
+            </div>
+            <div className="settings-asset-meta">
+              <strong>默认用户头像</strong>
+              <span className="settings-asset-hint">未上传个人头像的用户会显示这张图</span>
+              <div className="settings-asset-input-wrap">
+                <input
+                  className="settings-input mini"
+                  value={appearance?.defaultAvatarSrc ?? ""}
+                  onChange={(event) => onUpdateAppearance({ defaultAvatarSrc: event.target.value })}
+                  placeholder="/assets/head.webp"
+                />
+                <button
+                  className="ghost-button mini"
+                  type="button"
+                  onClick={() => defaultAvatarInputRef.current?.click()}
+                  title="选择本地图片"
+                >
+                  <Upload size={14} />
+                  <span>上传</span>
+                </button>
+                {appearance?.defaultAvatarSrc &&
+                appearance.defaultAvatarSrc !== defaultPanelAppearance.defaultAvatarSrc ? (
+                  <button
+                    className="ghost-button mini reset-btn"
+                    type="button"
+                    onClick={() =>
+                      onUpdateAppearance({ defaultAvatarSrc: defaultPanelAppearance.defaultAvatarSrc })
+                    }
+                    title="恢复默认头像"
+                  >
+                    <RotateCcw size={13} />
+                  </button>
+                ) : null}
               </div>
             </div>
           </div>
@@ -613,6 +708,25 @@ export const SettingsAppearanceTab = memo(function SettingsAppearanceTab({
               </>
             )}
           </div>
+        </div>
+
+        {/* Show Server Time Toggle */}
+        <div className="settings-switch-card">
+          <div className="settings-switch-info">
+            <div className="settings-switch-title">
+              <Clock size={18} className="settings-switch-icon" />
+              <strong>{t("settings.appearance.showServerTime")}</strong>
+            </div>
+            <span>{t("settings.appearance.showServerTimeDetail")}</span>
+          </div>
+          <label className="settings-switch-toggle">
+            <input
+              type="checkbox"
+              checked={appearance?.showServerTime !== false}
+              onChange={(e) => onUpdateAppearance({ showServerTime: e.target.checked })}
+            />
+            <span className="settings-switch-slider" />
+          </label>
         </div>
       </div>
     </div>

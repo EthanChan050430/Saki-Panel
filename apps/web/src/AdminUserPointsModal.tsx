@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowRight,
   ArrowUpDown,
@@ -81,7 +82,7 @@ export function AdminUserPointsModal({
     }
   }, [token, user]);
 
-  if (!open || !user) return null;
+  if (!open || !user || typeof document === "undefined") return null;
 
   const currentPoints = user.points ?? 0;
   const numericAmount = Number(amount) || 0;
@@ -128,24 +129,24 @@ export function AdminUserPointsModal({
     }
   }
 
-  return (
+  return createPortal(
     <div
-      className="modal-backdrop admin-points-backdrop"
+      className="modal-backdrop modal-fullscreen-backdrop admin-points-backdrop"
       role="presentation"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="modal-dialog admin-points-modal" role="dialog" aria-modal="true">
-        <header className="points-modal-header">
-          <div className="points-modal-title">
-            <div className="points-title-icon-wrap">
+      <div className="modal-panel modal-fullscreen-panel admin-points-modal" role="dialog" aria-modal="true">
+        <header className="modal-fullscreen-header points-modal-header">
+          <div className="modal-fullscreen-title-wrap points-modal-title">
+            <div className="modal-fullscreen-icon-wrap points-title-icon-wrap">
               <Coins size={22} className="points-title-icon" />
             </div>
-            <div>
+            <div className="modal-fullscreen-title-text">
               <h3>{isEn ? "Manage User Points" : isTw ? "管理使用者積分" : "管理用户积分"}</h3>
-              <p className="points-modal-subtitle">
-                {isEn ? "Target User: " : isTw ? "目標使用者：" : "目标用户："}<strong>{user.displayName || user.username}</strong>
+              <p className="modal-fullscreen-subtitle points-modal-subtitle">
+                <span>{isEn ? "Target User: " : isTw ? "目標使用者：" : "目标用户："}<strong>{user.displayName || user.username}</strong></span>
                 <span className="user-curr-points-tag">
                   {isEn
                     ? `Current: ${user.unlimitedPoints ? "∞ Unlimited" : `${currentPoints} pts`}`
@@ -156,38 +157,42 @@ export function AdminUserPointsModal({
               </p>
             </div>
           </div>
-          <button className="icon-button mini" type="button" title={isEn ? "Close" : isTw ? "關閉" : "关闭"} onClick={onClose}>
-            <X size={16} />
+          <button className="icon-button mini modal-fullscreen-close-btn" type="button" title={isEn ? "Close" : isTw ? "關閉" : "关闭"} onClick={onClose}>
+            <X size={18} />
           </button>
         </header>
 
-        <div className="admin-points-tabs-segmented">
-          <button
-            type="button"
-            className={`admin-points-tab-btn ${tab === "manage" ? "active" : ""}`}
-            onClick={() => setTab("manage")}
-          >
-            <Sliders size={14} />
-            <span>{isEn ? "Point Actions" : isTw ? "積分操作" : "积分操作"}</span>
-          </button>
-          <button
-            type="button"
-            className={`admin-points-tab-btn ${tab === "records" ? "active" : ""}`}
-            onClick={() => setTab("records")}
-          >
-            <History size={14} />
-            <span>{isEn ? "Usage & Change History" : isTw ? "消耗與變動明細" : "消耗与变动明细"}</span>
-            {records.length > 0 ? <span className="tab-record-count">{records.length}</span> : null}
-          </button>
+        <div className="modal-fullscreen-nav-bar">
+          <div className="admin-points-tabs-segmented">
+            <button
+              type="button"
+              className={`admin-points-tab-btn ${tab === "manage" ? "active" : ""}`}
+              onClick={() => setTab("manage")}
+            >
+              <Sliders size={14} />
+              <span>{isEn ? "Point Actions" : isTw ? "積分操作" : "积分操作"}</span>
+            </button>
+            <button
+              type="button"
+              className={`admin-points-tab-btn ${tab === "records" ? "active" : ""}`}
+              onClick={() => setTab("records")}
+            >
+              <History size={14} />
+              <span>{isEn ? "Usage & Change History" : isTw ? "消耗與變動明細" : "消耗与变动明细"}</span>
+              {records.length > 0 ? <span className="tab-record-count">{records.length}</span> : null}
+            </button>
+          </div>
         </div>
 
-        {error ? <div className="admin-form-alert error">{error}</div> : null}
-        {notice ? <div className="admin-form-alert success">{notice}</div> : null}
+        {tab === "manage" ? (
+          <form onSubmit={(e) => void handleSave(e)} className="modal-fullscreen-form-wrapper">
+            <div className="modal-fullscreen-body admin-points-body">
+              <div className="modal-fullscreen-content">
+                {error ? <div className="admin-form-alert error">{error}</div> : null}
+                {notice ? <div className="admin-form-alert success">{notice}</div> : null}
 
-        <div className="points-modal-body admin-points-body">
-          {tab === "manage" ? (
-            <form onSubmit={(e) => void handleSave(e)} className="admin-points-form">
-              <div className="admin-form-group">
+                <div className="admin-points-form">
+                  <div className="admin-form-group">
                 <label className="admin-form-label">{isEn ? "Action Type" : isTw ? "操作類型" : "操作类型"}</label>
                 <div className="admin-action-cards">
                   <button
@@ -321,74 +326,101 @@ export function AdminUserPointsModal({
                   onChange={(e) => setNote(e.target.value)}
                 />
               </div>
+            </div>
+          </div>
+        </div>
 
-              <div className="admin-points-footer">
-                <button className="secondary-button" type="button" onClick={onClose} disabled={saving}>
-                  {isEn ? "Cancel" : isTw ? "取消" : "取消"}
-                </button>
-                <button className="primary-button" type="submit" disabled={saving}>
-                  {saving ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
-                  {isEn ? "Save Changes" : isTw ? "確認儲存" : "确认保存"}
-                </button>
-              </div>
-            </form>
-          ) : (
-            <div className="admin-points-records">
-              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
-                <button
-                  className="secondary-button mini"
-                  type="button"
-                  onClick={() => void loadRecords()}
-                  disabled={recordsLoading}
-                >
-                  <RefreshCw size={13} className={recordsLoading ? "spin" : ""} />
-                  {isEn ? "Refresh Records" : isTw ? "重新整理記錄" : "刷新记录"}
-                </button>
-              </div>
-              <div className="points-records-table-wrap">
-                <table className="points-records-table">
-                  <thead>
-                    <tr>
-                      <th>{isEn ? "Time" : isTw ? "時間" : "时间"}</th>
-                      <th>{isEn ? "Description" : isTw ? "說明" : "说明"}</th>
-                      <th>{isEn ? "Tokens" : isTw ? "Token 消耗" : "Token 消耗"}</th>
-                      <th>{isEn ? "Points Delta" : isTw ? "積分變動" : "积分变动"}</th>
-                      <th>{isEn ? "Balance" : isTw ? "餘額" : "余额"}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {records.length === 0 ? (
+        <footer className="modal-fullscreen-footer admin-points-footer">
+            <div className="modal-fullscreen-footer-inner">
+              <button className="secondary-button" type="button" onClick={onClose} disabled={saving}>
+                {isEn ? "Cancel" : isTw ? "取消" : "取消"}
+              </button>
+              <button className="primary-button" type="submit" disabled={saving}>
+                {saving ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
+                {isEn ? "Save Changes" : isTw ? "確認儲存" : "确认保存"}
+              </button>
+            </div>
+          </footer>
+        </form>
+      ) : (
+        <div className="modal-fullscreen-form-wrapper">
+          <div className="modal-fullscreen-body admin-points-body">
+            <div className="modal-fullscreen-content">
+              {error ? <div className="admin-form-alert error">{error}</div> : null}
+              {notice ? <div className="admin-form-alert success">{notice}</div> : null}
+
+              <div className="admin-points-records">
+                <div className="records-toolbar">
+                  <span className="records-count-text">
+                    {records.length > 0
+                      ? (isEn ? `Total ${records.length} record(s)` : isTw ? `共 ${records.length} 筆記錄` : `共 ${records.length} 条变动明细`)
+                      : (isEn ? "No records" : isTw ? "無記錄" : "暂无明细")}
+                  </span>
+                  <button
+                    className="secondary-button mini"
+                    type="button"
+                    onClick={() => void loadRecords()}
+                    disabled={recordsLoading}
+                  >
+                    <RefreshCw size={13} className={recordsLoading ? "spin" : ""} />
+                    {isEn ? "Refresh Records" : isTw ? "重新整理記錄" : "刷新记录"}
+                  </button>
+                </div>
+                <div className="points-records-table-wrap">
+                  <table className="points-records-table">
+                    <thead>
                       <tr>
-                        <td colSpan={5} className="empty-cell">
-                          {recordsLoading ? (isEn ? "Loading records..." : isTw ? "正在載入明細..." : "正在加载明细...") : (isEn ? "No point records" : isTw ? "暫無積分變動記錄" : "暂无积分变动记录")}
-                        </td>
+                        <th>{isEn ? "Time" : isTw ? "時間" : "时间"}</th>
+                        <th>{isEn ? "Description" : isTw ? "說明" : "说明"}</th>
+                        <th>{isEn ? "Tokens" : isTw ? "Token 消耗" : "Token 消耗"}</th>
+                        <th>{isEn ? "Points Delta" : isTw ? "積分變動" : "积分变动"}</th>
+                        <th>{isEn ? "Balance" : isTw ? "餘額" : "余额"}</th>
                       </tr>
-                    ) : (
-                      records.map((r) => (
-                        <tr key={r.id}>
-                          <td className="time-cell">{formatDate(r.createdAt)}</td>
-                          <td>{r.description || (isEn ? "No description" : isTw ? "無說明" : "无说明")}</td>
-                          <td>{r.tokensUsed ? r.tokensUsed.toLocaleString() : "-"}</td>
-                          <td>
-                            {r.delta < 0 ? (
-                              <span className="point-delta negative">{r.delta} {ptsUnit.trim()}</span>
-                            ) : r.delta > 0 ? (
-                              <span className="point-delta positive">+{r.delta} {ptsUnit.trim()}</span>
-                            ) : (
-                              <span className="point-delta zero">0 ({isEn ? "Unlimited" : isTw ? "無限" : "无限"})</span>
-                            )}
+                    </thead>
+                    <tbody>
+                      {records.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="empty-cell">
+                            {recordsLoading ? (isEn ? "Loading records..." : isTw ? "正在載入明細..." : "正在加载明细...") : (isEn ? "No point records" : isTw ? "暫無積分變動記錄" : "暂无积分变动记录")}
                           </td>
-                          <td>{r.balanceAfter !== null && r.balanceAfter !== undefined ? `${r.balanceAfter} ${ptsUnit.trim()}` : (isEn ? "Unlimited" : isTw ? "無限" : "无限")}</td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                      ) : (
+                        records.map((r) => (
+                          <tr key={r.id}>
+                            <td className="time-cell">{formatDate(r.createdAt)}</td>
+                            <td>{r.description || (isEn ? "No description" : isTw ? "無說明" : "无说明")}</td>
+                            <td>{r.tokensUsed ? r.tokensUsed.toLocaleString() : "-"}</td>
+                            <td>
+                              {r.delta < 0 ? (
+                                <span className="point-delta negative">{r.delta} {ptsUnit.trim()}</span>
+                              ) : r.delta > 0 ? (
+                                <span className="point-delta positive">+{r.delta} {ptsUnit.trim()}</span>
+                              ) : (
+                                <span className="point-delta zero">0 ({isEn ? "Unlimited" : isTw ? "無限" : "无限"})</span>
+                              )}
+                            </td>
+                            <td>{r.balanceAfter !== null && r.balanceAfter !== undefined ? `${r.balanceAfter} ${ptsUnit.trim()}` : (isEn ? "Unlimited" : isTw ? "無限" : "无限")}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
-          )}
+          </div>
+
+          <footer className="modal-fullscreen-footer admin-points-footer">
+            <div className="modal-fullscreen-footer-inner">
+              <button className="secondary-button" type="button" onClick={onClose}>
+                {isEn ? "Close" : isTw ? "關閉" : "关闭"}
+              </button>
+            </div>
+          </footer>
         </div>
+      )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

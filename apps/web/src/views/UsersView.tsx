@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   Camera,
@@ -569,157 +570,188 @@ export function UsersView({
         </div>
       ) : null}
 
-      {editingUser ? (
-        <div className="modal-backdrop">
-          <div className="modal-panel user-edit-modal" role="dialog" aria-modal="true" aria-labelledby="user-edit-title">
-            <div className="section-heading modal-heading">
-              <div className="role-heading-info">
-                <h2 id="user-edit-title">{t("users.edit.title")}</h2>
-                <p>{editingUser.username}{t("users.edit.copySuffix")}</p>
-              </div>
-              <button className="icon-button mini" disabled={savingUser} title={t("common.close")} type="button" onClick={closeUserEditor}>
-                <X size={18} />
-              </button>
-            </div>
-            <form className="modal-form user-edit-form" onSubmit={saveEditedUser}>
-              <input
-                ref={editAvatarFileInputRef}
-                className="hidden-file-input"
-                type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif"
-                onChange={(event) => void chooseEditedUserAvatar(event)}
-              />
-              <div className="managed-user-avatar-editor">
-                <button
-                  className="managed-user-avatar-button"
-                  disabled={savingUser}
-                  title={t("account.uploadAvatar")}
-                  type="button"
-                  onClick={() => editAvatarFileInputRef.current?.click()}
-                >
-                  <AccountAvatar
-                    avatarDataUrl={editForm.avatarDataUrl ?? null}
-                    displayName={editForm.displayName ?? editingUser.displayName}
-                    username={editForm.username ?? editingUser.username}
-                    className="managed-user-preview"
-                  />
-                  <span className="account-avatar-action">
-                    <Camera size={15} />
-                  </span>
-                </button>
-                <div className="managed-user-avatar-copy">
-                  <strong>{(editForm.displayName ?? editingUser.displayName).trim() || editingUser.username}</strong>
-                  <span>@{editForm.username ?? editingUser.username}</span>
-                  <div className="account-upload-actions">
-                    <button className="icon-button mini" disabled={savingUser} type="button" title={t("account.uploadAvatar")} aria-label={t("account.uploadAvatar")} onClick={() => editAvatarFileInputRef.current?.click()}>
-                      <Upload size={15} />
-                    </button>
-                    <button
-                      className="icon-button mini danger-action"
-                      disabled={savingUser}
-                      type="button"
-                      title={t("common.remove")}
-                      aria-label={t("common.remove")}
-                      onClick={() => setEditForm((current) => ({ ...current, avatarDataUrl: null }))}
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  </div>
+      {typeof document !== "undefined" && editingUser
+        ? createPortal(
+            <div
+          className="modal-backdrop modal-fullscreen-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !savingUser) closeUserEditor();
+          }}
+        >
+          <div className="modal-panel modal-fullscreen-panel user-edit-modal" role="dialog" aria-modal="true" aria-labelledby="user-edit-title">
+            <header className="modal-fullscreen-header">
+              <div className="modal-fullscreen-title-wrap">
+                <div className="modal-fullscreen-icon-wrap">
+                  <UserCog size={22} className="points-title-icon" />
+                </div>
+                <div className="modal-fullscreen-title-text">
+                  <h3 id="user-edit-title">{t("users.edit.title")}</h3>
+                  <p className="modal-fullscreen-subtitle">
+                    <span>{editingUser.username}{t("users.edit.copySuffix")}</span>
+                    <span className={`user-status-pill ${editForm.status === "ACTIVE" ? "active" : "disabled"}`}>
+                      {editForm.status === "ACTIVE" ? t("users.status.active") : t("users.status.disabled")}
+                    </span>
+                  </p>
                 </div>
               </div>
-              <div className="user-edit-grid">
-                <label>
-                  {t("users.username")}
+              <button
+                className="icon-button mini modal-fullscreen-close-btn"
+                disabled={savingUser}
+                title={t("common.close")}
+                type="button"
+                onClick={closeUserEditor}
+              >
+                <X size={18} />
+              </button>
+            </header>
+
+            <form className="modal-fullscreen-form-wrapper" onSubmit={saveEditedUser}>
+              <div className="modal-fullscreen-body user-edit-fullscreen-body">
+                <div className="modal-fullscreen-content">
                   <input
-                    value={editForm.username ?? ""}
-                    onChange={(event) => setEditForm((current) => ({ ...current, username: event.target.value }))}
-                    required
+                    ref={editAvatarFileInputRef}
+                    className="hidden-file-input"
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    onChange={(event) => void chooseEditedUserAvatar(event)}
                   />
-                </label>
-                <label>
-                  {t("users.displayName")}
-                  <input
-                    value={editForm.displayName ?? ""}
-                    onChange={(event) => setEditForm((current) => ({ ...current, displayName: event.target.value }))}
-                    required
-                  />
-                </label>
-                <label>
-                  {t("users.status")}
-                  <select
-                    value={editForm.status ?? "ACTIVE"}
-                    onChange={(event) => setEditForm((current) => ({ ...current, status: event.target.value as ManagedUser["status"] }))}
-                  >
-                    <option value="ACTIVE">{t("users.status.active")}</option>
-                    <option value="DISABLED">{t("users.status.disabled")}</option>
-                  </select>
-                </label>
-                <label>
-                  {t("users.newPassword")}
-                  <input
-                    type="password"
-                    value={editForm.password ?? ""}
-                    onChange={(event) => setEditForm((current) => ({ ...current, password: event.target.value }))}
-                    placeholder={t("users.newPassword.placeholder")}
-                  />
-                </label>
-              </div>
-              <div className="user-role-editor">
-                <span className="user-role-editor-title">{t("users.roles")}</span>
-                <div className="permission-group-items user-role-options">
-                  <label className={`permission-chip ${(editForm.roleIds ?? []).length === 0 ? "active" : ""}`}>
-                    <input
-                      className="hidden-checkbox"
-                      type="checkbox"
-                      checked={(editForm.roleIds ?? []).length === 0}
-                      onChange={() => setEditForm((current) => ({ ...current, roleIds: [] }))}
-                    />
-                    <div className="permission-chip-content">
-                      {(editForm.roleIds ?? []).length === 0 ? <ShieldCheck size={17} /> : <div className="permission-chip-dot" />}
-                      <span className="permission-label">{t("users.noRole")}</span>
+                  <div className="managed-user-avatar-editor">
+                    <button
+                      className="managed-user-avatar-button"
+                      disabled={savingUser}
+                      title={t("account.uploadAvatar")}
+                      type="button"
+                      onClick={() => editAvatarFileInputRef.current?.click()}
+                    >
+                      <AccountAvatar
+                        avatarDataUrl={editForm.avatarDataUrl ?? null}
+                        displayName={editForm.displayName ?? editingUser.displayName}
+                        username={editForm.username ?? editingUser.username}
+                        className="managed-user-preview"
+                      />
+                      <span className="account-avatar-action">
+                        <Camera size={15} />
+                      </span>
+                    </button>
+                    <div className="managed-user-avatar-copy">
+                      <strong>{(editForm.displayName ?? editingUser.displayName).trim() || editingUser.username}</strong>
+                      <span>@{editForm.username ?? editingUser.username}</span>
+                      <div className="account-upload-actions">
+                        <button className="icon-button mini" disabled={savingUser} type="button" title={t("account.uploadAvatar")} aria-label={t("account.uploadAvatar")} onClick={() => editAvatarFileInputRef.current?.click()}>
+                          <Upload size={15} />
+                        </button>
+                        <button
+                          className="icon-button mini danger-action"
+                          disabled={savingUser}
+                          type="button"
+                          title={t("common.remove")}
+                          aria-label={t("common.remove")}
+                          onClick={() => setEditForm((current) => ({ ...current, avatarDataUrl: null }))}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     </div>
-                  </label>
-                  {assignableRoles.map((role) => {
-                    const isActive = (editForm.roleIds ?? []).includes(role.id);
-                    return (
-                      <label className={`permission-chip ${isActive ? "active" : ""}`} key={role.id}>
+                  </div>
+                  <div className="user-edit-grid">
+                    <label>
+                      {t("users.username")}
+                      <input
+                        value={editForm.username ?? ""}
+                        onChange={(event) => setEditForm((current) => ({ ...current, username: event.target.value }))}
+                        required
+                      />
+                    </label>
+                    <label>
+                      {t("users.displayName")}
+                      <input
+                        value={editForm.displayName ?? ""}
+                        onChange={(event) => setEditForm((current) => ({ ...current, displayName: event.target.value }))}
+                        required
+                      />
+                    </label>
+                    <label>
+                      {t("users.status")}
+                      <select
+                        value={editForm.status ?? "ACTIVE"}
+                        onChange={(event) => setEditForm((current) => ({ ...current, status: event.target.value as ManagedUser["status"] }))}
+                      >
+                        <option value="ACTIVE">{t("users.status.active")}</option>
+                        <option value="DISABLED">{t("users.status.disabled")}</option>
+                      </select>
+                    </label>
+                    <label>
+                      {t("users.newPassword")}
+                      <input
+                        type="password"
+                        value={editForm.password ?? ""}
+                        onChange={(event) => setEditForm((current) => ({ ...current, password: event.target.value }))}
+                        placeholder={t("users.newPassword.placeholder")}
+                      />
+                    </label>
+                  </div>
+                  <div className="user-role-editor">
+                    <span className="user-role-editor-title">{t("users.roles")}</span>
+                    <div className="permission-group-items user-role-options">
+                      <label className={`permission-chip ${(editForm.roleIds ?? []).length === 0 ? "active" : ""}`}>
                         <input
                           className="hidden-checkbox"
                           type="checkbox"
-                          checked={isActive}
-                          onChange={(event) =>
-                            setEditForm((current) => {
-                              const currentRoleIds = current.roleIds ?? [];
-                              return {
-                                ...current,
-                                roleIds: event.target.checked
-                                  ? [...new Set([...currentRoleIds, role.id])]
-                                  : currentRoleIds.filter((id) => id !== role.id)
-                              };
-                            })
-                          }
+                          checked={(editForm.roleIds ?? []).length === 0}
+                          onChange={() => setEditForm((current) => ({ ...current, roleIds: [] }))}
                         />
                         <div className="permission-chip-content">
-                          {isActive ? <ShieldCheck size={17} /> : <div className="permission-chip-dot" />}
-                          <span className="permission-label">{roleDisplayName(role, t)}</span>
+                          {(editForm.roleIds ?? []).length === 0 ? <ShieldCheck size={17} /> : <div className="permission-chip-dot" />}
+                          <span className="permission-label">{t("users.noRole")}</span>
                         </div>
                       </label>
-                    );
-                  })}
+                      {assignableRoles.map((role) => {
+                        const isActive = (editForm.roleIds ?? []).includes(role.id);
+                        return (
+                          <label className={`permission-chip ${isActive ? "active" : ""}`} key={role.id}>
+                            <input
+                              className="hidden-checkbox"
+                              type="checkbox"
+                              checked={isActive}
+                              onChange={(event) =>
+                                setEditForm((current) => {
+                                  const currentRoleIds = current.roleIds ?? [];
+                                  return {
+                                    ...current,
+                                    roleIds: event.target.checked
+                                      ? [...new Set([...currentRoleIds, role.id])]
+                                      : currentRoleIds.filter((id) => id !== role.id)
+                                  };
+                                })
+                              }
+                            />
+                            <div className="permission-chip-content">
+                              {isActive ? <ShieldCheck size={17} /> : <div className="permission-chip-dot" />}
+                              <span className="permission-label">{roleDisplayName(role, t)}</span>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div className="assignment-actions">
-                <button className="secondary-button" disabled={savingUser} type="button" onClick={closeUserEditor}>
-                  {t("common.cancel")}
-                </button>
-                <button className="primary-button" disabled={savingUser} type="submit">
-                  <Save size={18} />
-                  {savingUser ? t("common.saving") : t("users.saveUser")}
-                </button>
-              </div>
+              <footer className="modal-fullscreen-footer assignment-actions">
+                <div className="modal-fullscreen-footer-inner">
+                  <button className="secondary-button" disabled={savingUser} type="button" onClick={closeUserEditor}>
+                    {t("common.cancel")}
+                  </button>
+                  <button className="primary-button" disabled={savingUser} type="submit">
+                    {savingUser ? <Loader2 size={16} className="spin" /> : <Save size={16} />}
+                    {savingUser ? t("common.saving") : t("users.saveUser")}
+                  </button>
+                </div>
+              </footer>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       ) : null}
 
       {!canManageAccounts && canAssignInstances ? (

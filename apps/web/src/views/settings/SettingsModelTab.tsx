@@ -1,4 +1,4 @@
-import React, { memo } from "react";
+import React, { memo, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -6,6 +6,8 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Coins,
   Cpu,
   ExternalLink,
@@ -20,6 +22,7 @@ import {
   LogOut,
   Plus,
   RefreshCw,
+  Search,
   Server,
   ShieldCheck,
   SlidersHorizontal,
@@ -152,6 +155,24 @@ export const SettingsModelTab = memo(function SettingsModelTab({
   handleAddCustomMultiplier,
   t
 }: SettingsModelTabProps) {
+  const [multipliersPage, setMultipliersPage] = useState(1);
+  const [multipliersFilter, setMultipliersFilter] = useState("");
+  const MULTIPLIERS_PER_PAGE = 8;
+
+  const filteredMultipliers = useMemo(() => {
+    if (!multipliersFilter.trim()) return combinedModelKeys;
+    const q = multipliersFilter.trim().toLowerCase();
+    return combinedModelKeys.filter((key) => key.toLowerCase().includes(q));
+  }, [combinedModelKeys, multipliersFilter]);
+
+  const totalMultipliersPages = Math.max(1, Math.ceil(filteredMultipliers.length / MULTIPLIERS_PER_PAGE));
+  const safeMultipliersPage = Math.min(Math.max(1, multipliersPage), totalMultipliersPages);
+
+  const paginatedMultipliers = useMemo(() => {
+    const start = (safeMultipliersPage - 1) * MULTIPLIERS_PER_PAGE;
+    return filteredMultipliers.slice(start, start + MULTIPLIERS_PER_PAGE);
+  }, [filteredMultipliers, safeMultipliersPage]);
+
   return (
     <div
       className={`settings-group ${isActive ? "active" : "settings-section-hidden"}`}
@@ -1019,87 +1040,183 @@ export const SettingsModelTab = memo(function SettingsModelTab({
                 </span>
               </div>
             </div>
-            <div className="model-multipliers-hint">
-              <span>设为 <strong>0x</strong> 则该模型完全免费；未单独配置乘区的模型默认按 <strong>1.0x</strong> 计费。</span>
+            <div className="model-multipliers-header-right">
+              <div className="model-multipliers-hint">
+                <span>设为 <strong>0x</strong> 则该模型完全免费；未单独配置乘区的模型默认按 <strong>1.0x</strong> 计费。</span>
+              </div>
+              {combinedModelKeys.length > MULTIPLIERS_PER_PAGE ? (
+                <div className="model-multipliers-search-box">
+                  <Search size={14} className="multipliers-search-icon" />
+                  <input
+                    type="text"
+                    className="settings-input mini multipliers-search-input"
+                    placeholder="搜索乘区模型..."
+                    value={multipliersFilter}
+                    onChange={(e) => {
+                      setMultipliersFilter(e.target.value);
+                      setMultipliersPage(1);
+                    }}
+                  />
+                  {multipliersFilter ? (
+                    <button
+                      type="button"
+                      className="multipliers-search-clear"
+                      onClick={() => {
+                        setMultipliersFilter("");
+                        setMultipliersPage(1);
+                      }}
+                      title="清空搜索"
+                    >
+                      <X size={12} />
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
 
           <div className="model-multipliers-list">
-            {combinedModelKeys.map((modelKey) => {
-              const currentMultiplier = form.modelPointsMultipliers?.[modelKey] ?? 1.0;
-              const isCustom = form.modelPointsMultipliers?.[modelKey] !== undefined;
-              const isCurrentActive = form.model === modelKey;
+            {paginatedMultipliers.length === 0 ? (
+              <div className="model-multipliers-empty">
+                <span>未找到与「{multipliersFilter}」匹配的模型</span>
+              </div>
+            ) : (
+              paginatedMultipliers.map((modelKey) => {
+                const currentMultiplier = form.modelPointsMultipliers?.[modelKey] ?? 1.0;
+                const isCustom = form.modelPointsMultipliers?.[modelKey] !== undefined;
+                const isCurrentActive = form.model === modelKey;
 
-              return (
-                <div
-                  key={modelKey}
-                  className={`model-multiplier-item ${isCurrentActive ? "active-model" : ""}`}
-                >
-                  <div className="model-multiplier-info">
-                    <div className="model-name-row">
-                      <span className="model-identifier">{modelKey}</span>
-                      {isCurrentActive ? (
-                        <span className="model-active-badge">当前生效</span>
+                return (
+                  <div
+                    key={modelKey}
+                    className={`model-multiplier-item ${isCurrentActive ? "active-model" : ""}`}
+                  >
+                    <div className="model-multiplier-info">
+                      <div className="model-name-row">
+                        <span className="model-identifier">{modelKey}</span>
+                        {isCurrentActive ? (
+                          <span className="model-active-badge">当前生效</span>
+                        ) : null}
+                      </div>
+                      <div className="multiplier-status-row">
+                        {currentMultiplier === 0 ? (
+                          <span className="multiplier-pill free">0x 免费</span>
+                        ) : currentMultiplier === 1 ? (
+                          <span className="multiplier-pill default">1.0x 标准</span>
+                        ) : currentMultiplier > 1 ? (
+                          <span className="multiplier-pill premium">{currentMultiplier}x 乘区</span>
+                        ) : (
+                          <span className="multiplier-pill discount">{currentMultiplier}x 优惠</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="model-multiplier-controls">
+                      <div className="multiplier-preset-buttons">
+                        {[0, 0.5, 1.0, 2.0, 3.0].map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            className={`preset-btn ${currentMultiplier === preset ? "selected" : ""}`}
+                            onClick={() => handleSetModelMultiplier(modelKey, preset)}
+                          >
+                            {preset === 0 ? "免费(0x)" : `${preset}x`}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="multiplier-input-wrapper">
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="100"
+                          className="multiplier-number-input"
+                          value={currentMultiplier}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            handleSetModelMultiplier(modelKey, Number.isFinite(val) ? val : 1);
+                          }}
+                        />
+                        <span className="multiplier-unit">x</span>
+                      </div>
+
+                      {isCustom ? (
+                        <button
+                          type="button"
+                          className="multiplier-reset-btn"
+                          onClick={() => handleResetModelMultiplier(modelKey)}
+                          title="恢复为默认 1.0x"
+                        >
+                          重置
+                        </button>
                       ) : null}
                     </div>
-                    <div className="multiplier-status-row">
-                      {currentMultiplier === 0 ? (
-                        <span className="multiplier-pill free">0x 免费</span>
-                      ) : currentMultiplier === 1 ? (
-                        <span className="multiplier-pill default">1.0x 标准</span>
-                      ) : currentMultiplier > 1 ? (
-                        <span className="multiplier-pill premium">{currentMultiplier}x 乘区</span>
-                      ) : (
-                        <span className="multiplier-pill discount">{currentMultiplier}x 优惠</span>
-                      )}
-                    </div>
                   </div>
-
-                  <div className="model-multiplier-controls">
-                    <div className="multiplier-preset-buttons">
-                      {[0, 0.5, 1.0, 2.0, 3.0].map((preset) => (
-                        <button
-                          key={preset}
-                          type="button"
-                          className={`preset-btn ${currentMultiplier === preset ? "selected" : ""}`}
-                          onClick={() => handleSetModelMultiplier(modelKey, preset)}
-                        >
-                          {preset === 0 ? "免费(0x)" : `${preset}x`}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="multiplier-input-wrapper">
-                      <input
-                        type="number"
-                        step="0.1"
-                        min="0"
-                        max="100"
-                        className="multiplier-number-input"
-                        value={currentMultiplier}
-                        onChange={(e) => {
-                          const val = parseFloat(e.target.value);
-                          handleSetModelMultiplier(modelKey, Number.isFinite(val) ? val : 1);
-                        }}
-                      />
-                      <span className="multiplier-unit">x</span>
-                    </div>
-
-                    {isCustom ? (
-                      <button
-                        type="button"
-                        className="multiplier-reset-btn"
-                        onClick={() => handleResetModelMultiplier(modelKey)}
-                        title="恢复为默认 1.0x"
-                      >
-                        重置
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
+
+          {totalMultipliersPages > 1 ? (
+            <div className="model-multipliers-pagination">
+              <div className="multipliers-pagination-info">
+                第 <strong>{safeMultipliersPage}</strong> / {totalMultipliersPages} 页 · 共 {filteredMultipliers.length} 个模型
+              </div>
+              <div className="multipliers-pagination-controls">
+                <button
+                  type="button"
+                  className="multipliers-page-btn"
+                  disabled={safeMultipliersPage <= 1}
+                  onClick={() => setMultipliersPage((p) => Math.max(1, p - 1))}
+                  title="上一页"
+                >
+                  <ChevronLeft size={15} />
+                  <span>上一页</span>
+                </button>
+
+                <div className="multipliers-page-numbers">
+                  {Array.from({ length: totalMultipliersPages }, (_, i) => i + 1)
+                    .filter((p) => {
+                      return p === 1 || p === totalMultipliersPages || Math.abs(p - safeMultipliersPage) <= 1;
+                    })
+                    .reduce<(number | string)[]>((acc, p, idx, arr) => {
+                      if (idx > 0 && (p as number) - (arr[idx - 1] as number) > 1) {
+                        acc.push(`ellipsis-${p}`);
+                      }
+                      acc.push(p);
+                      return acc;
+                    }, [])
+                    .map((item) => {
+                      if (typeof item === "string") {
+                        return <span key={item} className="multipliers-page-ellipsis">…</span>;
+                      }
+                      return (
+                        <button
+                          key={item}
+                          type="button"
+                          className={`multipliers-page-num ${safeMultipliersPage === item ? "active" : ""}`}
+                          onClick={() => setMultipliersPage(item)}
+                        >
+                          {item}
+                        </button>
+                      );
+                    })}
+                </div>
+
+                <button
+                  type="button"
+                  className="multipliers-page-btn"
+                  disabled={safeMultipliersPage >= totalMultipliersPages}
+                  onClick={() => setMultipliersPage((p) => Math.min(totalMultipliersPages, p + 1))}
+                  title="下一页"
+                >
+                  <span>下一页</span>
+                  <ChevronRight size={15} />
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           {/* 添加自定义模型乘区 */}
           <div className="add-multiplier-row">

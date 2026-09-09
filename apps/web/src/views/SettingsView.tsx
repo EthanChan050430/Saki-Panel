@@ -40,7 +40,7 @@ import {
   type SakiVoiceEchoEngineType,
   type WebGPUDetectionResult
 } from "../components/saki/sakiVoiceEngine.js";
-import { PageErrorToast } from "../components/common/CommonUI.js";
+import { PageErrorToast, PageNoticeToast } from "../components/common/CommonUI.js";
 import {
   antigravityModeOf,
   emptySakiConfig,
@@ -380,38 +380,48 @@ export function SettingsView({
   }
 
   function updateAppearance(patch: Partial<PanelAppearanceSettings>) {
-    setForm((current) => ({
-      ...current,
-      appearance: normalizePanelAppearance({
+    setForm((current) => {
+      const nextAppearance = normalizePanelAppearance({
         ...current.appearance,
         ...patch
-      })
-    }));
+      });
+      onAppearanceChange(nextAppearance);
+      return {
+        ...current,
+        appearance: nextAppearance
+      };
+    });
   }
 
   async function chooseAppearanceMedia(
-    field: "appLogoSrc" | "sidebarLogoSrc" | "loginCoverSrc" | "backgroundSrc" | "mobileBackgroundSrc" | "darkBackgroundSrc" | "mobileDarkBackgroundSrc",
+    field: "appLogoSrc" | "sidebarLogoSrc" | "loginCoverSrc" | "defaultAvatarSrc" | "backgroundSrc" | "mobileBackgroundSrc" | "darkBackgroundSrc" | "mobileDarkBackgroundSrc",
     event: React.ChangeEvent<HTMLInputElement>,
-    allowVideo = false
+    allowVideo = false,
+    maxEdge = 2560
   ) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
+    const input = event.target;
+    const file = input.files?.[0];
     if (!file) return;
     setError("");
     setNotice("");
     try {
-      const dataUrl = await appearanceMediaFileToDataUrl(file, allowVideo);
+      const dataUrl = await appearanceMediaFileToDataUrl(file, allowVideo, maxEdge);
       updateAppearance({ [field]: dataUrl });
+      setNotice("图片已加载并实时生效，点击下方「保存」即可永久保存。");
     } catch (err) {
+      console.error("图片读取失败:", err);
       setError(err instanceof Error ? err.message : (allowVideo ? "文件读取失败" : "图片读取失败"));
+    } finally {
+      input.value = "";
     }
   }
 
   function chooseAppearanceImage(
-    field: "appLogoSrc" | "sidebarLogoSrc" | "loginCoverSrc",
+    field: "appLogoSrc" | "sidebarLogoSrc" | "loginCoverSrc" | "defaultAvatarSrc",
     event: React.ChangeEvent<HTMLInputElement>
   ) {
-    return chooseAppearanceMedia(field, event, false);
+    const maxEdge = field === "loginCoverSrc" ? 2560 : 512;
+    return chooseAppearanceMedia(field, event, false, maxEdge);
   }
 
   const refreshCopilotAuthStatus = useCallback(async (silent = false) => {
@@ -822,12 +832,8 @@ export function SettingsView({
   return (
     <>
       <PageErrorToast error={error} onDismiss={() => setError("")} />
-      {notice ? <div className="page-notice">{notice}</div> : null}
-      <section className="panel-block settings-panel">
-        <div className="section-heading">
-          <h2>{t("settings.title")}</h2>
-          <span>{loading ? t("settings.loading") : t("settings.runtime")}</span>
-        </div>
+      <PageNoticeToast notice={notice} onDismiss={() => setNotice("")} />
+      <div className="settings-liquid-container">
         <div className={`settings-grid settings-wiki ${settingsMenuCollapsed ? "toc-collapsed" : ""}`}>
           <nav className="settings-toc" aria-label={t("settings.toc")}>
             <button
@@ -974,20 +980,7 @@ export function SettingsView({
 
                 {/* Floating Footer Action Bar */}
                 <div className="settings-sticky-footer">
-                  <div className="settings-footer-info">
-                    <span className="settings-footer-dot" />
-                    <span>修改配置后请点击右侧保存生效</span>
-                  </div>
                   <div className="settings-footer-actions">
-                    <button
-                      className="ghost-button"
-                      disabled={detectingModels || loading}
-                      type="button"
-                      onClick={() => void detectModels(false)}
-                    >
-                      <RefreshCw size={16} className={detectingModels ? "animate-spin" : ""} />
-                      <span>{detectingModels ? t("settings.detecting") : t("settings.detectModels")}</span>
-                    </button>
                     <button className="primary-button settings-save" disabled={saving || loading} type="submit">
                       <Save size={16} />
                       <span>{saving ? t("common.saving") : t("settings.save")}</span>
@@ -998,7 +991,7 @@ export function SettingsView({
             )}
           </div>
         </div>
-      </section>
+      </div>
     </>
   );
 }

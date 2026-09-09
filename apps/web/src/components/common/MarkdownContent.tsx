@@ -1,4 +1,5 @@
-import React, { createContext, useContext } from "react";
+import React, { createContext, useContext, useEffect, useRef, useState } from "react";
+import { Check, Copy } from "lucide-react";
 import type { MarkdownBlock } from "../../types/app.js";
 
 export const SakiPathOpenContext = createContext<((path: string, line?: number) => void) | undefined>(undefined);
@@ -205,6 +206,61 @@ function renderInlineLines(text: string, keyPrefix: string, onOpenPath?: ((path:
   });
 }
 
+function SakiCodeBlock({ language, code }: { language: string; code: string }) {
+  const [copied, setCopied] = useState(false);
+  const copiedTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current);
+    };
+  }, []);
+
+  async function copyCode(event: React.MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(code);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = code;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
+    setCopied(true);
+    if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current);
+    copiedTimerRef.current = window.setTimeout(() => {
+      setCopied(false);
+      copiedTimerRef.current = null;
+    }, 1600);
+  }
+
+  return (
+    <div className={`saki-code-block${copied ? " is-copied" : ""}`}>
+      <div className="saki-code-toolbar">
+        <span className="saki-code-lang">{language || "code"}</span>
+        <button
+          className="saki-code-copy"
+          type="button"
+          title={copied ? "已复制" : "复制代码"}
+          aria-label={copied ? "已复制" : "复制代码"}
+          onClick={(event) => void copyCode(event)}
+        >
+          {copied ? <Check size={15} strokeWidth={2.2} /> : <Copy size={15} strokeWidth={2.2} />}
+        </button>
+      </div>
+      <pre>
+        <code>{code}</code>
+      </pre>
+    </div>
+  );
+}
+
 function MarkdownContent({ content }: { content: string }) {
   const onOpenPath = useContext(SakiPathOpenContext);
   const blocks = parseMarkdownBlocks(content);
@@ -231,14 +287,7 @@ function MarkdownContent({ content }: { content: string }) {
           );
         }
         if (block.type === "code") {
-          return (
-            <div className="saki-code-block" key={index}>
-              {block.language ? <span>{block.language}</span> : null}
-              <pre>
-                <code>{block.code}</code>
-              </pre>
-            </div>
-          );
+          return <SakiCodeBlock key={index} language={block.language} code={block.code} />;
         }
         return <p key={index}>{renderInlineLines(block.text, `paragraph-${index}`, onOpenPath)}</p>;
       })}

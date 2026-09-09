@@ -433,7 +433,6 @@
   transform: scale(0.94) !important;
 }
 
-/* has-open: NO background, NO border, NO box-shadow, NO rotation - fully consistent with refresh button */
 .topbar-refresh-btn.incident-bell-button.has-open,
 .incident-bell-button.has-open {
   background: transparent !important;

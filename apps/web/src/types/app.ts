@@ -109,6 +109,7 @@ export interface SakiSubmitOverride {
   mode?: SakiChatMode;
   attachments?: SakiInputAttachment[];
   steer?: boolean;
+  replaceHistory?: LocalSakiMessage[];
 }
 
 export interface SakiSelectionCapture {

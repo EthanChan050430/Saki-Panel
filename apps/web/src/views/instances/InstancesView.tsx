@@ -200,7 +200,8 @@ export function InstancesView({
   initialInstanceId,
   onSelectInstance,
   openFileRequest = null,
-  onOpenFileRequestConsumed
+  onOpenFileRequestConsumed,
+  onFileManagerOpenChange
 }: {
   token: string;
   onLogout: () => void;
@@ -216,6 +217,7 @@ export function InstancesView({
   onSelectInstance?: (id: string | null) => void;
   openFileRequest?: SakiOpenFileRequest | null;
   onOpenFileRequestConsumed?: () => void;
+  onFileManagerOpenChange?: ((open: boolean) => void) | undefined;
 }) {
   const [nodes, setNodes] = useState<ManagedNode[]>([]);
   const [instances, setInstances] = useState<ManagedInstance[]>([]);
@@ -414,6 +416,9 @@ export function InstancesView({
   const [editingDatabase, setEditingDatabase] = useState<DatabaseVisualizerInstance | null>(null);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showFileManagerModal, setShowFileManagerModal] = useState(false);
+  useEffect(() => {
+    onFileManagerOpenChange?.(showFileManagerModal);
+  }, [showFileManagerModal, onFileManagerOpenChange]);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showProxyModal, setShowProxyModal] = useState(false);
   const [showDatabaseVisualizer, setShowDatabaseVisualizer] = useState(false);
@@ -1905,7 +1910,7 @@ export function InstancesView({
                   : undefined
               }
             />
-            {/* Card 1: 实例信息 */}
+            {/* 实例信息 */}
             <div className="glass-panel instance-side-card instance-summary-card">
               <div className="instance-summary-header">
                 <div className="summary-title-row">
@@ -1957,7 +1962,7 @@ export function InstancesView({
               </div>
             </div>
 
-            {/* Card 2: 快捷操作 */}
+            {/* 快捷操作 */}
             <div className="glass-panel instance-side-card instance-actions-panel-card">
               <div className="quick-actions-square-grid">
                 <button
@@ -2058,7 +2063,7 @@ export function InstancesView({
               </div>
             </div>
 
-            {/* Card 3: 实时性能与进程探针 */}
+            {/* 实时性能与进程探针 */}
             <InstanceProcessProbeCard
               instance={selectedInstance}
               running={running}

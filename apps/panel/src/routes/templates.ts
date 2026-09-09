@@ -9,6 +9,7 @@ import type {
   InstanceOwnerRole,
   ManagedInstance,
   RestartPolicy,
+  CreateCustomTemplateRequest,
   SaveTemplateFromInstanceRequest,
   UpdateTemplateRequest
 } from "@webops/shared";
@@ -302,6 +303,69 @@ export async function registerTemplateRoutes(app: FastifyInstance): Promise<void
     });
     return rows.map(toInstanceTemplateRow) satisfies InstanceTemplate[];
   });
+
+  // POST /api/templates — create a custom template directly
+  app.post(
+    "/api/templates",
+    { preHandler: requirePermission("template.create") },
+    async (request, reply) => {
+      const body = request.body as CreateCustomTemplateRequest;
+      if (!body?.name?.trim()) {
+        reply.code(400).send({ message: "模板名称不能为空" });
+        return;
+      }
+      const user = await loadCurrentUser(request.user.sub);
+      if (!user) {
+        reply.code(401).send({ message: "Unauthorized" });
+        return;
+      }
+
+      const startCommand = body.defaultStartCommand?.trim() || "";
+      if (startCommand) {
+        const blocked = findDangerousCommandReason(startCommand);
+        if (blocked) {
+          reply.code(400).send({ message: blocked });
+          return;
+        }
+      }
+
+      const id = randomUUID();
+      const template = await prisma.template.create({
+        data: {
+          id,
+          name: body.name.trim(),
+          description: body.description?.trim() || null,
+          type: body.type || "generic_command",
+          defaultStartCommand: startCommand,
+          defaultStopCommand: body.defaultStopCommand?.trim() || null,
+          defaultWorkingDirectoryPrefix: body.defaultWorkingDirectoryPrefix?.trim() || "instances",
+          portsJson: JSON.stringify(body.ports || []),
+          envsJson: JSON.stringify(body.envs || []),
+          autoStart: Boolean(body.autoStart),
+          restartPolicy: body.restartPolicy || "never",
+          restartMaxRetries: Math.max(0, Math.min(Math.floor(body.restartMaxRetries ?? 3), 99)),
+          runAsUser: body.runAsUser || null,
+          memoryLimit: body.memoryLimit || null,
+          cpuLimit: body.cpuLimit || null,
+          fromInstanceId: null,
+          isBuiltin: false,
+          createdById: request.user.sub
+        },
+        include: { createdBy: { select: { username: true } } }
+      });
+
+      await writeAuditLog({
+        request,
+        userId: request.user.sub,
+        action: "template.create",
+        resourceType: "template",
+        resourceId: id,
+        payload: { name: template.name, type: template.type }
+      });
+
+      return toInstanceTemplateRow(template);
+    }
+  );
 
   // POST /api/templates/from-instance — snapshot an existing instance as a template
   app.post(

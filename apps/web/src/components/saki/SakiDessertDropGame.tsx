@@ -706,7 +706,7 @@ export function SakiDessertDropGame({ onClose, onFinish }: SakiDessertDropGamePr
                     grade: "A",
                     title: isEn ? "Full Basket" : isTw ? "滿載而歸" : "满载而归",
                     badgeColor: "cyan",
-                    expression: "/assets/expression/happy.webp",
+                    expression: "/assets/expression/wink.webp",
                     quote: isEn
                       ? "Phew～ Caught quite a few treats! We'll definitely catch even more together next time, hehe～ (๑>◡<๑)"
                       : isTw
@@ -717,7 +717,7 @@ export function SakiDessertDropGame({ onClose, onFinish }: SakiDessertDropGamePr
                     grade: "B",
                     title: isEn ? "Keep It Up" : isTw ? "繼續加油" : "继续加油",
                     badgeColor: "purple",
-                    expression: "/assets/expression/upset.webp",
+                    expression: "/assets/expression/cry.webp",
                     quote: isEn
                       ? "Aww, just missed by a little bit... But having Master play with me makes me super happy! Next time will be even better～ (´,,•ω•,,)"
                       : isTw

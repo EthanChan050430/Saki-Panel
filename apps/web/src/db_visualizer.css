@@ -704,10 +704,9 @@
 }
 
 /* =========================================================
-   Add / Edit Database Modal — 布局与呼吸空间修复
+   Add / Edit Database Modal
    ========================================================= */
 
-/* 弹窗容器：明确尺寸，避免高度被压扁 */
 .add-db-modal.glass-modal-container {
   width: 680px;
   max-width: 94vw;
@@ -731,7 +730,6 @@
   margin-bottom: 4px;
 }
 
-/* 单个分段按钮：增加上下 padding，避免过扁，图标文字间距拉开 */
 .add-db-modal .engine-segment-btn {
   padding: 10px 14px;
   min-width: 104px;
@@ -779,14 +777,13 @@
   padding: 10px 26px 6px;
 }
 
-/* 手动配置 Tab 底部 footer：与表单内容拉开距离，并强制左右分布（绕过 glass-modal-footer 的 !important） */
 .add-db-modal .manual-tab-footer.glass-modal-footer {
   justify-content: space-between !important;
   padding: 16px 26px 18px !important;
 }
 
 /* =========================================================
-   Add / Edit Modal — 通用表单元素样式（解决控件"扁扁挤在一起"）
+   Add / Edit Modal Form Elements
    ========================================================= */
 
 .add-db-modal .glass-modal-body label,
