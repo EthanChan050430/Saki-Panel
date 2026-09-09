@@ -2,6 +2,7 @@ FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages ./packages
+COPY scripts ./scripts
 COPY apps/daemon ./apps/daemon
 RUN npm ci
 RUN npm run build -w @webops/shared && npm run build -w @webops/daemon
