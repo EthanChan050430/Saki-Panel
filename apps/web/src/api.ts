@@ -119,6 +119,7 @@ import type {
   DatabaseVisualizerInstance,
   DiscoveredDatabase,
   SystemVersionCheckResult,
+  SystemUpgradeResponse,
   UpdateDatabaseVisualizerRequest
 } from "@webops/shared";
 
@@ -730,6 +731,13 @@ export const api = {
     return requestJson<SystemVersionCheckResult>(
       `/api/system/check-update${force ? "?force=true" : ""}`,
       {},
+      token
+    );
+  },
+  upgradeSystemCode(token?: string) {
+    return requestJson<SystemUpgradeResponse>(
+      "/api/system/upgrade-code",
+      { method: "POST" },
       token
     );
   },

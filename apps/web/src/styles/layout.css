@@ -529,9 +529,11 @@ html.theme-transitioning select {
    will-change pre-promotes the GPU layer so the first animation frame is instant. */
 .workspace-view-content {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: 18px;
   min-width: 0;
+  max-width: 100%;
   will-change: opacity, transform;
 }
 

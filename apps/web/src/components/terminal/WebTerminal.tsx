@@ -1085,6 +1085,7 @@ export function WebTerminal({
     terminalHost.addEventListener("touchend", handleTerminalTouchEnd);
     terminalHost.addEventListener("touchcancel", handleTerminalTouchEnd);
 
+    let resizeTimer: number | null = null;
     const fitTerminalSafe = () => {
       if (!isActiveRef.current || !terminalHost) return;
       try {
@@ -1100,15 +1101,28 @@ export function WebTerminal({
     setTerminalReady(true);
     setTerminalMountKey((value) => value + 1);
 
-    const resize = () => fitTerminalSafe();
-    window.addEventListener("resize", resize);
-    const resizeObserver = new ResizeObserver(() => fitTerminalSafe());
+    const debouncedFit = () => {
+      if (resizeTimer !== null) {
+        window.cancelAnimationFrame(resizeTimer);
+      }
+      resizeTimer = window.requestAnimationFrame(() => {
+        resizeTimer = null;
+        fitTerminalSafe();
+      });
+    };
+
+    window.addEventListener("resize", debouncedFit);
+    const resizeObserver = new ResizeObserver(() => debouncedFit());
     resizeObserver.observe(terminalHost);
 
     return () => {
+      if (resizeTimer !== null) {
+        window.cancelAnimationFrame(resizeTimer);
+        resizeTimer = null;
+      }
       themeObserver.disconnect();
       resizeObserver.disconnect();
-      window.removeEventListener("resize", resize);
+      window.removeEventListener("resize", debouncedFit);
       terminalHost.removeEventListener("copy", handleTerminalCopy, true);
       document.removeEventListener("selectionchange", handleDomSelectionChange);
       terminalHost.removeEventListener("touchstart", handleTerminalTouchStart);

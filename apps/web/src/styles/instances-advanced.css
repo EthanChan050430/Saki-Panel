@@ -2977,30 +2977,42 @@
   }
 
   .quick-actions-square-grid {
-    grid-template-columns: repeat(4, 1fr);
-    gap: 8px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 7px;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .quick-action-square-btn {
-    padding: 10px 4px;
-    min-height: 68px;
-    border-radius: 14px;
-    gap: 4px;
+    padding: 8px 3px 6px;
+    min-height: 64px;
+    border-radius: 12px;
+    gap: 3px;
+    min-width: 0;
+    width: 100%;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
   }
 
   .quick-action-square-btn .action-icon-circle {
-    width: 30px;
-    height: 30px;
+    width: 28px;
+    height: 28px;
   }
 
   .quick-action-square-btn .action-icon-circle svg {
-    width: 18px;
-    height: 18px;
+    width: 17px;
+    height: 17px;
   }
 
   .quick-action-square-btn .action-text {
     font-size: 11px;
     font-weight: 600;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: 100%;
+    text-align: center;
   }
 
   .terminal-command-row {
@@ -3519,8 +3531,11 @@ button,
     flex-direction: column;
     gap: 16px;
     width: 100%;
+    max-width: 100%;
+    min-width: 0;
     height: auto;
     min-height: 0;
+    overflow-x: hidden;
   }
 
   .instance-terminal-col {
@@ -3528,16 +3543,21 @@ button,
     flex-direction: column;
     gap: 10px;
     width: 100%;
+    max-width: 100%;
+    min-width: 0;
     height: calc(100dvh - 84px);
     min-height: 460px;
     box-sizing: border-box;
     flex: 0 0 auto;
+    overflow: hidden;
   }
 
   .instance-terminal-box {
     flex: 1 1 0;
     height: 100%;
     min-height: 0;
+    max-width: 100%;
+    min-width: 0;
     border-radius: 16px;
     display: flex;
     flex-direction: column;
@@ -3584,6 +3604,8 @@ button,
     flex-direction: column;
     gap: 14px;
     width: 100%;
+    max-width: 100%;
+    min-width: 0;
     height: auto;
     overflow: visible;
     padding-bottom: 24px;
@@ -3596,6 +3618,13 @@ button,
   .instance-actions-panel-card {
     display: block;
     width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    overflow: visible !important;
+    padding: 12px 14px;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
   }
 
   .modal-backdrop,

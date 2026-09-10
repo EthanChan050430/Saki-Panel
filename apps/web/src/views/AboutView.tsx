@@ -1,27 +1,76 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Activity,
+  AlertTriangle,
+  Bell,
+  BookOpen,
+  Bot,
   Bug,
+  Check,
   CheckCircle2,
+  ChevronRight,
   ClipboardList,
   Clock,
   Code2,
+  Cpu,
+  Database,
   DownloadCloud,
   FileText,
+  FolderOpen,
   Github,
+  Heart,
   Info,
   Layers,
+  LayoutTemplate,
   Loader2,
+  LogIn,
+  Play,
   RefreshCw,
+  Search,
   Server,
+  Settings,
+  Shield,
   ShieldCheck,
+  Sparkles,
   Terminal as TerminalIcon,
-  Wrench
+  Users,
+  Wrench,
+  X
 } from "lucide-react";
 import type { RegistrationIdentity } from "@webops/shared";
 import { PANEL_VERSION, isNewerVersion, extractVersionString } from "@webops/shared";
-import { usePanelT } from "../i18n/index.js";
+import { usePanelLanguage, usePanelT } from "../i18n/index.js";
 import { defaultPanelAppearance } from "../constants.js";
 import { api } from "../api.js";
+import {
+  InstanceActionsMockup,
+  InstanceSummaryMockup,
+  InstanceProbeMockup,
+  TerminalConsoleMockup,
+  FileManagerMockup,
+  SakiPatchDiffMockup,
+  NodeClusterMockup,
+  DatabaseProbeMockup,
+  RbacQuotaMockup,
+  SakiAssistantWindowMockup,
+  SakiCompanionMockup,
+  SakiMiniGameMockup,
+  TopbarCompanionMockup,
+  DashboardMockup,
+  SettingsNavMockup,
+  IncidentInboxMockup,
+  LoginScreenMockup,
+  ReliabilityMockup,
+  CronTasksMockup,
+  ServerTimeMockup,
+  PointsUsageMockup,
+  CreateInstanceMockup,
+  NodeJoinMockup,
+  DatabaseWorkspaceMockup,
+  AgentMonitorMockup
+} from "./about/AboutWikiMockups.js";
+import type { WikiSubSection } from "./about/wikiData.js";
+import { getWikiCategories, getWikiChapters } from "./about/wikiLocalize.js";
 
 interface AboutViewProps {
   token?: string;
@@ -29,13 +78,39 @@ interface AboutViewProps {
 
 export function AboutView({ token }: AboutViewProps = {}) {
   const t = usePanelT();
+  const { language } = usePanelLanguage();
+  const wikiChapters = useMemo(() => getWikiChapters(language), [language]);
+  const wikiCategories = useMemo(() => getWikiCategories(language), [language]);
   const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "available" | "up-to-date" | "updating" | "error">("idle");
   const [updateMessage, setUpdateMessage] = useState("");
   const currentVersion = `v${PANEL_VERSION}`;
   const projectLogoSrc = defaultPanelAppearance.appLogoSrc;
   const [latestVersion, setLatestVersion] = useState("");
   const [latestReleaseUrl, setLatestReleaseUrl] = useState("");
+  const [deploymentMode, setDeploymentMode] = useState<"git" | "release" | null>(null);
 
+  // Wiki Search & Category Filter State
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [activeChapterId, setActiveChapterId] = useState<string>("wiki-start");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Keyboard shortcut: Press '/' to focus search input
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "/" && document.activeElement !== searchInputRef.current) {
+        const tagName = (document.activeElement?.tagName || "").toLowerCase();
+        if (tagName !== "input" && tagName !== "textarea") {
+          e.preventDefault();
+          searchInputRef.current?.focus();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Update Check Logic
   const checkForUpdates = useCallback(async () => {
     setUpdateStatus("checking");
     setUpdateMessage(t("about.update.messageChecking"));
@@ -43,14 +118,17 @@ export function AboutView({ token }: AboutViewProps = {}) {
       let resolvedVersion = "";
       let resolvedUrl = "https://github.com/EthanChan050430/Saki-Panel/releases";
       let hasUpdate = false;
+      let detectedMode: "git" | "release" = "release";
 
       // 1. First attempt update check via Panel backend API
       try {
         const backendRes = await api.checkSystemUpdate(true, token);
-        if (backendRes && backendRes.latestVersion) {
-          resolvedVersion = backendRes.latestVersion;
+        if (backendRes) {
+          resolvedVersion = backendRes.latestVersion || "";
           resolvedUrl = backendRes.releaseUrl || resolvedUrl;
           hasUpdate = backendRes.hasUpdate;
+          detectedMode = backendRes.mode || "release";
+          setDeploymentMode(detectedMode);
         }
       } catch {
         // Fall back to direct browser fetch if backend check fails
@@ -117,18 +195,44 @@ export function AboutView({ token }: AboutViewProps = {}) {
         }
       }
 
-      if (resolvedVersion) {
-        setLatestVersion(resolvedVersion);
-        setLatestReleaseUrl(resolvedUrl);
-        if (hasUpdate) {
+      if (!resolvedVersion && !hasUpdate) {
+        throw new Error(t("about.update.errorVersion"));
+      }
+
+      setLatestVersion(resolvedVersion);
+      setLatestReleaseUrl(resolvedUrl);
+
+      if (hasUpdate) {
+        if (detectedMode === "release") {
+          // Release executable mode: Jump directly to download page
           setUpdateStatus("available");
-          setUpdateMessage(`${t("about.update.messageAvailable")}: ${resolvedVersion}`);
+          setUpdateMessage(t("about.update.redirectingDownload"));
+          const targetUrl = resolvedUrl || "https://github.com/EthanChan050430/Saki-Panel/releases";
+          const newWin = window.open(targetUrl, "_blank", "noopener,noreferrer");
+          if (!newWin) {
+            window.location.href = targetUrl;
+          }
         } else {
-          setUpdateStatus("up-to-date");
-          setUpdateMessage(t("about.update.messageCurrent"));
+          // Git clone mode: Automatically pull latest code and npm run build
+          setUpdateStatus("updating");
+          setUpdateMessage(t("about.update.pullingAndBuilding"));
+          try {
+            const upgradeRes = await api.upgradeSystemCode(token);
+            if (upgradeRes.success) {
+              setUpdateStatus("up-to-date");
+              setUpdateMessage(upgradeRes.message || t("about.update.upgradeSuccess"));
+            } else {
+              setUpdateStatus("error");
+              setUpdateMessage(upgradeRes.message || t("about.update.upgradeFailed"));
+            }
+          } catch (upgradeErr) {
+            setUpdateStatus("error");
+            setUpdateMessage(upgradeErr instanceof Error ? upgradeErr.message : t("about.update.upgradeFailed"));
+          }
         }
       } else {
-        throw new Error(t("about.update.errorVersion"));
+        setUpdateStatus("up-to-date");
+        setUpdateMessage(t("about.update.messageCurrent"));
       }
     } catch (err) {
       setUpdateStatus("error");
@@ -136,177 +240,341 @@ export function AboutView({ token }: AboutViewProps = {}) {
     }
   }, [currentVersion, t, token]);
 
+  // Filter Chapters based on Search Query and Category Filter
+  const filteredChapters = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return wikiChapters.filter((chapter) => {
+      // Category filter
+      if (selectedCategory !== "all" && chapter.category !== selectedCategory) {
+        return false;
+      }
+      // Query search
+      if (!q) return true;
+
+      const inTitle = chapter.title.toLowerCase().includes(q) || chapter.shortTitle.toLowerCase().includes(q);
+      const inSummary = chapter.summary.toLowerCase().includes(q);
+      const inKeywords = chapter.keywords.some((k) => k.toLowerCase().includes(q));
+      const inSubsections = chapter.subsections.some(
+        (sub) =>
+          sub.title.toLowerCase().includes(q) ||
+          (sub.description && sub.description.toLowerCase().includes(q)) ||
+          (sub.bullets && sub.bullets.some((b) => b.toLowerCase().includes(q))) ||
+          (sub.parameters && sub.parameters.some((p) => p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q)))
+      );
+
+      return inTitle || inSummary || inKeywords || inSubsections;
+    });
+  }, [searchQuery, selectedCategory, wikiChapters]);
+
+  // Scroll to Chapter Anchor
+  const scrollToChapter = useCallback((chapterId: string) => {
+    setActiveChapterId(chapterId);
+    const elem = document.getElementById(chapterId);
+    if (elem) {
+      const navOffset = 80;
+      const elementPosition = elem.getBoundingClientRect().top;
+      const offsetPosition = elementPosition + window.pageYOffset - navOffset;
+      window.scrollTo({
+        top: offsetPosition,
+        behavior: "smooth"
+      });
+    }
+  }, []);
+
+  // Render specific UI mockups
+  const renderMockup = (mockupKey?: WikiSubSection["mockupKey"]) => {
+    switch (mockupKey) {
+      case "saki-window":
+        return <SakiAssistantWindowMockup />;
+      case "saki-companion":
+        return <SakiCompanionMockup />;
+      case "saki-game":
+        return <SakiMiniGameMockup />;
+      case "saki-patch":
+        return <SakiPatchDiffMockup />;
+      case "topbar-companion":
+        return <TopbarCompanionMockup />;
+      case "instance-actions":
+        return <InstanceActionsMockup />;
+      case "instance-summary":
+        return <InstanceSummaryMockup />;
+      case "instance-probe":
+        return <InstanceProbeMockup />;
+      case "terminal-console":
+        return <TerminalConsoleMockup />;
+      case "file-manager":
+        return <FileManagerMockup />;
+      case "node-cluster":
+        return <NodeClusterMockup />;
+      case "database-probe":
+        return <DatabaseProbeMockup />;
+      case "rbac-quota":
+        return <RbacQuotaMockup />;
+      case "dashboard":
+        return <DashboardMockup />;
+      case "settings-nav":
+        return <SettingsNavMockup />;
+      case "incident-inbox":
+        return <IncidentInboxMockup />;
+      case "login":
+        return <LoginScreenMockup />;
+      case "reliability":
+        return <ReliabilityMockup />;
+      case "cron-tasks":
+        return <CronTasksMockup />;
+      case "server-time":
+        return <ServerTimeMockup />;
+      case "points-usage":
+        return <PointsUsageMockup />;
+      case "create-instance":
+        return <CreateInstanceMockup />;
+      case "node-join":
+        return <NodeJoinMockup />;
+      case "database-workspace":
+        return <DatabaseWorkspaceMockup />;
+      case "agent-monitor":
+        return <AgentMonitorMockup />;
+      default:
+        return null;
+    }
+  };
+
+  // Render chapter icon
+  const renderChapterIcon = (iconName: string) => {
+    switch (iconName) {
+      case "Layers":
+        return <Layers size={19} className="text-pink-500" />;
+      case "Activity":
+        return <Activity size={19} className="text-emerald-500" />;
+      case "Play":
+        return <Play size={19} className="text-blue-500" />;
+      case "Cpu":
+        return <Cpu size={19} className="text-purple-500" />;
+      case "Terminal":
+        return <TerminalIcon size={19} className="text-green-500" />;
+      case "FolderOpen":
+        return <FolderOpen size={19} className="text-amber-500" />;
+      case "Bot":
+        return <Bot size={19} className="text-pink-500" />;
+      case "Server":
+        return <Server size={19} className="text-indigo-500" />;
+      case "LayoutTemplate":
+        return <LayoutTemplate size={19} className="text-cyan-500" />;
+      case "Users":
+        return <Users size={19} className="text-orange-500" />;
+      case "Database":
+        return <Database size={19} className="text-blue-600" />;
+      case "Clock":
+        return <Clock size={19} className="text-amber-500" />;
+      case "Settings":
+        return <Settings size={19} className="text-slate-500" />;
+      case "Heart":
+        return <Heart size={19} className="text-rose-500" />;
+      case "Bell":
+        return <Bell size={19} className="text-pink-500" />;
+      case "LogIn":
+        return <LogIn size={19} className="text-sky-500" />;
+      case "Shield":
+        return <Shield size={19} className="text-teal-500" />;
+      case "ClipboardList":
+        return <ClipboardList size={19} className="text-slate-500" />;
+      default:
+        return <BookOpen size={19} />;
+    }
+  };
+
   return (
     <div className="about-page">
+      {/* Top Search and Category Filter Toolbar */}
+      <div className="wiki-search-toolbar">
+        <div className="wiki-search-input-box">
+          <Search size={17} className="wiki-search-icon" />
+          <input
+            ref={searchInputRef}
+            type="text"
+            className="wiki-search-input"
+            placeholder={t("about.wiki.searchPlaceholder")}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              className="wiki-search-clear-btn"
+              title={t("about.wiki.searchClear")}
+              onClick={() => setSearchQuery("")}
+            >
+              <X size={15} />
+            </button>
+          )}
+          <span className="wiki-search-stats">
+            {filteredChapters.length} {t("about.wiki.related")}
+          </span>
+        </div>
+
+        {/* Category Chips */}
+        <div className="wiki-category-chips" role="tablist">
+          {wikiCategories.map((cat) => (
+            <button
+              key={cat.key}
+              type="button"
+              className={`wiki-category-chip ${selectedCategory === cat.key ? "active" : ""}`}
+              onClick={() => setSelectedCategory(cat.key)}
+            >
+              {cat.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="about-wiki-layout">
+        {/* Main Documentation Articles Column */}
         <article className="about-article">
-          <header className="about-article-header">
-            <div className="about-kicker">
-              <img className="about-kicker-logo" src={projectLogoSrc} alt="" draggable={false} />
-              {t("about.kicker")}
-            </div>
-            <h1>Saki Panel</h1>
-            <p>{t("about.summary")}</p>
-            <div className="about-meta-strip" aria-label={t("about.kicker")}>
-              <span>{t("about.meta.version")} {currentVersion}</span>
-              <span>Apache-2.0 License</span>
-              <span>React + TypeScript</span>
-              <span>{t("about.meta.architecture")}</span>
+          <header className="wiki-clean-header">
+            <div className="wiki-header-title-box">
+              <h1 className="wiki-main-title">
+                {t("about.wiki.title")}
+                <span className="wiki-version-tag">v{PANEL_VERSION}</span>
+              </h1>
+              <p className="wiki-subtitle">
+                {t("about.wiki.subtitle")}
+              </p>
             </div>
           </header>
 
-          <section id="about-overview" className="about-wiki-section">
-            <h2>
-              <Info size={18} />
-              {t("about.overview")}
-            </h2>
-            <p>{t("about.overview.copy")}</p>
-            <dl className="about-definition-list">
-              <div>
-                <dt>{t("about.position")}</dt>
-                <dd>{t("about.position.value")}</dd>
-              </div>
-              <div>
-                <dt>{t("about.scenario")}</dt>
-                <dd>{t("about.scenario.value")}</dd>
-              </div>
-              <div>
-                <dt>{t("about.design")}</dt>
-                <dd>{t("about.design.value")}</dd>
-              </div>
-            </dl>
-          </section>
-
-          <section id="about-architecture" className="about-wiki-section">
-            <h2>
-              <Layers size={18} />
-              {t("about.architecture")}
-            </h2>
-            <p>{t("about.architecture.copy")}</p>
-            <div className="about-component-grid">
-              <div>
-                <Server size={18} />
-                <strong>Panel</strong>
-                <span>{t("about.panel.copy")}</span>
-              </div>
-              <div>
-                <TerminalIcon size={18} />
-                <strong>Daemon</strong>
-                <span>{t("about.daemon.copy")}</span>
-              </div>
-              <div>
-                <FileText size={18} />
-                <strong>Web Console</strong>
-                <span>{t("about.web.copy")}</span>
-              </div>
+          {/* Chapters Rendering */}
+          {filteredChapters.length === 0 ? (
+            <div style={{ padding: "60px 20px", textAlign: "center", color: "#64748b" }}>
+              <Search size={36} style={{ margin: "0 auto 12px", opacity: 0.4 }} />
+              <h3 style={{ fontSize: "15px", fontWeight: 700, margin: "0 0 6px" }}>{t("about.wiki.emptyTitle")}</h3>
+              <p style={{ fontSize: "13px", margin: 0 }}>
+                {t("about.wiki.emptyHint")}
+              </p>
+              <button
+                type="button"
+                className="wiki-category-chip active"
+                style={{ marginTop: "14px" }}
+                onClick={() => {
+                  setSearchQuery("");
+                  setSelectedCategory("all");
+                }}
+              >
+                {t("about.wiki.reset")}
+              </button>
             </div>
-          </section>
+          ) : (
+            filteredChapters.map((chapter) => (
+              <section
+                key={chapter.id}
+                id={chapter.id}
+                className="wiki-chapter-article"
+              >
+                <div className="wiki-chapter-header">
+                  <div className="wiki-chapter-title-row">
+                    <h2 className="wiki-chapter-title">
+                      {renderChapterIcon(chapter.iconName)}
+                      <span>{chapter.title}</span>
+                    </h2>
+                    {chapter.badge && (
+                      <span className="wiki-chapter-badge">{chapter.badge}</span>
+                    )}
+                  </div>
+                  <p className="wiki-chapter-summary">{chapter.summary}</p>
+                </div>
 
-          <section id="about-features" className="about-wiki-section">
-            <h2>
-              <Wrench size={18} />
-              {t("about.features")}
-            </h2>
-            <div className="about-feature-table" role="table" aria-label={t("about.features")}>
-              <div role="row">
-                <span role="columnheader">{t("about.features.module")}</span>
-                <span role="columnheader">{t("about.features.purpose")}</span>
-                <span role="columnheader">{t("about.features.value")}</span>
-              </div>
-              <div role="row">
-                <span role="cell">{t("about.feature.instances")}</span>
-                <span role="cell">{t("about.feature.instances.purpose")}</span>
-                <span role="cell">{t("about.feature.instances.value")}</span>
-              </div>
-              <div role="row">
-                <span role="cell">{t("about.feature.files")}</span>
-                <span role="cell">{t("about.feature.files.purpose")}</span>
-                <span role="cell">{t("about.feature.files.value")}</span>
-              </div>
-              <div role="row">
-                <span role="cell">{t("about.feature.nodes")}</span>
-                <span role="cell">{t("about.feature.nodes.purpose")}</span>
-                <span role="cell">{t("about.feature.nodes.value")}</span>
-              </div>
-              <div role="row">
-                <span role="cell">{t("about.feature.templates")}</span>
-                <span role="cell">{t("about.feature.templates.purpose")}</span>
-                <span role="cell">{t("about.feature.templates.value")}</span>
-              </div>
-              <div role="row">
-                <span role="cell">{t("about.feature.saki")}</span>
-                <span role="cell">{t("about.feature.saki.purpose")}</span>
-                <span role="cell">{t("about.feature.saki.value")}</span>
-              </div>
-            </div>
-          </section>
+                {/* Subsections */}
+                {chapter.subsections.map((sub) => (
+                  <div key={sub.id} className="wiki-subsection">
+                    <h3 className="wiki-subsection-title">{sub.title}</h3>
 
-          <section id="about-workflow" className="about-wiki-section">
-            <h2>
-              <ClipboardList size={18} />
-              {t("about.workflow")}
-            </h2>
-            <ol className="about-flow-list">
-              <li>
-                <strong>{t("about.workflow.node")}</strong>
-                <span>{t("about.workflow.node.copy")}</span>
-              </li>
-              <li>
-                <strong>{t("about.workflow.template")}</strong>
-                <span>{t("about.workflow.template.copy")}</span>
-              </li>
-              <li>
-                <strong>{t("about.workflow.deploy")}</strong>
-                <span>{t("about.workflow.deploy.copy")}</span>
-              </li>
-              <li>
-                <strong>{t("about.workflow.maintain")}</strong>
-                <span>{t("about.workflow.maintain.copy")}</span>
-              </li>
-            </ol>
-          </section>
+                    {sub.description && (
+                      <p className="wiki-subsection-desc">{sub.description}</p>
+                    )}
 
-          <section id="about-security" className="about-wiki-section">
-            <h2>
-              <ShieldCheck size={18} />
-              {t("about.security")}
-            </h2>
-            <p>{t("about.security.copy")}</p>
-            <ul className="about-check-list">
-              <li>{t("about.security.userRoles")}</li>
-              <li>{t("about.security.assignment")}</li>
-              <li>{t("about.security.audit")}</li>
-              <li>{t("about.security.runtime")}</li>
-            </ul>
-          </section>
+                    {/* Bullets */}
+                    {sub.bullets && sub.bullets.length > 0 && (
+                      <ul className="wiki-bullet-list">
+                        {sub.bullets.map((bullet, bIdx) => (
+                          <li key={bIdx}>{bullet}</li>
+                        ))}
+                      </ul>
+                    )}
 
-          <section id="about-stack" className="about-wiki-section">
-            <h2>
-              <Code2 size={18} />
-              {t("about.stack")}
-            </h2>
-            <div className="about-stack-list">
-              <span>React 19</span>
-              <span>TypeScript</span>
-              <span>Vite</span>
-              <span>Fastify</span>
-              <span>Prisma</span>
-              <span>WebSocket</span>
-              <span>xterm.js</span>
-              <span>CodeMirror</span>
-            </div>
-          </section>
+                    {/* Callout */}
+                    {sub.callout && (
+                      <div className={`wiki-callout ${sub.callout.type}`}>
+                        {sub.callout.type === "tip" && <CheckCircle2 size={16} style={{ flexShrink: 0, marginTop: 2 }} />}
+                        {sub.callout.type === "warning" && <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 2 }} />}
+                        {sub.callout.type === "note" && <Info size={16} style={{ flexShrink: 0, marginTop: 2 }} />}
+                        <div>
+                          <strong>{sub.callout.title}</strong>
+                          <span>{sub.callout.text}</span>
+                        </div>
+                      </div>
+                    )}
 
-          <section id="about-maintenance" className="about-wiki-section">
-            <h2>
-              <RefreshCw size={18} />
-              {t("about.maintenance")}
-            </h2>
-            <p>{t("about.maintenance.copy")}</p>
-          </section>
+                    {/* Table */}
+                    {sub.table && (
+                      <div className="wiki-table-container">
+                        <table className="wiki-data-table">
+                          <thead>
+                            <tr>
+                              {sub.table.headers.map((h, hIdx) => (
+                                <th key={hIdx}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sub.table.rows.map((row, rIdx) => (
+                              <tr key={rIdx}>
+                                {row.map((cell, cIdx) => (
+                                  <td key={cIdx}>{cell}</td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {/* Parameters Table */}
+                    {sub.parameters && sub.parameters.length > 0 && (
+                      <div className="wiki-table-container">
+                        <table className="wiki-data-table">
+                          <thead>
+                            <tr>
+                              <th>{t("about.wiki.paramName")}</th>
+                              <th>{t("about.wiki.paramType")}</th>
+                              <th>{t("about.wiki.paramDefault")}</th>
+                              <th>{t("about.wiki.paramDesc")}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sub.parameters.map((param, pIdx) => (
+                              <tr key={pIdx}>
+                                <td><code>{param.name}</code></td>
+                                <td><span style={{ color: "#6366f1", fontWeight: 600 }}>{param.type || "string"}</span></td>
+                                <td>{param.defaultVal ? <code>{param.defaultVal}</code> : "-"}</td>
+                                <td>{param.description}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {/* Embedded Pure CSS/DOM UI Mockup Legend (Non-interactive) */}
+                    {sub.mockupKey && renderMockup(sub.mockupKey)}
+                  </div>
+                ))}
+              </section>
+            ))
+          )}
         </article>
 
+        {/* Right Sticky Column: Infobox + Updates + Wiki Table of Contents */}
         <aside className="about-side-column" aria-label={t("about.sidebar")}>
+          {/* Infobox & Update Checker */}
           <section className="about-infobox" aria-label={t("about.projectInfo")}>
             <div className="about-infobox-title">
               <div className="about-icon">
@@ -339,26 +607,43 @@ export function AboutView({ token }: AboutViewProps = {}) {
                 <dt>{t("about.repository")}</dt>
                 <dd>
                   <a href="https://github.com/EthanChan050430/Saki-Panel" target="_blank" rel="noopener noreferrer">
-                    <Github size={15} />
+                    <Github size={14} />
                     EthanChan050430/Saki-Panel
                   </a>
                 </dd>
               </div>
             </dl>
 
+            {/* Check for updates */}
             <div className="about-update-panel">
-              <h2>
-                <RefreshCw size={16} />
-                {t("about.updateCheck")}
-              </h2>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                <h2 style={{ margin: 0 }}>
+                  <RefreshCw size={15} />
+                  {t("about.updateCheck")}
+                </h2>
+                {deploymentMode && (
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      padding: "2px 8px",
+                      borderRadius: "10px",
+                      backgroundColor: deploymentMode === "git" ? "rgba(99, 102, 241, 0.12)" : "rgba(16, 185, 129, 0.12)",
+                      color: deploymentMode === "git" ? "#818cf8" : "#34d399",
+                      fontWeight: 600
+                    }}
+                  >
+                    {deploymentMode === "git" ? t("about.update.modeGit") : t("about.update.modeRelease")}
+                  </span>
+                )}
+              </div>
               <div className="update-status">
                 <div className={`status-indicator ${updateStatus}`}>
-                  {updateStatus === "checking" && <Loader2 size={16} className="status-spinner" />}
-                  {updateStatus === "available" && <DownloadCloud size={16} />}
-                  {updateStatus === "up-to-date" && <CheckCircle2 size={16} />}
-                  {updateStatus === "updating" && <Loader2 size={16} className="status-spinner" />}
-                  {updateStatus === "error" && <Bug size={16} />}
-                  {updateStatus === "idle" && <Clock size={16} />}
+                  {updateStatus === "checking" && <Loader2 size={15} className="status-spinner" />}
+                  {updateStatus === "available" && <DownloadCloud size={15} />}
+                  {updateStatus === "up-to-date" && <CheckCircle2 size={15} />}
+                  {updateStatus === "updating" && <Loader2 size={15} className="status-spinner" />}
+                  {updateStatus === "error" && <Bug size={15} />}
+                  {updateStatus === "idle" && <Clock size={15} />}
                 </div>
                 <span className="status-text">{updateMessage || t("about.update.idle")}</span>
               </div>
@@ -368,7 +653,7 @@ export function AboutView({ token }: AboutViewProps = {}) {
                   onClick={checkForUpdates}
                   disabled={updateStatus === "checking" || updateStatus === "updating"}
                 >
-                  {updateStatus === "checking" ? t("about.update.checking") : t("about.update.check")}
+                  {updateStatus === "checking" ? t("about.update.checking") : updateStatus === "updating" ? t("common.loading") : t("about.update.check")}
                 </button>
                 {updateStatus === "available" && (
                   <a
@@ -377,9 +662,19 @@ export function AboutView({ token }: AboutViewProps = {}) {
                     target="_blank"
                     rel="noopener noreferrer"
                   >
-                    <DownloadCloud size={15} />
+                    <DownloadCloud size={14} />
                     {t("about.update.release")}
                   </a>
+                )}
+                {updateStatus === "up-to-date" && deploymentMode === "git" && (
+                  <button
+                    className="update-btn"
+                    onClick={() => window.location.reload()}
+                    title={t("about.update.refreshPage")}
+                  >
+                    <RefreshCw size={13} />
+                    {t("about.update.refreshPage")}
+                  </button>
                 )}
               </div>
               {latestVersion && (
@@ -388,15 +683,39 @@ export function AboutView({ token }: AboutViewProps = {}) {
             </div>
           </section>
 
-          <nav className="about-toc" aria-label={t("about.toc")}>
-            <div className="about-toc-heading">{t("about.toc")}</div>
-            <a href="#about-overview">{t("about.overview")}</a>
-            <a href="#about-architecture">{t("about.architecture")}</a>
-            <a href="#about-features">{t("about.features")}</a>
-            <a href="#about-workflow">{t("about.workflow")}</a>
-            <a href="#about-security">{t("about.security")}</a>
-            <a href="#about-stack">{t("about.stack")}</a>
-            <a href="#about-maintenance">{t("about.maintenance")}</a>
+          {/* Dynamic Wiki Table of Contents */}
+          <nav className="about-toc" aria-label={t("about.wiki.tocAria")}>
+            <div className="about-toc-heading" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>{t("about.toc")} ({filteredChapters.length})</span>
+              {searchQuery && (
+                <span style={{ fontSize: "11px", color: "#ff75ac", fontWeight: 600 }}>{t("about.wiki.searching")}</span>
+              )}
+            </div>
+
+            <div className="wiki-toc-list">
+              {filteredChapters.map((ch) => (
+                <a
+                  key={ch.id}
+                  href={`#${ch.id}`}
+                  className={`wiki-toc-item ${activeChapterId === ch.id ? "active" : ""}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    scrollToChapter(ch.id);
+                  }}
+                >
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {ch.shortTitle}
+                  </span>
+                  {ch.badge && (
+                    <span className="wiki-toc-badge">{ch.badge}</span>
+                  )}
+                </a>
+              ))}
+            </div>
+
+            <div style={{ padding: "8px 10px 2px", fontSize: "11px", color: "#64748b", borderTop: "1px solid rgba(226, 232, 240, 0.6)" }}>
+              💡 {t("about.wiki.slashHint")} <kbd style={{ padding: "1px 4px", borderRadius: 3, background: "rgba(148,163,184,0.18)", fontSize: "10px" }}>/</kbd> {t("about.wiki.slashHintAfter")}
+            </div>
           </nav>
         </aside>
       </div>

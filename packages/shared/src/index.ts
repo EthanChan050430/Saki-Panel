@@ -1,4 +1,4 @@
-export const PANEL_VERSION = "3.3";
+export const PANEL_VERSION = "3.4";
 
 export const noRolePermissionRoleName = "__no_role__";
 
@@ -1872,6 +1872,8 @@ export interface DatabaseImportResponse {
   message?: string | undefined;
 }
 
+export type SystemDeploymentMode = "release" | "git";
+
 export interface SystemVersionCheckResult {
   currentVersion: string;
   latestVersion: string;
@@ -1880,6 +1882,18 @@ export interface SystemVersionCheckResult {
   releaseNotes?: string | undefined;
   publishedAt?: string | undefined;
   checkedAt: string;
+  mode: SystemDeploymentMode;
+  commitsBehind?: number | undefined;
+  currentCommit?: string | undefined;
+  remoteCommit?: string | undefined;
+}
+
+export interface SystemUpgradeResponse {
+  success: boolean;
+  message: string;
+  pullOutput?: string | undefined;
+  buildOutput?: string | undefined;
+  error?: string | undefined;
 }
 
 export function parseSemver(version: string): { major: number; minor: number; patch: number; pre?: string | undefined } | null {

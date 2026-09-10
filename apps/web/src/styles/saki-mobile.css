@@ -31,32 +31,56 @@
   .instance-side-card {
     padding: 12px 14px;
     border-radius: 14px;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+
+  .instance-actions-panel-card {
+    padding: 10px 10px !important;
+    overflow: visible !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
   }
 
   .quick-actions-square-grid {
-    grid-template-columns: repeat(4, 1fr);
-    gap: 6px;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+    width: 100% !important;
   }
 
   .quick-action-square-btn {
-    padding: 8px 2px;
-    min-height: 64px;
-    border-radius: 12px;
-    gap: 3px;
+    padding: 6px 2px 5px !important;
+    min-height: 58px !important;
+    border-radius: 11px !important;
+    gap: 2px !important;
+    min-width: 0 !important;
+    width: 100% !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    touch-action: manipulation;
   }
 
   .quick-action-square-btn .action-icon-circle {
-    width: 28px;
-    height: 28px;
+    width: 26px !important;
+    height: 26px !important;
   }
 
   .quick-action-square-btn .action-icon-circle svg {
-    width: 16px;
-    height: 16px;
+    width: 16px !important;
+    height: 16px !important;
   }
 
   .quick-action-square-btn .action-text {
-    font-size: 10.5px;
+    font-size: 10.5px !important;
+    line-height: 1.25 !important;
+    width: 100% !important;
+    text-align: center !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    display: block !important;
   }
 
   .instance-summary-table .summary-row {
