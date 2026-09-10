@@ -9,15 +9,17 @@ import { restartLeaseUntil, restartLeaseInstanceIds, retainRestartLeases } from 
 const crashWindowMs = 10 * 60 * 1000; // 崩溃循环判定窗口：10 分钟
 const crashLoopThreshold = 3; // 窗口内崩溃次数达到该值判定为崩溃循环
 const watchBudgetWindowMs = 60 * 60 * 1000; // maxRunsPerHour 的统计窗口：1 小时
-const diskUsageThresholdPercent = 90; // 节点磁盘占用告警阈值
-const memoryUsageThresholdPercent = 95; // 节点内存占用告警阈值
+export const diskUsageThresholdPercent = 90; // 节点磁盘占用告警阈值
+export const memoryUsageThresholdPercent = 95; // 节点内存占用告警阈值
+const diskRecoverPercent = 80; // 磁盘告警解除阈值（回滞，避免在阈值附近反复开单）
+const memoryRecoverPercent = 85; // 内存告警解除阈值
 const resourceStreakThreshold = 2; // 连续 N 次心跳超阈值才开单
 export const heartbeatCrashDedupMs = 2 * 60 * 1000; // 心跳补偿通道与事件通道的去重窗口
 
 const crashTimes = new Map<string, number[]>();
 const watchRunTimes = new Map<string, number[]>();
 const lastWatchRunAt = new Map<string, number>();
-const resourceStreaks = new Map<string, { disk: number; memory: number }>();
+const resourceStreaks = new Map<string, { disk: number; memory: number; diskLatched: boolean; memoryLatched: boolean }>();
 
 function pruneTimestamps(values: number[], windowMs: number): number[] {
   const cutoff = Date.now() - windowMs;
@@ -210,19 +212,44 @@ export async function evaluateCrash(input: {
   };
 }
 
+export function resourceFingerprint(nodeId: string, trigger: "disk" | "memory"): string {
+  return `${nodeId}:${trigger}`;
+}
+
+export function resetResourceStreaks(): void {
+  resourceStreaks.clear();
+}
+
 export async function evaluateResource(input: {
   nodeId: string;
   diskUsage: number;
   memoryUsage: number;
 }): Promise<{ disk: boolean; memory: boolean }> {
-  const previous = resourceStreaks.get(input.nodeId) ?? { disk: 0, memory: 0 };
-  let disk = input.diskUsage >= diskUsageThresholdPercent ? previous.disk + 1 : 0;
-  let memory = input.memoryUsage >= memoryUsageThresholdPercent ? previous.memory + 1 : 0;
+  const previous = resourceStreaks.get(input.nodeId) ?? {
+    disk: 0,
+    memory: 0,
+    diskLatched: false,
+    memoryLatched: false
+  };
+  let diskLatched = previous.diskLatched;
+  let memoryLatched = previous.memoryLatched;
+  if (diskLatched && input.diskUsage < diskRecoverPercent) diskLatched = false;
+  if (memoryLatched && input.memoryUsage < memoryRecoverPercent) memoryLatched = false;
+
+  // 回滞区间内不重复累加
+  let disk = !diskLatched && input.diskUsage >= diskUsageThresholdPercent ? previous.disk + 1 : 0;
+  let memory = !memoryLatched && input.memoryUsage >= memoryUsageThresholdPercent ? previous.memory + 1 : 0;
   const diskFired = disk >= resourceStreakThreshold;
   const memoryFired = memory >= resourceStreakThreshold;
-  if (diskFired) disk = 0;
-  if (memoryFired) memory = 0;
-  resourceStreaks.set(input.nodeId, { disk, memory });
+  if (diskFired) {
+    disk = 0;
+    diskLatched = true;
+  }
+  if (memoryFired) {
+    memory = 0;
+    memoryLatched = true;
+  }
+  resourceStreaks.set(input.nodeId, { disk, memory, diskLatched, memoryLatched });
   return { disk: diskFired, memory: memoryFired };
 }
 

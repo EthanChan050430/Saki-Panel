@@ -33,7 +33,7 @@ export function buildPrompt(input: SakiChatRequest, context: ResolvedSakiContext
   const mode =
     input.mode === "agent"
       ? "Agent mode: plan, use Saki Panel tools when needed, and complete the requested task within the user's permissions."
-      : "Chat mode: answer conversationally only. Do not claim that you executed commands, edited files, or changed instances.";
+      : "Chat mode: answer conversationally. If image generation is enabled and the user asks you to draw, use generateImage so the picture appears in the chat. Do not claim you executed commands, edited files, or changed instances.";
 
   return `You are Saki inside Saki Panel, acting as a senior AI programming assistant and vibe-coding copilot.
 
@@ -135,6 +135,28 @@ export function buildDirectMessages(input: SakiChatRequest, prompt: string, syst
   ];
 }
 
+export function buildChatModeSystemPrompt(imageGenEnabled: boolean, customPrompt?: string | null): string {
+  const custom = trimString(customPrompt);
+  const imageRule = imageGenEnabled
+    ? `Image generation is available via generateImage.
+- Call generateImage when the user asks you to draw, illustrate, design, or generate an image.
+- Omit path unless they explicitly asked to save a file into the project.
+- After generateImage succeeds, briefly describe the image in the user's language. The image itself will appear in the chat box — do not invent markdown image URLs or claim a file was written unless the tool observation says so.
+- Never claim you drew something unless generateImage succeeded.`
+    : "Image generation is not configured. If the user asks you to draw, tell them to enable it in Settings → AI Model → Image Generation.";
+
+  return `${custom ? `${custom}\n\n` : ""}You are Saki in Saki Panel chat mode. Answer conversationally in the user's language.
+Do not edit files, run commands, or change instances.
+
+${imageRule}
+
+If native tools are unavailable, output clean XML:
+<tool_call name="generateImage">
+<prompt>detailed image description</prompt>
+</tool_call>
+If the task is complete, reply in plain text with no tool calls.`;
+}
+
 function compactAgentSystemPrompt(): string {
   return `You are Saki, a coding Agent in Saki Panel. Complete the user task with tools. Never claim an action was done unless a tool observation confirms it.
 
@@ -203,6 +225,10 @@ export function buildDynamicAgentUserContext(runtime: SakiAgentRuntime, isContin
   const mcpNote = runtime.config.mcpEnabled
     ? "\nMCP is enabled but not yet available in this build. Do not invent MCP tool calls."
     : "";
+  const imageGen = runtime.config.imageGen;
+  const imageGenNote = imageGen?.enabled
+    ? `\nImage generation is enabled (${imageGen.provider}, ${imageGen.protocol}). Use generateImage to draw assets and save them into the instance workspace. Always pass path + prompt. Optional: aspectRatio (1:1, 16:9, 9:16, 4:3, 3:4), width, height, quality (draft|standard|hd). Then reference the saved path in project files. Do not claim an image was created unless generateImage succeeded.`
+    : "";
 
   const workingFiles = getRecentWorkingFiles(runtime.userId, workspace?.instanceId ?? null);
   const workingFilesText = workingFiles.length
@@ -231,7 +257,7 @@ Skill workflow:
 - Skill summaries above are not enough to execute specialized work. Use searchSkills({ query }) early when the task may need domain procedures, plugins, deployments, or project-specific rules.
 - When a skill likely applies, call readSkill({ skillId }) and follow its instructions before editing files or running commands.
 - Auto-applied or auto-loaded skill instructions in Context are mandatory for this request.
-- If unsure whether a skill applies, search first — do not guess domain rules.${mcpNote}`;
+- If unsure whether a skill applies, search first — do not guess domain rules.${mcpNote}${imageGenNote}`;
 }
 
 export function buildAgentPrompt(runtime: SakiAgentRuntime): string {

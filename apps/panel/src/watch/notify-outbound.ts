@@ -77,9 +77,11 @@ function clip(value: string | null | undefined, max = 280): string {
 }
 
 function incidentNotificationText(incident: ManagedIncident, kind: NotificationEventKind): { title: string; text: string } {
-  const title = `【Saki 值班】${kindLabels[kind]} · ${incident.instanceName}`;
+  const nodeResource = incident.trigger === "disk" || incident.trigger === "memory";
+  const subject = nodeResource ? incident.nodeName ?? incident.instanceName : incident.instanceName;
+  const title = `【Saki 值班】${kindLabels[kind]} · ${subject}`;
   const lines = [
-    `实例：${incident.instanceName}`,
+    nodeResource ? `节点：${incident.nodeName ?? incident.nodeId}` : `实例：${incident.instanceName}`,
     `触发：${triggerLabels[incident.trigger] ?? incident.trigger}`,
     `状态：${kindLabels[kind]}（${incident.status}）`
   ];

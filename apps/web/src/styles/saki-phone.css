@@ -1,0 +1,1656 @@
+/* ==========================================================================
+   Saki Phone Launcher & Mini-Games Stylesheet
+   Authentic Smartphone OS Desktop & High-Juice Match-3
+   ========================================================================== */
+
+/* --- Phone Frame Container --- */
+.saki-phone-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  overflow: hidden;
+  user-select: none;
+  animation: sakiPhoneSlideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.45);
+}
+
+@keyframes sakiPhoneSlideUp {
+  0% {
+    opacity: 0;
+    transform: translateY(28px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Status Bar */
+.saki-phone-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px 4px;
+  z-index: 20;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+}
+
+.saki-phone-clock {
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+/* Dynamic Island */
+.saki-phone-island {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(15, 23, 42, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  padding: 4px 12px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.saki-phone-island:hover {
+  transform: scale(1.05);
+  border-color: rgba(255, 117, 172, 0.6);
+}
+
+.saki-phone-island .island-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 6px #38bdf8;
+  animation: islandPulse 1.8s infinite alternate;
+}
+
+@keyframes islandPulse {
+  0% { transform: scale(0.85); opacity: 0.7; }
+  100% { transform: scale(1.2); opacity: 1; }
+}
+
+.saki-phone-island .island-text {
+  font-size: 10px;
+  font-weight: 700;
+  color: #fbcfe8;
+  letter-spacing: 0.4px;
+}
+
+.saki-phone-status-right {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.saki-phone-battery {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.battery-pill {
+  width: 18px;
+  height: 9px;
+  border-radius: 3px;
+  border: 1.5px solid #ffffff;
+  padding: 1px;
+  display: flex;
+  align-items: center;
+}
+
+.battery-level {
+  width: 88%;
+  height: 100%;
+  background: #4ade80;
+  border-radius: 1px;
+}
+
+/* --- Real Smartphone App Desktop --- */
+.saki-phone-desktop {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 14px 10px;
+  gap: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.saki-phone-desktop::-webkit-scrollbar {
+  display: none;
+}
+
+/* iOS Style Compact Top Widget */
+.saki-phone-widget-row {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+
+.saki-phone-clock-widget {
+  flex: 1;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+}
+
+.saki-widget-date {
+  font-size: 10px;
+  font-weight: 800;
+  color: #ff75ac;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.saki-widget-time-big {
+  font-size: 24px;
+  font-weight: 900;
+  color: #ffffff;
+  font-family: var(--font-mono, monospace);
+  line-height: 1.1;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.saki-widget-status {
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.8);
+  margin-top: 2px;
+}
+
+.saki-phone-avatar-widget {
+  width: 78px;
+  height: 78px;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, rgba(255, 117, 172, 0.35) 0%, rgba(147, 51, 234, 0.35) 100%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.saki-phone-avatar-widget:hover {
+  transform: scale(1.04);
+}
+
+.saki-phone-avatar-widget img {
+  width: 50px;
+  height: 50px;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.4));
+}
+
+.saki-phone-avatar-widget .widget-badge {
+  position: absolute;
+  bottom: 4px;
+  font-size: 9px;
+  font-weight: 900;
+  background: #ff75ac;
+  color: #ffffff;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  box-shadow: 0 2px 6px rgba(255, 117, 172, 0.6);
+}
+
+/* App Icons Grid (4 columns, true smartphone style) */
+.saki-app-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px 8px;
+  padding: 4px 2px;
+  width: 100%;
+}
+
+.saki-app-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  outline: none;
+  transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.saki-app-item:hover {
+  transform: translateY(-3px) scale(1.08);
+}
+
+.saki-app-item:active {
+  transform: scale(0.92);
+}
+
+.saki-app-icon-squircle {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.42), inset 0 1px 1px rgba(255, 255, 255, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  transition: box-shadow 0.2s ease;
+}
+
+.saki-app-item:hover .saki-app-icon-squircle {
+  box-shadow: 0 8px 22px rgba(255, 117, 172, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.5);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.saki-app-icon-squircle img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Notification Dots on Icons */
+.saki-app-badge-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  padding: 1px 5px;
+  font-size: 8.5px;
+  font-weight: 900;
+  border-radius: 9999px;
+  color: #ffffff;
+  border: 1.5px solid #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.2px;
+  z-index: 5;
+}
+
+.saki-app-badge-dot.red {
+  background: #f43f5e;
+}
+
+.saki-app-badge-dot.gold {
+  background: #f59e0b;
+}
+
+.saki-app-badge-dot.blue {
+  background: #3b82f6;
+}
+
+.saki-app-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffffff;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 62px;
+  letter-spacing: 0.2px;
+}
+
+/* Page Dots */
+.saki-phone-pages {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 4px 0;
+}
+
+.saki-phone-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.saki-phone-dot.active {
+  width: 16px;
+  border-radius: 9999px;
+  background: #ffffff;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
+}
+
+/* Floating Glass Dock */
+.saki-phone-glass-dock {
+  margin: 0 12px 14px;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55);
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  position: relative;
+}
+
+.saki-dock-app-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.saki-dock-app-btn:hover {
+  transform: translateY(-3px) scale(1.1);
+}
+
+.saki-dock-app-btn:active {
+  transform: scale(0.92);
+}
+
+.saki-dock-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.saki-dock-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Home Indicator Bar */
+.saki-phone-home-bar-area {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 6px;
+  cursor: pointer;
+}
+
+.saki-phone-home-indicator {
+  width: 110px;
+  height: 4.5px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.75);
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+.saki-phone-home-bar-area:hover .saki-phone-home-indicator {
+  background: #ff75ac;
+  width: 130px;
+  box-shadow: 0 0 10px #ff75ac;
+}
+
+/* ==========================================================================
+   Sweet Match-3 Game Stylesheet (High-Juice Arcade)
+   ========================================================================== */
+.saki-match-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background-size: cover;
+  background-position: center;
+  overflow: hidden;
+  user-select: none;
+  animation: sakiFadeIn 0.25s ease;
+}
+
+.saki-match-overlay.fever-active {
+  box-shadow: inset 0 0 35px rgba(251, 191, 36, 0.95), inset 0 0 70px rgba(244, 63, 94, 0.7);
+}
+
+/* Screen Shakes for massive impacts */
+.saki-match-board-area.shaking-mild {
+  animation: matchShakeMild 0.22s ease;
+}
+
+.saki-match-board-area.shaking-intense {
+  animation: matchShakeIntense 0.35s ease;
+}
+
+@keyframes matchShakeMild {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(-3px, 2px); }
+  75% { transform: translate(3px, -2px); }
+}
+
+@keyframes matchShakeIntense {
+  0%, 100% { transform: translate(0, 0); }
+  20% { transform: translate(-6px, 4px) rotate(-1deg); }
+  40% { transform: translate(6px, -4px) rotate(1deg); }
+  60% { transform: translate(-4px, 2px); }
+  80% { transform: translate(4px, -2px); }
+}
+
+/* Match Game Header */
+.saki-match-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  z-index: 20;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.9) 0%, rgba(15, 23, 42, 0.4) 80%, transparent 100%);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.saki-match-stats {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.saki-match-stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.saki-match-stat-label {
+  font-size: 9px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.75);
+  letter-spacing: 0.5px;
+}
+
+.saki-match-stat-val {
+  font-size: 16px;
+  font-weight: 800;
+  font-family: var(--font-mono, monospace);
+}
+
+.saki-match-stat-val.timer {
+  color: #fbbf24;
+}
+
+.saki-match-stat-val.score {
+  color: #ffffff;
+  text-shadow: 0 0 10px rgba(255, 255, 255, 0.6);
+}
+
+.saki-match-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.saki-match-btn-icon {
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+}
+
+.saki-match-btn-icon:hover {
+  background: rgba(255, 117, 172, 0.7);
+  transform: scale(1.1);
+}
+
+.saki-match-btn-icon.exit:hover {
+  background: rgba(239, 68, 68, 0.85);
+  border-color: #ef4444;
+}
+
+/* Board Center Area */
+.saki-match-board-area {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.saki-match-board-area.hammer-mode {
+  cursor: crosshair !important;
+}
+
+.saki-match-hammer-hint {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 26;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 4px 14px;
+  border-radius: 9999px;
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.85);
+  white-space: nowrap;
+  animation: sakiFeverPulse 0.8s infinite alternate;
+  pointer-events: none;
+  border: 1px solid #fef08a;
+}
+
+.saki-match-board-area.hammer-mode .saki-match-tile {
+  cursor: pointer !important;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.saki-match-board-area.hammer-mode .saki-match-tile:hover {
+  transform: scale(1.14);
+  box-shadow: 0 0 16px rgba(251, 191, 36, 0.9);
+  border-radius: 12px;
+  background: rgba(251, 191, 36, 0.28);
+}
+
+/* Fever Banner */
+.saki-match-fever-banner {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 25;
+  background: linear-gradient(135deg, #fbbf24, #f59e0b, #ec4899);
+  color: #1e1b4b;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.8px;
+  padding: 3px 14px;
+  border-radius: 9999px;
+  box-shadow: 0 0 16px rgba(251, 191, 36, 0.8);
+  border: 1.5px solid #fef08a;
+  animation: sakiFeverPulse 0.8s infinite alternate;
+}
+
+@keyframes sakiFeverPulse {
+  0% { transform: translateX(-50%) scale(0.95); }
+  100% { transform: translateX(-50%) scale(1.08); }
+}
+
+/* Combo Float Display */
+.saki-match-combo-popup {
+  position: absolute;
+  top: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 24;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  animation: sakiComboPop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes sakiComboPop {
+  0% { transform: translateX(-50%) scale(0.6); opacity: 0; }
+  100% { transform: translateX(-50%) scale(1); opacity: 1; }
+}
+
+.saki-match-combo-popup .combo-num {
+  font-size: 26px;
+  font-weight: 900;
+  font-family: var(--font-mono, monospace);
+  background: linear-gradient(180deg, #ffffff 0%, #ff75ac 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 8px rgba(255, 117, 172, 0.8));
+}
+
+.saki-match-combo-popup .combo-text {
+  font-size: 10.5px;
+  font-weight: 900;
+  color: #fef08a;
+  letter-spacing: 1px;
+}
+
+/* 
+ * FIXED 7x7 GRID CONTAINER
+ * Strictly wraps all 7 rows and 7 columns inside the dark frame without ANY spillover!
+ */
+.saki-match-grid-container {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 292px;
+  aspect-ratio: 1 / 1;
+  background: rgba(15, 23, 42, 0.82);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-radius: 20px;
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.65), inset 0 0 14px rgba(255, 255, 255, 0.08);
+  padding: 6px;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-rows: repeat(7, minmax(0, 1fr));
+  gap: 3px;
+  overflow: hidden;
+}
+
+/* Individual Tile Cell */
+.saki-match-tile {
+  position: relative;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.12s ease, background-color 0.12s ease;
+  user-select: none;
+  touch-action: none;
+  overflow: hidden;
+}
+
+.saki-match-tile:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: scale(1.06);
+}
+
+.saki-match-tile.selected {
+  background: rgba(255, 117, 172, 0.45);
+  border: 2px solid #ff75ac;
+  box-shadow: 0 0 12px rgba(255, 117, 172, 0.85);
+  transform: scale(1.1);
+  animation: tileSelectedJiggle 0.6s infinite alternate ease-in-out;
+  z-index: 5;
+}
+
+@keyframes tileSelectedJiggle {
+  0% { transform: scale(1.08) rotate(-2deg); }
+  100% { transform: scale(1.12) rotate(2deg); }
+}
+
+.saki-match-tile.matching {
+  animation: tileMatchExplode 0.24s ease-out forwards;
+  z-index: 10;
+}
+
+@keyframes tileMatchExplode {
+  0% { transform: scale(1); opacity: 1; filter: brightness(1.6); }
+  50% { transform: scale(1.4); opacity: 0.85; filter: brightness(2.2); }
+  100% { transform: scale(0); opacity: 0; }
+}
+
+.saki-match-tile img {
+  max-width: 84%;
+  max-height: 84%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.45));
+  pointer-events: none;
+  transition: transform 0.15s ease;
+}
+
+/* Powerup Gem Effects */
+.saki-match-tile.is-powerup img {
+  animation: powerupSpinGlow 2.5s linear infinite;
+  filter: drop-shadow(0 0 8px rgba(251, 191, 36, 0.95));
+}
+
+@keyframes powerupSpinGlow {
+  0% { transform: rotate(0deg) scale(1.05); }
+  50% { transform: rotate(180deg) scale(1.16); }
+  100% { transform: rotate(360deg) scale(1.05); }
+}
+
+/* Lightning Beam FX */
+.saki-lightning-beam-h {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 10px;
+  background: #67e8f9;
+  box-shadow: 0 0 18px #38bdf8, 0 0 30px #ffffff;
+  pointer-events: none;
+  z-index: 28;
+  animation: beamFlash 0.32s ease-out forwards;
+}
+
+.saki-lightning-beam-v {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  background: #67e8f9;
+  box-shadow: 0 0 18px #38bdf8, 0 0 30px #ffffff;
+  pointer-events: none;
+  z-index: 28;
+  animation: beamFlash 0.32s ease-out forwards;
+}
+
+@keyframes beamFlash {
+  0% { opacity: 1; transform: scale(1.3); }
+  100% { opacity: 0; transform: scale(0.3); }
+}
+
+/* Bomb Shockwave FX */
+.saki-bomb-shockwave {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 4px solid #f43f5e;
+  box-shadow: 0 0 20px #fb7185, 0 0 40px #f43f5e;
+  pointer-events: none;
+  z-index: 29;
+  animation: bombWave 0.45s cubic-bezier(0.1, 0.8, 0.3, 1) forwards;
+}
+
+@keyframes bombWave {
+  0% { transform: translate(-50%, -50%) scale(0.2); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(4.5); opacity: 0; }
+}
+
+/* --- Interactive Boosters Toolbar at Bottom --- */
+.saki-match-boosters-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 6px 14px 10px;
+  z-index: 22;
+  background: linear-gradient(0deg, rgba(15, 23, 42, 0.85) 0%, rgba(15, 23, 42, 0.4) 80%, transparent 100%);
+}
+
+.saki-booster-btn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  border-radius: 14px;
+  padding: 5px 10px;
+  cursor: pointer;
+  color: #ffffff;
+  transition: all 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.saki-booster-btn:hover:not(:disabled) {
+  transform: translateY(-2px) scale(1.08);
+  border-color: #ff75ac;
+  background: rgba(255, 117, 172, 0.25);
+  box-shadow: 0 6px 16px rgba(255, 117, 172, 0.4);
+}
+
+.saki-booster-btn.active {
+  background: rgba(255, 117, 172, 0.5);
+  border-color: #f43f5e;
+  box-shadow: 0 0 14px #ff75ac;
+  transform: scale(1.08);
+}
+
+.saki-booster-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: grayscale(0.8);
+}
+
+.saki-booster-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: linear-gradient(135deg, #f43f5e, #fb7185);
+  color: #ffffff;
+  font-size: 9px;
+  font-weight: 900;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #ffffff;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+}
+
+.saki-booster-label {
+  font-size: 9.5px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.9);
+  letter-spacing: 0.3px;
+}
+
+/* ==========================================================================
+   Photo Album / Easter Popup Styles
+   ========================================================================== */
+.saki-phone-easter-popup {
+  position: absolute;
+  inset: 12px 10px 14px;
+  z-index: 50;
+  background: linear-gradient(175deg, rgba(28, 20, 48, 0.96) 0%, rgba(15, 23, 42, 0.98) 100%);
+  backdrop-filter: blur(28px) saturate(200%);
+  -webkit-backdrop-filter: blur(28px) saturate(200%);
+  border-radius: 24px;
+  border: 1.5px solid rgba(255, 117, 172, 0.45);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.85), 0 0 30px rgba(255, 117, 172, 0.25);
+  display: flex;
+  flex-direction: column;
+  padding: 14px 12px 12px;
+  animation: sakiPhoneSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+.saki-easter-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.saki-easter-title {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+
+.saki-easter-close {
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+  border-radius: 50%;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+}
+
+.saki-easter-close:hover {
+  background: #ef4444;
+  border-color: #ef4444;
+  transform: scale(1.1);
+}
+
+.saki-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  overflow-y: auto;
+  padding: 4px 2px;
+  flex: 1;
+}
+
+.saki-gallery-grid::-webkit-scrollbar {
+  width: 3px;
+}
+.saki-gallery-grid::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 9999px;
+}
+
+.saki-gallery-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 6px;
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(12px);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  text-align: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.saki-gallery-card:hover {
+  background: rgba(255, 117, 172, 0.25);
+  border-color: #ff75ac;
+  transform: translateY(-3px) scale(1.04);
+  box-shadow: 0 8px 20px rgba(255, 117, 172, 0.35);
+}
+
+.saki-gallery-card img {
+  width: 68px;
+  height: 68px;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.4));
+}
+
+.saki-gallery-card span {
+  font-size: 11px;
+  font-weight: 800;
+  color: #ffffff;
+  margin-top: 6px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+/* ==========================================================================
+   Settlement Screen Buttons & Layout Fixes
+   ========================================================================== */
+.saki-settlement-btn {
+  position: relative;
+  width: 100%;
+  height: 40px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: linear-gradient(135deg, #ff75ac 0%, #ff5277 50%, #f43f5e 100%);
+  border: 1.5px solid rgba(255, 255, 255, 0.5);
+  color: #ffffff;
+  font-weight: 900;
+  font-size: 13.5px;
+  letter-spacing: 0.5px;
+  box-shadow: 0 6px 20px rgba(244, 63, 94, 0.6), inset 0 1px 2px rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  overflow: hidden;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.saki-settlement-btn:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 10px 28px rgba(244, 63, 94, 0.8);
+}
+
+.saki-settlement-btn:active {
+  transform: scale(0.97);
+}
+
+.saki-settlement-btn .btn-icon {
+  animation: sakiRankStarTwinkle 1.8s ease-in-out infinite alternate;
+}
+
+.saki-settlement-btn .btn-shine {
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  transform: skewX(-22deg);
+  animation: sakiBtnShineSweep 2.8s infinite;
+  pointer-events: none;
+}
+
+/* Sub Buttons (再来一局 / 返回手机) */
+.saki-phone-exit-btn,
+.saki-settlement-sub-btn {
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(14px);
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  outline: none;
+}
+
+.saki-phone-exit-btn:hover,
+.saki-settlement-sub-btn:hover {
+  background: rgba(255, 117, 172, 0.35);
+  border-color: #ff75ac;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(255, 117, 172, 0.35);
+}
+
+.saki-phone-exit-btn:active,
+.saki-settlement-sub-btn:active {
+  transform: scale(0.96);
+}
+
+.saki-settlement-restart-btn {
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.28), rgba(59, 130, 246, 0.28)) !important;
+  border-color: rgba(56, 189, 248, 0.6) !important;
+  color: #e0f2fe !important;
+}
+
+.saki-settlement-restart-btn:hover {
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.48), rgba(59, 130, 246, 0.48)) !important;
+  border-color: #38bdf8 !important;
+  box-shadow: 0 6px 18px rgba(56, 189, 248, 0.5) !important;
+}
+
+.saki-settlement-back-btn {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.28), rgba(236, 72, 153, 0.28)) !important;
+  border-color: rgba(168, 85, 247, 0.6) !important;
+  color: #f3e8ff !important;
+}
+
+.saki-settlement-back-btn:hover {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.48), rgba(236, 72, 153, 0.48)) !important;
+  border-color: #c084fc !important;
+  box-shadow: 0 6px 18px rgba(168, 85, 247, 0.5) !important;
+}
+
+/* ==========================================================================
+   Plants Overdrive: Zombie Slayer Game Styles
+   ========================================================================== */
+.saki-plant-slayer-container {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: #080f18;
+  overflow: hidden;
+  user-select: none;
+  touch-action: none;
+  z-index: 25;
+}
+
+.plant-slayer-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  cursor: crosshair;
+}
+
+.plant-hud-top {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  z-index: 30;
+  pointer-events: auto;
+}
+
+.plant-icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  outline: none;
+}
+
+.plant-icon-btn:hover {
+  background: rgba(56, 189, 248, 0.35);
+  border-color: #38bdf8;
+  transform: scale(1.08);
+}
+
+.plant-bars-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.hud-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hud-center {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.plant-hud-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  color: #ffffff;
+  font-family: var(--font-mono, monospace);
+}
+
+.plant-hud-bar .bar-track {
+  width: 68px;
+  height: 6px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.16);
+  overflow: hidden;
+}
+
+.plant-hud-bar .bar-fill {
+  height: 100%;
+  border-radius: 9999px;
+  transition: width 0.15s ease-out;
+}
+
+.plant-hud-bar .bar-fill.hp-fill {
+  background: linear-gradient(90deg, #f43f5e, #fb7185);
+}
+
+.plant-hud-bar .bar-fill.exp-fill {
+  background: linear-gradient(90deg, #10b981, #34d399);
+}
+
+.plant-kills-pill,
+.plant-score-pill {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 9999px;
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  font-size: 11px;
+  font-weight: 800;
+  color: #ffffff;
+  font-family: var(--font-mono, monospace);
+}
+
+/* Boss Health Bar */
+.plant-boss-bar-wrap {
+  position: absolute;
+  top: 48px;
+  left: 14px;
+  right: 14px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(244, 63, 94, 0.5);
+  backdrop-filter: blur(16px);
+  z-index: 32;
+  animation: sakiBossPulse 1.5s infinite alternate;
+}
+
+@keyframes sakiBossPulse {
+  0% { box-shadow: 0 0 10px rgba(244, 63, 94, 0.3); }
+  100% { box-shadow: 0 0 22px rgba(244, 63, 94, 0.7); }
+}
+
+.plant-boss-bar-wrap .boss-title {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  font-weight: 900;
+  color: #fb7185;
+  margin-bottom: 3px;
+  letter-spacing: 0.5px;
+}
+
+.plant-boss-bar-wrap .boss-bar-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+
+.plant-boss-bar-wrap .boss-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #e11d48, #f43f5e);
+  border-radius: 9999px;
+  transition: width 0.12s ease;
+}
+
+/* Combo Banner */
+.plant-combo-banner {
+  position: absolute;
+  top: 86px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 14px;
+  border-radius: 9999px;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.9), rgba(239, 68, 68, 0.9));
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.6px;
+  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.6);
+  z-index: 35;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* Saki Speech Bubble */
+.plant-saki-bubble {
+  position: absolute;
+  bottom: 82px;
+  left: 14px;
+  right: 14px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  color: #e0f2fe;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 34;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  animation: bubblePop 0.25s ease-out;
+}
+
+.bubble-saki-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1.5px solid #38bdf8;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+/* Ultimate Energy Bean Button */
+.plant-ultimate-wrap {
+  position: absolute;
+  bottom: 22px;
+  right: 18px;
+  z-index: 36;
+}
+
+.plant-bean-btn {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  position: relative;
+  background: linear-gradient(135deg, #059669, #10b981);
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  outline: none;
+}
+
+.plant-bean-btn.empty {
+  filter: grayscale(0.8) opacity(0.5);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.plant-bean-btn.ready {
+  animation: beanReadyPulse 1.2s infinite alternate;
+}
+
+@keyframes beanReadyPulse {
+  0% { transform: scale(1); box-shadow: 0 0 12px rgba(16, 185, 129, 0.5); }
+  100% { transform: scale(1.08); box-shadow: 0 0 26px rgba(56, 189, 248, 0.85); }
+}
+
+.plant-bean-btn.active {
+  background: linear-gradient(135deg, #0284c7, #38bdf8);
+  animation: beanActiveSpin 1.8s linear infinite;
+}
+
+@keyframes beanActiveSpin {
+  0% { box-shadow: 0 0 20px #38bdf8; }
+  50% { box-shadow: 0 0 35px #67e8f9; }
+  100% { box-shadow: 0 0 20px #38bdf8; }
+}
+
+.bean-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.bean-emoji {
+  font-size: 20px;
+}
+
+.bean-count {
+  font-size: 9px;
+  font-family: var(--font-mono, monospace);
+  margin-top: 2px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+/* Modal Backdrops & Level Up Card */
+.plant-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 10, 20, 0.78);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 50;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.plant-levelup-card {
+  width: 100%;
+  max-width: 320px;
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1.5px solid rgba(56, 189, 248, 0.45);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: scaleUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.levelup-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+  color: #facc15;
+}
+
+.levelup-header h2 {
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  margin: 0;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+
+.upgrade-cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.upgrade-item-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  outline: none;
+  width: 100%;
+}
+
+.upgrade-item-card:hover {
+  background: rgba(56, 189, 248, 0.25);
+  border-color: #38bdf8;
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 6px 16px rgba(56, 189, 248, 0.3);
+}
+
+.upgrade-icon-wrap {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.upgrade-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.upgrade-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2px;
+}
+
+.upgrade-name {
+  font-size: 12px;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.upgrade-lvl {
+  font-size: 10px;
+  font-weight: 800;
+  color: #38bdf8;
+  font-family: var(--font-mono, monospace);
+}
+
+.upgrade-desc {
+  font-size: 10px;
+  color: #94a3b8;
+  line-height: 1.35;
+  margin: 0;
+}
+
+/* Saki Settlement Avatar & Speech Box Styling */
+.settlement-saki-speech {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1.5px solid rgba(255, 117, 172, 0.35);
+  border-radius: 14px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  text-align: left;
+}
+
+.settlement-saki-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid #ff75ac;
+  box-shadow: 0 0 14px rgba(255, 117, 172, 0.5);
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.settlement-saki-speech p {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #fce7f3;
+  font-weight: 600;
+}
+
+/* Plant Evolution Stage Badge in HUD */
+.plant-stage-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 9999px;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(52, 211, 153, 0.4);
+  backdrop-filter: blur(12px);
+  color: #6ee7b7;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.25);
+  transition: all 0.25s ease;
+}
+
+.plant-stage-badge.stage-4 {
+  border-color: rgba(56, 189, 248, 0.6);
+  color: #38bdf8;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.35);
+}
+
+.plant-stage-badge.stage-5 {
+  border-color: rgba(250, 204, 21, 0.7);
+  color: #facc15;
+  box-shadow: 0 0 14px rgba(250, 204, 21, 0.45);
+}
+
+.plant-stage-badge.fire {
+  border-color: #ea580c;
+  color: #fdba74;
+  box-shadow: 0 0 16px rgba(234, 88, 12, 0.6);
+}
+
+.plant-stage-badge.poison {
+  border-color: #16a34a;
+  color: #86efac;
+  box-shadow: 0 0 16px rgba(22, 163, 74, 0.6);
+}
+
+.plant-stage-badge.lightning {
+  border-color: #0284c7;
+  color: #7dd3fc;
+  box-shadow: 0 0 16px rgba(2, 132, 199, 0.6);
+}
+
+.plant-stage-badge.ice {
+  border-color: #06b6d4;
+  color: #a5f3fc;
+  box-shadow: 0 0 16px rgba(6, 182, 212, 0.6);
+}
+
+/* Extract & Settle Run Button in Top HUD */
+.plant-extract-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.25), rgba(244, 63, 94, 0.35));
+  border: 1px solid rgba(244, 63, 94, 0.55);
+  color: #ffe4e6;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  backdrop-filter: blur(12px);
+  outline: none;
+}
+
+.plant-extract-btn:hover {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.45), rgba(244, 63, 94, 0.6));
+  border-color: #f43f5e;
+  transform: scale(1.05);
+  box-shadow: 0 0 12px rgba(244, 63, 94, 0.5);
+}
+
+/* Elemental Specialization Modal */
+.elemental-modal-card {
+  max-width: 340px !important;
+  border-color: rgba(250, 204, 21, 0.6) !important;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.85), 0 0 24px rgba(250, 204, 21, 0.25) !important;
+}
+
+.elemental-subtitle {
+  font-size: 10.5px;
+  color: #cbd5e1;
+  text-align: center;
+  margin: -4px 0 6px 0;
+  line-height: 1.4;
+}
+
+.elemental-choice-btn {
+  position: relative;
+  overflow: hidden;
+}
+
+.elemental-choice-btn.elem-fire:hover {
+  background: rgba(234, 88, 12, 0.2) !important;
+  box-shadow: 0 6px 18px rgba(234, 88, 12, 0.4) !important;
+}
+
+.elemental-choice-btn.elem-poison:hover {
+  background: rgba(22, 163, 74, 0.2) !important;
+  box-shadow: 0 6px 18px rgba(22, 163, 74, 0.4) !important;
+}
+
+.elemental-choice-btn.elem-lightning:hover {
+  background: rgba(2, 132, 199, 0.2) !important;
+  box-shadow: 0 6px 18px rgba(2, 132, 199, 0.4) !important;
+}
+
+.elemental-choice-btn.elem-ice:hover {
+  background: rgba(6, 182, 212, 0.2) !important;
+  box-shadow: 0 6px 18px rgba(6, 182, 212, 0.4) !important;
+}
+
+
+

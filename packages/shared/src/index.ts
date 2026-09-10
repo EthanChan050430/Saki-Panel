@@ -1,4 +1,4 @@
-export const PANEL_VERSION = "3.4";
+export const PANEL_VERSION = "3.5";
 
 export const noRolePermissionRoleName = "__no_role__";
 
@@ -1316,6 +1316,11 @@ export interface SakiInputAttachment {
   size?: number;
   text?: string;
   dataUrl?: string;
+  /**
+   * Server-stored generated image id. Used to rehydrate chat images without
+   * persisting the raw base64 payload in conversation history.
+   */
+  generatedImageId?: string;
   width?: number;
   height?: number;
   capturedAt?: string;
@@ -1477,6 +1482,7 @@ export interface SakiAgentAction {
   ok: boolean;
   status?: SakiAgentActionStatus;
   approval?: SakiAgentActionApproval;
+  attachments?: SakiInputAttachment[];
   createdAt: string;
 }
 
@@ -1510,6 +1516,7 @@ export interface SakiChatResponse {
   skills?: SakiSkillSummary[];
   diagnostics?: string[];
   actions?: SakiAgentAction[];
+  attachments?: SakiInputAttachment[];
   usage?: {
     tokensUsed: number;
     pointsUsed: number;
@@ -1543,6 +1550,291 @@ export interface SakiProviderConfig {
   mode?: "proxy" | "direct";
 }
 
+export const sakiImageGenProviderIds = [
+  "sd-webui",
+  "openai",
+  "xai",
+  "siliconflow",
+  "stability",
+  "gemini",
+  "zhipu",
+  "tongyi",
+  "doubao",
+  "custom"
+] as const;
+
+export type SakiImageGenProviderId = (typeof sakiImageGenProviderIds)[number];
+
+export const sakiImageGenProtocols = ["openai-images", "sd-webui", "stability", "gemini", "dashscope"] as const;
+
+export type SakiImageGenProtocol = (typeof sakiImageGenProtocols)[number];
+
+export const sakiImageGenQualities = ["draft", "standard", "hd"] as const;
+
+export type SakiImageGenQuality = (typeof sakiImageGenQualities)[number];
+
+export const sakiImageGenAspectRatios = ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9"] as const;
+
+export type SakiImageGenAspectRatio = (typeof sakiImageGenAspectRatios)[number];
+
+export interface SakiImageGenConfig {
+  enabled: boolean;
+  provider: SakiImageGenProviderId;
+  protocol: SakiImageGenProtocol;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  defaultAspectRatio: SakiImageGenAspectRatio;
+  defaultWidth: number;
+  defaultHeight: number;
+  defaultQuality: SakiImageGenQuality;
+}
+
+export interface SakiImageGenProviderPreset {
+  id: SakiImageGenProviderId;
+  label: string;
+  protocol: SakiImageGenProtocol;
+  baseUrl: string;
+  model: string;
+  needsApiKey: boolean;
+  hint: string;
+}
+
+export const sakiImageGenProviderPresets: SakiImageGenProviderPreset[] = [
+  {
+    id: "sd-webui",
+    label: "Stable Diffusion WebUI (本地)",
+    protocol: "sd-webui",
+    baseUrl: "http://127.0.0.1:7860",
+    model: "",
+    needsApiKey: false,
+    hint: "Automatic1111 / Forge / SD.Next，默认调用 /sdapi/v1/txt2img"
+  },
+  {
+    id: "openai",
+    label: "OpenAI Images",
+    protocol: "openai-images",
+    baseUrl: "https://api.openai.com/v1",
+    model: "dall-e-3",
+    needsApiKey: true,
+    hint: "DALL·E 3 / gpt-image-1，兼容 OpenAI Images API"
+  },
+  {
+    id: "xai",
+    label: "SpaceXAI (Grok Imagine)",
+    protocol: "openai-images",
+    baseUrl: "https://api.x.ai/v1",
+    model: "grok-imagine-image-2.0",
+    needsApiKey: true,
+    hint: "xAI Grok Imagine，OpenAI 兼容 /images/generations"
+  },
+  {
+    id: "siliconflow",
+    label: "SiliconFlow",
+    protocol: "openai-images",
+    baseUrl: "https://api.siliconflow.cn/v1",
+    model: "black-forest-labs/FLUX.1-schnell",
+    needsApiKey: true,
+    hint: "Flux / SD3 等，OpenAI 兼容图像接口"
+  },
+  {
+    id: "stability",
+    label: "Stability AI",
+    protocol: "stability",
+    baseUrl: "https://api.stability.ai",
+    model: "core",
+    needsApiKey: true,
+    hint: "Stable Image v2beta（core / sd3 / ultra）"
+  },
+  {
+    id: "gemini",
+    label: "Google Imagen",
+    protocol: "gemini",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    model: "imagen-4.0-generate-001",
+    needsApiKey: true,
+    hint: "Gemini Imagen predict 接口"
+  },
+  {
+    id: "zhipu",
+    label: "智谱 CogView",
+    protocol: "openai-images",
+    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+    model: "cogview-4-250304",
+    needsApiKey: true,
+    hint: "CogView / GLM-Image，OpenAI 兼容"
+  },
+  {
+    id: "tongyi",
+    label: "通义万相",
+    protocol: "dashscope",
+    baseUrl: "https://dashscope.aliyuncs.com/api/v1",
+    model: "wanx2.1-t2i-turbo",
+    needsApiKey: true,
+    hint: "DashScope 文生图，支持同步与异步任务"
+  },
+  {
+    id: "doubao",
+    label: "豆包 Seedream",
+    protocol: "openai-images",
+    baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+    model: "doubao-seedream-3-0-t2i-250415",
+    needsApiKey: true,
+    hint: "火山方舟图像生成，OpenAI 兼容"
+  },
+  {
+    id: "custom",
+    label: "自定义 (URL + API Key)",
+    protocol: "openai-images",
+    baseUrl: "",
+    model: "",
+    needsApiKey: true,
+    hint: "自行填写 Base URL、API Key、模型，并选择协议"
+  }
+];
+
+export const defaultSakiImageGenConfig: SakiImageGenConfig = {
+  enabled: false,
+  provider: "sd-webui",
+  protocol: "sd-webui",
+  baseUrl: "http://127.0.0.1:7860",
+  apiKey: "",
+  model: "",
+  defaultAspectRatio: "1:1",
+  defaultWidth: 1024,
+  defaultHeight: 1024,
+  defaultQuality: "standard"
+};
+
+function trimSharedString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export function isSakiImageGenProviderId(value: string): value is SakiImageGenProviderId {
+  return (sakiImageGenProviderIds as readonly string[]).includes(value);
+}
+
+export function isSakiImageGenProtocol(value: string): value is SakiImageGenProtocol {
+  return (sakiImageGenProtocols as readonly string[]).includes(value);
+}
+
+export function sakiImageGenPreset(provider: string): SakiImageGenProviderPreset {
+  const id = isSakiImageGenProviderId(provider) ? provider : "custom";
+  return sakiImageGenProviderPresets.find((preset) => preset.id === id) ?? sakiImageGenProviderPresets[sakiImageGenProviderPresets.length - 1]!;
+}
+
+export function parseSakiImageGenAspectRatio(value: unknown, fallback: SakiImageGenAspectRatio = "1:1"): SakiImageGenAspectRatio {
+  const raw = trimSharedString(value).replace(/\s+/g, "");
+  const matched = sakiImageGenAspectRatios.find((item) => item === raw);
+  if (matched) return matched;
+  const pair = raw.match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/);
+  if (!pair) return fallback;
+  const width = Number(pair[1]);
+  const height = Number(pair[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return fallback;
+  const ratio = width / height;
+  let best: SakiImageGenAspectRatio = fallback;
+  let bestDelta = Number.POSITIVE_INFINITY;
+  for (const item of sakiImageGenAspectRatios) {
+    const [aw, ah] = item.split(":").map(Number);
+    if (!aw || !ah) continue;
+    const delta = Math.abs(aw / ah - ratio);
+    if (delta < bestDelta) {
+      best = item;
+      bestDelta = delta;
+    }
+  }
+  return best;
+}
+
+export function parseSakiImageGenQuality(value: unknown, fallback: SakiImageGenQuality = "standard"): SakiImageGenQuality {
+  const raw = trimSharedString(value).toLowerCase();
+  if (raw === "draft" || raw === "low" || raw === "fast") return "draft";
+  if (raw === "hd" || raw === "high" || raw === "2k" || raw === "quality") return "hd";
+  if (raw === "standard" || raw === "medium" || raw === "1k" || raw === "auto") return "standard";
+  return fallback;
+}
+
+export function sakiImageGenShortSide(quality: SakiImageGenQuality): number {
+  if (quality === "draft") return 512;
+  if (quality === "hd") return 1536;
+  return 1024;
+}
+
+export function resolveSakiImageSize(input: {
+  width?: unknown;
+  height?: unknown;
+  aspectRatio?: unknown;
+  quality?: unknown;
+  defaults?: Partial<Pick<SakiImageGenConfig, "defaultWidth" | "defaultHeight" | "defaultAspectRatio" | "defaultQuality">>;
+}): { width: number; height: number; aspectRatio: SakiImageGenAspectRatio; quality: SakiImageGenQuality } {
+  const defaults = input.defaults ?? {};
+  const quality = parseSakiImageGenQuality(input.quality, defaults.defaultQuality ?? "standard");
+  const fallbackRatio = parseSakiImageGenAspectRatio(defaults.defaultAspectRatio, "1:1");
+  const clampDim = (value: number) => Math.max(64, Math.min(2048, Math.round(value / 8) * 8));
+  const parsedWidth = Number(input.width);
+  const parsedHeight = Number(input.height);
+  const hasWidth = Number.isFinite(parsedWidth) && parsedWidth >= 64;
+  const hasHeight = Number.isFinite(parsedHeight) && parsedHeight >= 64;
+
+  if (hasWidth && hasHeight) {
+    const width = clampDim(parsedWidth);
+    const height = clampDim(parsedHeight);
+    return {
+      width,
+      height,
+      aspectRatio: parseSakiImageGenAspectRatio(`${width}:${height}`, fallbackRatio),
+      quality
+    };
+  }
+
+  const aspectRatio = parseSakiImageGenAspectRatio(input.aspectRatio, fallbackRatio);
+  const [aw, ah] = aspectRatio.split(":").map(Number) as [number, number];
+  const defaultWidth = Number(defaults.defaultWidth);
+  const defaultHeight = Number(defaults.defaultHeight);
+  const base = sakiImageGenShortSide(quality);
+  let width: number;
+  let height: number;
+  if (aw >= ah) {
+    height = hasHeight ? clampDim(parsedHeight) : clampDim(Number.isFinite(defaultHeight) && defaultHeight >= 64 ? defaultHeight : base);
+    width = clampDim((height * aw) / ah);
+  } else {
+    width = hasWidth ? clampDim(parsedWidth) : clampDim(Number.isFinite(defaultWidth) && defaultWidth >= 64 ? defaultWidth : base);
+    height = clampDim((width * ah) / aw);
+  }
+  return { width, height, aspectRatio, quality };
+}
+
+export function sanitizeSakiImageGenConfig(value: unknown): SakiImageGenConfig {
+  const item = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const providerRaw = trimSharedString(item.provider).toLowerCase();
+  const provider: SakiImageGenProviderId = isSakiImageGenProviderId(providerRaw) ? providerRaw : defaultSakiImageGenConfig.provider;
+  const preset = sakiImageGenPreset(provider);
+  const protocolRaw = trimSharedString(item.protocol).toLowerCase();
+  const protocol: SakiImageGenProtocol =
+    isSakiImageGenProtocol(protocolRaw) ? protocolRaw : provider === "custom" ? "openai-images" : preset.protocol;
+  const size = resolveSakiImageSize({
+    width: item.defaultWidth,
+    height: item.defaultHeight,
+    aspectRatio: item.defaultAspectRatio,
+    quality: item.defaultQuality,
+    defaults: defaultSakiImageGenConfig
+  });
+  const baseUrl = trimSharedString(item.baseUrl) || (provider === "custom" ? "" : preset.baseUrl);
+  return {
+    enabled: item.enabled === true,
+    provider,
+    protocol,
+    baseUrl,
+    apiKey: trimSharedString(item.apiKey),
+    model: trimSharedString(item.model) || (provider === "custom" || provider === "sd-webui" ? "" : preset.model),
+    defaultAspectRatio: size.aspectRatio,
+    defaultWidth: size.width,
+    defaultHeight: size.height,
+    defaultQuality: size.quality
+  };
+}
+
 export interface SakiConfigResponse {
   requestTimeoutMs: number;
   provider: string;
@@ -1555,6 +1847,7 @@ export interface SakiConfigResponse {
   searchEnabled: boolean;
   mcpEnabled: boolean;
   memoryEnabled?: boolean;
+  imageGen: SakiImageGenConfig;
   systemPrompt?: string | null;
   appearance: PanelAppearanceSettings;
   configPath: string;
@@ -1573,6 +1866,7 @@ export interface UpdateSakiConfigRequest {
   searchEnabled?: boolean;
   mcpEnabled?: boolean;
   memoryEnabled?: boolean;
+  imageGen?: SakiImageGenConfig;
   systemPrompt?: string | null;
   appearance?: Partial<PanelAppearanceSettings>;
 }

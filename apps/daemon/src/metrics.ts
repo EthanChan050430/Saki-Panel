@@ -18,12 +18,18 @@ function clampPercent(value: number): number {
 export async function collectMetrics(): Promise<HeartbeatRequest["metrics"]> {
   const [load, memory, disks] = await Promise.all([si.currentLoad(), si.mem(), si.fsSize()]);
   const primaryDisk = disks[0];
+  // 排除 Linux page cache，用 total-available 计算内存压力
+  const available = Number.isFinite(memory.available) ? memory.available : Number.NaN;
+  const pressureBytes =
+    Number.isFinite(available) && available >= 0 && memory.total > 0
+      ? Math.max(0, memory.total - available)
+      : memory.used;
   const totalMemoryMb = toMb(memory.total);
-  const usedMemoryMb = toMb(memory.used);
+  const usedMemoryMb = toMb(pressureBytes);
 
   return {
     cpuUsage: clampPercent(load.currentLoad),
-    memoryUsage: clampPercent((memory.used / memory.total) * 100),
+    memoryUsage: clampPercent(memory.total > 0 ? (pressureBytes / memory.total) * 100 : 0),
     diskUsage: clampPercent(primaryDisk?.use ?? 0),
     totalMemoryMb,
     usedMemoryMb,

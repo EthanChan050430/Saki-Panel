@@ -2431,6 +2431,8 @@
   }
 
   .templates-panel-heading {
+    flex-direction: row !important;
+    align-items: center !important;
     flex-wrap: nowrap !important;
     padding: 14px 16px !important;
     gap: 8px !important;

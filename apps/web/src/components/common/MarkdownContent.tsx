@@ -127,9 +127,23 @@ function safeMarkdownHref(rawHref: string): string | null {
   const href = rawHref.trim();
   if (!href) return null;
   if (href.startsWith("#") || href.startsWith("/")) return href;
+  if (/^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(href)) return href;
   try {
     const parsed = new URL(href);
     return parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "mailto:" ? href : null;
+  } catch {
+    return null;
+  }
+}
+
+function safeMarkdownImageSrc(rawSrc: string): string | null {
+  const src = rawSrc.trim();
+  if (!src) return null;
+  if (/^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(src)) return src;
+  if (src.startsWith("/")) return src;
+  try {
+    const parsed = new URL(src);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? src : null;
   } catch {
     return null;
   }
@@ -165,7 +179,7 @@ function renderInlineMarkdown(
   onOpenPath?: ((path: string, line?: number) => void) | undefined
 ): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
-  const pattern = /(`([^`]+)`|\*\*([^*]+)\*\*|\[([^\]]+)\]\(([^)\s]+)\))/g;
+  const pattern = /(`([^`]+)`|\*\*([^*]+)\*\*|!\[([^\]]*)\]\(([^)\s]+)\)|\[([^\]]+)\]\(([^)\s]+)\))/g;
   let cursor = 0;
   let match: RegExpExecArray | null;
 
@@ -180,15 +194,25 @@ function renderInlineMarkdown(
       nodes.push(ref ? renderPathButton(code, ref, `${keyPrefix}-code-${match.index}`, onOpenPath) : <code key={`${keyPrefix}-code-${match.index}`}>{code}</code>);
     } else if (token.startsWith("**")) {
       nodes.push(<strong key={`${keyPrefix}-strong-${match.index}`}>{match[3] ?? ""}</strong>);
+    } else if (token.startsWith("![")) {
+      const src = safeMarkdownImageSrc(match[5] ?? "");
+      const alt = match[4] ?? "";
+      nodes.push(
+        src ? (
+          <img className="saki-md-image" src={src} alt={alt} key={`${keyPrefix}-img-${match.index}`} draggable={false} />
+        ) : (
+          alt || token
+        )
+      );
     } else {
-      const href = safeMarkdownHref(match[5] ?? "");
+      const href = safeMarkdownHref(match[7] ?? "");
       nodes.push(
         href ? (
           <a href={href} key={`${keyPrefix}-link-${match.index}`} rel="noreferrer" target={href.startsWith("/") || href.startsWith("#") ? undefined : "_blank"}>
-            {match[4] ?? href}
+            {match[6] ?? href}
           </a>
         ) : (
-          match[4] ?? token
+          match[6] ?? token
         )
       );
     }

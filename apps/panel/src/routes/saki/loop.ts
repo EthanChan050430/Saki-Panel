@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { SakiAgentAction, SakiAgentRiskLevel, SakiChatRequest, SakiChatResponse, PermissionCode } from "@webops/shared";
+import type { SakiAgentAction, SakiAgentRiskLevel, SakiChatRequest, SakiChatResponse, SakiInputAttachment, PermissionCode } from "@webops/shared";
 import { countTokens, estimateModelCallTokens } from "../../tokenizer.js";
 import { recordAgentTokenUsage } from "../../points.js";
 import type { ParsedToolCall, SakiAgentResumeState, SakiAgentRunEvents, SakiAgentRuntime, SakiCheckpoint, SakiModelToolTurn, PendingSakiAction } from "./types.js";
@@ -784,13 +784,23 @@ ${buildAgentWorkspacePrefix(runtime)}`;
         usageResult = await recordAgentTokenUsage(
           runtime.userId,
           totalTokensUsed,
-          `Agent [${effectiveModel}]: ${String(runtime.input.message || "任务执行").slice(0, 45)}`,
+          `${runtime.kind === "chat" ? "Chat" : "Agent"} [${effectiveModel}]: ${String(runtime.input.message || "任务执行").slice(0, 45)}`,
           multiplier
         );
       }
     } catch {}
 
     await emitAgentFinalText(events, message, lastForwardedDeltaContent);
+    const attachments: SakiInputAttachment[] = [];
+    const seenAttachments = new Set<string>();
+    for (const action of actions) {
+      for (const attachment of action.attachments ?? []) {
+        const key = attachment.generatedImageId || attachment.id || attachment.name;
+        if (!key || seenAttachments.has(key)) continue;
+        seenAttachments.add(key);
+        attachments.push(attachment);
+      }
+    }
     return {
       source: "direct-model",
       message,
@@ -799,6 +809,7 @@ ${buildAgentWorkspacePrefix(runtime)}`;
       agentPermissionMode,
       skills: runtime.skills,
       actions,
+      ...(attachments.length ? { attachments } : {}),
       usage: usageResult
     };
   };

@@ -172,6 +172,7 @@ import {
 } from "../../utils/path.js";
 import { newClientId } from "../../utils/id.js";
 import { MarkdownContent, SakiPathOpenContext } from "../common/MarkdownContent.js";
+import { isSakiPetTouchUi, useSakiPet } from "./pet/sakiPetState.js";
 import {
   SakiAttachmentChip,
   SakiCharacterArt,
@@ -228,12 +229,14 @@ import {
   type StoredSakiConversation
 } from "./SakiComponents.js";
 import { SakiDessertDropGame } from "./SakiDessertDropGame.js";
+import { getFavorabilityLevelInfo as getFavorabilityLevelInfoHelper } from "./sakiChatHelpers.js";
 import { SakiAttachmentModal } from "./SakiAttachmentModal.js";
 import { SakiMentionMenu } from "./SakiMentionMenu.js";
 import { ChatLauncher } from "./chat/ChatLauncher.js";
 import { SakiVideoPane } from "./chat/SakiVideoPane.js";
 import { SakiHistoryDrawer } from "./chat/SakiHistoryDrawer.js";
 import { SakiMessagesList } from "./chat/SakiMessagesList.js";
+import { mergeSakiMessageAttachments } from "./chat/SakiChatImages.js";
 import { SakiComposer } from "./chat/SakiComposer.js";
 import { SakiChatDropdowns } from "./chat/SakiChatDropdowns.js";
 import { SakiVoiceEcho } from "./sakiVoice.js";
@@ -458,6 +461,18 @@ export function SakiFloatingChat({
     }
   });
 
+  const petStageRef = useRef<HTMLDivElement | null>(null);
+  const pet = useSakiPet({
+    enabled: !sakiLieMode,
+    dragging: launcherDragging,
+    chatOpen: open,
+    edgeAttached: Boolean(launcherPosition?.edge),
+    position: launcherPosition,
+    setPosition: setLauncherPosition,
+    stageRef: petStageRef,
+    intimacyLevel: getFavorabilityLevelInfoHelper(sakiFavorabilityExp, language).level
+  });
+
   const [feedMenuOpen, setFeedMenuOpen] = useState(false);
   const [miniGameActive, setMiniGameActive] = useState(false);
   const [mobileActiveTab, setMobileActiveTab] = useState<"video" | "chat">("video");
@@ -480,46 +495,7 @@ export function SakiFloatingChat({
   const videoBubbleRef = useRef<HTMLDivElement | null>(null);
 
   function getFavorabilityLevelInfo(totalExp: number) {
-    const isEn = language === "en-US";
-    const isTw = language === "zh-TW";
-    const levelThresholds = [
-      { level: 1, title: isEn ? "Acquaintance" : isTw ? "初識" : "初识", minExp: 0, maxExp: 100 },
-      { level: 2, title: isEn ? "Rapport" : isTw ? "默契" : "默契", minExp: 100, maxExp: 250 },
-      { level: 3, title: isEn ? "Intimate" : isTw ? "親密" : "亲密", minExp: 250, maxExp: 500 },
-      { level: 4, title: isEn ? "Best Friends" : isTw ? "摯友" : "挚友", minExp: 500, maxExp: 900 },
-      { level: 5, title: isEn ? "Kindred Spirits" : isTw ? "心有靈犀" : "心有灵犀", minExp: 900, maxExp: 1400 },
-      { level: 6, title: isEn ? "Incomparable" : isTw ? "獨一無二" : "独一无二", minExp: 1400, maxExp: 2000 },
-      { level: 7, title: isEn ? "Galaxy Vow" : isTw ? "星河誓約" : "星河誓约", minExp: 2000, maxExp: 3000 },
-      { level: 8, title: isEn ? "Eternal Bond" : isTw ? "永恆羈絆" : "永恒羁绊", minExp: 3000, maxExp: 5000 }
-    ];
-
-    for (let i = 0; i < levelThresholds.length; i++) {
-      const tier = levelThresholds[i]!;
-      if (totalExp < tier.maxExp) {
-        const range = tier.maxExp - tier.minExp;
-        const gained = totalExp - tier.minExp;
-        const progress = Math.min(100, Math.max(0, Math.round((gained / range) * 100)));
-        return {
-          level: tier.level,
-          title: tier.title,
-          currentExp: totalExp,
-          minExpForLevel: tier.minExp,
-          maxExpForLevel: tier.maxExp,
-          levelProgress: progress,
-          isMaxLevel: false
-        };
-      }
-    }
-
-    return {
-      level: 8,
-      title: isEn ? "Eternal Bond" : isTw ? "永恆羈絆" : "永恒羁绊",
-      currentExp: totalExp,
-      minExpForLevel: 3000,
-      maxExpForLevel: 5000,
-      levelProgress: 100,
-      isMaxLevel: true
-    };
+    return getFavorabilityLevelInfoHelper(totalExp, language);
   }
 
   function addFavorabilityExp(amount: number) {
@@ -763,6 +739,7 @@ export function SakiFloatingChat({
     startX: number;
     startY: number;
     moved: boolean;
+    slop: number;
   } | null>(null);
   const suppressLauncherClickRef = useRef(false);
   const conversationsRef = useRef<Record<string, LocalSakiMessage[]>>({});
@@ -1158,6 +1135,11 @@ export function SakiFloatingChat({
                     message.thinkingStartedAt && !message.thinkingDurationSec
                       ? Math.max(1, Math.round((Date.now() - message.thinkingStartedAt) / 1000))
                       : message.thinkingDurationSec;
+                  const mergedAttachments = mergeSakiMessageAttachments(
+                    message.attachments,
+                    response.attachments,
+                    nextActions
+                  );
                   const nextMessage: LocalSakiMessage = {
                     ...message,
                     content: response.message,
@@ -1167,7 +1149,8 @@ export function SakiFloatingChat({
                     source: response.source,
                     workflowExpanded: false,
                     streaming: false,
-                    usage: response.usage
+                    usage: response.usage,
+                    ...(mergedAttachments.length ? { attachments: mergedAttachments } : {})
                   };
                   if (nextActions?.length) return { ...nextMessage, actions: nextActions };
                   return nextMessage;
@@ -1654,7 +1637,15 @@ export function SakiFloatingChat({
     const drag = launcherDragRef.current;
     if (!drag || drag.pointerId !== pointerId) return;
     const distance = Math.hypot(clientX - drag.startX, clientY - drag.startY);
-    if (distance > 4) drag.moved = true;
+    if (distance > (drag.slop ?? 4)) {
+      if (!drag.moved) {
+        drag.moved = true;
+        pet.dismissMenu();
+        setDraggingExpression(Math.random() > 0.5 ? sakiArtAssets.pickup1 : sakiArtAssets.pickup2);
+        setLauncherDragging(true);
+        onLauncherDraggingChange?.(true);
+      }
+    }
     if (!drag.moved) return;
     highlightLieDropTarget(clientX, clientY);
     setLauncherPosition(
@@ -1726,11 +1717,9 @@ export function SakiFloatingChat({
       offsetY: event.clientY - dragOrigin.y,
       startX: event.clientX,
       startY: event.clientY,
-      moved: false
+      moved: false,
+      slop: event.pointerType === "touch" || event.pointerType === "pen" ? 12 : 4
     };
-    setDraggingExpression(Math.random() > 0.5 ? sakiArtAssets.pickup1 : sakiArtAssets.pickup2);
-    setLauncherDragging(true);
-    onLauncherDraggingChange?.(true);
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
@@ -1762,7 +1751,8 @@ export function SakiFloatingChat({
       offsetY: request.offsetY,
       startX: request.clientX,
       startY: request.clientY,
-      moved: true
+      moved: true,
+      slop: 12
     };
     setDraggingExpression(Math.random() > 0.5 ? sakiArtAssets.pickup1 : sakiArtAssets.pickup2);
     setLauncherDragging(true);
@@ -1793,6 +1783,11 @@ export function SakiFloatingChat({
       event.preventDefault();
       event.stopPropagation();
       suppressLauncherClickRef.current = false;
+      return;
+    }
+    if (isSakiPetTouchUi()) {
+      event.preventDefault();
+      pet.toggleMenu();
       return;
     }
     setOpen(true);
@@ -1937,13 +1932,15 @@ export function SakiFloatingChat({
       current.map((message) => {
         if (!message.actions?.some((item) => item.id === anchorActionId)) return message;
         const nextActions = mergeSakiActionList(message.actions, response.actions);
+        const mergedAttachments = mergeSakiMessageAttachments(message.attachments, response.attachments, nextActions);
         const nextMessage: LocalSakiMessage = {
           ...message,
           content: mergeSakiFinalText(message.content, response.message),
           timeline: mergeSakiTimelineActions(mergeSakiFinalTimeline(message.timeline, response.message), nextActions),
           source: response.source,
           workflowExpanded: false,
-          streaming: false
+          streaming: false,
+          ...(mergedAttachments.length ? { attachments: mergedAttachments } : {})
         };
         if (nextActions?.length) return { ...nextMessage, actions: nextActions };
         return nextMessage;
@@ -2317,6 +2314,39 @@ export function SakiFloatingChat({
     if (files.length === 0) return;
     event.preventDefault();
     void addFilesToComposer(files, "image");
+  }
+
+  async function capturePetSticker() {
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      pet.showBubble(language === "en-US" ? "This browser cannot capture the screen." : "当前浏览器不支持截图贴图。");
+      return;
+    }
+    let stream: MediaStream | null = null;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      const video = document.createElement("video");
+      video.muted = true;
+      video.srcObject = stream;
+      await video.play();
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+      if (!width || !height) throw new Error("截图画面读取失败");
+      const scale = Math.min(1, 480 / Math.max(width, height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("浏览器无法处理截图");
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL("image/webp", 0.72);
+      pet.addSticker(dataUrl, Math.round((globalThis.innerWidth || 800) / 2 - 90), 96);
+      pet.closeWidget();
+      pet.showBubble(language === "en-US" ? "Sticker placed～" : "贴图放好啦～");
+    } catch (err) {
+      pet.showBubble(err instanceof Error ? err.message : "截图已取消");
+    } finally {
+      stream?.getTracks().forEach((track) => track.stop());
+    }
   }
 
   async function captureScreenAttachment() {
@@ -2917,6 +2947,11 @@ export function SakiFloatingChat({
                   message.thinkingStartedAt && !message.thinkingDurationSec
                     ? Math.max(1, Math.round((Date.now() - message.thinkingStartedAt) / 1000))
                     : message.thinkingDurationSec;
+                const mergedAttachments = mergeSakiMessageAttachments(
+                  message.attachments,
+                  response.attachments,
+                  nextActions
+                );
                 const nextMessage: LocalSakiMessage = {
                   ...message,
                   content: finalContent,
@@ -2926,7 +2961,8 @@ export function SakiFloatingChat({
                   source: response.source,
                   workflowExpanded: false,
                   streaming: false,
-                  usage: response.usage
+                  usage: response.usage,
+                  ...(mergedAttachments.length ? { attachments: mergedAttachments } : {})
                 };
                 if (nextActions?.length) return { ...nextMessage, actions: nextActions };
                 return nextMessage;
@@ -3494,6 +3530,7 @@ export function SakiFloatingChat({
         open={open}
         sakiLieMode={sakiLieMode}
         launcherRef={launcherRef}
+        petStageRef={petStageRef}
         launcherDragging={launcherDragging}
         launcherEdgeAttached={launcherEdgeAttached}
         launcherEdge={launcherEdge}
@@ -3502,6 +3539,24 @@ export function SakiFloatingChat({
         fileDragActive={fileDragActive}
         artMood={artMood}
         draggingExpression={draggingExpression}
+        pet={pet}
+        language={language}
+        intimacyLevel={getFavorabilityLevelInfo(sakiFavorabilityExp).level}
+        intimacyTitle={getFavorabilityLevelInfo(sakiFavorabilityExp).title}
+        foods={getLocalizedFoodMenu(language)}
+        canAfford={(cost) => isUnlimitedPoints || numericSakiPoints >= cost}
+        onFeed={(foodId) => {
+          const food = getLocalizedFoodMenu(language).find((item) => item.id === foodId);
+          if (!food) return;
+          handleFeedSaki(food);
+          pet.applyCare("feed", food.favorability);
+          pet.showBubble(food.greeting, 3200);
+        }}
+        onCaptureSticker={() => {
+          void capturePetSticker();
+        }}
+        onIntimacy={(amount) => addFavorabilityExp(amount)}
+        onOpenChat={() => setOpen(true)}
         onClick={handleLauncherClick}
         onPointerDown={handleLauncherPointerDown}
         onPointerMove={handleLauncherPointerMove}
@@ -3716,6 +3771,7 @@ export function SakiFloatingChat({
             onOpenPath={onOpenWorkspaceFile ? openWorkspacePath : undefined}
             onRollbackAllFileActions={rollbackAllFileActions}
             onPreviewAttachment={(preview) => setPreviewingAttachment(preview)}
+            token={token}
           />
         </div>
       </div>
@@ -3783,6 +3839,7 @@ export function SakiFloatingChat({
         contextText={contextText}
         auditSearchActive={Boolean(auditSearchActive)}
         hasActiveInstance={Boolean(instance)}
+        token={token}
       />
     {previewingAttachment ? (
         <SakiAttachmentModal

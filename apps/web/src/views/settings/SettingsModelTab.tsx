@@ -15,6 +15,7 @@ import {
   EyeOff,
   Github,
   Globe,
+  ImagePlus,
   Info,
   KeyRound,
   Loader2,
@@ -38,6 +39,7 @@ import type {
   SakiConfigResponse,
   SakiCopilotAuthStatusResponse,
   SakiCopilotLoginResponse,
+  SakiImageGenConfig,
   SakiModelOption,
   SakiProviderConfig
 } from "@webops/shared";
@@ -47,7 +49,15 @@ import {
   isLocalProvider,
   modelProviderOptions,
   needsCloudApiFields,
+  applyImageGenProvider,
+  withImageGenSizeDefaults,
+  imageGenAspectRatioOptions,
+  imageGenFromForm,
+  imageGenNeedsApiKey,
+  imageGenProtocolOptions,
+  imageGenQualityOptions,
   providerBaseUrlDefaults,
+  sakiImageGenProviderPresets,
   type AntigravityMode
 } from "./settingsHelpers.js";
 
@@ -64,6 +74,7 @@ export interface SettingsModelTabProps {
   setShowApiKey: React.Dispatch<React.SetStateAction<boolean>>;
   customModelMode: boolean;
   setCustomModelMode: React.Dispatch<React.SetStateAction<boolean>>;
+  onImageGenChange: (patch: Partial<SakiImageGenConfig>) => void;
   // Copilot
   copilotAuthStatus: SakiCopilotAuthStatusResponse | null;
   copilotLoginState: SakiCopilotLoginResponse | null;
@@ -118,6 +129,7 @@ export const SettingsModelTab = memo(function SettingsModelTab({
   setShowApiKey,
   customModelMode,
   setCustomModelMode,
+  onImageGenChange,
   copilotAuthStatus,
   copilotLoginState,
   copilotBusy,
@@ -157,7 +169,10 @@ export const SettingsModelTab = memo(function SettingsModelTab({
 }: SettingsModelTabProps) {
   const [multipliersPage, setMultipliersPage] = useState(1);
   const [multipliersFilter, setMultipliersFilter] = useState("");
+  const [showImageApiKey, setShowImageApiKey] = useState(false);
   const MULTIPLIERS_PER_PAGE = 8;
+  const imageGen = imageGenFromForm(form);
+  const imageGenPreset = sakiImageGenProviderPresets.find((preset) => preset.id === imageGen.provider);
 
   const filteredMultipliers = useMemo(() => {
     if (!multipliersFilter.trim()) return combinedModelKeys;
@@ -1027,6 +1042,226 @@ export const SettingsModelTab = memo(function SettingsModelTab({
             </div>
           );
         })() : null}
+
+        <div className="model-multipliers-card image-gen-settings-card wide-field">
+          <div className="model-multipliers-header">
+            <div className="model-multipliers-title">
+              <ImagePlus size={18} className="settings-switch-icon" />
+              <div>
+                <strong>{t("settings.model.imageGen")}</strong>
+                <span className="model-multipliers-subtitle">{t("settings.model.imageGen.detail")}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="settings-switch-card" style={{ margin: 0 }}>
+            <div className="settings-switch-info">
+              <div className="settings-switch-title">
+                <ImagePlus size={18} className="settings-switch-icon" />
+                <strong>允许 Agent 自主画图</strong>
+              </div>
+              <span>
+                启用后，Agent 可调用独立生图 API，把 png/jpg/webp 写入当前实例工作目录，并在 HTML/CSS/Markdown 中引用。
+              </span>
+            </div>
+            <label className="settings-switch-toggle">
+              <input
+                type="checkbox"
+                checked={imageGen.enabled}
+                onChange={(event) => onImageGenChange({ enabled: event.target.checked })}
+              />
+              <span className="settings-switch-slider" />
+            </label>
+          </div>
+
+          <div className={`image-gen-settings-body ${imageGen.enabled ? "" : "is-disabled"}`}>
+            <div className="settings-form-row">
+              <label className="settings-field">
+                <span className="settings-field-label">生图服务商</span>
+                <select
+                  className="settings-select"
+                  value={imageGen.provider}
+                  onChange={(event) => onImageGenChange(applyImageGenProvider(imageGen, event.target.value))}
+                >
+                  {sakiImageGenProviderPresets.map((preset) => (
+                    <option value={preset.id} key={preset.id}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="settings-field-hint">
+                  {imageGenPreset?.hint || "本地 WebUI、厂商 API 或自定义 URL 均可"}
+                </span>
+              </label>
+
+              {imageGen.provider === "custom" ? (
+                <label className="settings-field">
+                  <span className="settings-field-label">协议</span>
+                  <select
+                    className="settings-select"
+                    value={imageGen.protocol}
+                    onChange={(event) =>
+                      onImageGenChange({ protocol: event.target.value as SakiImageGenConfig["protocol"] })
+                    }
+                  >
+                    {imageGenProtocolOptions.map((option) => (
+                      <option value={option.value} key={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="settings-field-hint">自定义接入时按服务实际协议选择</span>
+                </label>
+              ) : (
+                <label className="settings-field">
+                  <span className="settings-field-label">协议</span>
+                  <input className="settings-input" value={imageGen.protocol} readOnly />
+                  <span className="settings-field-hint">由服务商预设，自定义服务商时可改</span>
+                </label>
+              )}
+            </div>
+
+            <div className="settings-form-row">
+              <label className="settings-field">
+                <span className="settings-field-label">生图 API Base URL</span>
+                <input
+                  className="settings-input"
+                  value={imageGen.baseUrl}
+                  onChange={(event) => onImageGenChange({ baseUrl: event.target.value })}
+                  placeholder={
+                    imageGen.protocol === "sd-webui"
+                      ? "http://127.0.0.1:7860"
+                      : imageGenPreset?.baseUrl || "https://api.example.com/v1"
+                  }
+                />
+                <span className="settings-field-hint">
+                  {imageGen.protocol === "sd-webui"
+                    ? "本地 SD WebUI 地址，无需带 /sdapi/v1/txt2img"
+                    : "OpenAI 兼容网关填到主机或 /v1，将请求 POST {base}/v1/images/generations，请求体为 model + prompt"}
+                </span>
+              </label>
+
+              <label className="settings-field">
+                <span className="settings-field-label">
+                  {imageGenNeedsApiKey(imageGen) ? "生图 API Key" : "生图 API Key（可选）"}
+                </span>
+                <div className="settings-input-with-action">
+                  <input
+                    className="settings-input"
+                    type={showImageApiKey ? "text" : "password"}
+                    value={imageGen.apiKey}
+                    onChange={(event) => onImageGenChange({ apiKey: event.target.value })}
+                    placeholder={imageGenNeedsApiKey(imageGen) ? "sk-..." : "本地 WebUI 通常留空"}
+                  />
+                  <button
+                    type="button"
+                    className="settings-inline-action-btn icon-only"
+                    onClick={() => setShowImageApiKey((s) => !s)}
+                    title={showImageApiKey ? "隐藏 API Key" : "显示 API Key"}
+                  >
+                    {showImageApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </div>
+              </label>
+            </div>
+
+            <label className="settings-field">
+              <span className="settings-field-label">生图模型</span>
+              <input
+                className="settings-input"
+                value={imageGen.model}
+                onChange={(event) => onImageGenChange({ model: event.target.value })}
+                placeholder={
+                  imageGen.provider === "sd-webui"
+                    ? "留空则使用 WebUI 当前加载的模型"
+                    : imageGenPreset?.model || "模型 ID"
+                }
+              />
+              <span className="settings-field-hint">
+                {imageGen.provider === "stability"
+                  ? "Stability 填写 core / sd3 / ultra"
+                  : imageGen.provider === "sd-webui"
+                    ? "可选，对应 WebUI 的 checkpoint 名称"
+                    : "对应厂商的图像模型 ID"}
+              </span>
+            </label>
+
+            <div className="settings-form-row">
+              <label className="settings-field">
+                <span className="settings-field-label">默认比例</span>
+                <select
+                  className="settings-select"
+                  value={imageGen.defaultAspectRatio}
+                  onChange={(event) =>
+                    onImageGenChange(
+                      withImageGenSizeDefaults(imageGen, {
+                        defaultAspectRatio: event.target.value as SakiImageGenConfig["defaultAspectRatio"]
+                      })
+                    )
+                  }
+                >
+                  {imageGenAspectRatioOptions.map((option) => (
+                    <option value={option.value} key={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="settings-field">
+                <span className="settings-field-label">默认清晰度</span>
+                <select
+                  className="settings-select"
+                  value={imageGen.defaultQuality}
+                  onChange={(event) =>
+                    onImageGenChange(
+                      withImageGenSizeDefaults(imageGen, {
+                        defaultQuality: event.target.value as SakiImageGenConfig["defaultQuality"]
+                      })
+                    )
+                  }
+                >
+                  {imageGenQualityOptions.map((option) => (
+                    <option value={option.value} key={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="settings-form-row">
+              <label className="settings-field">
+                <span className="settings-field-label">默认宽度 (px)</span>
+                <input
+                  className="settings-input"
+                  type="number"
+                  min={64}
+                  max={2048}
+                  step={8}
+                  value={imageGen.defaultWidth}
+                  onChange={(event) => onImageGenChange({ defaultWidth: Number(event.target.value) || 1024 })}
+                />
+              </label>
+              <label className="settings-field">
+                <span className="settings-field-label">默认高度 (px)</span>
+                <input
+                  className="settings-input"
+                  type="number"
+                  min={64}
+                  max={2048}
+                  step={8}
+                  value={imageGen.defaultHeight}
+                  onChange={(event) => onImageGenChange({ defaultHeight: Number(event.target.value) || 1024 })}
+                />
+              </label>
+            </div>
+
+            <div className="model-multipliers-hint">
+              Agent 工具 <code>generateImage</code> 可按任务自行指定 path、prompt、aspectRatio、width、height、quality。
+              未指定时使用以上默认值，生成结果会保存到实例工作目录。
+            </div>
+          </div>
+        </div>
 
         {/* 模型消耗积分乘区设置 */}
         <div className="model-multipliers-card wide-field">

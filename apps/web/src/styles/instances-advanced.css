@@ -4334,7 +4334,7 @@ button,
     overflow: hidden !important;
   }
 
-  .section-heading:not(.users-panel-header),
+  .section-heading:not(.users-panel-header):not(.templates-panel-heading),
   .glass-panel-heading,
   .role-heading-wrap,
   .audit-stream-heading,

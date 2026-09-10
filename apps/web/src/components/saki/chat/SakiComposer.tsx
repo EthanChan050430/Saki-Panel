@@ -121,6 +121,7 @@ export interface SakiComposerProps {
   contextText: string | null;
   auditSearchActive: boolean;
   hasActiveInstance: boolean;
+  token?: string;
 }
 
 export const SakiComposer = React.memo(function SakiComposer({
@@ -183,7 +184,8 @@ export const SakiComposer = React.memo(function SakiComposer({
   onStopSakiGeneration,
   contextText,
   auditSearchActive,
-  hasActiveInstance
+  hasActiveInstance,
+  token
 }: SakiComposerProps) {
   const placeholder = attachments.some(isSakiImageAttachment)
     ? "输入 @ 引用已上传的参考图"
@@ -241,6 +243,7 @@ export const SakiComposer = React.memo(function SakiComposer({
           loading={loading}
           hasStreamingAssistant={hasStreamingAssistant}
           thinkingGif={thinkingGif}
+          {...(token ? { token } : {})}
         />
       )}
 

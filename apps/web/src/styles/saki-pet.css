@@ -1,0 +1,929 @@
+/* ==========================================================================
+   Saki desktop pet — floating companion, orbit, widgets
+   ========================================================================== */
+
+.saki-pet-stage {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 120;
+  width: 86px;
+  height: 118px;
+  overflow: visible;
+  touch-action: none;
+  transform-origin: center bottom;
+  scale: var(--saki-pet-scale, 1);
+  --saki-face: 1;
+  --saki-look: 0deg;
+}
+
+.saki-pet-stage.is-touch {
+  width: 96px;
+  height: 128px;
+}
+
+.saki-pet-stage.hiding {
+  opacity: 0;
+  scale: calc(var(--saki-pet-scale, 1) * 0.9);
+  pointer-events: none;
+}
+
+.saki-pet-stage.edge-attached {
+  width: 58px;
+  height: 92px;
+  overflow: visible;
+}
+
+.saki-pet-stage.edge-right {
+  transform-origin: right bottom;
+}
+
+.saki-pet-stage.edge-left {
+  transform-origin: left bottom;
+}
+
+.saki-pet-stage.edge-right .saki-character-image-edge {
+  transform: scaleX(-1);
+}
+
+.saki-pet-stage.edge-left .saki-character-image-edge {
+  transform: none;
+}
+
+.saki-pet-stage.edge-right .saki-pet-chrome {
+  left: auto;
+  right: 0;
+  margin-left: 0;
+  width: min(196px, calc(100vw - 16px));
+  align-items: flex-end;
+}
+
+.saki-pet-stage.edge-left .saki-pet-chrome {
+  left: 0;
+  margin-left: 0;
+  width: min(196px, calc(100vw - 16px));
+  align-items: flex-start;
+}
+
+.saki-pet-stage.edge-right .saki-pet-bubble {
+  left: auto;
+  right: 4px;
+  transform: none;
+  border-radius: 12px 12px 4px 12px;
+}
+
+.saki-pet-stage.edge-left .saki-pet-bubble {
+  left: 4px;
+  transform: none;
+}
+
+.saki-pet-stage .saki-launcher {
+  position: relative;
+  left: auto;
+  right: auto;
+  top: auto;
+  bottom: auto;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+}
+
+.saki-pet-stage .saki-character-art.compact {
+  transform: none;
+  transform-origin: center bottom;
+}
+
+.saki-pet-stage.pet-bath .saki-character-art.compact .saki-character-image {
+  transform: scale(1.1);
+  transform-origin: center bottom;
+}
+
+.saki-pet-stage.pet-roll .saki-character-art.compact .saki-character-image {
+  transform: scale(1.22);
+  transform-origin: center bottom;
+}
+
+.saki-pet-stage.pet-walk .saki-character-art.compact {
+  animation: saki-pet-bob 0.42s ease-in-out infinite;
+}
+
+.saki-pet-stage.pet-roll .saki-character-art.compact {
+  animation: saki-pet-spin 0.7s ease-in-out;
+}
+
+.saki-pet-stage.pet-sleep .saki-character-image {
+  filter: drop-shadow(0 10px 16px rgba(21, 32, 43, 0.2));
+}
+
+@keyframes saki-pet-bob {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -5px; }
+}
+
+@keyframes saki-pet-spin {
+  0% { rotate: 0deg; }
+  40% { rotate: 28deg; }
+  100% { rotate: 0deg; }
+}
+
+.saki-pet-chrome {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  width: 196px;
+  margin-left: -98px;
+  padding-bottom: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition: opacity 180ms ease, transform 180ms ease;
+  z-index: 4;
+}
+
+.saki-pet-chrome.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.saki-pet-chrome.is-below {
+  bottom: auto;
+  top: 100%;
+  padding-bottom: 0;
+  padding-top: 6px;
+  transform: translateY(-6px);
+}
+
+.saki-pet-chrome.is-below.is-open {
+  transform: translateY(0);
+}
+
+.saki-pet-nameplate {
+  width: 100%;
+  padding: 5px 7px 6px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 8px 20px rgba(49, 46, 129, 0.12);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.saki-pet-nameplate-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 4px;
+  min-width: 0;
+}
+
+.saki-pet-lv,
+.saki-pet-ambient {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.saki-pet-lv {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #db2777;
+}
+
+.saki-pet-ambient em {
+  font-style: normal;
+  margin-left: 4px;
+  color: #475569;
+}
+
+.saki-pet-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 4px;
+}
+
+.saki-pet-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.saki-pet-stat span {
+  font-size: 9px;
+  font-weight: 700;
+  color: #94a3b8;
+}
+
+.saki-pet-stat i {
+  display: block;
+  height: 3px;
+  border-radius: 99px;
+  background: rgba(148, 163, 184, 0.28);
+  overflow: hidden;
+}
+
+.saki-pet-stat i b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.saki-pet-stat.hunger i b { background: linear-gradient(90deg, #fb7185, #f43f5e); }
+.saki-pet-stat.mood i b { background: linear-gradient(90deg, #f9a8d4, #ec4899); }
+.saki-pet-stat.health i b { background: linear-gradient(90deg, #86efac, #22c55e); }
+
+.saki-pet-orbit {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 5px;
+}
+
+.saki-pet-petal {
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 6px 16px rgba(49, 46, 129, 0.1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  color: #64748b;
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, color 160ms ease;
+}
+
+.saki-pet-petal span {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+.saki-pet-petal:hover,
+.saki-pet-petal.active {
+  transform: translateY(-2px);
+  color: #db2777;
+}
+
+.saki-pet-petal.chat {
+  width: 44px;
+  height: 44px;
+  background: linear-gradient(180deg, #ff8fbf, #ff75ac);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 8px 18px rgba(255, 117, 172, 0.34);
+}
+
+.saki-pet-petal.chat span {
+  color: #fff;
+}
+
+.saki-pet-tray,
+.saki-pet-play-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 3px;
+  width: 100%;
+}
+
+.saki-pet-chip,
+.saki-pet-play-row button {
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.9);
+  color: #475569;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.07);
+}
+
+.saki-pet-chip.active,
+.saki-pet-play-row button.active {
+  color: #db2777;
+  background: #fff1f6;
+  border-color: rgba(255, 117, 172, 0.35);
+}
+
+.saki-pet-bubble {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(220px, 70vw);
+  padding: 7px 10px;
+  border-radius: 12px 12px 12px 4px;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.4;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
+  z-index: 6;
+  pointer-events: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: left;
+}
+
+.saki-pet-bubble.is-below {
+  bottom: auto;
+  top: calc(100% + 8px);
+  border-radius: 4px 12px 12px 12px;
+}
+
+.saki-pet-due-dot {
+  position: absolute;
+  top: 6px;
+  right: 4px;
+  z-index: 5;
+  width: 16px;
+  height: 16px;
+  border-radius: 99px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+}
+
+.saki-pet-fx {
+  position: absolute;
+  inset: -18px -10px 8px;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.saki-pet-fx.fx-hearts::before,
+.saki-pet-fx.fx-hearts::after {
+  content: "♥";
+  position: absolute;
+  color: #fb7185;
+  animation: saki-pet-float 1.6s ease-out infinite;
+}
+
+.saki-pet-fx.fx-hearts::before { left: 18%; font-size: 14px; }
+.saki-pet-fx.fx-hearts::after { right: 16%; font-size: 18px; animation-delay: 0.25s; }
+
+.saki-pet-fx.fx-zzz::before {
+  content: "zzz";
+  position: absolute;
+  right: 8%;
+  top: 6%;
+  color: #94a3b8;
+  font-weight: 800;
+  animation: saki-pet-float 1.8s ease-out infinite;
+}
+
+.saki-pet-fx.fx-soap::before,
+.saki-pet-fx.fx-soap::after {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 99px;
+  border: 2px solid rgba(125, 211, 252, 0.9);
+  animation: saki-pet-float 1.5s ease-out infinite;
+}
+.saki-pet-fx.fx-soap::before { left: 20%; }
+.saki-pet-fx.fx-soap::after { right: 18%; width: 8px; height: 8px; animation-delay: 0.2s; }
+
+.saki-pet-fx.fx-sparkle::before {
+  content: "✦";
+  position: absolute;
+  left: 46%;
+  top: 0;
+  color: #fbbf24;
+  animation: saki-pet-float 1.4s ease-out infinite;
+}
+
+@keyframes saki-pet-float {
+  0% { transform: translateY(8px); opacity: 0; }
+  30% { opacity: 1; }
+  100% { transform: translateY(-22px); opacity: 0; }
+}
+
+.saki-pet-widget-card {
+  position: absolute;
+  top: 8px;
+  width: 248px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  z-index: 7;
+  overflow: hidden;
+}
+
+.saki-pet-widget-card.edge-right {
+  right: calc(100% + 12px);
+  left: auto;
+}
+
+.saki-pet-widget-card.edge-left {
+  left: calc(100% + 12px);
+  right: auto;
+}
+
+.saki-pet-widget-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+}
+
+.saki-pet-widget-card header strong {
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.saki-pet-widget-card header button,
+.saki-pet-sticky-close,
+.saki-pet-sticker button {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.saki-pet-widget-body {
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.saki-pet-widget-hint {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.saki-pet-add-row,
+.saki-pet-schedule-form {
+  display: flex;
+  gap: 6px;
+}
+
+.saki-pet-add-row input,
+.saki-pet-schedule-form input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  border-radius: 9px;
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.saki-pet-add-row button,
+.saki-pet-schedule-form button,
+.saki-pet-primary,
+.saki-pet-pomo-actions button {
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 0;
+  background: #ff75ac;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.saki-pet-check-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.saki-pet-check-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #334155;
+}
+
+.saki-pet-check-list li.done span {
+  text-decoration: line-through;
+  color: #94a3b8;
+}
+
+.saki-pet-check-list li.empty {
+  color: #94a3b8;
+}
+
+.saki-pet-check-list li button:first-child {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #22c55e;
+}
+
+.saki-pet-feed-list {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  gap: 6px;
+}
+
+.saki-pet-feed-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.saki-pet-feed-item img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+}
+
+.saki-pet-feed-item span {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.saki-pet-feed-item b {
+  font-size: 12px;
+  color: #0f172a;
+}
+
+.saki-pet-feed-item small {
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.saki-pet-feed-item em {
+  font-style: normal;
+  color: #db2777;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.saki-pet-feed-item.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.saki-pet-pomo {
+  align-items: center;
+  text-align: center;
+}
+
+.saki-pet-pomo-face {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #db2777;
+}
+
+.saki-pet-pomo-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.saki-pet-pomo-actions button:last-child {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.saki-pet-note-swatches {
+  display: flex;
+  gap: 8px;
+}
+
+.saki-pet-note-swatches button {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  cursor: pointer;
+}
+
+.saki-pet-clock-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 13px;
+  color: #334155;
+}
+
+.saki-pet-clock-row strong {
+  font-size: 22px;
+  letter-spacing: 0.04em;
+}
+
+.saki-pet-cal-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: #64748b;
+}
+
+.saki-pet-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  text-align: center;
+  font-size: 11px;
+}
+
+.saki-pet-cal-grid .dow {
+  color: #94a3b8;
+  font-weight: 700;
+}
+
+.saki-pet-cal-grid span {
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+}
+
+.saki-pet-cal-grid .today {
+  background: #ff75ac;
+  color: #fff;
+  font-weight: 800;
+}
+
+.saki-pet-skin-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 10px;
+}
+
+.saki-pet-skin-grid button {
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  background: #fff;
+  border-radius: 12px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.saki-pet-skin-grid img {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+}
+
+.saki-pet-skin-grid span {
+  font-size: 11px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.saki-pet-skin-grid .active {
+  border-color: #ff75ac;
+  box-shadow: 0 0 0 2px rgba(255, 117, 172, 0.2);
+}
+
+.saki-pet-skin-grid .locked {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.saki-pet-skin-grid em {
+  font-style: normal;
+  font-size: 10px;
+  color: #db2777;
+}
+
+.saki-pet-sticky {
+  position: fixed;
+  z-index: 118;
+  width: 168px;
+  min-height: 132px;
+  padding: 18px 10px 10px;
+  border-radius: 4px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+  cursor: grab;
+}
+
+.saki-pet-sticky textarea {
+  width: 100%;
+  height: 96px;
+  border: 0;
+  resize: none;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #334155;
+}
+
+.saki-pet-sticky-close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
+
+.saki-pet-sticker {
+  position: fixed;
+  z-index: 117;
+  width: 180px;
+  cursor: grab;
+}
+
+.saki-pet-sticker img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+}
+
+.saki-pet-sticker button {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+}
+
+.saki-pet-pomo-chip {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 130;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 117, 172, 0.28);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+  font-size: 12px;
+  font-weight: 700;
+  color: #db2777;
+}
+
+[data-theme="dark"] .saki-pet-nameplate,
+[data-theme="dark"] .saki-pet-petal,
+[data-theme="dark"] .saki-pet-chip,
+[data-theme="dark"] .saki-pet-play-row button,
+[data-theme="dark"] .saki-pet-widget-card,
+[data-theme="dark"] .saki-pet-bubble,
+[data-theme="dark"] .saki-pet-pomo-chip {
+  background: rgba(15, 23, 42, 0.88);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: #e2e8f0;
+}
+
+[data-theme="dark"] .saki-pet-widget-card header strong,
+[data-theme="dark"] .saki-pet-feed-item b,
+[data-theme="dark"] .saki-pet-clock-row {
+  color: #f8fafc;
+}
+
+[data-theme="dark"] .saki-pet-petal.chat {
+  background: linear-gradient(180deg, #ff8fbf, #ff75ac);
+  color: #fff;
+}
+
+.saki-pet-stage.is-touch .saki-pet-chrome {
+  width: 216px;
+  margin-left: -108px;
+  gap: 6px;
+  padding-bottom: 8px;
+}
+
+.saki-pet-stage.is-touch.edge-right .saki-pet-chrome,
+.saki-pet-stage.is-touch.edge-left .saki-pet-chrome {
+  width: min(216px, calc(100vw - 16px));
+  margin-left: 0;
+}
+
+.saki-pet-stage.is-touch .saki-pet-petal {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+}
+
+.saki-pet-stage.is-touch .saki-pet-petal.chat {
+  width: 54px;
+  height: 54px;
+}
+
+.saki-pet-stage.is-touch .saki-pet-petal span {
+  font-size: 10px;
+}
+
+.saki-pet-stage.is-touch .saki-pet-chip,
+.saki-pet-stage.is-touch .saki-pet-play-row button {
+  height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.saki-pet-stage.is-touch .saki-pet-chrome.is-below {
+  padding-top: 8px;
+}
+
+@media (max-width: 760px) {
+  .saki-pet-chrome {
+    width: 180px;
+    margin-left: -90px;
+  }
+
+  .saki-pet-stage.edge-right .saki-pet-chrome,
+  .saki-pet-stage.edge-left .saki-pet-chrome {
+    width: min(180px, calc(100vw - 16px));
+    margin-left: 0;
+  }
+
+  .saki-pet-widget-card,
+  .saki-pet-widget-card.edge-left,
+  .saki-pet-widget-card.edge-right {
+    left: 50%;
+    right: auto;
+    top: auto;
+    bottom: calc(100% + 8px);
+    transform: translateX(-50%);
+    width: min(248px, 70vw);
+  }
+
+  .saki-pet-widget-card.is-below,
+  .saki-pet-widget-card.is-below.edge-left,
+  .saki-pet-widget-card.is-below.edge-right {
+    top: calc(100% + 8px);
+    bottom: auto;
+  }
+
+  .saki-pet-stage.edge-right .saki-pet-widget-card,
+  .saki-pet-stage.edge-right .saki-pet-widget-card.edge-right,
+  .saki-pet-stage.edge-right .saki-pet-widget-card.edge-left {
+    left: auto;
+    right: 0;
+    transform: none;
+    width: min(248px, calc(100vw - 16px));
+  }
+
+  .saki-pet-stage.edge-left .saki-pet-widget-card,
+  .saki-pet-stage.edge-left .saki-pet-widget-card.edge-left,
+  .saki-pet-stage.edge-left .saki-pet-widget-card.edge-right {
+    left: 0;
+    right: auto;
+    transform: none;
+    width: min(248px, calc(100vw - 16px));
+  }
+
+  .saki-pet-nameplate {
+    display: none;
+  }
+}

@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Sparkles, Trophy, Volume2, VolumeX, X } from "lucide-react";
+import { Sparkles, Trophy, Volume2, VolumeX, X, ArrowLeft } from "lucide-react";
 import { sakiArtAssets } from "../../constants.js";
 import { usePanelLanguage } from "../../i18n/index.js";
 
 interface SakiDessertDropGameProps {
   onClose: () => void;
   onFinish: (score: number, expReward: number) => void;
+  onBackToPhone?: () => void;
 }
 
 interface GameFallingItem {
@@ -78,7 +79,7 @@ class GameSoundFX {
       const t = this.ctx.currentTime;
 
       if (isWishStar) {
-        // Celestial harp glissando for Wish Star
+        // 特殊星音效
         const notes = [523.25, 659.25, 783.99, 987.77, 1046.5, 1318.51];
         notes.forEach((freq, i) => {
           const osc = this.ctx!.createOscillator();
@@ -98,7 +99,7 @@ class GameSoundFX {
         return;
       }
 
-      // Pop / arcade sound with dynamic pitch scaling
+      // 接取连击音效
       const basePitches = [392.0, 440.0, 493.88, 523.25, 587.33, 659.25, 783.99, 880.0, 987.77, 1046.5];
       const freq = basePitches[Math.min(combo, basePitches.length - 1)] ?? 440;
 
@@ -260,7 +261,7 @@ class GameSoundFX {
   }
 }
 
-export function SakiDessertDropGame({ onClose, onFinish }: SakiDessertDropGameProps) {
+export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDessertDropGameProps) {
   const { language } = usePanelLanguage();
   const [score, setScore] = useState(0);
   const [combo, setCombo] = useState(0);
@@ -307,8 +308,14 @@ export function SakiDessertDropGame({ onClose, onFinish }: SakiDessertDropGamePr
   useEffect(() => {
     if (gameOver) {
       soundFxRef.current.playVictory();
+      try {
+        const prev = Number(localStorage.getItem("saki_dessert_high_score") || "0");
+        if (score > prev) {
+          localStorage.setItem("saki_dessert_high_score", String(score));
+        }
+      } catch {}
     }
-  }, [gameOver]);
+  }, [gameOver, score]);
 
   const itemTypes = [
     { name: "心愿星", iconSrc: "/assets/game/star.webp", points: 30, isBug: false, weight: 2 },
@@ -578,6 +585,16 @@ export function SakiDessertDropGame({ onClose, onFinish }: SakiDessertDropGamePr
           >
             {soundMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
           </button>
+          {onBackToPhone ? (
+            <button
+              className="saki-game-sound-btn"
+              type="button"
+              title="返回手机应用"
+              onClick={onBackToPhone}
+            >
+              <ArrowLeft size={15} />
+            </button>
+          ) : null}
           <button
             className="saki-game-close-btn"
             type="button"
@@ -784,7 +801,7 @@ export function SakiDessertDropGame({ onClose, onFinish }: SakiDessertDropGamePr
             </div>
           </div>
 
-          <div className="settlement-actions">
+          <div className="settlement-actions" style={{ display: "flex", flexDirection: "column", gap: "8px", width: "100%", marginTop: "12px" }}>
             <button
               className="saki-settlement-btn"
               type="button"
@@ -794,6 +811,20 @@ export function SakiDessertDropGame({ onClose, onFinish }: SakiDessertDropGamePr
               <span>领取奖励并完成</span>
               <div className="btn-shine" aria-hidden="true" />
             </button>
+            {onBackToPhone ? (
+              <button
+                className="saki-phone-exit-btn"
+                type="button"
+                style={{ width: "100%", justifyContent: "center" }}
+                onClick={() => {
+                  onFinish(score, expReward);
+                  onBackToPhone();
+                }}
+              >
+                <ArrowLeft size={13} />
+                <span>领取奖励并返回手机</span>
+              </button>
+            ) : null}
           </div>
         </div>
       )}

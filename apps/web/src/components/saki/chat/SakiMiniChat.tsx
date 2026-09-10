@@ -2,19 +2,22 @@ import React from "react";
 import { MarkdownContent } from "../../common/MarkdownContent.js";
 import { parseThinkingContent, SakiThinkingActionCard } from "../SakiComponents.js";
 import type { LocalSakiMessage } from "../sakiChatHelpers.js";
+import { SakiChatGeneratedImages } from "./SakiChatImages.js";
 
 export interface SakiMiniChatProps {
   messages: LocalSakiMessage[];
   loading: boolean;
   hasStreamingAssistant: boolean;
   thinkingGif: string;
+  token?: string;
 }
 
 export const SakiMiniChat = React.memo(function SakiMiniChat({
   messages,
   loading,
   hasStreamingAssistant,
-  thinkingGif
+  thinkingGif,
+  token
 }: SakiMiniChatProps) {
   if (messages.length <= 1 && !loading) {
     return null;
@@ -61,6 +64,9 @@ export const SakiMiniChat = React.memo(function SakiMiniChat({
                         <MarkdownContent content={parsed.answer} />
                       )}
                     </div>
+                  ) : null}
+                  {message.role === "assistant" && token ? (
+                    <SakiChatGeneratedImages message={message} token={token} compact />
                   ) : null}
                   {!hasAnswer && !hasThinking && message.streaming ? (
                     <div className="saki-message-body">

@@ -69,7 +69,17 @@ import type {
   LocalSakiWorkflowStep
 } from "../../types/app.js";
 import type { SakiChatStreamEvent, SakiChatWorkflowStatus } from "../../api.js";
-import { sakiArtAssets, sakiIdleLauncherAssets, sakiSpeakingAssets } from "../../constants.js";
+import {
+  sakiArtAssets,
+  sakiIdleLauncherAssets,
+  sakiPetBathFrames,
+  sakiPetClimbFrames,
+  sakiPetDoctorFrames,
+  sakiPetEatFrames,
+  sakiPetWalkFrames,
+  sakiSpeakingAssets,
+  sakiExpressionAnimFrames
+} from "../../constants.js";
 import { compactContextText, formatBytes } from "../../utils/path.js";
 import { newClientId } from "../../utils/id.js";
 import { MarkdownContent } from "../common/MarkdownContent.js";
@@ -491,6 +501,98 @@ export function getSakiActivityExpressionSrc(activityMood: SakiActivityMood): st
   }
 }
 
+type SakiPetPoseName =
+  | "idle"
+  | "walk"
+  | "sit"
+  | "lie"
+  | "sleep"
+  | "roll"
+  | "look"
+  | "climb"
+  | "hang"
+  | "fall"
+  | "chase"
+  | "happy"
+  | "eat"
+  | "doctor"
+  | "pickup"
+  | "bath"
+  | "poke"
+  | "yawn"
+  | "shy"
+  | "pout"
+  | "drink"
+  | "blink"
+  | "peek"
+  | null;
+
+function resolveSakiPetSprite({
+  pose,
+  walkFrame
+}: {
+  pose: SakiPetPoseName;
+  walkFrame: number;
+  dragging: boolean;
+}): { kind: "pair"; idle: string; hover: string } | { kind: "single"; src: string } {
+  if (!pose || pose === "idle") {
+    return { kind: "pair", idle: sakiArtAssets.petIdle, hover: sakiArtAssets.petHover };
+  }
+  if (pose === "blink") {
+    return { kind: "single", src: sakiArtAssets.petBlink };
+  }
+
+  const walkCycle = sakiPetWalkFrames;
+  const climbCycle = sakiPetClimbFrames;
+  const bathCycle = sakiPetBathFrames;
+  const doctorCycle = sakiPetDoctorFrames;
+  const eatCycle = sakiPetEatFrames;
+  const src =
+    pose === "sit"
+      ? sakiArtAssets.petSit
+      : pose === "sleep"
+      ? sakiArtAssets.petSleep
+      : pose === "roll"
+      ? sakiArtAssets.petRoll
+      : pose === "walk" || pose === "chase"
+      ? (walkCycle[walkFrame % walkCycle.length] ?? sakiArtAssets.petWalkF1)
+      : pose === "look"
+      ? sakiArtAssets.petLook
+      : pose === "lie"
+      ? sakiArtAssets.petLie
+      : pose === "hang"
+      ? sakiArtAssets.petHang
+      : pose === "fall"
+      ? sakiArtAssets.petFall
+      : pose === "climb"
+      ? (climbCycle[walkFrame % climbCycle.length] ?? sakiArtAssets.petClimbF1)
+      : pose === "pickup"
+      ? sakiArtAssets.petPickup
+      : pose === "happy"
+      ? sakiArtAssets.petHappy
+      : pose === "eat"
+      ? (eatCycle[walkFrame % eatCycle.length] ?? sakiArtAssets.petEat)
+      : pose === "doctor"
+      ? (doctorCycle[walkFrame % doctorCycle.length] ?? sakiArtAssets.petDoctor)
+      : pose === "bath"
+      ? (bathCycle[walkFrame % bathCycle.length] ?? sakiArtAssets.petBath)
+      : pose === "poke"
+      ? sakiArtAssets.petPoke
+      : pose === "yawn"
+      ? sakiArtAssets.petYawn
+      : pose === "shy"
+      ? sakiArtAssets.petShy
+      : pose === "pout"
+      ? sakiArtAssets.petPout
+      : pose === "drink"
+      ? sakiArtAssets.petDrink
+      : pose === "peek"
+      ? sakiArtAssets.tieEdge
+      : sakiArtAssets.petIdle;
+
+  return { kind: "single", src };
+}
+
 export function SakiCharacterArt({
   mood = "normal",
   compact = false,
@@ -498,7 +600,8 @@ export function SakiCharacterArt({
   edgeAttached = false,
   dragging = false,
   draggingExpressionSrc = null,
-  activityMood = null
+  activityMood = null,
+  petPose = null
 }: {
   mood?: SakiArtMood;
   compact?: boolean;
@@ -507,9 +610,37 @@ export function SakiCharacterArt({
   dragging?: boolean;
   draggingExpressionSrc?: string | null;
   activityMood?: SakiActivityMood;
+  petPose?:
+    | "idle"
+    | "walk"
+    | "sit"
+    | "lie"
+    | "sleep"
+    | "roll"
+    | "look"
+    | "climb"
+    | "hang"
+    | "fall"
+    | "chase"
+    | "happy"
+    | "eat"
+    | "doctor"
+    | "pickup"
+    | "bath"
+    | "poke"
+    | "yawn"
+    | "shy"
+    | "pout"
+    | "drink"
+    | "blink"
+    | "peek"
+    | null;
 }) {
   const [idleLauncherSrc, setIdleLauncherSrc] = useState(() => pickSakiAsset(sakiIdleLauncherAssets));
   const [speakingSrc, setSpeakingSrc] = useState(() => pickSakiAsset(sakiSpeakingAssets));
+  const [walkFrame, setWalkFrame] = useState(0);
+  const [blinking, setBlinking] = useState(false);
+  const [exprFrame, setExprFrame] = useState(0);
 
   useEffect(() => {
     if (!compact) return;
@@ -520,10 +651,56 @@ export function SakiCharacterArt({
   }, [compact]);
 
   useEffect(() => {
+    if (!compact || petPose) return;
+    let timeout = 0;
+    let blinkOff = 0;
+    const schedule = () => {
+      timeout = window.setTimeout(() => {
+        setBlinking(true);
+        blinkOff = window.setTimeout(() => setBlinking(false), 160);
+        schedule();
+      }, 2600 + Math.random() * 2800);
+    };
+    schedule();
+    return () => {
+      window.clearTimeout(timeout);
+      window.clearTimeout(blinkOff);
+    };
+  }, [compact, petPose]);
+
+  useEffect(() => {
+    if (!compact || (petPose !== "walk" && petPose !== "chase" && petPose !== "climb" && petPose !== "bath" && petPose !== "doctor" && petPose !== "eat")) return;
+    const id = window.setInterval(() => {
+      setWalkFrame((frame) => frame + 1);
+    }, petPose === "bath" || petPose === "eat" || petPose === "doctor" ? 180 : 140);
+    return () => window.clearInterval(id);
+  }, [compact, petPose]);
+
+  useEffect(() => {
     if (activityMood === "speaking") {
       setSpeakingSrc(pickSakiAsset(sakiSpeakingAssets));
     }
   }, [activityMood]);
+
+  const expressionAnimKey = activityMood && activityMood in sakiExpressionAnimFrames
+    ? activityMood
+    : !activityMood && mood === "thinking"
+    ? "thinking"
+    : !activityMood && mood === "worry"
+    ? "worry"
+    : null;
+  const expressionAnim = expressionAnimKey ? sakiExpressionAnimFrames[expressionAnimKey] : null;
+
+  useEffect(() => {
+    if (compact || !expressionAnim) {
+      setExprFrame(0);
+      return;
+    }
+    const id = window.setInterval(() => {
+      setExprFrame((frame) => frame + 1);
+    }, 180);
+    return () => window.clearInterval(id);
+  }, [compact, expressionAnim]);
 
   const activityExpressionSrc = activityMood === "speaking"
     ? speakingSrc
@@ -541,56 +718,40 @@ export function SakiCharacterArt({
     : sakiArtAssets.normal;
 
   if (compact) {
-    if (dragging) {
+    if (dragging && draggingExpressionSrc) {
       return (
         <div className="saki-character-art compact" aria-hidden="true">
-          <img
-            className="saki-character-image"
-            src={expressionSrc}
-            alt=""
-            draggable={false}
-          />
+          <img className="saki-character-image" src={draggingExpressionSrc} alt="" draggable={false} />
         </div>
       );
     }
 
-    if (fileDrop) {
+    const petSrc = resolveSakiPetSprite({
+      pose: fileDrop
+        ? "idle"
+        : edgeAttached
+        ? "peek"
+        : blinking && !petPose
+        ? "blink"
+        : petPose,
+      walkFrame,
+      dragging
+    });
+
+    if (petSrc.kind === "pair") {
       return (
         <div className="saki-character-art compact" aria-hidden="true">
-          <img
-            className="saki-character-image saki-character-image-file-drop"
-            src={sakiArtAssets.files}
-            alt=""
-            draggable={false}
-          />
-        </div>
-      );
-    }
-
-    if (edgeAttached) {
-      return (
-        <div className="saki-character-art compact edge-attached" aria-hidden="true">
-          <img
-            className="saki-character-image saki-character-image-edge"
-            src={sakiArtAssets.tieEdge}
-            alt=""
-            draggable={false}
-          />
+          <img className="saki-character-image saki-character-image-idle" src={petSrc.idle} alt="" draggable={false} />
+          <img className="saki-character-image saki-character-image-hover" src={petSrc.hover} alt="" draggable={false} />
         </div>
       );
     }
 
     return (
-      <div className="saki-character-art compact" aria-hidden="true">
+      <div className={`saki-character-art compact ${edgeAttached ? "edge-attached" : ""}`} aria-hidden="true">
         <img
-          className="saki-character-image saki-character-image-idle"
-          src={idleLauncherSrc}
-          alt=""
-          draggable={false}
-        />
-        <img
-          className="saki-character-image saki-character-image-hover"
-          src={sakiArtAssets.launcherHover}
+          className={`saki-character-image ${edgeAttached ? "saki-character-image-edge" : ""}`}
+          src={petSrc.src}
           alt=""
           draggable={false}
         />
@@ -598,11 +759,13 @@ export function SakiCharacterArt({
     );
   }
 
+  const animatedSrc = expressionAnim ? expressionAnim[exprFrame % expressionAnim.length] : expressionSrc;
+
   return (
     <div className={`saki-character-art mood-${mood}`} aria-hidden="true">
       <img
         className="saki-character-image"
-        src={expressionSrc}
+        src={animatedSrc}
         alt=""
         draggable={false}
       />
@@ -747,6 +910,9 @@ export function workflowStatusText(step: LocalSakiWorkflowStep): string | null {
   if (tool === "researchweb") return "研究搜索...";
   if (tool === "readmemory") return "读取项目记忆...";
   if (tool === "writememory") return "保存项目记忆...";
+  if (tool === "generateimage" || tool === "generate_image" || tool === "drawimage" || tool === "createimage" || tool === "txt2img" || tool === "imagegen" || tool === "imagine") {
+    return "正在生成图片...";
+  }
   if (tool === "plan") return "制定计划...";
   if (tool === "spawntask") return "执行子任务...";
   if (tool === "readskill") return "加载技能...";
@@ -1184,6 +1350,9 @@ export function sakiActionTarget(action: SakiAgentAction): string {
   if (tool === "searchfiles") return sakiActionStringArg(action, ["pattern"]);
   if (tool === "findfiles") return sakiActionStringArg(action, ["pattern"]);
   if (tool === "readmemory" || tool === "writememory") return "SAKI.md";
+  if (tool === "generateimage" || tool === "generate_image" || tool === "drawimage" || tool === "createimage" || tool === "txt2img" || tool === "imagegen" || tool === "imagine") {
+    return sakiActionStringArg(action, ["path"]) || sakiActionStringArg(action, ["prompt"]);
+  }
   if (tool === "plan") return sakiActionStringArg(action, ["summary"]);
   if (tool === "spawntask") return sakiActionStringArg(action, ["task"]);
   if (tool === "readskill") return sakiActionStringArg(action, ["skillId"]);
@@ -1462,6 +1631,14 @@ export function sakiActionTitle(action: SakiAgentAction): string {
       return "移动/重命名";
     case "uploadbase64":
       return "上传文件";
+    case "generateimage":
+    case "generate_image":
+    case "drawimage":
+    case "createimage":
+    case "txt2img":
+    case "imagegen":
+    case "imagine":
+      return "生成图片";
     case "runcommand":
       return "运行终端命令";
     case "sendinput":
@@ -1618,6 +1795,14 @@ export function SakiToolIcon({ action }: { action: SakiAgentAction }) {
     case "writefile":
     case "uploadbase64":
       return <FilePlus size={16} />;
+    case "generateimage":
+    case "generate_image":
+    case "drawimage":
+    case "createimage":
+    case "txt2img":
+    case "imagegen":
+    case "imagine":
+      return <ImageIcon size={16} />;
     case "replaceinfile":
     case "editlines":
     case "applypatch":

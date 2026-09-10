@@ -1,10 +1,19 @@
-import type { DaemonEventResponse, DaemonInstanceSnapshot, DaemonInstanceStatusEvent, IncidentTrigger } from "@webops/shared";
+import type { DaemonEventResponse, DaemonInstanceSnapshot, DaemonInstanceStatusEvent } from "@webops/shared";
 import { prisma } from "../db.js";
 import { instanceAccessInclude } from "../instance-access.js";
-import { evaluateCrash, evaluateResource, heartbeatCrashDedupMs, materializeIncident, recentCrashSampleCount } from "./detector.js";
+import {
+  diskUsageThresholdPercent,
+  evaluateCrash,
+  evaluateResource,
+  heartbeatCrashDedupMs,
+  materializeIncident,
+  memoryUsageThresholdPercent,
+  recentCrashSampleCount,
+  resourceFingerprint
+} from "./detector.js";
 import { listActiveRestartLeases } from "./leases.js";
-import { readWatchPolicy } from "./policy.js";
-import { findActiveIncident, truncateLogTail, updateIncident } from "./incidents.js";
+import { readWatchPolicy, toManagedWatchPolicy } from "./policy.js";
+import { truncateLogTail, updateIncident } from "./incidents.js";
 
 function statusPatch(status: string, exitCode?: number | null) {
   const now = new Date();
@@ -133,6 +142,41 @@ async function evaluateHeartbeatCrash(snapshot: DaemonInstanceSnapshot, nodeId: 
   }
 }
 
+// 节点级指标，单节点单触发类型绑定单个活跃实例
+async function openNodeResourceIncident(input: {
+  nodeId: string;
+  trigger: "disk" | "memory";
+  usage: number;
+  threshold: number;
+}): Promise<void> {
+  const nodeInstances = await prisma.instance.findMany({
+    where: { nodeId: input.nodeId },
+    include: { watchPolicy: true },
+    orderBy: { id: "asc" }
+  });
+  const watched = nodeInstances.filter((instance) => {
+    const policy = toManagedWatchPolicy(instance.id, instance.watchPolicy);
+    return policy.enabled && policy.mode !== "off";
+  });
+  if (!watched.length) return;
+
+  const running = watched.filter((instance) => instance.status === "RUNNING" || instance.status === "STARTING");
+  const anchor = running[0] ?? watched[0];
+  if (!anchor) return;
+
+  const policy = toManagedWatchPolicy(anchor.id, anchor.watchPolicy);
+  const metricLabel = input.trigger === "disk" ? "磁盘" : "内存";
+  await materializeIncident({
+    instanceId: anchor.id,
+    nodeId: input.nodeId,
+    fingerprint: resourceFingerprint(input.nodeId, input.trigger),
+    trigger: input.trigger,
+    logTail: `节点${metricLabel}占用 ${input.usage.toFixed(1)}%。`,
+    assigneeUserId: policy.approverUserId ?? anchor.assignedToId ?? anchor.createdById,
+    summary: `节点${metricLabel}占用超过 ${input.threshold}%。这是节点级告警，同一节点只开一单。确认后 Saki 才会开始诊断（会消耗模型额度）。`
+  });
+}
+
 export async function ingestHeartbeatSnapshots(
   nodeId: string,
   snapshots: DaemonInstanceSnapshot[] | undefined,
@@ -147,41 +191,21 @@ export async function ingestHeartbeatSnapshots(
 
   if (metrics) {
     const resource = await evaluateResource({ nodeId, diskUsage: metrics.diskUsage, memoryUsage: metrics.memoryUsage });
-    if (resource.disk || resource.memory) {
-      // 节点磁盘/内存是整个节点的指标，语义上归属于该节点上所有实例；
-      // 这里对节点上每个启用 watch 的实例分别评估，各自建单
-      // （指纹为 `${instanceId}:${trigger}`，重复心跳会合并到同一单）。
-      const nodeInstances = await prisma.instance.findMany({
-        where: { nodeId },
-        orderBy: { updatedAt: "desc" }
+    if (resource.disk) {
+      await openNodeResourceIncident({
+        nodeId,
+        trigger: "disk",
+        usage: metrics.diskUsage,
+        threshold: diskUsageThresholdPercent
       });
-      const triggers: IncidentTrigger[] = [
-        ...(resource.disk ? (["disk"] as const) : []),
-        ...(resource.memory ? (["memory"] as const) : [])
-      ];
-      for (const instance of nodeInstances) {
-        const policy = await readWatchPolicy(instance.id);
-        if (!policy.enabled || policy.mode === "off") continue;
-        for (const trigger of triggers) {
-          const fingerprint = `${instance.id}:${trigger}`;
-          const existing = await findActiveIncident(instance.id, fingerprint);
-          if (existing) continue;
-          await materializeIncident({
-            instanceId: instance.id,
-            nodeId,
-            fingerprint,
-            trigger,
-            logTail:
-              trigger === "disk"
-                ? `节点磁盘占用 ${metrics.diskUsage.toFixed(1)}%。`
-                : `节点内存占用 ${metrics.memoryUsage.toFixed(1)}%。`,
-            summary:
-              trigger === "disk"
-                ? "节点磁盘占用超过 90%。确认后 Saki 才会开始诊断（会消耗模型额度）。"
-                : "节点内存占用超过 95%。确认后 Saki 才会开始诊断（会消耗模型额度）。"
-          });
-        }
-      }
+    }
+    if (resource.memory) {
+      await openNodeResourceIncident({
+        nodeId,
+        trigger: "memory",
+        usage: metrics.memoryUsage,
+        threshold: memoryUsageThresholdPercent
+      });
     }
   }
 

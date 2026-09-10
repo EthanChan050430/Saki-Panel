@@ -9,7 +9,8 @@ import {
   Trash2
 } from "lucide-react";
 import { MarkdownContent } from "../../common/MarkdownContent.js";
-import type { SakiAgentAction, SakiInputAttachment } from "@webops/shared";
+import { isSakiImageAttachment, type SakiAgentAction, type SakiInputAttachment } from "@webops/shared";
+import { SakiChatGeneratedImages } from "./SakiChatImages.js";
 import type { LocalSakiMessage } from "../../../types/app.js";
 import {
   SakiAttachmentChip,
@@ -45,6 +46,7 @@ export interface SakiMessagesListProps {
   onOpenPath?: ((path: string, line?: number) => void) | undefined;
   onRollbackAllFileActions: (messageId: string, fileRollbackActions: SakiAgentAction[]) => Promise<void> | void;
   onPreviewAttachment: (preview: { attachment: SakiInputAttachment; editable: boolean }) => void;
+  token: string;
 }
 
 function findPrecedingUserMessage(messages: LocalSakiMessage[], assistantId: string): LocalSakiMessage | null {
@@ -76,7 +78,8 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
   onDecideAction,
   onOpenPath,
   onRollbackAllFileActions,
-  onPreviewAttachment
+  onPreviewAttachment,
+  token
 }: SakiMessagesListProps) {
   return (
     <div className="saki-messages" ref={messagesRef} onScroll={onScroll}>
@@ -264,6 +267,14 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
               </div>
             ) : null}
 
+            {message.role === "assistant" ? (
+              <SakiChatGeneratedImages
+                message={message}
+                token={token}
+                onPreview={(attachment) => onPreviewAttachment({ attachment, editable: false })}
+              />
+            ) : null}
+
             {message.role === "assistant" && message.usage ? (
               <div className="saki-token-usage-text">
                 {message.usage.isUnlimited
@@ -272,17 +283,23 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
               </div>
             ) : null}
 
-            {message.attachments?.length ? (
-              <div className="saki-message-attachments">
-                {message.attachments.map((attachment, index) => (
-                  <SakiAttachmentChip
-                    attachment={attachment}
-                    key={attachment.id ?? `${attachment.name}-${index}`}
-                    onClick={() => onPreviewAttachment({ attachment, editable: false })}
-                  />
-                ))}
-              </div>
-            ) : null}
+            {(() => {
+              const leftover = (message.attachments ?? []).filter(
+                (attachment) => message.role === "user" || !isSakiImageAttachment(attachment)
+              );
+              if (!leftover.length) return null;
+              return (
+                <div className="saki-message-attachments">
+                  {leftover.map((attachment, index) => (
+                    <SakiAttachmentChip
+                      attachment={attachment}
+                      key={attachment.id ?? `${attachment.name}-${index}`}
+                      onClick={() => onPreviewAttachment({ attachment, editable: false })}
+                    />
+                  ))}
+                </div>
+              );
+            })()}
 
             {showAssistantActions ? (
               <div className="saki-assistant-message-actions">

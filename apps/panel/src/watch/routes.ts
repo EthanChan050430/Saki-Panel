@@ -293,7 +293,7 @@ export async function registerWatchRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
-  // 从某个 incident 一键静默：按该单的 instanceId+fingerprint 建规则，同时忽略当前单。
+  // 一键静默规则
   app.post("/api/incidents/:id/silence", { preHandler: requirePermission("saki.agent") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const incident = await getIncident(id);
@@ -307,9 +307,11 @@ export async function registerWatchRoutes(app: FastifyInstance): Promise<void> {
       return;
     }
     const body = (request.body ?? {}) as { minutes?: number; reason?: string };
+    const nodeResource = incident.trigger === "disk" || incident.trigger === "memory";
     const rule = await createSilenceRule({
-      instanceId: incident.instanceId,
-      fingerprint: incident.fingerprint,
+      ...(nodeResource
+        ? { fingerprint: incident.fingerprint, trigger: incident.trigger }
+        : { instanceId: incident.instanceId, fingerprint: incident.fingerprint }),
       ...(body.reason ? { reason: body.reason } : {}),
       ...(typeof body.minutes === "number" ? { minutes: body.minutes } : {})
     });

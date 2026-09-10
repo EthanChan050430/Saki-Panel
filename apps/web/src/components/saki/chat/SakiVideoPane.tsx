@@ -1,4 +1,4 @@
-import React, { memo } from "react";
+import React, { memo, useState, useEffect } from "react";
 import {
   Gamepad2,
   Heart,
@@ -21,6 +21,9 @@ import {
   type SakiVoiceEchoState
 } from "../SakiComponents.js";
 import { SakiDessertDropGame } from "../SakiDessertDropGame.js";
+import { SakiPhoneLauncher } from "../phone/SakiPhoneLauncher.js";
+import { SakiSweetMatchGame } from "../games/SakiSweetMatchGame.js";
+import { SakiPlantSlayerGame } from "../games/SakiPlantSlayerGame.js";
 import { MarkdownContent } from "../../common/MarkdownContent.js";
 import {
   getFavorabilityLevelInfo,
@@ -119,6 +122,14 @@ export const SakiVideoPane = memo(function SakiVideoPane({
   const isEn = language === "en-US";
   const isTw = language === "zh-TW";
 
+  const [activeGame, setActiveGame] = useState<"dessert_drop" | "sweet_match" | "plant_slayer" | null>(null);
+
+  useEffect(() => {
+    if (!miniGameActive) {
+      setActiveGame(null);
+    }
+  }, [miniGameActive]);
+
   const favBadgeTitle = isEn
     ? `[Saki Affection Details]\nLevel: Lv.${favInfo.level} · ${favInfo.title}\nCurrent EXP: ${favInfo.currentExp} / ${favInfo.maxExpForLevel} EXP (${favInfo.levelProgress}%)\n${favInfo.isMaxLevel ? "Max affection level reached!" : `EXP needed for next level: ${favInfo.maxExpForLevel - favInfo.currentExp}`}`
     : isTw
@@ -138,18 +149,70 @@ export const SakiVideoPane = memo(function SakiVideoPane({
         onChange={handleCustomRoomBgUpload}
       />
 
-      {/* Mini Game occupying the FULL saki-video-pane */}
+      {/* Mini Game & Phone Launcher occupying the FULL saki-video-pane */}
       {miniGameActive ? (
-        <SakiDessertDropGame
-          onClose={() => {
-            setMiniGameActive(false);
-            setSakiPokeMood(null);
-          }}
-          onFinish={(score, expReward) => {
-            setMiniGameActive(false);
-            handleMiniGameFinish(score, expReward);
-          }}
-        />
+        activeGame === "dessert_drop" ? (
+          <SakiDessertDropGame
+            onClose={() => {
+              setMiniGameActive(false);
+              setActiveGame(null);
+            }}
+            onBackToPhone={() => {
+              setActiveGame(null);
+            }}
+            onFinish={(score, expReward) => {
+              handleMiniGameFinish(score, expReward);
+            }}
+          />
+        ) : activeGame === "sweet_match" ? (
+          <SakiSweetMatchGame
+            onClose={() => {
+              setMiniGameActive(false);
+              setActiveGame(null);
+            }}
+            onBackToPhone={() => {
+              setActiveGame(null);
+            }}
+            onFinish={(score, expReward) => {
+              handleMiniGameFinish(score, expReward);
+            }}
+          />
+        ) : activeGame === "plant_slayer" ? (
+          <SakiPlantSlayerGame
+            onClose={() => {
+              setMiniGameActive(false);
+              setActiveGame(null);
+            }}
+            onBackToPhone={() => {
+              setActiveGame(null);
+            }}
+            onFinish={(score, expReward) => {
+              handleMiniGameFinish(score, expReward);
+            }}
+          />
+        ) : (
+          <SakiPhoneLauncher
+            favorabilityLevel={favInfo.level}
+            onSelectGame={(gameId) => {
+              setActiveGame(gameId);
+              setSakiPokeMood("gaming");
+            }}
+            onClose={() => {
+              setMiniGameActive(false);
+              setSakiPokeMood(null);
+              setActiveGame(null);
+            }}
+            onOpenFeed={() => {
+              setFeedMenuOpen(true);
+            }}
+            onOpenDecorate={() => {
+              roomBgInputRef.current?.click();
+            }}
+            onSwitchToChat={() => {
+              setMobileActiveTab("chat");
+            }}
+          />
+        )
       ) : null}
 
       <div className="saki-video-header">
@@ -215,7 +278,9 @@ export const SakiVideoPane = memo(function SakiVideoPane({
           <div className="saki-video-favorability-badge" title={favBadgeTitle}>
             <div className={`saki-favorability-heart-wrap ${favorabilityPop ? "pop" : ""}`}>
               <Heart size={32} className="saki-favorability-heart fill-rose-500 text-rose-400" />
-              <span className="saki-favorability-heart-level">{favInfo.level}</span>
+              <span className={`saki-favorability-heart-level ${favInfo.level >= 100 ? "three-digits" : favInfo.level >= 10 ? "two-digits" : ""}`}>
+                {favInfo.level}
+              </span>
             </div>
 
             <div className="saki-favorability-tooltip" role="tooltip">
@@ -362,13 +427,18 @@ export const SakiVideoPane = memo(function SakiVideoPane({
         <button
           className={`saki-video-btn ${miniGameActive ? "active" : ""}`}
           type="button"
-          title="星梦甜点接接乐 (小游戏赚取好感度与积分)"
-          aria-label="小游戏"
+          title={isEn ? "Saki Phone (Mini-games)" : isTw ? "星夢手機 (選擇小遊戲玩耍)" : "星梦手机 (选择小游戏玩耍)"}
+          aria-label={isEn ? "Mini-games" : "小游戏中心"}
           onClick={() => {
             setFeedMenuOpen(false);
             setMiniGameActive((prev) => {
               const next = !prev;
-              setSakiPokeMood(next ? "gaming" : null);
+              if (!next) {
+                setActiveGame(null);
+                setSakiPokeMood(null);
+              } else {
+                setActiveGame(null);
+              }
               return next;
             });
           }}

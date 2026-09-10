@@ -12,6 +12,7 @@ import type {
   SakiChatRequest,
   SakiChatResponse,
   SakiConfigResponse,
+  SakiImageGenConfig,
   SakiInputAttachment,
   SakiModelOption,
   SakiProviderConfig,
@@ -38,6 +39,7 @@ export interface PanelSakiSettings {
   modelPointsMultipliers?: Record<string, number> | undefined;
   searchEnabled?: boolean;
   mcpEnabled?: boolean;
+  imageGen?: SakiImageGenConfig;
   systemPrompt?: string | null;
   appearance?: Partial<PanelAppearanceSettings>;
 }
@@ -543,7 +545,7 @@ export interface SakiAgentRuntime {
   systemPromptOverride?: string;
   abortController?: AbortController;
   usedToolNames?: string[];
-  toolProfile?: "full" | "research";
+  toolProfile?: "full" | "research" | "chat";
   taskId?: string;
   turnMessages?: import("./agent-messages.js").SakiAgentTurnMessage[];
 }

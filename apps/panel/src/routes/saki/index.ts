@@ -105,6 +105,7 @@ export type { SakiModelFamily, SakiModelProfile } from "./model-profile.js";
 
 export {
   buildPrompt,
+  buildChatModeSystemPrompt,
   buildDirectSystemPrompt,
   buildDirectMessages,
   buildAgentPrompt,
@@ -189,6 +190,14 @@ export type { SakiExecutorHost } from "./executor.js";
 export { ensureSakiModulesReady } from "./bootstrap.js";
 
 export { readEffectiveSakiConfig, saveSakiConfig } from "./config.js";
+export {
+  generateSakiImage,
+  imageGenerationEndpoint,
+  parseGeneratedImagePayload,
+  normalizeSakiImageOutputPath,
+  isSakiImageOutputPath
+} from "./image-gen.js";
+export type { SakiGenerateImageInput, SakiGeneratedImage } from "./image-gen.js";
 
 export {
   prepareSakiChatInvocation,

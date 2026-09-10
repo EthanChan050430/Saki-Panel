@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="musicBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="50%" stop-color="#818cf8" />
+      <stop offset="100%" stop-color="#c084fc" />
+    </linearGradient>
+    <linearGradient id="musicGloss" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.45" />
+      <stop offset="60%" stop-color="#ffffff" stop-opacity="0" />
+    </linearGradient>
+    <radialGradient id="musicGlow" cx="50%" cy="40%" r="50%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.6" />
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0" />
+    </radialGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#4f46e5" flood-opacity="0.4" />
+    </filter>
+  </defs>
+
+  <!-- Squircle Base -->
+  <rect x="4" y="4" width="120" height="120" rx="30" ry="30" fill="url(#musicBg)" filter="url(#shadow)" />
+  <!-- Radial Aura Glow -->
+  <rect x="4" y="4" width="120" height="120" rx="30" ry="30" fill="url(#musicGlow)" />
+  <!-- Gloss overlay -->
+  <path d="M 4 34 C 4 17.43 17.43 4 34 4 L 94 4 C 110.57 4 124 17.43 124 34 L 124 56 C 80 44 40 52 4 72 Z" fill="url(#musicGloss)" />
+
+  <!-- Headphones -->
+  <g transform="translate(64, 64)">
+    <!-- Headband -->
+    <path d="M -32 4 A 34 34 0 0 1 32 4" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" />
+    <!-- Headband padding cushion -->
+    <path d="M -22 -14 A 28 28 0 0 1 22 -14" fill="none" stroke="#fbcfe8" stroke-width="3" stroke-linecap="round" opacity="0.8" />
+    <!-- Earcups Left & Right -->
+    <rect x="-38" y="-2" width="12" height="26" rx="6" fill="#f43f5e" stroke="#ffffff" stroke-width="2.5" />
+    <rect x="26" y="-2" width="12" height="26" rx="6" fill="#f43f5e" stroke="#ffffff" stroke-width="2.5" />
+    <!-- Inner earcup cushion -->
+    <rect x="-34" y="2" width="5" height="18" rx="2.5" fill="#fecdd3" />
+    <rect x="29" y="2" width="5" height="18" rx="2.5" fill="#fecdd3" />
+
+    <!-- Melodic Note 1 -->
+    <path d="M -10 14 L -10 -2 A 4 4 0 0 1 -6 -6 L 8 -10 A 4 4 0 0 1 12 -6 L 12 10" fill="none" stroke="#fef08a" stroke-width="3" stroke-linecap="round" />
+    <ellipse cx="-13" cy="14" rx="5.5" ry="4" fill="#fef08a" transform="rotate(-20 -13 14)" />
+    <ellipse cx="9" cy="10" rx="5.5" ry="4" fill="#fef08a" transform="rotate(-20 9 10)" />
+    <line x1="-10" y1="-2" x2="12" y2="-6" stroke="#fef08a" stroke-width="4" stroke-linecap="round" />
+
+    <!-- Floating Sparkles -->
+    <path d="M 22 -24 L 24 -18 L 30 -16 L 24 -14 L 22 -8 L 20 -14 L 14 -16 L 20 -18 Z" fill="#ffffff" />
+    <path d="M -24 -20 L -22 -16 L -18 -15 L -22 -14 L -24 -10 L -26 -14 L -30 -15 L -26 -16 Z" fill="#fef08a" />
+  </g>
+</svg>

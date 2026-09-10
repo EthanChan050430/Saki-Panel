@@ -1527,6 +1527,27 @@ html.perf-lite .modal-panel {
   gap: 16px;
 }
 
+.image-gen-settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.image-gen-settings-body.is-disabled {
+  opacity: 0.72;
+}
+
+.image-gen-settings-card .settings-field-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.image-gen-settings-card code {
+  font-size: 12px;
+}
+
 .model-multipliers-header {
   display: flex;
   flex-direction: column;
@@ -1929,6 +1950,10 @@ html.perf-lite .modal-panel {
 [data-theme="dark"] .model-multipliers-card {
   background: rgba(30, 41, 59, 0.5);
   border-color: rgba(51, 65, 85, 0.7);
+}
+
+[data-theme="dark"] .image-gen-settings-card .settings-field-hint {
+  color: #94a3b8;
 }
 
 [data-theme="dark"] .model-multipliers-title strong {

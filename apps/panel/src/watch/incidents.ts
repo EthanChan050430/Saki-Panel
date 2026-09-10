@@ -224,6 +224,24 @@ export async function findActiveIncident(instanceId: string, fingerprint: string
   return row ? toManagedIncident(row) : null;
 }
 
+function isNodeResourceTrigger(trigger: string): trigger is "disk" | "memory" {
+  return trigger === "disk" || trigger === "memory";
+}
+
+// 节点资源告警去重
+export async function findActiveResourceIncident(nodeId: string, trigger: IncidentTrigger): Promise<ManagedIncident | null> {
+  const row = await prisma.incident.findFirst({
+    where: {
+      nodeId,
+      trigger,
+      status: { in: activeIncidentStatuses }
+    },
+    include: incidentInclude,
+    orderBy: { updatedAt: "desc" }
+  });
+  return row ? toManagedIncident(row) : null;
+}
+
 export async function findActiveIncidentForInstance(instanceId: string): Promise<ManagedIncident | null> {
   const row = await prisma.incident.findFirst({
     where: {
@@ -310,7 +328,9 @@ export async function openOrRefreshIncident(input: {
   assigneeUserId?: string | null;
   summary?: string;
 }): Promise<{ incident: ManagedIncident; created: boolean }> {
-  const key = `${input.instanceId}:${input.fingerprint}`;
+  const key = isNodeResourceTrigger(input.trigger)
+    ? `${input.nodeId}:${input.trigger}`
+    : `${input.instanceId}:${input.fingerprint}`;
   const previous = openLocks.get(key) ?? Promise.resolve();
   const task = previous.catch(() => undefined).then(() => openOrRefreshIncidentLocked(input));
   openLocks.set(key, task);
@@ -332,10 +352,11 @@ async function openOrRefreshIncidentLocked(input: {
   summary?: string;
 }): Promise<{ incident: ManagedIncident; created: boolean }> {
   const logTail = truncateLogTail(input.logTail);
-  // 只有同实例且同 fingerprint 的活跃 incident 才合并（资源类指纹内含 metric，
-  // 崩溃类指纹内含 exitCode 与归一化日志）；不同 trigger/fingerprint 新建 incident，
-  // 避免资源类文案覆盖崩溃日志等吞证据问题。
-  const existing = await findActiveIncident(input.instanceId, input.fingerprint);
+  const nodeResource = isNodeResourceTrigger(input.trigger);
+  // 节点告警按节点合并，实例告警按指纹合并
+  const existing = nodeResource
+    ? await findActiveResourceIncident(input.nodeId, input.trigger)
+    : await findActiveIncident(input.instanceId, input.fingerprint);
   if (existing && isActiveIncidentStatus(existing.status)) {
     const nextOccurrenceCount = existing.occurrenceCount + 1;
     // 抖动判定：创建后一小时内复发次数达到阈值，标记 flapping 并在 summary 上标注一次。
@@ -369,12 +390,19 @@ async function openOrRefreshIncidentLocked(input: {
   }
 
   const ignored = await prisma.incident.findFirst({
-    where: {
-      instanceId: input.instanceId,
-      fingerprint: input.fingerprint,
-      status: "ignored",
-      ignoredUntil: { gt: new Date() }
-    },
+    where: nodeResource
+      ? {
+          nodeId: input.nodeId,
+          trigger: input.trigger,
+          status: "ignored",
+          ignoredUntil: { gt: new Date() }
+        }
+      : {
+          instanceId: input.instanceId,
+          fingerprint: input.fingerprint,
+          status: "ignored",
+          ignoredUntil: { gt: new Date() }
+        },
     orderBy: { updatedAt: "desc" }
   });
   if (ignored) {
@@ -405,9 +433,11 @@ async function openOrRefreshIncidentLocked(input: {
     };
   }
 
-  // 复发次数：同实例同指纹的历史 incident 数（ignored 不计入，避免被忽略的历史噪音抬高计数）。
+  // 历史复发统计（排除已忽略）
   const recurrenceCount = await prisma.incident.count({
-    where: { instanceId: input.instanceId, fingerprint: input.fingerprint, status: { not: "ignored" } }
+    where: nodeResource
+      ? { nodeId: input.nodeId, trigger: input.trigger, status: { not: "ignored" } }
+      : { instanceId: input.instanceId, fingerprint: input.fingerprint, status: { not: "ignored" } }
   });
 
   const row = await prisma.incident.create({

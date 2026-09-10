@@ -411,9 +411,11 @@ export interface FavorabilityLevelInfo {
 }
 
 export function getFavorabilityLevelInfo(totalExp: number, language?: string): FavorabilityLevelInfo {
+  const exp = Math.max(0, Math.floor(Number(totalExp) || 0));
   const isEn = language === "en-US";
   const isTw = language === "zh-TW";
-  const levelThresholds = [
+
+  const baseTiers = [
     { level: 1, title: isEn ? "Acquaintance" : isTw ? "初識" : "初识", minExp: 0, maxExp: 100 },
     { level: 2, title: isEn ? "Rapport" : isTw ? "默契" : "默契", minExp: 100, maxExp: 250 },
     { level: 3, title: isEn ? "Intimate" : isTw ? "親密" : "亲密", minExp: 250, maxExp: 500 },
@@ -424,32 +426,83 @@ export function getFavorabilityLevelInfo(totalExp: number, language?: string): F
     { level: 8, title: isEn ? "Eternal Bond" : isTw ? "永恆羈絆" : "永恒羁绊", minExp: 3000, maxExp: 5000 }
   ];
 
-  for (let i = 0; i < levelThresholds.length; i++) {
-    const tier = levelThresholds[i]!;
-    if (totalExp < tier.maxExp) {
-      const range = tier.maxExp - tier.minExp;
-      const gained = totalExp - tier.minExp;
-      const progress = Math.min(100, Math.max(0, Math.round((gained / range) * 100)));
-      return {
-        level: tier.level,
-        title: tier.title,
-        currentExp: totalExp,
-        minExpForLevel: tier.minExp,
-        maxExpForLevel: tier.maxExp,
-        levelProgress: progress,
-        isMaxLevel: false
-      };
+  if (exp < 5000) {
+    for (let i = 0; i < baseTiers.length; i++) {
+      const tier = baseTiers[i]!;
+      if (exp < tier.maxExp) {
+        const range = tier.maxExp - tier.minExp;
+        const gained = exp - tier.minExp;
+        const progress = Math.min(100, Math.max(0, Math.round((gained / range) * 100)));
+        return {
+          level: tier.level,
+          title: tier.title,
+          currentExp: exp,
+          minExpForLevel: tier.minExp,
+          maxExpForLevel: tier.maxExp,
+          levelProgress: progress,
+          isMaxLevel: false
+        };
+      }
     }
   }
 
+  // Lv >= 9: E(m) = 5000 + 250m^2 + 2250m
+  const excess = exp - 5000;
+  const m = Math.max(0, Math.floor((-9 + Math.sqrt(81 + excess / 62.5)) / 2));
+  const level = 9 + m;
+  const minExp = 5000 + 250 * m * m + 2250 * m;
+  const span = 2500 + 500 * m;
+  const maxExp = minExp + span;
+  const gained = exp - minExp;
+  const progress = Math.min(100, Math.max(0, Math.round((gained / span) * 100)));
+
+  const titlesLv9to20: Record<number, { cn: string; tw: string; en: string }> = {
+    9: { cn: "灵魂共鸣", tw: "靈魂共鳴", en: "Soul Resonance" },
+    10: { cn: "命运交织", tw: "命運交織", en: "Destiny Intertwined" },
+    11: { cn: "星穹守护", tw: "星穹守護", en: "Stellar Guardian" },
+    12: { cn: "浮生若梦", tw: "浮生若夢", en: "Dreamlike Epiphany" },
+    13: { cn: "时空回响", tw: "時空迴響", en: "Echoes of Time" },
+    14: { cn: "万星之璀", tw: "萬星之璀", en: "Radiant Constellation" },
+    15: { cn: "心灵相通", tw: "心靈相通", en: "True Empathy" },
+    16: { cn: "永夜明灯", tw: "永夜明燈", en: "Eternal Beacon" },
+    17: { cn: "梦境同调", tw: "夢境同調", en: "Dream Sync" },
+    18: { cn: "炽热之契", tw: "熾熱之契", en: "Blazing Covenant" },
+    19: { cn: "极星眷侣", tw: "極星眷侶", en: "Polar Companion" },
+    20: { cn: "璀璨奇迹", tw: "璀璨奇蹟", en: "Brilliant Miracle" }
+  };
+
+  const prestigeTitles = [
+    { cn: "星海共生", tw: "星海共生", en: "Cosmic Symbiosis" },
+    { cn: "宇宙独家", tw: "宇宙獨家", en: "Universal Only" },
+    { cn: "奇迹缔造者", tw: "奇蹟締造者", en: "Miracle Maker" },
+    { cn: "时空至爱", tw: "時空至愛", en: "Timeless Beloved" },
+    { cn: "银河之誓", tw: "銀河之誓", en: "Oath of the Galaxy" },
+    { cn: "星辰神谕", tw: "星辰神諭", en: "Celestial Oracle" },
+    { cn: "永恒守护者", tw: "永恆守護者", en: "Eternal Guardian" },
+    { cn: "无限光年", tw: "無限光年", en: "Infinite Lightyears" },
+    { cn: "至高羁绊", tw: "至高羈絆", en: "Supreme Bond" },
+    { cn: "万界唯你", tw: "萬界唯你", en: "Only You in All Realms" }
+  ];
+
+  let title = "";
+  if (level in titlesLv9to20) {
+    const item = titlesLv9to20[level]!;
+    title = isEn ? item.en : isTw ? item.tw : item.cn;
+  } else {
+    const prestigeIndex = Math.floor((level - 21) / 5) % prestigeTitles.length;
+    const item = prestigeTitles[prestigeIndex]!;
+    const baseTitle = isEn ? item.en : isTw ? item.tw : item.cn;
+    title = `${baseTitle} Lv.${level}`;
+  }
+
   return {
-    level: 8,
-    title: isEn ? "Eternal Bond" : isTw ? "永恆羈絆" : "永恒羁绊",
-    currentExp: totalExp,
-    minExpForLevel: 3000,
-    maxExpForLevel: 5000,
-    levelProgress: 100,
-    isMaxLevel: true
+    level,
+    title,
+    currentExp: exp,
+    minExpForLevel: minExp,
+    maxExpForLevel: maxExp,
+    levelProgress: progress,
+    isMaxLevel: false
   };
 }
 

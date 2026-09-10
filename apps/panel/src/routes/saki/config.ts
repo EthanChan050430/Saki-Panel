@@ -1,5 +1,6 @@
 import { panelConfig, panelPaths } from "../../config.js";
 import type { SakiConfigResponse, SakiProviderConfig, UpdateSakiConfigRequest } from "@webops/shared";
+import { sanitizeSakiImageGenConfig } from "@webops/shared";
 import { publishAppearanceUpdate } from "./appearance-events.js";
 import { registerCopilotConfigHost } from "./providers.js";
 import { registerAntigravityConfigHost } from "./providers/antigravity.js";
@@ -74,6 +75,7 @@ export async function readEffectiveSakiConfig(): Promise<SakiConfigResponse> {
     modelPointsMultipliers: settings.modelPointsMultipliers ?? {},
     searchEnabled: settings.searchEnabled !== false,
     mcpEnabled: Boolean(settings.mcpEnabled),
+    imageGen: sanitizeSakiImageGenConfig(settings.imageGen),
     systemPrompt,
     appearance: sanitizePanelAppearance(settings.appearance),
     configPath: panelPaths.sakiConfigFile,
@@ -127,6 +129,7 @@ export async function saveSakiConfig(input: UpdateSakiConfigRequest): Promise<Sa
     modelPointsMultipliers: sanitizedMultipliers,
     searchEnabled: input.searchEnabled !== undefined ? Boolean(input.searchEnabled) : current.searchEnabled,
     mcpEnabled: input.mcpEnabled !== undefined ? Boolean(input.mcpEnabled) : current.mcpEnabled,
+    imageGen: sanitizeSakiImageGenConfig(input.imageGen !== undefined ? input.imageGen : current.imageGen),
     appearance: input.appearance !== undefined ? sanitizePanelAppearance(input.appearance, current.appearance) : current.appearance
   };
   const nextSystemPrompt = input.systemPrompt !== undefined ? input.systemPrompt : current.systemPrompt;

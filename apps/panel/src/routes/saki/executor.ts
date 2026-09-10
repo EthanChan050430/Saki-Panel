@@ -1,7 +1,7 @@
 import path from "node:path";
 import { createPatch } from "diff";
 import { applyPatchToContent, parseWorkspacePatch, patchHunkStartLine } from "./patch.js";
-import type { CreateScheduledTaskRequest, PermissionCode, SakiAgentAction, SakiAgentRiskLevel, SakiChatRequest, UpdateScheduledTaskRequest } from "@webops/shared";
+import type { CreateScheduledTaskRequest, PermissionCode, SakiAgentAction, SakiAgentRiskLevel, SakiChatRequest, SakiInputAttachment, UpdateScheduledTaskRequest } from "@webops/shared";
 import { prisma } from "../../db.js";
 import { writeAuditLog } from "../../audit.js";
 import { classifyCommandRisk, findDangerousCommandReason } from "../../security.js";
@@ -100,6 +100,8 @@ import {
   toolArgs
 } from "./tools.js";
 import { attachIncidentCheckpoint } from "../../watch/incidents.js";
+import { generateSakiImage, normalizeSakiImageOutputPath } from "./image-gen.js";
+import { saveSakiGeneratedImage } from "./generated-images.js";
 
 export interface SakiExecutorHost {
   buildAuditSearchContext(query: string, canViewAudit: boolean): Promise<string>;
@@ -587,6 +589,33 @@ async function buildApproval(runtime: SakiAgentRuntime, call: ParsedToolCall): P
       rollbackAvailable: true
     };
   }
+  if (
+    toolName === "generateimage" ||
+    toolName === "generate_image" ||
+    toolName === "drawimage" ||
+    toolName === "createimage" ||
+    toolName === "txt2img" ||
+    toolName === "imagegen" ||
+    toolName === "imagine"
+  ) {
+    const prompt = stringArg(args, "prompt");
+    if (!prompt) throw new RouteError("generateImage requires a prompt.", 400);
+    const relativePath = safeRelativePath(args.path);
+    if (!relativePath) {
+      reason = "Image generation will appear in the chat conversation.";
+      risk = "low";
+      preview = prompt.slice(0, 240);
+      rollbackAvailable = false;
+      return { required: true, reason, risk, preview, rollbackAvailable };
+    }
+    requireUserPermission(runtime.permissions, "file.write");
+    const instance = await resolveAgentInstance(runtime, args);
+    reason = "Image generation will write a binary file into the instance workspace. Saki will checkpoint any existing file first.";
+    risk = "medium";
+    preview = `${instance.name}:${relativePath}\nprompt=${prompt.slice(0, 240)}`;
+    rollbackAvailable = true;
+    return { required: true, reason, risk, preview, rollbackAvailable };
+  }
   if (toolName === "writefile" || toolName === "replaceinfile" || toolName === "editlines" || toolName === "uploadbase64") {
     requireUserPermission(runtime.permissions, "file.write");
     const instance = await resolveAgentInstance(runtime, args);
@@ -768,6 +797,14 @@ function normalizeToolArgs(toolName: string, call: ParsedToolCall): Record<strin
     case "deletepath": return { lookup: callArgs[0], path: callArgs[1] };
     case "renamepath": return { lookup: callArgs[0], from: callArgs[1], to: callArgs[2] };
     case "uploadbase64": return { lookup: callArgs[0], path: callArgs[1], base64: callArgs[2] };
+    case "generateimage":
+    case "generate_image":
+    case "drawimage":
+    case "createimage":
+    case "txt2img":
+    case "imagegen":
+    case "imagine":
+      return { lookup: callArgs[0], path: callArgs[1], prompt: callArgs[2] };
     case "runcommand": return { lookup: callArgs[0], command: callArgs[1], cwd: callArgs[2], timeout: callArgs[3] };
     case "sendinput": return { lookup: callArgs[0], input: callArgs[1] };
     case "sendcommand": return { lookup: callArgs[0], command: callArgs[1] };
@@ -814,6 +851,7 @@ export async function executeSakiAgentTool(
     let fileEditAfterContent: string | null = null;
     let fileEditBeforeContent: string | null = null;
     let fileEditPreview: string | undefined;
+    let actionAttachments: SakiInputAttachment[] | undefined;
 
     try {
       assertSakiPermissionModeAllowsTool(runtime, toolName, args);
@@ -1079,6 +1117,72 @@ export async function executeSakiAgentTool(
           fileEditAfterContent = "(binary upload)";
         }
         observation = `Success: uploaded ${entry.path} (${entry.size} bytes).`;
+      } else if (
+        toolName === "generateimage" ||
+        toolName === "generate_image" ||
+        toolName === "drawimage" ||
+        toolName === "createimage" ||
+        toolName === "txt2img" ||
+        toolName === "imagegen" ||
+        toolName === "imagine"
+      ) {
+        const prompt = stringArg(args, "prompt");
+        if (!prompt) throw new RouteError("generateImage requires a prompt.", 400);
+        if (!runtime.config.imageGen?.enabled) {
+          throw new RouteError("Image generation is disabled. Enable it in Settings → AI Model → Image Generation.", 400);
+        }
+        const negativePrompt = stringArg(args, "negativePrompt");
+        const aspectRatio = stringArg(args, "aspectRatio");
+        const quality = stringArg(args, "quality");
+        const generated = await generateSakiImage(runtime.config.imageGen, {
+          prompt,
+          ...(negativePrompt ? { negativePrompt } : {}),
+          ...(args.width !== undefined ? { width: args.width } : {}),
+          ...(args.height !== undefined ? { height: args.height } : {}),
+          ...(aspectRatio ? { aspectRatio } : {}),
+          ...(quality ? { quality } : {}),
+          ...(args.seed !== undefined ? { seed: args.seed } : {}),
+          ...(args.steps !== undefined ? { steps: args.steps } : {})
+        });
+        const stored = await saveSakiGeneratedImage(runtime.userId, generated, prompt);
+        actionAttachments = [stored.attachment];
+        const requestedPath = safeRelativePath(args.path);
+        const notes = [
+          `Provider: ${generated.provider} (${generated.protocol})`,
+          `Model: ${generated.model}`,
+          `Size: ${generated.width}x${generated.height} (${generated.aspectRatio}, ${generated.quality})`,
+          `MIME: ${generated.mimeType}`,
+          generated.revisedPrompt ? `Revised prompt: ${generated.revisedPrompt}` : null
+        ];
+        if (requestedPath && runtime.toolProfile !== "chat") {
+          requireUserPermission(runtime.permissions, "file.write");
+          const instance = await resolveAgentInstance(runtime, args);
+          const relativePath = normalizeSakiImageOutputPath(requestedPath, generated.extension);
+          checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath, runtime);
+          fileEditPreview = `${instance.name}:${relativePath}`;
+          const entry = await uploadDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, {
+            path: relativePath,
+            contentBase64: generated.base64,
+            overwrite: true
+          });
+          invalidateInstanceFileCache(instance.id, relativePath);
+          recordWorkingFileAccess(runtime.userId, instance.id, relativePath);
+          fileEditAfterContent = "(generated image)";
+          observation = [
+            `Success: generated image and saved ${entry.path} (${entry.size} bytes). The image is also shown in the chat.`,
+            ...notes,
+            "Use this workspace-relative path in project files (HTML/CSS/markdown/code). Do not inline the binary."
+          ]
+            .filter(Boolean)
+            .join("\n");
+        } else {
+          observation = [
+            "Success: generated image for the chat conversation. It will appear in the chat box. Do not claim a workspace file was written.",
+            ...notes
+          ]
+            .filter(Boolean)
+            .join("\n");
+        }
       } else if (toolName === "archivepaths" || toolName === "archive" || toolName === "compresspaths" || toolName === "zippaths") {
         requireUserPermission(runtime.permissions, "file.write");
         const instance = await resolveAgentInstance(runtime, args);
@@ -1827,6 +1931,7 @@ export async function executeSakiAgentTool(
       ok,
       status: ok ? "completed" : "failed",
       ...(approval ? { approval } : {}),
+      ...(actionAttachments?.length ? { attachments: actionAttachments } : {}),
       createdAt: startedAt
     };
     await saveCompletedSakiAction(action);

@@ -2032,6 +2032,78 @@
   margin-top: 8px;
 }
 
+.saki-chat-generated-images {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 8px 0 2px;
+  max-width: min(100%, 560px);
+}
+
+.saki-chat-generated-image {
+  margin: 0;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+.saki-chat-generated-image.is-clickable {
+  cursor: zoom-in;
+}
+
+.saki-chat-generated-image img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 520px;
+  object-fit: contain;
+  background:
+    linear-gradient(45deg, rgba(148, 163, 184, 0.16) 25%, transparent 25%) 0 0 / 16px 16px,
+    linear-gradient(-45deg, rgba(148, 163, 184, 0.16) 25%, transparent 25%) 0 8px / 16px 16px;
+}
+
+.saki-chat-generated-image figcaption {
+  padding: 6px 10px 8px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.saki-chat-generated-image.is-loading,
+.saki-chat-generated-image.is-failed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 64px;
+  padding: 12px 14px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.saki-chat-generated-image.is-failed {
+  color: #b45309;
+}
+
+.saki-chat-generated-images.is-compact,
+.saki-chat-generated-image.is-compact {
+  max-width: min(100%, 280px);
+}
+
+.saki-chat-generated-image.is-compact img {
+  max-height: 220px;
+}
+
+.saki-md-image {
+  display: block;
+  max-width: min(100%, 520px);
+  max-height: 480px;
+  height: auto;
+  margin: 8px 0;
+  border-radius: 12px;
+  object-fit: contain;
+}
+
 .saki-attachment-chip {
   min-width: 0;
   max-width: 240px;

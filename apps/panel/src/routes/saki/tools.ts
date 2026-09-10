@@ -91,7 +91,28 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "getEnvironmentInfo", description: "Cached OS and runtime versions. Call only when you need them.", parameters: objectSchema({ instanceId: instanceLookupSchema }), aliases: ["envInfo", "get_environment_info", "systemInfo", "env_info"] },
   { name: "readSymbol", description: "Read one function/class/type body by name.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, symbol: { type: "string" } }, ["path", "symbol"]), aliases: ["viewSymbol", "getSymbol", "inspectSymbol", "viewFunction", "read_symbol", "extractSymbol"] },
   { name: "plan", description: "Present a step plan before executing a complex task.", parameters: objectSchema({ steps: { type: "string" }, summary: { type: "string" } }, ["steps", "summary"]) },
-  { name: "respond", description: "Return the final user-facing answer.", parameters: objectSchema({ text: { type: "string" } }, ["text"]) }
+  { name: "respond", description: "Return the final user-facing answer.", parameters: objectSchema({ text: { type: "string" } }, ["text"]) },
+  {
+    name: "generateImage",
+    description:
+      "Generate an image with the panel's configured image API. In chat mode omit path so the image appears in the conversation. In agent mode pass a workspace-relative path (png/jpg/webp/gif) to also save it into the project. Optional: aspectRatio (1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9), width, height, quality (draft|standard|hd), negativePrompt.",
+    parameters: objectSchema(
+      {
+        instanceId: instanceLookupSchema,
+        path: { type: "string", description: "Optional workspace-relative output path, e.g. assets/hero.png. Omit in chat mode to only show the image in the conversation." },
+        prompt: { type: "string", description: "Full image description. Be concrete about subject, style, composition, and lighting." },
+        negativePrompt: { type: "string", description: "Optional things to avoid. Useful for local Stable Diffusion." },
+        aspectRatio: { type: "string", description: "Optional aspect ratio such as 1:1, 16:9, 9:16, 4:3, 3:4." },
+        width: { type: "integer", minimum: 64, maximum: 2048, description: "Optional width in pixels." },
+        height: { type: "integer", minimum: 64, maximum: 2048, description: "Optional height in pixels." },
+        quality: { type: "string", enum: ["draft", "standard", "hd"], description: "Clarity / resolution preset." },
+        seed: { type: "integer", description: "Optional seed for local Stable Diffusion." },
+        steps: { type: "integer", minimum: 1, maximum: 150, description: "Optional sampler steps for local Stable Diffusion." }
+      },
+      ["prompt"]
+    ),
+    aliases: ["generate_image", "drawImage", "createImage", "txt2img", "imageGen", "imagine"]
+  }
 ];
 
 export const sakiToolRegistry = new Map<string, SakiToolSchema>();
@@ -172,7 +193,7 @@ const sakiResearchToolNames = new Set([
   "describeinstance"
 ]);
 
-type SakiToolGroupId = "instances" | "liveTerminal" | "schedule" | "web" | "webDeep" | "archive" | "memory" | "audit" | "env" | "research";
+type SakiToolGroupId = "instances" | "liveTerminal" | "schedule" | "web" | "webDeep" | "archive" | "memory" | "audit" | "env" | "research" | "imageGen";
 
 const sakiToolGroups: Record<SakiToolGroupId, { names: string[]; hint: RegExp }> = {
   instances: {
@@ -214,6 +235,10 @@ const sakiToolGroups: Record<SakiToolGroupId, { names: string[]; hint: RegExp }>
   research: {
     names: ["spawnTask"],
     hint: /\b(spawnTask|sub-agent|subagent|delegate|parallel explor|explore the (code|repo|codebase)|broad (search|explor)|entire (codebase|repo))\b|子代理|并行探索|探索代码|整个代码库|全库/
+  },
+  imageGen: {
+    names: ["generateImage"],
+    hint: /\b(generateImage|image gen|txt2img|text-to-image|draw|illustration|sprite|icon set|concept art)\b|画图|生图|配图|插画|插图|封面|海报|图标|精灵图|立绘|素材图/
   }
 };
 
@@ -231,6 +256,11 @@ function schemasNamed(names: Iterable<string>): SakiToolSchema[] {
 }
 
 export function toolSchemasForRuntime(runtime: SakiAgentRuntime): SakiToolSchema[] {
+  if (runtime.toolProfile === "chat") {
+    const names = new Set<string>(["respond", "reportProgress"]);
+    if (runtime.config.imageGen?.enabled) names.add("generateImage");
+    return capAdvertisedToolSchemas(schemasNamed(names), sakiModelProfile(runtime.config.provider, runtime.config.model));
+  }
   if (runtime.toolProfile === "research") {
     const research = schemasNamed([...sakiResearchToolNames].map((name) => canonicalToolSchema(name)?.name ?? name)).filter((schema) => {
       if (!runtime.config.searchEnabled && (schema.name === "searchWeb" || schema.name === "browse")) return false;
@@ -253,6 +283,9 @@ export function toolSchemasForRuntime(runtime: SakiAgentRuntime): SakiToolSchema
     names.add("searchWeb");
     names.add("browse");
   }
+  if (runtime.config.imageGen?.enabled) {
+    names.add("generateImage");
+  }
 
   for (const group of Object.values(sakiToolGroups)) {
     const usedInGroup = (runtime.usedToolNames ?? []).some((used) => {
@@ -269,6 +302,10 @@ export function toolSchemasForRuntime(runtime: SakiAgentRuntime): SakiToolSchema
     names.delete("browse");
     names.delete("crawl");
     names.delete("researchWeb");
+  }
+
+  if (!runtime.config.imageGen?.enabled) {
+    names.delete("generateImage");
   }
 
   const permissionMode = effectiveSakiAgentPermissionMode(runtime.input);
@@ -301,6 +338,7 @@ export function toolSchemasForRuntime(runtime: SakiAgentRuntime): SakiToolSchema
 function capAdvertisedToolSchemas(schemas: SakiToolSchema[], maxTools: ReturnType<typeof sakiModelProfile>): SakiToolSchema[] {
   if (schemas.length <= maxTools.maxAdvertisedTools) return schemas;
   const essential = new Set(["readFile", "searchFiles", "findFiles", "applyPatch", "replaceInFile", "writeFile", "diagnoseCode", "runCommand", "listFiles"]);
+  if (schemas.some((schema) => schema.name === "generateImage")) essential.add("generateImage");
   const kept: SakiToolSchema[] = [];
   const rest: SakiToolSchema[] = [];
   for (const schema of schemas) {
@@ -311,9 +349,17 @@ function capAdvertisedToolSchemas(schemas: SakiToolSchema[], maxTools: ReturnTyp
   return [...kept, ...rest.slice(0, room)];
 }
 
+const sakiChatToolNames = new Set(["generateimage", "generate_image", "drawimage", "createimage", "txt2img", "imagegen", "imagine", "respond", "reportprogress"]);
+
 export function assertToolProfileAllowsTool(runtime: SakiAgentRuntime, toolName: string): void {
-  if (runtime.toolProfile !== "research") return;
   const lower = normalizedAgentToolName(toolName);
+  if (runtime.toolProfile === "chat") {
+    if (!sakiChatToolNames.has(lower) && !sakiChatToolNames.has(toolName.toLowerCase())) {
+      throw new RouteError("Chat mode can generate images and reply. It cannot edit files, run commands, or change instances.", 403);
+    }
+    return;
+  }
+  if (runtime.toolProfile !== "research") return;
   if (!sakiResearchToolNames.has(lower)) {
     throw new RouteError("Research sub-agents can only inspect. They cannot edit, diagnose, or spawn further agents.", 403);
   }
@@ -988,7 +1034,14 @@ export const sakiAutoAcceptedFileToolNames = new Set([
   "uploadbase64",
   "archivepaths",
   "extractarchive",
-  "writememory"
+  "writememory",
+  "generateimage",
+  "generate_image",
+  "drawimage",
+  "createimage",
+  "txt2img",
+  "imagegen",
+  "imagine"
 ]);
 
 export const sakiPlanBlockedToolNames = new Set([

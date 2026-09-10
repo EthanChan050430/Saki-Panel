@@ -308,6 +308,7 @@ export function SettingsView({
       modelPointsMultipliers: form.modelPointsMultipliers || {},
       searchEnabled: form.searchEnabled,
       mcpEnabled: form.mcpEnabled,
+      imageGen: form.imageGen,
       systemPrompt: form.systemPrompt ?? "",
       appearance: form.appearance
     };
@@ -906,6 +907,15 @@ export function SettingsView({
                   setShowApiKey={setShowApiKey}
                   customModelMode={customModelMode}
                   setCustomModelMode={setCustomModelMode}
+                  onImageGenChange={(patch) =>
+                    setForm((current) => ({
+                      ...current,
+                      imageGen: {
+                        ...(current.imageGen ?? emptySakiConfig.imageGen),
+                        ...patch
+                      }
+                    }))
+                  }
                   copilotAuthStatus={copilotAuthStatus}
                   copilotLoginState={copilotLoginState}
                   copilotBusy={copilotBusy}

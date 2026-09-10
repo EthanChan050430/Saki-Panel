@@ -1,8 +1,18 @@
 import type {
   RegistrationIdentity,
   SakiConfigResponse,
+  SakiImageGenConfig,
+  SakiImageGenProtocol,
+  SakiImageGenProviderId,
   SakiProviderConfig,
   SakiSkillDetail
+} from "@webops/shared";
+import {
+  defaultSakiImageGenConfig,
+  resolveSakiImageSize,
+  sakiImageGenPreset,
+  sakiImageGenProviderPresets,
+  sanitizeSakiImageGenConfig
 } from "@webops/shared";
 import { defaultPanelAppearance, defaultSakiRequestTimeoutMs } from "../../constants.js";
 
@@ -22,6 +32,7 @@ export const emptySakiConfig: SakiConfigResponse = {
   modelPointsMultipliers: {},
   searchEnabled: true,
   mcpEnabled: false,
+  imageGen: { ...defaultSakiImageGenConfig },
   systemPrompt: "",
   appearance: defaultPanelAppearance,
   configPath: "",
@@ -101,6 +112,84 @@ export function defaultProviderConfig(provider: string): SakiProviderConfig {
     baseUrl: providerBaseUrlDefaults[provider] ?? "",
     apiKey: ""
   };
+}
+
+export const imageGenProtocolOptions: Array<{ value: SakiImageGenProtocol; label: string }> = [
+  { value: "openai-images", label: "OpenAI Images (/images/generations)" },
+  { value: "sd-webui", label: "Stable Diffusion WebUI (/sdapi/v1/txt2img)" },
+  { value: "stability", label: "Stability AI (v2beta)" },
+  { value: "gemini", label: "Google Imagen (predict)" },
+  { value: "dashscope", label: "DashScope 通义万相" }
+];
+
+export const imageGenAspectRatioOptions = [
+  { value: "1:1", label: "1:1 方形" },
+  { value: "16:9", label: "16:9 横版" },
+  { value: "9:16", label: "9:16 竖版" },
+  { value: "4:3", label: "4:3" },
+  { value: "3:4", label: "3:4" },
+  { value: "3:2", label: "3:2" },
+  { value: "2:3", label: "2:3" },
+  { value: "21:9", label: "21:9 超宽" }
+];
+
+export const imageGenQualityOptions = [
+  { value: "draft", label: "草稿 (draft / 512)" },
+  { value: "standard", label: "标准 (standard / 1024)" },
+  { value: "hd", label: "高清 (hd / 1536+)" }
+];
+
+export { sakiImageGenProviderPresets, defaultSakiImageGenConfig, sanitizeSakiImageGenConfig };
+
+export function imageGenFromForm(form: SakiConfigResponse): SakiImageGenConfig {
+  return sanitizeSakiImageGenConfig(form.imageGen);
+}
+
+export function imageGenNeedsApiKey(config: SakiImageGenConfig): boolean {
+  if (config.provider === "sd-webui" || config.protocol === "sd-webui") return false;
+  return true;
+}
+
+export function withImageGenSizeDefaults(
+  current: SakiImageGenConfig,
+  patch: Partial<Pick<SakiImageGenConfig, "defaultAspectRatio" | "defaultQuality" | "defaultWidth" | "defaultHeight">>
+): Partial<SakiImageGenConfig> {
+  const merged = { ...current, ...patch };
+  const size = resolveSakiImageSize({
+    width: patch.defaultWidth,
+    height: patch.defaultHeight,
+    aspectRatio: merged.defaultAspectRatio,
+    quality: merged.defaultQuality,
+    defaults: {
+      defaultAspectRatio: merged.defaultAspectRatio,
+      defaultQuality: merged.defaultQuality
+    }
+  });
+  return {
+    ...patch,
+    defaultAspectRatio: size.aspectRatio,
+    defaultQuality: size.quality,
+    defaultWidth: size.width,
+    defaultHeight: size.height
+  };
+}
+
+export function applyImageGenProvider(current: SakiImageGenConfig, provider: string): SakiImageGenConfig {
+  const preset = sakiImageGenPreset(provider);
+  const nextProvider = preset.id as SakiImageGenProviderId;
+  if (nextProvider === "custom") {
+    return sanitizeSakiImageGenConfig({
+      ...current,
+      provider: "custom"
+    });
+  }
+  return sanitizeSakiImageGenConfig({
+    ...current,
+    provider: nextProvider,
+    protocol: preset.protocol,
+    baseUrl: preset.baseUrl,
+    model: preset.model || current.model
+  });
 }
 
 export function providerConfigFromForm(form: SakiConfigResponse, provider: string): SakiProviderConfig {

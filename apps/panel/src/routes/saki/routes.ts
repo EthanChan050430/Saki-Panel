@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type {
   CreateSakiSkillRequest,
   DownloadSakiSkillRequest,
@@ -31,7 +31,9 @@ import {
 import { readEffectiveSakiConfig, saveSakiConfig } from "./config.js";
 import { startAppearanceEventStream } from "./appearance-events.js";
 import { executeSakiAgentTool } from "./executor.js";
+import { readSakiGeneratedImage } from "./generated-images.js";
 import { emitAgentFinalText, runSakiAgent } from "./loop.js";
+import { buildChatModeSystemPrompt } from "./prompt.js";
 import { assertUserHasSpendablePoints, recordAgentTokenUsage } from "../../points.js";
 import {
   checkAntigravityAuthStatus,
@@ -87,6 +89,13 @@ import {
   type SakiAgentResumeState,
   type SakiAgentRunEvents
 } from "./types.js";
+async function acceptQueryBearer(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
+  const query = request.query as { token?: string };
+  if (!request.headers.authorization && typeof query.token === "string" && query.token.trim()) {
+    request.headers.authorization = `Bearer ${query.token.trim()}`;
+  }
+}
+
 export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
   ensureSakiModulesReady();
   app.get("/api/saki/appearance", async () => {
@@ -346,6 +355,8 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
         ollamaUrl: saved.ollamaUrl,
         searchEnabled: saved.searchEnabled,
         mcpEnabled: saved.mcpEnabled,
+        imageGenEnabled: saved.imageGen.enabled,
+        imageGenProvider: saved.imageGen.provider,
         requestTimeoutMs: saved.requestTimeoutMs,
         appearanceTitle: saved.appearance.appTitle
       }
@@ -466,6 +477,26 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
           executeSakiAgentTool
         );
         finishActiveSakiTask(taskId, "completed", response);
+      } else if (config.imageGen?.enabled) {
+        response = await runSakiAgent(
+          {
+            request,
+            input: modelInput,
+            context,
+            skills,
+            userId: request.user.sub,
+            permissions: request.user.permissions,
+            config,
+            kind: "chat",
+            toolProfile: "chat",
+            maxLoops: 8,
+            systemPromptOverride: buildChatModeSystemPrompt(true, config.systemPrompt),
+            abortController: taskAbortController
+          },
+          events,
+          undefined,
+          executeSakiAgentTool
+        );
       } else {
         let streamedAnyText = false;
         let replyText = "";
@@ -714,6 +745,29 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
         return response;
       }
 
+      if (config.imageGen?.enabled) {
+        const response = await runSakiAgent(
+          {
+            request,
+            input: modelInput,
+            context,
+            skills,
+            userId: request.user.sub,
+            permissions: request.user.permissions,
+            config,
+            kind: "chat",
+            toolProfile: "chat",
+            maxLoops: 8,
+            systemPromptOverride: buildChatModeSystemPrompt(true, config.systemPrompt)
+          },
+          undefined,
+          undefined,
+          executeSakiAgentTool
+        );
+        await auditSakiChatResponse(request, prepared, response);
+        return response;
+      }
+
       const reply = await callConfiguredModel(modelInput, context, skills);
       let chatUsage: any;
       try {
@@ -742,6 +796,19 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
       return fallback;
     }
   });
+
+  app.get(
+    "/api/saki/generated-images/:id",
+    { preHandler: [acceptQueryBearer, requireAnyPermission(sakiUsePermissions)] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const { record, bytes } = await readSakiGeneratedImage(request.user.sub, id);
+      reply.header("content-type", record.mimeType || "image/png");
+      reply.header("cache-control", "private, max-age=86400");
+      reply.header("content-disposition", `inline; filename="${record.fileName.replace(/"/g, "")}"`);
+      return reply.send(bytes);
+    }
+  );
 
   app.get("/api/saki/conversations", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
     const rows = await prisma.sakiConversation.findMany({

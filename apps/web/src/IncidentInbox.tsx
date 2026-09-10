@@ -508,7 +508,7 @@ export function IncidentBell({
     }
   }
 
-  // 永久静默：以事件的 实例+指纹 生成永久静默规则并忽略该事件；复用二次确认键 `silence:${id}`。
+  // 永久静默
   async function silenceForever(id: string) {
     setBusyId(id);
     setActionError(null);
@@ -643,7 +643,11 @@ export function IncidentBell({
           }}
         >
           <div className="incident-item-header-row">
-            <span className="incident-item-title">{incident.instanceName}</span>
+            <span className="incident-item-title">
+              {incident.trigger === "disk" || incident.trigger === "memory"
+                ? incident.nodeName ?? incident.instanceName
+                : incident.instanceName}
+            </span>
             <span className="incident-item-badges">
               {incident.recurrenceCount > 0 ? (
                 <span

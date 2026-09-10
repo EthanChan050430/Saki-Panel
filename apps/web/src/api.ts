@@ -1524,6 +1524,17 @@ export const api = {
       token
     );
   },
+  async sakiGeneratedImageBlob(token: string, id: string): Promise<Blob> {
+    const response = await fetch(new URL(`/api/saki/generated-images/${encodeURIComponent(id)}`, API_BASE), {
+      headers: {
+        authorization: `Bearer ${token}`
+      }
+    });
+    if (!response.ok) {
+      throw new ApiError(await responseErrorMessage(response), response.status);
+    }
+    return response.blob();
+  },
   sakiListConversations(token: string) {
     return requestJson<SakiSavedConversation[]>("/api/saki/conversations", {}, token);
   },

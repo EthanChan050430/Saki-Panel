@@ -2552,12 +2552,22 @@ body.saki-selection-capture-active .saki-launcher {
   pointer-events: none;
 }
 
+.saki-favorability-heart-level.two-digits {
+  font-size: 11px;
+}
+
+.saki-favorability-heart-level.three-digits {
+  font-size: 9px;
+}
+
 /* Floating Hover Tooltip Card for EXP Details */
 .saki-favorability-tooltip {
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  width: 175px;
+  min-width: 175px;
+  width: max-content;
+  max-width: 240px;
   padding: 8px 10px;
   border-radius: 12px;
   background: rgba(15, 18, 28, 0.94);
