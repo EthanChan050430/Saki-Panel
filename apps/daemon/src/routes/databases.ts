@@ -26,7 +26,6 @@ import type {
 import { daemonPaths } from "../config.js";
 import { authenticatePanelRequest } from "../daemon-auth.js";
 import { escapeDefaultValue, escapeSqlType } from "../sql-utils.js";
-import { DaemonErrorCode, throwDaemonError } from "../errors.js";
 import * as mysql from "../mysql.js";
 import * as postgres from "../postgres.js";
 import * as redis from "../redis.js";
@@ -42,65 +41,17 @@ function toSqlParam(val: unknown): SQLiteParam {
   return JSON.stringify(val);
 }
 
-function isInsideAny(target: string, roots: string[]): boolean {
-  const normalized = path.resolve(target);
-  return roots.some((root) => {
-    const rootNormalized = path.resolve(root);
-    const rel = path.relative(rootNormalized, normalized);
-    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
-  });
-}
-
-// SQLite files may only be opened inside these roots to prevent arbitrary
-// file access via an absolute path supplied by the API caller.
-function allowedSqliteRoots(): string[] {
-  const workspace = path.resolve(daemonPaths.workspaceDir);
-  const daemonData = path.resolve(daemonPaths.dataDir);
-  return Array.from(new Set([workspace, daemonData]));
-}
-
 function resolveDbPath(inputPath: string): string {
   const normalized = inputPath.trim();
-  const allowedRoots = allowedSqliteRoots();
-
-  let resolved: string;
   if (path.isAbsolute(normalized)) {
-    resolved = path.normalize(normalized);
-  } else {
-    // Prefer workspace-rooted discovery so relative names stay stable.
-    const fromWorkspace = path.resolve(daemonPaths.workspaceDir, normalized);
-    if (fsSync.existsSync(fromWorkspace)) {
-      resolved = fromWorkspace;
-    } else {
-      resolved = path.resolve(process.cwd(), normalized);
-    }
+    return path.normalize(normalized);
   }
 
-  if (!isInsideAny(resolved, allowedRoots)) {
-    throwDaemonError(
-      DaemonErrorCode.PATH_OUT_OF_BOUNDS,
-      `SQLite path must reside inside one of the daemon's allowed roots.`,
-      "The requested path is outside the daemon workspace/data directory and has been rejected for safety."
-    );
+  const fromWorkspace = path.resolve(daemonPaths.workspaceDir, normalized);
+  if (fsSync.existsSync(fromWorkspace)) {
+    return fromWorkspace;
   }
-
-  // If the file exists, also verify symlinks do not escape the allowed roots.
-  if (fsSync.existsSync(resolved)) {
-    try {
-      const real = fsSync.realpathSync(resolved);
-      if (!isInsideAny(real, allowedRoots)) {
-        throwDaemonError(
-          DaemonErrorCode.PATH_SYMLINK_ESCAPE,
-          `SQLite path escapes the allowed roots via symlink.`,
-          "Resolved target is outside allowed roots — symlink attack attempt blocked."
-        );
-      }
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-    }
-  }
-
-  return resolved;
+  return path.resolve(process.cwd(), normalized);
 }
 
 function probePort(host: string, port: number, timeoutMs = 400): Promise<boolean> {

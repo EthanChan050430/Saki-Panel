@@ -1,5 +1,4 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import path from "node:path";
 import type { Prisma } from "@prisma/client";
 import { classifyCommandRisk, findDangerousCommandReason } from "../../security.js";
 import { sakiModelProfile } from "./model-profile.js";
@@ -1186,9 +1185,6 @@ export function instanceSettingsSnapshot(instance: InstanceWithNode): Prisma.Ins
 export function normalizeWorkingDirectoryForAgent(value: string): string {
   const normalized = value.replace(/\\/g, "/").trim();
   if (!normalized) throw new RouteError("workingDirectory cannot be empty.", 400);
-  if (path.isAbsolute(normalized) || normalized.split("/").some((part) => part === "..")) {
-    throw new RouteError("Saki can only set instance working directories inside the daemon workspace.", 400);
-  }
   return normalized;
 }
 

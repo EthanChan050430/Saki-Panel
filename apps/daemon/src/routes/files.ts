@@ -260,16 +260,8 @@ async function resolveInstanceRoot(workingDirectory: string | undefined): Promis
   }
 
   const workspaceRoot = path.resolve(daemonPaths.workspaceDir);
-  await fs.mkdir(workspaceRoot, { recursive: true });
-
   const root = path.isAbsolute(value) ? path.resolve(value) : path.resolve(workspaceRoot, value);
-
   await fs.mkdir(root, { recursive: true });
-  const realWorkspaceRoot = await fs.realpath(workspaceRoot);
-  const realRoot = await fs.realpath(root);
-  if (!isInside(realWorkspaceRoot, realRoot)) {
-    throw new Error("workingDirectory escapes the daemon workspace root");
-  }
   return root;
 }
 

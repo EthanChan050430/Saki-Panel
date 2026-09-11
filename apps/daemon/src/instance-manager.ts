@@ -266,41 +266,10 @@ function emitStatus(instanceId: string, runtime: RuntimeState): void {
   runtimeEvents.emit("state-changed");
 }
 
-function isInsidePath(parent: string, child: string): boolean {
-  const relative = path.relative(parent, child);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
-
-async function pathExists(targetPath: string): Promise<boolean> {
-  try {
-    await fs.lstat(targetPath);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
-  }
-}
-
-async function ensureInsideWorkspace(targetPath: string): Promise<string> {
+async function resolveWorkingDirectory(targetPath: string): Promise<string> {
   const workspaceRoot = path.resolve(daemonPaths.workspaceDir);
-  await fs.mkdir(workspaceRoot, { recursive: true });
   const resolved = path.isAbsolute(targetPath) ? path.resolve(targetPath) : path.resolve(workspaceRoot, targetPath);
-  const realWorkspaceRoot = await fs.realpath(workspaceRoot);
-
-  const exists = await pathExists(resolved);
-  if (exists) {
-    const realTarget = await fs.realpath(resolved);
-    if (!isInsidePath(realWorkspaceRoot, realTarget)) {
-      throw new Error("Path escapes the daemon workspace root");
-    }
-    return resolved;
-  }
-
   await fs.mkdir(resolved, { recursive: true });
-  const realParent = await fs.realpath(path.dirname(resolved));
-  if (!isInsidePath(realWorkspaceRoot, realParent)) {
-    throw new Error("Path escapes the daemon workspace root");
-  }
   return resolved;
 }
 
@@ -905,7 +874,7 @@ export class InstanceManager {
       runtime.restartAttempts = 0;
     }
 
-    const cwd = await ensureInsideWorkspace(spec.workingDirectory);
+    const cwd = await resolveWorkingDirectory(spec.workingDirectory);
     await fs.mkdir(cwd, { recursive: true });
     assertCommandAllowed(spec.startCommand);
 
@@ -1248,7 +1217,7 @@ export class InstanceManager {
   ): Promise<{ sessionId: string; label?: string | undefined }> {
     const spec = instanceSpecs.get(instanceId);
     const targetDir = workingDirectory || spec?.workingDirectory || ".";
-    const cwd = await ensureInsideWorkspace(targetDir);
+    const cwd = await resolveWorkingDirectory(targetDir);
     await fs.mkdir(cwd, { recursive: true });
     const session = createInteractiveShellPty(instanceId, cwd, label);
     return { sessionId: session.id, label: session.label };
@@ -1292,7 +1261,7 @@ export class InstanceManager {
     const runtime = getRuntime(instanceId);
     assertCommandAllowed(command);
     if (typeof options.input === "string") validateCommandInput(options.input);
-    const cwd = await ensureInsideWorkspace(options.workingDirectory || runtime.cwd || ".");
+    const cwd = await resolveWorkingDirectory(options.workingDirectory || runtime.cwd || ".");
     const timeoutMs = Math.max(1000, Math.min(Math.floor(options.timeoutMs ?? 30000), 120000));
     await fs.mkdir(cwd, { recursive: true });
 
