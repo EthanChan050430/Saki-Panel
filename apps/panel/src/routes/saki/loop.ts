@@ -26,6 +26,7 @@ import {
   stringArg,
   logSakiModelEvent,
   sakiVerboseModelLogsEnabled,
+  stripDsmlWrappers,
   stripThinking,
   truncateText,
   trimString,
@@ -261,11 +262,12 @@ const sakiToolNameAlternation = sakiToolSchemas
   .join("|");
 
 function looksLikeToolCallPayload(text: string): boolean {
-  if (/<(?:tool_call|tool_calls|command|invoke|function|action|call)\b/i.test(text)) return true;
-  if (/"?tool_calls"?\s*:/i.test(text) || /"?toolCalls"?\s*:/i.test(text)) return true;
-  if (new RegExp(`"(?:${sakiToolNameAlternation})"\\s*:`, "i").test(text)) return true;
-  if (new RegExp(`"name"\\s*:\\s*"(?:${sakiToolNameAlternation})"`, "i").test(text)) return true;
-  return new RegExp(`<(?:command|function|action|call|tool)\\s+name=["'](?:${sakiToolNameAlternation})["']`, "i").test(text);
+  const t = stripDsmlWrappers(text);
+  if (/<(?:tool_call|tool_calls|command|invoke|function|action|call)\b/i.test(t)) return true;
+  if (/"?tool_calls"?\s*:/i.test(t) || /"?toolCalls"?\s*:/i.test(t)) return true;
+  if (new RegExp(`"(?:${sakiToolNameAlternation})"\\s*:`, "i").test(t)) return true;
+  if (new RegExp(`"name"\\s*:\\s*"(?:${sakiToolNameAlternation})"`, "i").test(t)) return true;
+  return new RegExp(`<(?:command|function|action|call|tool)\\s+name=["'](?:${sakiToolNameAlternation})["']`, "i").test(t);
 }
 
 function extractNarrationBeforeToolCall(text: string): string {
@@ -1159,7 +1161,10 @@ ${buildAgentWorkspacePrefix(runtime)}`;
       }
       throw error;
     }
-    const cleanedTurn = stripThinking(turn.content).trim();
+    const rawContent = stripDsmlWrappers(turn.content);
+    // 让后续所有代码都基于剥掉 DSML 包装的干净内容工作
+    (turn as SakiModelToolTurn & { content: string }).content = rawContent;
+    const cleanedTurn = stripThinking(rawContent).trim();
     if (isDegenerateRepetition(cleanedTurn)) {
       if (degenerateRetries < maxDegenerateRetries) {
         degenerateRetries += 1;

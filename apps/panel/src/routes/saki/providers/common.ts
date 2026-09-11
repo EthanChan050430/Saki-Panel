@@ -19,6 +19,7 @@ import {
   sanitizeProviderConfig,
   sakiVerboseModelLogsEnabled,
   streamingThinkingText,
+  stripDsmlWrappers,
   stripThinking,
   trimString
 } from "../types.js";
@@ -259,7 +260,13 @@ export async function streamPromptAgentTurnWithFilteredDelta(
     "<command",
     "<invoke",
     "<function",
-    "<action"
+    "<action",
+    // DSML 协议包装标记
+    "< |DSML| |calls",
+    "< |DSML| |invoke",
+    "< |DSML| |command",
+    "< |DSML| |function",
+    "< |DSML| |action"
   ];
   const maxPrefixLen = Math.max(...stopPatterns.map((pattern) => pattern.length));
   const filteredDelta = (text: string) => {
@@ -287,8 +294,9 @@ export async function streamPromptAgentTurnWithFilteredDelta(
 
   const content = await contentStream(filteredDelta);
   emitThinking();
+  // 把 accumulated 里残留的 DSML 包装剥掉，避免流式尾段漏到前端
   if (!stoppedStreaming) {
-    const visible = stripThinking(accumulated);
+    const visible = stripDsmlWrappers(stripThinking(accumulated));
     if (forwardedIndex < visible.length) {
       const tail = visible.slice(forwardedIndex);
       if (tail && !/<(?:tool_call|tool_calls|command|invoke|function|action)\b/i.test(tail) && !/"?tool_calls"?\s*:/i.test(tail)) {
@@ -298,10 +306,10 @@ export async function streamPromptAgentTurnWithFilteredDelta(
     }
   }
   return {
-    content,
+    content: stripDsmlWrappers(content),
     toolCalls: parseToolCallsFromText(content),
     forwardedDeltaText: forwardedIndex > 0,
-    forwardedDeltaContent: accumulated.slice(0, forwardedIndex)
+    forwardedDeltaContent: stripDsmlWrappers(accumulated.slice(0, forwardedIndex))
   };
 }
 

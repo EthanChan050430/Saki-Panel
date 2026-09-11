@@ -507,6 +507,23 @@ export function stripThinking(text: string): string {
   return text.replace(closedThinkingBlockPattern(), "").trim();
 }
 
+/**
+ * 某些模型会把工具调用标记包装成 DSML 协议格式：
+ *   < |DSML| |calls>...< |DSML| |invoke name="runCommand">...</ |DSML| |invoke>...</ |DSML| |calls>
+ * 把 DSML 壳剥掉，露出标准 XML（<invoke>...</invoke> 等），让 parseXmlToolCalls 能识别。
+ */
+export function stripDsmlWrappers(text: string): string {
+  if (!text) return text;
+  return text
+    // 干掉开/闭标签里的 DSML 包装段：
+    //   < |DSML| |invoke name="foo">  →  <invoke name="foo">
+    //   < / |DSML| |invoke>           →  </invoke>
+    // 注意要保留可选的 /（闭合标记），并确保标签名直接紧贴 < 或 </
+    .replace(/<\s*(\/)?\s*[\s|]*DSML[\s|]*/gi, "<$1")
+    // 标签尾端多余的 |（DSML 格式标签名后可能多一个 |）
+    .replace(/\|?\s*>/g, ">");
+}
+
 export type JsonSchema = Record<string, unknown>;
 
 export interface SakiToolSchema {

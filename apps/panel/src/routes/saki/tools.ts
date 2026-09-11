@@ -12,6 +12,7 @@ import {
   objectValue,
   RouteError,
   stringArg,
+  stripDsmlWrappers,
   stripThinking,
   trimString
 } from "./types.js";
@@ -685,7 +686,7 @@ function parseXmlParameters(inner: string): Record<string, unknown> {
 }
 
 export function parseXmlToolCalls(source: string): ParsedToolCall[] | null {
-  let stripped = stripThinking(source).trim();
+  let stripped = stripDsmlWrappers(stripThinking(source)).trim();
   stripped = stripped.replace(/<\/?(?:tool_calls|commands)(?:\s+[^>]*)?>/gi, "").trim();
   const toolTagRe = /<(tool_call|invoke|(?:command|function|action|call|tool|[a-zA-Z0-9_-]+))(?:\s+([^>]*))?>([\s\S]*?)(?:<\/\1>|(?=<(?:tool_call|invoke|[a-zA-Z0-9_-]+\s+[^>]*\b(?:name|tool|function)=))|$)/gi;
   const matches = [...stripped.matchAll(toolTagRe)];
@@ -884,7 +885,7 @@ function parseSpecialTokenToolCalls(source: string): ParsedToolCall[] {
 }
 
 export function parseAnyToolCalls(source: string): ParsedToolCall[] {
-  const prepared = stripAllCodeFences(source);
+  const prepared = stripDsmlWrappers(stripAllCodeFences(source));
   try {
     const xmlCalls = parseXmlToolCalls(prepared);
     if (xmlCalls?.length) return xmlCalls;
