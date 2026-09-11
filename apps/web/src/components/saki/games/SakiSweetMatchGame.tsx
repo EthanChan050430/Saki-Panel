@@ -338,6 +338,7 @@ export function SakiSweetMatchGame({ onClose, onFinish, onBackToPhone }: SakiSwe
   const { language } = usePanelLanguage();
   const isEn = language === "en-US";
   const isTw = language === "zh-TW";
+  const isJa = language === "ja-JP";
   const [board, setBoard] = useState<MatchTile[][]>(() => createInitialBoard());
   const [selectedPos, setSelectedPos] = useState<{ r: number; c: number } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -600,7 +601,7 @@ export function SakiSweetMatchGame({ onClose, onFinish, onBackToPhone }: SakiSwe
                 x: fx,
                 y: fy,
                 text: "+500",
-                rating: isEn ? "HAMMER SMASH! 🔨" : isTw ? "星錘粉碎! 🔨" : "星锤粉碎! 🔨",
+                rating: isEn ? "HAMMER SMASH! 🔨" : isTw ? "星錘粉碎! 🔨" : isJa ? "ハンマースマッシュ! 🔨" : "星锤粉碎! 🔨",
                 color: "#fbbf24"
               }
             ]);
@@ -1025,7 +1026,7 @@ export function SakiSweetMatchGame({ onClose, onFinish, onBackToPhone }: SakiSwe
             {/* Hammer Targeting Hint Banner */}
             {isHammerActive ? (
               <div className="saki-match-hammer-hint">
-                🔨 {isEn ? "Select any tile to smash and trigger combos!" : isTw ? "點擊任意方塊將其敲碎並觸發連鎖！" : "点击任意方块将其敲碎并触发连锁！"}
+                🔨 {isEn ? "Select any tile to smash and trigger combos!" : isTw ? "點擊任意方塊將其敲碎並觸發連鎖！" : isJa ? "好きなマスを選んで壊してコンボを決めよう！" : "点击任意方块将其敲碎并触发连锁！"}
               </div>
             ) : null}
 
@@ -1142,7 +1143,7 @@ export function SakiSweetMatchGame({ onClose, onFinish, onBackToPhone }: SakiSwe
             >
               <Hammer size={18} style={{ color: "#fbbf24" }} />
               <span className="saki-booster-label">
-                {isHammerActive ? (isEn ? "Cancel" : isTw ? "取消" : "取消") : (isEn ? "Hammer" : isTw ? "星錘" : "星锤")}
+                {isHammerActive ? (isEn ? "Cancel" : isTw ? "取消" : isJa ? "キャンセル" : "取消") : (isEn ? "Hammer" : isTw ? "星錘" : isJa ? "ハンマー" : "星锤")}
               </span>
               <span className="saki-booster-badge">{hammerCharges}</span>
             </button>
@@ -1182,52 +1183,61 @@ export function SakiSweetMatchGame({ onClose, onFinish, onBackToPhone }: SakiSwe
           {(() => {
             const isEn = language === "en-US";
             const isTw = language === "zh-TW";
+            const isJa = language === "ja-JP";
             const rankInfo =
               score >= 3200
                 ? {
                     grade: "SSS",
-                    title: isEn ? "Puzzle Goddess" : isTw ? "消消樂神祇" : "消消乐神祇",
+                    title: isEn ? "Puzzle Goddess" : isTw ? "消消樂神祇" : isJa ? "パズルの女神" : "消消乐神祇",
                     badgeColor: "gold",
                     expression: "/assets/expression/eating.webp",
                     quote: isEn
                       ? "Unbelievable! High combo explosion after explosion! Master's intuition is so sharp～ (੭ˊ꒳​ˋ)੭✨"
                       : isTw
                       ? "不可思議！超高連擊一波接一波！主人的直覺太敏銳啦～ (੭ˊ꒳​ˋ)੭✨"
+                      : isJa
+                      ? "信じられない！高コンボが連続炸裂！主人の直感が鋭すぎるよ～ (੭ˊ꒳​ˋ)੭✨"
                       : "不可思议！超高连击一波接一波！主人的直觉太敏锐啦～ (੭ˊ꒳​ˋ)੭✨"
                   }
                 : score >= 2000
                 ? {
                     grade: "S",
-                    title: isEn ? "Star Eliminator" : isTw ? "星夢消除大師" : "星梦消除大师",
+                    title: isEn ? "Star Eliminator" : isTw ? "星夢消除大師" : isJa ? "スターエリミネーター" : "星梦消除大师",
                     badgeColor: "pink",
                     expression: "/assets/expression/happy.webp",
                     quote: isEn
                       ? "Amazing combos! The rainbow stars and lightning cleared the whole screen, super satisfying～ (≧∇≦)ﾉ"
                       : isTw
                       ? "太爽快啦！彩虹願望星和閃電直接清空全屏，看得我好激動～ (≧∇≦)ﾉ"
+                      : isJa
+                      ? "コンボがすごい！レインボースターと稲妻が画面全体を一気にクリアするの、超気持ちいい～ (≧∇≦)ﾉ"
                       : "太爽快啦！彩虹愿望星和闪电直接清空全屏，看得我好激动～ (≧∇≦)ﾉ"
                   }
                 : score >= 1000
                 ? {
                     grade: "A",
-                    title: isEn ? "Sweet Combiner" : isTw ? "甜蜜連擊手" : "甜蜜连击手",
+                    title: isEn ? "Sweet Combiner" : isTw ? "甜蜜連擊手" : isJa ? "スイートコンボ" : "甜蜜连击手",
                     badgeColor: "cyan",
                     expression: "/assets/expression/wink.webp",
                     quote: isEn
                       ? "Well done! We scored tons of points together! Next time let's chain even more combos～ (๑>◡<๑)"
                       : isTw
                       ? "表現很棒哦！拿到了好多好感經驗！下次一定能打出更長的連擊～ (๑>◡<๑)"
+                      : isJa
+                      ? "よくやったね！たくさんポイント取れたよ！次はもっと長いコンボを繋げようね～ (๑>◡<๑)"
                       : "表现很棒哦！拿到了好多好感经验！下次一定能打出更长的连击～ (๑>◡<๑)"
                   }
                 : {
                     grade: "B",
-                    title: isEn ? "Practice Makes Perfect" : isTw ? "萌新實習生" : "萌新实习生",
+                    title: isEn ? "Practice Makes Perfect" : isTw ? "萌新實習生" : isJa ? "練習あるのみ" : "萌新实习生",
                     badgeColor: "purple",
                     expression: "/assets/expression/think.webp",
                     quote: isEn
                       ? "Keep going! Try spotting 4-gem lines to make lightning bombs next time～ (´,,•ω•,,)"
                       : isTw
                       ? "再接再厲～ 下次留意湊四連生成閃電炸彈，分數會翻倍哦～ (´,,•ω•,,)"
+                      : isJa
+                      ? "頑張って！次は4つ連なっているのを見つけて稲妻爆弾を作ろうね～ (´,,•ω•,,)"
                       : "再接再厉～ 下次留意凑四连生成闪电炸弹，分数会翻倍哦～ (´,,•ω•,,)"
                   };
 
@@ -1240,7 +1250,7 @@ export function SakiSweetMatchGame({ onClose, onFinish, onBackToPhone }: SakiSwe
                   <span className="rank-title">{rankInfo.title}</span>
                 </div>
                 <h3 className="settlement-title">
-                  {isEn ? "Match Complete!" : isTw ? "消除挑戰完成！" : "消除挑战完成！"}
+                  {isEn ? "Match Complete!" : isTw ? "消除挑戰完成！" : isJa ? "マッチ完了！" : "消除挑战完成！"}
                 </h3>
 
                 <div className="settlement-character-wrap">

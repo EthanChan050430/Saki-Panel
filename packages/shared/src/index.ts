@@ -45,7 +45,9 @@ export const permissions = [
   "saki.agent",
   "saki.skills",
   "saki.configure",
-  "system.view"
+  "system.view",
+  "plugin.view",
+  "plugin.manage"
 ] as const;
 
 export type PermissionCode = (typeof permissions)[number];
@@ -1847,6 +1849,7 @@ export interface SakiConfigResponse {
   searchEnabled: boolean;
   mcpEnabled: boolean;
   memoryEnabled?: boolean;
+  allowCrossInstanceEnforcement?: boolean;
   imageGen: SakiImageGenConfig;
   systemPrompt?: string | null;
   appearance: PanelAppearanceSettings;
@@ -1866,6 +1869,7 @@ export interface UpdateSakiConfigRequest {
   searchEnabled?: boolean;
   mcpEnabled?: boolean;
   memoryEnabled?: boolean;
+  allowCrossInstanceEnforcement?: boolean;
   imageGen?: SakiImageGenConfig;
   systemPrompt?: string | null;
   appearance?: Partial<PanelAppearanceSettings>;
@@ -2226,5 +2230,139 @@ export function extractVersionString(raw: string): string {
   if (!raw) return "";
   const match = raw.match(/v?\d+(?:\.\d+)+(?:-[0-9A-Za-z.-]+)?/i);
   return match ? match[0] : raw.trim();
+}
+
+// ==========================================
+// Plugin System Interfaces & Types
+// ==========================================
+
+export type PluginType = "theme" | "skin" | "game" | "widget" | "locale";
+
+export interface SakiPluginManifest {
+  name: string;
+  version: string;
+  displayName: string;
+  description: string;
+  author: string;
+  type: PluginType;
+  icon?: string | undefined;
+  preview?: string[] | undefined;
+  homepage?: string | undefined;
+  minPanelVersion?: string | undefined;
+  permissions?: string[] | undefined;
+  theme?: {
+    css: string;
+    /** Applied to <html> so theme CSS can restyle buttons/modals without fighting every selector. */
+    htmlClass?: string | undefined;
+    backgrounds?: {
+      light?: string | undefined;
+      dark?: string | undefined;
+    } | undefined;
+  } | undefined;
+  skin?: {
+    /**
+     * Drop-in replacement of the panel `/assets/` tree.
+     * A file at `{assetRoot}/expression/normal.webp` overrides `/assets/expression/normal.webp`.
+     */
+    assetRoot?: string | undefined;
+    expressions?: string | undefined;
+    pet?: string | undefined;
+    mapping?: Record<string, string> | undefined;
+    /** Optional explicit file list so overlay does not depend on the files API. */
+    files?: string[] | undefined;
+  } | undefined;
+  game?: {
+    entry: string;
+    title?: string | undefined;
+    width?: number | undefined;
+    height?: number | undefined;
+  } | undefined;
+  widget?: {
+    entry: string;
+    mountPoint?: "dashboard" | "sidebar" | "settings" | undefined;
+    width?: number | undefined;
+    height?: number | undefined;
+  } | undefined;
+  locale?: {
+    /** BCP 47 language code, e.g. "ja-JP", "fr-FR" */
+    language: string;
+    /** Path to translations file inside the plugin directory, e.g. "ja.json" */
+    translations: string;
+    /** Human-readable label, e.g. "日本語" */
+    label?: string | undefined;
+    /** Emoji flag, e.g. "🇯🇵" */
+    flag?: string | undefined;
+  } | undefined;
+}
+
+export interface InstalledPlugin {
+  id: string;
+  manifest: SakiPluginManifest;
+  enabled: boolean;
+  installedAt: string;
+  sourceRepo?: string | undefined;
+  sourceRef?: string | undefined;
+  sourceCommit?: string | undefined;
+  localPath: string;
+}
+
+/** Public subset of the active theme so the login page can restyle before auth. */
+export interface PublicActiveTheme {
+  id: string;
+  version: string;
+  css: string;
+  htmlClass?: string | undefined;
+  backgrounds?: {
+    light?: string | undefined;
+    dark?: string | undefined;
+  } | undefined;
+}
+
+export interface PluginUpdateStatus {
+  pluginId: string;
+  checksAvailable: boolean;
+  updatesAvailable: boolean;
+  remoteCommit?: string;
+  remoteVersion?: string;
+  localCommit?: string;
+  localVersion?: string;
+  error?: string;
+  lastCheckedAt?: string;
+}
+
+export interface GitHubMirrorOption {
+  id: string;
+  name: string;
+  description: string;
+  prefix?: string | undefined;
+  rawPrefix?: string | undefined;
+  domainReplace?: { from: string; to: string } | undefined;
+  isDefault?: boolean | undefined;
+}
+
+export interface PluginRegistryItem {
+  name: string;
+  displayName: string;
+  description: string;
+  author: string;
+  type: PluginType;
+  version: string;
+  repo: string;
+  ref?: string;
+  icon?: string | undefined;
+  iconUrl?: string | undefined;
+  preview?: string[] | undefined;
+  stars?: number | undefined;
+  downloads?: number | undefined;
+  featured?: boolean | undefined;
+}
+
+export interface PluginStoreState {
+  installed: InstalledPlugin[];
+  activeThemeId?: string | null | undefined;
+  activeSkinId?: string | null | undefined;
+  selectedMirrorId: string;
+  customMirrorUrl?: string | undefined;
+  mirrors: GitHubMirrorOption[];
 }
 

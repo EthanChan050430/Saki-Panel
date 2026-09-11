@@ -39,6 +39,7 @@ export interface PanelSakiSettings {
   modelPointsMultipliers?: Record<string, number> | undefined;
   searchEnabled?: boolean;
   mcpEnabled?: boolean;
+  allowCrossInstanceEnforcement?: boolean;
   imageGen?: SakiImageGenConfig;
   systemPrompt?: string | null;
   appearance?: Partial<PanelAppearanceSettings>;

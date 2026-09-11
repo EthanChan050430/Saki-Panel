@@ -1,7 +1,8 @@
-import React, { memo } from "react";
+import React, { memo, useMemo } from "react";
 import { Settings } from "lucide-react";
 import type { RegistrationIdentity } from "@webops/shared";
-import { panelLanguageOptions, type PanelLanguage, type PanelTextKey } from "../../i18n/index.js";
+import { getAvailableLanguageOptions, type PanelLanguage, type PanelTextKey } from "../../i18n/index.js";
+import { usePlugins } from "../../plugins/PluginContext.js";
 import { defaultSakiRequestTimeoutMs } from "../../constants.js";
 
 export interface SettingsSystemTabProps {
@@ -31,6 +32,13 @@ export const SettingsSystemTab = memo(function SettingsSystemTab({
   localizedRegistrationIdentityOptions,
   t
 }: SettingsSystemTabProps) {
+  // Trigger re-render whenever plugin state changes (install/enable/unload locale plugins)
+  const { state } = usePlugins();
+  // Compute fresh every render — dynamic languages Map updates via registerLocaleDictionary
+  // and a PluginContext state change will trigger a re-render here thanks to usePlugins()
+  void state;
+  const languageOptions = getAvailableLanguageOptions();
+
   return (
     <div
       className={`settings-group ${isActive ? "active" : "settings-section-hidden"}`}
@@ -54,9 +62,9 @@ export const SettingsSystemTab = memo(function SettingsSystemTab({
               value={language}
               onChange={(event) => onLanguageChange(event.target.value as PanelLanguage)}
             >
-              {panelLanguageOptions.map((option) => (
+              {languageOptions.map((option) => (
                 <option value={option.value} key={option.value}>
-                  {option.label}
+                  {option.flag ? `${option.flag}  ` : ""}{option.label}
                 </option>
               ))}
             </select>

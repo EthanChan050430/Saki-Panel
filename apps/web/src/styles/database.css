@@ -16,8 +16,8 @@
   pointer-events: none !important;
   user-select: none;
   z-index: 99999;
-  transform: translateZ(0);
-  will-change: transform;
+  /* no will-change: canvas is already composited; a permanent
+     full-viewport layer would just waste GPU memory */
 }
 
 @media (pointer: coarse) {
@@ -68,8 +68,8 @@
     radial-gradient(ellipse at 12% 8%, rgba(99, 102, 241, 0.06) 0%, transparent 45%),
     radial-gradient(ellipse at 88% 92%, rgba(14, 165, 233, 0.05) 0%, transparent 45%),
     rgba(248, 250, 252, 0.45);
-  backdrop-filter: blur(40px) saturate(180%);
-  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
 }
 
 [data-theme="dark"] .database-visualizer-container {
@@ -87,8 +87,8 @@
   padding: 14px 20px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.5);
   background: rgba(255, 255, 255, 0.40);
-  backdrop-filter: blur(28px) saturate(190%);
-  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  backdrop-filter: blur(16px) saturate(190%);
+  -webkit-backdrop-filter: blur(16px) saturate(190%);
   flex-shrink: 0;
   gap: 16px;
   box-shadow: 0 4px 20px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.8);
@@ -292,8 +292,8 @@
   width: 250px;
   border-right: 1px solid rgba(255, 255, 255, 0.4);
   background: rgba(255, 255, 255, 0.30);
-  backdrop-filter: blur(32px) saturate(180%);
-  -webkit-backdrop-filter: blur(32px) saturate(180%);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -548,8 +548,8 @@
   align-items: center;
   justify-content: space-between;
   background: rgba(255, 255, 255, 0.35);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
   box-shadow: 0 2px 12px rgba(15, 23, 42, 0.03);
 }
 
@@ -3065,3 +3065,36 @@
   }
 }
 
+
+/* ==========================================================================
+   Perf-lite: kill backdrop blur on the largest glass surfaces
+   (paired with a more opaque fallback background for readability)
+   ========================================================================== */
+
+html.perf-lite .database-visualizer-container,
+html.perf-lite .db-master-topbar,
+html.perf-lite .db-sidebar,
+html.perf-lite .db-content-header {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.perf-lite .database-visualizer-container {
+  background: rgba(248, 250, 252, 0.94);
+}
+
+html.perf-lite .db-master-topbar,
+html.perf-lite .db-sidebar,
+html.perf-lite .db-content-header {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+html.perf-lite[data-theme="dark"] .database-visualizer-container {
+  background: rgba(15, 23, 42, 0.94);
+}
+
+html.perf-lite[data-theme="dark"] .db-master-topbar,
+html.perf-lite[data-theme="dark"] .db-sidebar,
+html.perf-lite[data-theme="dark"] .db-content-header {
+  background: rgba(15, 23, 42, 0.92);
+}

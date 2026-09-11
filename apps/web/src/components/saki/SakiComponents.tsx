@@ -77,9 +77,13 @@ import {
   sakiPetDoctorFrames,
   sakiPetEatFrames,
   sakiPetWalkFrames,
+  sakiPetSingingFrames,
   sakiSpeakingAssets,
-  sakiExpressionAnimFrames
+  sakiExpressionAnimFrames,
+  sakiExpressionPlayOnce
 } from "../../constants.js";
+import { SakiSpriteCycle } from "./SakiSpriteCycle.js";
+import { useSkinRevision } from "../../plugins/SkinLoader.js";
 import { compactContextText, formatBytes } from "../../utils/path.js";
 import { newClientId } from "../../utils/id.js";
 import { MarkdownContent } from "../common/MarkdownContent.js";
@@ -161,6 +165,7 @@ export type SakiActivityMood =
   | "blocked"
   | "shy"
   | "middlefinger"
+  | "singing"
   | null;
 
 const SAKI_READ_TOOLS = new Set([
@@ -255,7 +260,7 @@ function pickSakiAsset(assets: readonly string[]): string {
 }
 export type SakiVoiceEchoState = "idle" | "hearing" | "speaking";
 export type SakiLauncherEdge = "left" | "right";
-export type SakiLauncherSizeMode = "current" | "expanded" | "attached";
+export type SakiLauncherSizeMode = "current" | "expanded" | "attached" | "dragging";
 
 export interface SakiLauncherPosition {
   x: number;
@@ -273,7 +278,7 @@ export interface SakiPullDragRequest {
 
 export const sakiLauncherPositionKey = "webops.saki.launcherPosition";
 export const sakiLauncherEdgePadding = 12;
-export const sakiLauncherEdgeSnapDistance = 56;
+export const sakiLauncherEdgeSnapDistance = 20;
 export const sakiLauncherExpandedSize = { width: 86, height: 118 };
 export const sakiLauncherAttachedSize = { width: 58, height: 92 };
 export const sakiConversationStorageKey = "webops.saki.conversations.v1";
@@ -375,7 +380,7 @@ export function writeSakiLauncherPosition(position: SakiLauncherPosition) {
 }
 
 export function sakiLauncherSize(element: HTMLElement | null, mode: SakiLauncherSizeMode = "current") {
-  if (mode === "expanded") return sakiLauncherExpandedSize;
+  if (mode === "expanded" || mode === "dragging") return sakiLauncherExpandedSize;
   if (mode === "attached") return sakiLauncherAttachedSize;
   const rect = element?.getBoundingClientRect();
   return {
@@ -392,13 +397,23 @@ export function clampSakiLauncherPosition(
   const { width, height } = sakiLauncherSize(element, mode);
   const viewportWidth = globalThis.innerWidth || width + sakiLauncherEdgePadding * 2;
   const viewportHeight = globalThis.innerHeight || height + sakiLauncherEdgePadding * 2;
-  const sidePadding = mode === "attached" ? 0 : sakiLauncherEdgePadding;
-  const maxX = Math.max(sidePadding, viewportWidth - width - sidePadding);
-  const maxY = Math.max(sakiLauncherEdgePadding, viewportHeight - height - sakiLauncherEdgePadding);
+  const sidePadding = mode === "attached" || mode === "dragging" ? 0 : sakiLauncherEdgePadding;
+  const maxX = Math.max(0, viewportWidth - width - sidePadding);
+  const maxY = Math.max(0, viewportHeight - height - (mode === "dragging" ? 0 : sakiLauncherEdgePadding));
+  const minX = sidePadding;
+  const minY = mode === "dragging" ? 0 : sakiLauncherEdgePadding;
+
+  const clampedX = Math.min(Math.max(minX, position.x), maxX);
+  const clampedY = Math.min(Math.max(minY, position.y), maxY);
+
+  const isLeft = clampedX <= 2;
+  const isRight = viewportWidth - (clampedX + sakiLauncherAttachedSize.width) <= 4;
+  const edge = isLeft ? "left" : isRight ? "right" : undefined;
 
   return {
-    x: Math.min(Math.max(sidePadding, position.x), maxX),
-    y: Math.min(Math.max(sakiLauncherEdgePadding, position.y), maxY)
+    x: clampedX,
+    y: clampedY,
+    ...(edge ? { edge } : {})
   };
 }
 
@@ -416,12 +431,10 @@ export function sakiLauncherSnapEdgeForPosition(position: SakiLauncherPosition):
 }
 
 export function sakiLauncherAttachedEdgeForPosition(position: SakiLauncherPosition): SakiLauncherEdge | null {
-  if (position.edge === "left" || position.edge === "right") return position.edge;
-
   const viewportWidth = globalThis.innerWidth || sakiLauncherAttachedSize.width + sakiLauncherEdgePadding * 2;
   const rightEdgeX = Math.max(0, viewportWidth - sakiLauncherAttachedSize.width);
-  if (position.x <= 1) return "left";
-  if (Math.abs(position.x - rightEdgeX) <= 1 || viewportWidth - (position.x + sakiLauncherAttachedSize.width) <= 1) return "right";
+  if (position.x <= 2) return "left";
+  if (Math.abs(position.x - rightEdgeX) <= 4 || viewportWidth - (position.x + sakiLauncherAttachedSize.width) <= 4) return "right";
   return null;
 }
 
@@ -496,6 +509,8 @@ export function getSakiActivityExpressionSrc(activityMood: SakiActivityMood): st
       return sakiArtAssets.shy;
     case "middlefinger":
       return sakiArtAssets.middlefinger;
+    case "singing":
+      return sakiArtAssets.singingF1;
     default:
       return null;
   }
@@ -525,6 +540,7 @@ type SakiPetPoseName =
   | "drink"
   | "blink"
   | "peek"
+  | "sing"
   | null;
 
 function resolveSakiPetSprite({
@@ -536,7 +552,7 @@ function resolveSakiPetSprite({
   dragging: boolean;
 }): { kind: "pair"; idle: string; hover: string } | { kind: "single"; src: string } {
   if (!pose || pose === "idle") {
-    return { kind: "pair", idle: sakiArtAssets.petIdle, hover: sakiArtAssets.petHover };
+    return { kind: "pair", idle: sakiArtAssets.petIdle, hover: sakiArtAssets.launcherHover };
   }
   if (pose === "blink") {
     return { kind: "single", src: sakiArtAssets.petBlink };
@@ -588,6 +604,8 @@ function resolveSakiPetSprite({
       ? sakiArtAssets.petDrink
       : pose === "peek"
       ? sakiArtAssets.tieEdge
+      : pose === "sing"
+      ? sakiArtAssets.happy
       : sakiArtAssets.petIdle;
 
   return { kind: "single", src };
@@ -634,13 +652,20 @@ export function SakiCharacterArt({
     | "drink"
     | "blink"
     | "peek"
+    | "sing"
     | null;
 }) {
+  const skinRevision = useSkinRevision();
   const [idleLauncherSrc, setIdleLauncherSrc] = useState(() => pickSakiAsset(sakiIdleLauncherAssets));
   const [speakingSrc, setSpeakingSrc] = useState(() => pickSakiAsset(sakiSpeakingAssets));
-  const [walkFrame, setWalkFrame] = useState(0);
   const [blinking, setBlinking] = useState(false);
-  const [exprFrame, setExprFrame] = useState(0);
+  const [cycleFinished, setCycleFinished] = useState(false);
+
+  // 皮肤切换会重建这些派生数组，需要重新挑选缓存的启动器/说话贴图
+  useEffect(() => {
+    setIdleLauncherSrc(pickSakiAsset(sakiIdleLauncherAssets));
+    setSpeakingSrc(pickSakiAsset(sakiSpeakingAssets));
+  }, [skinRevision]);
 
   useEffect(() => {
     if (!compact) return;
@@ -669,14 +694,6 @@ export function SakiCharacterArt({
   }, [compact, petPose]);
 
   useEffect(() => {
-    if (!compact || (petPose !== "walk" && petPose !== "chase" && petPose !== "climb" && petPose !== "bath" && petPose !== "doctor" && petPose !== "eat")) return;
-    const id = window.setInterval(() => {
-      setWalkFrame((frame) => frame + 1);
-    }, petPose === "bath" || petPose === "eat" || petPose === "doctor" ? 180 : 140);
-    return () => window.clearInterval(id);
-  }, [compact, petPose]);
-
-  useEffect(() => {
     if (activityMood === "speaking") {
       setSpeakingSrc(pickSakiAsset(sakiSpeakingAssets));
     }
@@ -690,17 +707,11 @@ export function SakiCharacterArt({
     ? "worry"
     : null;
   const expressionAnim = expressionAnimKey ? sakiExpressionAnimFrames[expressionAnimKey] : null;
+  const expressionPlayOnce = Boolean(expressionAnimKey && sakiExpressionPlayOnce.has(expressionAnimKey));
 
   useEffect(() => {
-    if (compact || !expressionAnim) {
-      setExprFrame(0);
-      return;
-    }
-    const id = window.setInterval(() => {
-      setExprFrame((frame) => frame + 1);
-    }, 180);
-    return () => window.clearInterval(id);
-  }, [compact, expressionAnim]);
+    setCycleFinished(false);
+  }, [expressionAnimKey, petPose]);
 
   const activityExpressionSrc = activityMood === "speaking"
     ? speakingSrc
@@ -726,15 +737,62 @@ export function SakiCharacterArt({
       );
     }
 
+    if (expressionAnim && expressionAnim.length > 1 && !(expressionPlayOnce && cycleFinished)) {
+      return (
+        <div className={`saki-character-art compact has-cycle ${edgeAttached ? "edge-attached" : ""}`} aria-hidden="true">
+          <SakiSpriteCycle
+            frames={expressionAnim}
+            mode={expressionPlayOnce ? "once" : "pingpong"}
+            intervalMs={expressionPlayOnce ? 260 : 380}
+            compact
+            onComplete={expressionPlayOnce ? () => setCycleFinished(true) : undefined}
+          />
+        </div>
+      );
+    }
+
+    const petCycle =
+      petPose === "walk" || petPose === "chase"
+        ? { frames: sakiPetWalkFrames, mode: "pingpong" as const, ms: 260 }
+        : petPose === "climb"
+        ? { frames: sakiPetClimbFrames, mode: "pingpong" as const, ms: 280 }
+        : petPose === "bath"
+        ? { frames: sakiPetBathFrames, mode: "once" as const, ms: 280 }
+        : petPose === "doctor"
+        ? { frames: sakiPetDoctorFrames, mode: "once" as const, ms: 280 }
+        : petPose === "eat"
+        ? { frames: sakiPetEatFrames, mode: "pingpong" as const, ms: 340 }
+        : petPose === "sing"
+        ? { frames: sakiPetSingingFrames, mode: "pingpong" as const, ms: 320 }
+        : null;
+
+    if (petCycle && !(petCycle.mode === "once" && cycleFinished)) {
+      return (
+        <div className={`saki-character-art compact ${edgeAttached ? "edge-attached" : ""}`} aria-hidden="true">
+          <SakiSpriteCycle
+            frames={petCycle.frames}
+            mode={petCycle.mode}
+            intervalMs={petCycle.ms}
+            compact
+            onComplete={petCycle.mode === "once" ? () => setCycleFinished(true) : undefined}
+          />
+        </div>
+      );
+    }
+
     const petSrc = resolveSakiPetSprite({
       pose: fileDrop
         ? "idle"
+        : dragging
+        ? "pickup"
         : edgeAttached
         ? "peek"
-        : blinking && !petPose
+        : blinking && (!petPose || cycleFinished)
         ? "blink"
+        : cycleFinished
+        ? null
         : petPose,
-      walkFrame,
+      walkFrame: 0,
       dragging
     });
 
@@ -759,13 +817,33 @@ export function SakiCharacterArt({
     );
   }
 
-  const animatedSrc = expressionAnim ? expressionAnim[exprFrame % expressionAnim.length] : expressionSrc;
+  if (expressionAnim && expressionAnim.length > 1 && !(expressionPlayOnce && cycleFinished)) {
+    return (
+      <div className={`saki-character-art mood-${mood} has-cycle`} aria-hidden="true">
+        <SakiSpriteCycle
+          frames={expressionAnim}
+          mode={expressionPlayOnce ? "once" : "pingpong"}
+          intervalMs={expressionPlayOnce ? 260 : 380}
+          onComplete={expressionPlayOnce ? () => setCycleFinished(true) : undefined}
+        />
+      </div>
+    );
+  }
+
+  const settledSrc =
+    expressionPlayOnce && cycleFinished
+      ? mood === "thinking"
+        ? sakiArtAssets.thinking
+        : mood === "worry"
+        ? sakiArtAssets.worry
+        : sakiArtAssets.normal
+      : expressionSrc;
 
   return (
     <div className={`saki-character-art mood-${mood}`} aria-hidden="true">
       <img
         className="saki-character-image"
-        src={animatedSrc}
+        src={settledSrc}
         alt=""
         draggable={false}
       />
@@ -2175,6 +2253,40 @@ export function getLocalizedFoodMenu(language?: string) {
         favorability: 60,
         desc: "特製萌貓便當，僅需 5 Saki 積分",
         greeting: "這...這是特製給我的貓咪便當嗎？！太感動了，最喜歡你啦～ (｡♥‿♥｡)",
+        mood: "shy" as SakiActivityMood
+      }
+    ];
+  }
+  if (language === "ja-JP") {
+    return [
+      {
+        id: "caomeidafu",
+        name: "いちご大福",
+        image: "/assets/game/caomeidafu.webp",
+        cost: 1,
+        favorability: 10,
+        desc: "もっちり甘くて、たった 1 Saki ポイント",
+        greeting: "もぐもぐ～もっちりいちご大福おいしい！ありがとう～ (๑>؂<๑)۶",
+        mood: "eating" as SakiActivityMood
+      },
+      {
+        id: "naicha",
+        name: "タピオカミルクティー",
+        image: "/assets/game/naicha.webp",
+        cost: 2,
+        favorability: 25,
+        desc: "もちもちタピオカ、たった 2 Saki ポイント",
+        greeting: "甘いタピオカミルクティーを飲むと元気が出るね！(*╹▽╹*)",
+        mood: "eating" as SakiActivityMood
+      },
+      {
+        id: "biandang",
+        name: "ハート猫弁当",
+        image: "/assets/game/biandang.webp",
+        cost: 5,
+        favorability: 60,
+        desc: "特製のキュートな猫弁当、たった 5 Saki ポイント",
+        greeting: "こ...これって私のために作ってくれた特別な猫弁当なの？！感動しちゃう、大好きだよ～ (｡♥‿♥｡)",
         mood: "shy" as SakiActivityMood
       }
     ];

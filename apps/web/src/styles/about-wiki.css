@@ -1156,7 +1156,8 @@
 .wiki-toc-list {
   display: grid;
   gap: 2px;
-  max-height: 520px;
+  max-height: calc(100vh - 140px);
+  min-height: 120px;
   overflow-y: auto;
   padding-right: 4px;
 }

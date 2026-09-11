@@ -4,9 +4,8 @@ import { crashFingerprint, findActiveIncidentForInstance, openOrRefreshIncident 
 import { readWatchPolicy } from "./policy.js";
 import { restartLeaseUntil, restartLeaseInstanceIds, retainRestartLeases } from "./leases.js";
 
-// 以下阈值目前是硬编码常量；未来如需按实例配置，可迁移进 watch policy
-// （需要同步扩展 prisma schema，本次不做数据库迁移）。
-const crashWindowMs = 10 * 60 * 1000; // 崩溃循环判定窗口：10 分钟
+// 崩溃循环判定窗口：10 分钟
+const crashWindowMs = 10 * 60 * 1000;
 const crashLoopThreshold = 3; // 窗口内崩溃次数达到该值判定为崩溃循环
 const watchBudgetWindowMs = 60 * 60 * 1000; // maxRunsPerHour 的统计窗口：1 小时
 export const diskUsageThresholdPercent = 90; // 节点磁盘占用告警阈值

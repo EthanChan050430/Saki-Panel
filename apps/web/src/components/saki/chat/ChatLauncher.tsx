@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { SakiCharacterArt, type SakiArtMood } from "../SakiComponents.js";
+import { SakiCharacterArt, type SakiActivityMood, type SakiArtMood } from "../SakiComponents.js";
 import { SakiDesktopPet } from "../pet/SakiDesktopPet.js";
 import { SakiPetDesktopBits } from "../pet/SakiPetWidgets.js";
 import { isSakiPetTouchUi, type SakiPetController } from "../pet/sakiPetState.js";
@@ -36,6 +36,7 @@ export interface ChatLauncherProps {
   sakiFileHoverActive: boolean;
   fileDragActive: boolean;
   artMood: SakiArtMood;
+  activityMood?: SakiActivityMood;
   draggingExpression?: string | null | undefined;
   pet: SakiPetController;
   language?: string | undefined;
@@ -70,6 +71,7 @@ export function ChatLauncher({
   sakiFileHoverActive,
   fileDragActive,
   artMood,
+  activityMood = null,
   draggingExpression,
   pet,
   language,
@@ -116,6 +118,8 @@ export function ChatLauncher({
     ? null
     : launcherEdgeAttached
     ? "peek"
+    : pet.music.playing
+    ? "sing"
     : pet.behavior === "idle"
     ? null
     : pet.behavior;
@@ -123,7 +127,7 @@ export function ChatLauncher({
   return (
     <div
       ref={petStageRef}
-      className={`saki-pet-stage ${launcherDragging ? "is-dragging" : ""} ${sakiFileHoverActive ? "drop-ready" : ""} ${open ? "hiding" : ""} ${launcherEdgeAttached ? `edge-attached edge-${launcherEdge}` : ""} ${touchUi ? "is-touch" : ""} pet-${pet.behavior} skin-${pet.skin}`}
+      className={`saki-pet-stage ${launcherDragging ? "is-dragging" : ""} ${sakiFileHoverActive ? "drop-ready" : ""} ${open ? "hiding" : ""} ${launcherEdgeAttached && !launcherDragging ? `edge-attached edge-${launcherEdge}` : ""} ${touchUi ? "is-touch" : ""} pet-${pet.behavior} skin-${pet.skin}`}
       style={{
         ...launcherStyle,
         ["--saki-pet-scale" as string]: String(pet.scale)
@@ -160,7 +164,7 @@ export function ChatLauncher({
     >
       <button
         ref={launcherRef}
-        className={`saki-launcher ${launcherDragging ? "is-dragging" : ""} ${sakiFileHoverActive ? "drop-ready" : ""} ${open ? "hiding" : ""} ${launcherEdgeAttached ? `edge-attached edge-${launcherEdge}` : ""}`}
+        className={`saki-launcher ${launcherDragging ? "is-dragging" : ""} ${sakiFileHoverActive ? "drop-ready" : ""} ${open ? "hiding" : ""} ${launcherEdgeAttached && !launcherDragging ? `edge-attached edge-${launcherEdge}` : ""}`}
         type="button"
         title="Saki"
         aria-label={touchUi ? "打开 Saki 菜单" : "打开 Saki"}
@@ -179,9 +183,10 @@ export function ChatLauncher({
           mood={artMood}
           compact
           fileDrop={fileDragActive}
-          edgeAttached={launcherEdgeAttached}
+          edgeAttached={launcherEdgeAttached && !launcherDragging}
           dragging={launcherDragging}
           draggingExpressionSrc={draggingExpression ?? null}
+          activityMood={activityMood}
           petPose={petPose}
         />
       </button>

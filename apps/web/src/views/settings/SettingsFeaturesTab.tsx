@@ -1,5 +1,5 @@
 import React, { memo } from "react";
-import { AlertTriangle, CheckCircle2, Cpu, Globe, Sparkles, Wrench, Zap } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Cpu, Globe, ShieldCheck, Sparkles, Wrench, Zap } from "lucide-react";
 import type { PanelTextKey } from "../../i18n/index.js";
 import type { SakiVoiceEchoEngineType, WebGPUDetectionResult } from "../../components/saki/sakiVoiceEngine.js";
 
@@ -9,6 +9,8 @@ export interface SettingsFeaturesTabProps {
   onSearchEnabledChange: (enabled: boolean) => void;
   mcpEnabled: boolean;
   onMcpEnabledChange: (enabled: boolean) => void;
+  allowCrossInstanceEnforcement: boolean;
+  onAllowCrossInstanceEnforcementChange: (enabled: boolean) => void;
   voiceEchoEngine: SakiVoiceEchoEngineType;
   onVoiceEchoEngineChange: (engine: SakiVoiceEchoEngineType) => void;
   webGpuInfo: WebGPUDetectionResult | null;
@@ -21,6 +23,8 @@ export const SettingsFeaturesTab = memo(function SettingsFeaturesTab({
   onSearchEnabledChange,
   mcpEnabled,
   onMcpEnabledChange,
+  allowCrossInstanceEnforcement,
+  onAllowCrossInstanceEnforcementChange,
   voiceEchoEngine,
   onVoiceEchoEngineChange,
   webGpuInfo,
@@ -72,6 +76,27 @@ export const SettingsFeaturesTab = memo(function SettingsFeaturesTab({
               type="checkbox"
               checked={mcpEnabled}
               onChange={(event) => onMcpEnabledChange(event.target.checked)}
+            />
+            <span className="settings-switch-slider" />
+          </label>
+        </div>
+
+        <div className="settings-switch-card">
+          <div className="settings-switch-info">
+            <div className="settings-switch-title">
+              <ShieldCheck size={18} className="settings-switch-icon" />
+              <strong>允许 Saki 跨实例执法</strong>
+            </div>
+            <span>
+              关闭后，Saki Agent 将被严格限制在当前实例文件夹内，无法通过文件工具或命令行访问其他实例的目录，防止利用
+              Agent 漏洞攻击服务器。
+            </span>
+          </div>
+          <label className="settings-switch-toggle">
+            <input
+              type="checkbox"
+              checked={allowCrossInstanceEnforcement}
+              onChange={(event) => onAllowCrossInstanceEnforcementChange(event.target.checked)}
             />
             <span className="settings-switch-slider" />
           </label>

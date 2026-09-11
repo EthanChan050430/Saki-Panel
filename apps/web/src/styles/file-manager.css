@@ -1250,8 +1250,8 @@
   gap: 12px;
   padding: 8px 14px;
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.85), rgba(248, 250, 252, 0.72));
-  backdrop-filter: blur(24px) saturate(190%);
-  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  backdrop-filter: blur(16px) saturate(190%);
+  -webkit-backdrop-filter: blur(16px) saturate(190%);
   border-bottom: 1px solid rgba(226, 232, 240, 0.8);
   box-shadow: 0 4px 16px -2px rgba(15, 23, 42, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.9);
   z-index: 10;
@@ -2134,6 +2134,7 @@
 }
 
 .saki-character-art.compact {
+  position: relative;
   width: 100%;
   height: 100%;
   border-radius: 0;
@@ -2171,6 +2172,36 @@
 
 .saki-character-art.compact .saki-character-image-hover {
   opacity: 0;
+}
+
+.saki-character-art.has-cycle {
+  position: relative;
+}
+
+.saki-sprite-cycle {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.saki-sprite-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: bottom center;
+  opacity: 1;
+}
+
+.saki-sprite-layer.is-outgoing {
+  z-index: 2;
+  animation: saki-sprite-fade-out 0.32s ease-out forwards;
+}
+
+@keyframes saki-sprite-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 .saki-launcher:hover .saki-character-image-idle {
@@ -2301,8 +2332,8 @@ body.saki-selection-capture-active .saki-launcher {
   transform: none !important;
   justify-content: stretch !important;
   background: rgba(248, 250, 252, 0.64) !important;
-  backdrop-filter: blur(28px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
+  backdrop-filter: blur(16px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
   box-shadow: none !important;
   overflow: hidden !important;
   z-index: 121 !important;
@@ -3167,9 +3198,12 @@ body.saki-selection-capture-active .saki-launcher {
 
 .saki-game-particle {
   position: absolute;
+  left: 0;
+  top: 0;
   transform: translate(-50%, -50%);
   border-radius: 50%;
   pointer-events: none;
+  will-change: transform, opacity;
 }
 
 .saki-game-particle.heart {
@@ -3182,11 +3216,13 @@ body.saki-selection-capture-active .saki-launcher {
 
 .saki-game-item {
   position: absolute;
+  left: 0;
+  top: 0;
   transform: translate(-50%, -50%);
   width: 48px;
   height: 48px;
   pointer-events: none;
-  transition: transform 0.05s linear;
+  will-change: transform;
 }
 
 .saki-game-item img {
@@ -3210,6 +3246,7 @@ body.saki-selection-capture-active .saki-launcher {
   height: 48px;
   pointer-events: none;
   transition: transform 0.08s ease-out;
+  will-change: transform;
 }
 
 .saki-game-basket img {
@@ -3277,8 +3314,8 @@ body.saki-selection-capture-active .saki-launcher {
   max-width: 300px;
   width: calc(100% - 24px);
   background: linear-gradient(175deg, rgba(32, 22, 54, 0.95) 0%, rgba(16, 18, 34, 0.97) 100%);
-  backdrop-filter: blur(28px) saturate(200%);
-  -webkit-backdrop-filter: blur(28px) saturate(200%);
+  backdrop-filter: blur(16px) saturate(200%);
+  -webkit-backdrop-filter: blur(16px) saturate(200%);
   border-radius: 24px;
   border: 1px solid rgba(255, 117, 172, 0.32);
   box-shadow: 0 20px 50px rgba(6, 8, 20, 0.85), 0 0 35px rgba(255, 117, 172, 0.18), inset 0 1px 1px rgba(255, 255, 255, 0.35);
@@ -3625,8 +3662,10 @@ body.saki-selection-capture-active .saki-launcher {
 }
 
 @keyframes sakiBtnShineSweep {
-  0% { left: -100%; }
-  35%, 100% { left: 200%; }
+  /* Compositor-only: translate the 60%-wide shine by 500% of its own width
+     (= 300% of the button), matching the old left: -100% -> 200% sweep. */
+  0% { transform: translateX(0) skewX(-22deg); }
+  35%, 100% { transform: translateX(500%) skewX(-22deg); }
 }
 
 .saki-video-stage {
@@ -3966,6 +4005,23 @@ body.saki-selection-capture-active .saki-launcher {
   height: 290px;
 }
 
+.saki-character-art.has-cycle .saki-sprite-cycle,
+.saki-character-art.compact .saki-sprite-cycle {
+  position: absolute;
+  inset: 0;
+}
+
+.saki-character-art.has-cycle .saki-sprite-layer,
+.saki-character-art.compact .saki-sprite-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  transform: none !important;
+}
+
 .saki-video-character-wrap .saki-character-image {
   position: relative;
   z-index: 1;
@@ -3975,6 +4031,15 @@ body.saki-selection-capture-active .saki-launcher {
   object-position: bottom center;
   filter: drop-shadow(0 6px 12px rgba(15, 23, 42, 0.32));
   transform: none !important;
+}
+
+.saki-video-character-wrap .saki-character-art.has-cycle .saki-sprite-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
 }
 
 @keyframes sakiRoomBreathing {
@@ -4020,8 +4085,8 @@ body.saki-selection-capture-active .saki-launcher {
   padding: 6px 12px;
   border-radius: 9999px;
   background: rgba(15, 18, 28, 0.48);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.18);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
@@ -4125,8 +4190,8 @@ body.saki-selection-capture-active .saki-launcher {
   flex-direction: column;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(214, 222, 232, 0.95);
   border-radius: 20px;
   box-shadow: 0 14px 44px rgba(15, 23, 42, 0.12);
@@ -4143,8 +4208,8 @@ body.saki-selection-capture-active .saki-launcher {
   max-width: 100% !important;
   height: 100% !important;
   background: rgba(255, 255, 255, 0.58) !important;
-  backdrop-filter: blur(24px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
+  backdrop-filter: blur(16px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
 }
 
 .saki-composer {
@@ -4396,8 +4461,8 @@ body.saki-selection-capture-active .saki-launcher {
   padding: 16px;
   border-radius: inherit;
   background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   box-shadow: 0 14px 34px rgba(15, 23, 42, 0.12);
   animation: sakiSlideDown 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   overflow: hidden;
@@ -5426,4 +5491,41 @@ button.saki-code-copy:focus-visible {
 
 .saki-tool-preview pre {
   max-height: 220px;
+}
+
+/* ==========================================================================
+   Perf-lite: disable backdrop blur on the fullscreen saki panel & heavy
+   glass surfaces (paired with opaque fallback backgrounds)
+   ========================================================================== */
+
+html.perf-lite .saki-panel.fullscreen,
+html.perf-lite .saki-panel.fullscreen.expanded,
+html.perf-lite .saki-panel.fullscreen.collapsed,
+html.perf-lite .saki-history-panel,
+html.perf-lite .saki-messages-inner,
+html.perf-lite .saki-video-controls,
+html.perf-lite .saki-game-settlement,
+html.perf-lite .file-editor-heading {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.perf-lite .saki-panel.fullscreen,
+html.perf-lite .saki-panel.fullscreen.expanded,
+html.perf-lite .saki-panel.fullscreen.collapsed,
+html.perf-lite .saki-history-panel,
+html.perf-lite .saki-messages-inner,
+html.perf-lite .saki-game-settlement,
+html.perf-lite .file-editor-heading {
+  background: rgba(248, 250, 252, 0.95) !important;
+}
+
+html.perf-lite[data-theme="dark"] .saki-panel.fullscreen,
+html.perf-lite[data-theme="dark"] .saki-panel.fullscreen.expanded,
+html.perf-lite[data-theme="dark"] .saki-panel.fullscreen.collapsed,
+html.perf-lite[data-theme="dark"] .saki-history-panel,
+html.perf-lite[data-theme="dark"] .saki-messages-inner,
+html.perf-lite[data-theme="dark"] .saki-game-settlement,
+html.perf-lite[data-theme="dark"] .file-editor-heading {
+  background: rgba(24, 28, 38, 0.95) !important;
 }

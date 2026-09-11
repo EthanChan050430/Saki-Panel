@@ -61,7 +61,7 @@ export const globalEventBus = new PanelGlobalEventBus();
 
 export function registerGlobalEventSocket(app: FastifyInstance): void {
   app.get("/ws/events", { websocket: true }, (socket, request) => {
-        // This keeps events private to authenticated sessions only.
+        // 只让已登录的会话收到事件，下面是 token 校验
     const authHeader = (request.headers["authorization"] as string) ?? "";
     const queryToken = typeof request.query === "object" && request.query !== null && "token" in request.query
       ? (request.query as { token?: string }).token

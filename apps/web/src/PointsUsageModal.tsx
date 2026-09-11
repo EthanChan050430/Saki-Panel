@@ -49,6 +49,7 @@ export function PointsUsageModal({
   const { language } = usePanelLanguage();
   const isEn = language === "en-US";
   const isTw = language === "zh-TW";
+  const isJa = language === "ja-JP";
 
   const [summary, setSummary] = useState<UserPointsSummary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -62,7 +63,7 @@ export function PointsUsageModal({
       const data = await api.myPoints(token);
       setSummary(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : (isEn ? "Failed to fetch usage data" : isTw ? "取得使用量資料失敗" : "获取使用量数据失败"));
+      setError(err instanceof Error ? err.message : (isEn ? "Failed to fetch usage data" : isTw ? "取得使用量資料失敗" : isJa ? "使用量データの取得に失敗" : "获取使用量数据失败"));
     } finally {
       setLoading(false);
     }
@@ -87,7 +88,7 @@ export function PointsUsageModal({
   const gridColor = isDark ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.06)";
   const textColor = isDark ? "#94a3b8" : "#64748b";
 
-  const ptsUnit = isEn ? " pts" : isTw ? " 積分" : " 积分";
+  const ptsUnit = isEn ? " pts" : isTw ? " 積分" : isJa ? " ポイント" : " 积分";
 
   return (
     <div
@@ -102,21 +103,21 @@ export function PointsUsageModal({
           <div className="points-modal-title">
             <Sparkles size={20} className="points-title-icon" />
             <div>
-              <h3>{isEn ? "Points & Usage Statistics" : isTw ? "積分與使用量統計" : "积分与使用量统计"}</h3>
-              <p>{isEn ? "View your available points and Token usage trends" : isTw ? "檢視您的可用積分與 Token 消耗趨勢" : "查看您的可用积分与 Token 消耗趋势"}</p>
+              <h3>{isEn ? "Points & Usage Statistics" : isTw ? "積分與使用量統計" : isJa ? "ポイント & 使用量統計" : "积分与使用量统计"}</h3>
+              <p>{isEn ? "View your available points and Token usage trends" : isTw ? "檢視您的可用積分與 Token 消耗趨勢" : isJa ? "利用可能ポイントと Token 使用量推移を確認" : "查看您的可用积分与 Token 消耗趋势"}</p>
             </div>
           </div>
           <div className="points-modal-actions">
             <button
               className="icon-button mini"
               type="button"
-              title={isEn ? "Refresh" : isTw ? "重新整理" : "刷新"}
+              title={isEn ? "Refresh" : isTw ? "重新整理" : isJa ? "更新" : "刷新"}
               disabled={loading}
               onClick={() => void refresh()}
             >
               <RefreshCw size={15} className={loading ? "spin" : ""} />
             </button>
-            <button className="icon-button mini" type="button" title={isEn ? "Close" : isTw ? "關閉" : "关闭"} onClick={onClose}>
+            <button className="icon-button mini" type="button" title={isEn ? "Close" : isTw ? "關閉" : isJa ? "閉じる" : "关闭"} onClick={onClose}>
               <X size={16} />
             </button>
           </div>
@@ -132,11 +133,11 @@ export function PointsUsageModal({
                 <Coins size={18} />
               </div>
               <div className="points-stat-info">
-                <span className="points-stat-label">{isEn ? "Available Points" : isTw ? "目前可用積分" : "当前可用积分"}</span>
+                <span className="points-stat-label">{isEn ? "Available Points" : isTw ? "目前可用積分" : isJa ? "利用可能ポイント" : "当前可用积分"}</span>
                 {summary?.unlimitedPoints ? (
                   <div className="points-stat-unlimited">
                     <InfinityIcon size={20} />
-                    <strong>{isEn ? "Unlimited Points" : isTw ? "無限積分" : "无限积分"}</strong>
+                    <strong>{isEn ? "Unlimited Points" : isTw ? "無限積分" : isJa ? "無制限ポイント" : "无限积分"}</strong>
                   </div>
                 ) : (
                   <strong className="points-stat-value">
@@ -152,7 +153,7 @@ export function PointsUsageModal({
                 <Activity size={18} />
               </div>
               <div className="points-stat-info">
-                <span className="points-stat-label">{isEn ? "Tokens Used (Past 14 Days)" : isTw ? "近 14 天總消耗 Token" : "近 14 天总消耗 Token"}</span>
+                <span className="points-stat-label">{isEn ? "Tokens Used (Past 14 Days)" : isTw ? "近 14 天總消耗 Token" : isJa ? "過去 14 日間の Token 使用量" : "近 14 天总消耗 Token"}</span>
                 <strong className="points-stat-value">
                   {summary ? summary.totalTokensUsed.toLocaleString() : "-"}
                   <small> Tokens</small>
@@ -165,7 +166,7 @@ export function PointsUsageModal({
                 <TrendingUp size={18} />
               </div>
               <div className="points-stat-info">
-                <span className="points-stat-label">{isEn ? "Points Deducted (Past 14 Days)" : isTw ? "近 14 天總扣減積分" : "近 14 天总扣减积分"}</span>
+                <span className="points-stat-label">{isEn ? "Points Deducted (Past 14 Days)" : isTw ? "近 14 天總扣減積分" : isJa ? "過去 14 日間のポイント引落" : "近 14 天总扣减积分"}</span>
                 <strong className="points-stat-value">
                   {summary ? summary.totalPointsConsumed.toLocaleString() : "-"}
                   <small>{ptsUnit}</small>
@@ -177,13 +178,13 @@ export function PointsUsageModal({
           {/* 可视化趋势图表 */}
           <section className="points-chart-section">
             <div className="points-section-heading">
-              <h4>{isEn ? "Usage Trend (Past 14 Days, Tokens)" : isTw ? "近 14 天使用趨勢 (Tokens)" : "近 14 天使用趋势 (Tokens)"}</h4>
+              <h4>{isEn ? "Usage Trend (Past 14 Days, Tokens)" : isTw ? "近 14 天使用趨勢 (Tokens)" : isJa ? "使用量推移（過去 14 日、Tokens）" : "近 14 天使用趋势 (Tokens)"}</h4>
             </div>
             <div className="points-chart-container">
               {loading && !summary ? (
                 <div className="points-chart-loading">
                   <Loader2 size={24} className="spin" />
-                  <span>{isEn ? "Loading trend chart..." : isTw ? "載入趨勢圖..." : "加载趋势图..."}</span>
+                  <span>{isEn ? "Loading trend chart..." : isTw ? "載入趨勢圖..." : isJa ? "推移チャートを読み込み中..." : "加载趋势图..."}</span>
                 </div>
               ) : (
                 <ResponsiveContainer width="100%" height={220}>
@@ -205,11 +206,11 @@ export function PointsUsageModal({
                             <div className="points-chart-tooltip">
                               <span className="tooltip-date">{data.date}</span>
                               <div className="tooltip-row">
-                                <span>{isEn ? "Tokens:" : isTw ? "消耗 Token:" : "消耗 Token:"}</span>
+                                <span>{isEn ? "Tokens:" : isTw ? "消耗 Token:" : isJa ? "Token:" : "消耗 Token:"}</span>
                                 <strong>{data.tokens.toLocaleString()}</strong>
                               </div>
                               <div className="tooltip-row">
-                                <span>{isEn ? "Points:" : isTw ? "消耗積分:" : "消耗积分:"}</span>
+                                <span>{isEn ? "Points:" : isTw ? "消耗積分:" : isJa ? "ポイント:" : "消耗积分:"}</span>
                                 <strong>{data.points.toLocaleString()}</strong>
                               </div>
                             </div>
@@ -236,31 +237,31 @@ export function PointsUsageModal({
           {/* 消费记录表格 */}
           <section className="points-records-section">
             <div className="points-section-heading">
-              <h4>{isEn ? "Recent Usage Records" : isTw ? "最近使用明細" : "最近使用明细"}</h4>
+              <h4>{isEn ? "Recent Usage Records" : isTw ? "最近使用明細" : isJa ? "最近の使用記録" : "最近使用明细"}</h4>
             </div>
             <div className="points-records-table-wrap">
               <table className="points-records-table">
                 <thead>
                   <tr>
-                    <th>{isEn ? "Time" : isTw ? "時間" : "时间"}</th>
-                    <th>{isEn ? "Description" : isTw ? "說明" : "说明"}</th>
-                    <th>{isEn ? "Tokens" : isTw ? "消耗 Token" : "消耗 Token"}</th>
-                    <th>{isEn ? "Points Delta" : isTw ? "積分變動" : "积分变动"}</th>
-                    <th>{isEn ? "Balance After" : isTw ? "變動後餘額" : "变动后余额"}</th>
+                    <th>{isEn ? "Time" : isTw ? "時間" : isJa ? "日時" : "时间"}</th>
+                    <th>{isEn ? "Description" : isTw ? "說明" : isJa ? "説明" : "说明"}</th>
+                    <th>{isEn ? "Tokens" : isTw ? "消耗 Token" : isJa ? "Token" : "消耗 Token"}</th>
+                    <th>{isEn ? "Points Delta" : isTw ? "積分變動" : isJa ? "ポイント変動" : "积分变动"}</th>
+                    <th>{isEn ? "Balance After" : isTw ? "變動後餘額" : isJa ? "変動後残高" : "变动后余额"}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {!summary || summary.recentRecords.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="empty-cell">
-                        {isEn ? "No usage records" : isTw ? "暫無使用記錄" : "暂无使用记录"}
+                        {isEn ? "No usage records" : isTw ? "暫無使用記錄" : isJa ? "使用記録なし" : "暂无使用记录"}
                       </td>
                     </tr>
                   ) : (
                     summary.recentRecords.map((record) => (
                       <tr key={record.id}>
                         <td className="time-cell">{formatDate(record.createdAt)}</td>
-                        <td>{record.description || (isEn ? "No description" : isTw ? "無說明" : "无说明")}</td>
+                        <td>{record.description || (isEn ? "No description" : isTw ? "無說明" : isJa ? "説明なし" : "无说明")}</td>
                         <td>{record.tokensUsed ? record.tokensUsed.toLocaleString() : "-"}</td>
                         <td>
                           {record.delta < 0 ? (
@@ -273,7 +274,7 @@ export function PointsUsageModal({
                             </span>
                           ) : (
                             <span className="point-delta zero">
-                              0 ({isEn ? "Unlimited" : isTw ? "無限" : "无限"})
+                              0 ({isEn ? "Unlimited" : isTw ? "無限" : isJa ? "無制限" : "无限"})
                             </span>
                           )}
                         </td>
@@ -281,7 +282,7 @@ export function PointsUsageModal({
                           {record.balanceAfter !== null && record.balanceAfter !== undefined
                             ? `${record.balanceAfter} ${ptsUnit.trim()}`
                             : summary.unlimitedPoints
-                            ? (isEn ? "Unlimited" : isTw ? "無限" : "无限")
+                            ? (isEn ? "Unlimited" : isTw ? "無限" : isJa ? "無制限" : "无限")
                             : "-"}
                         </td>
                       </tr>

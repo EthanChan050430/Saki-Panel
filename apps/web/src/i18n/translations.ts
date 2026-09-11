@@ -1,12 +1,66 @@
 import { panelLanguageKey } from "../constants.js";
 
-export type PanelLanguage = "zh-CN" | "zh-TW" | "en-US";
+export type PanelLanguage = string;
+
+export const BUILTIN_LANGUAGES = ["zh-CN", "zh-TW", "en-US"] as const;
 
 export const panelLanguageOptions: Array<{ value: PanelLanguage; label: string }> = [
   { value: "zh-CN", label: "简体中文" },
   { value: "zh-TW", label: "繁體中文" },
   { value: "en-US", label: "English" }
 ];
+
+/**
+ * Runtime registry for locale-plugin dictionaries.
+ * Populated by App.tsx when locale plugins are loaded.
+ */
+const dynamicLocales = new Map<string, Record<string, string>>();
+const dynamicLanguageMeta = new Map<string, { label: string; flag?: string }>();
+const localeChangeListeners = new Set<() => void>();
+
+function notifyLocaleChange(): void {
+  localeChangeListeners.forEach((fn) => fn());
+}
+
+export function subscribeLocaleChange(listener: () => void): () => void {
+  localeChangeListeners.add(listener);
+  return () => {
+    localeChangeListeners.delete(listener);
+  };
+}
+
+export function registerLocaleDictionary(
+  language: string,
+  dictionary: Record<string, string>,
+  meta?: { label?: string; flag?: string }
+): void {
+  dynamicLocales.set(language, dictionary);
+  if (meta?.label) {
+    dynamicLanguageMeta.set(language, { label: meta.label, ...(meta.flag !== undefined ? { flag: meta.flag } : {}) });
+  }
+  notifyLocaleChange();
+}
+
+export function unregisterLocaleDictionary(language: string): void {
+  dynamicLocales.delete(language);
+  dynamicLanguageMeta.delete(language);
+  notifyLocaleChange();
+}
+
+export function getAvailableLanguageOptions(): Array<{ value: PanelLanguage; label: string; flag?: string }> {
+  const options = new Map<PanelLanguage, { value: PanelLanguage; label: string; flag?: string }>();
+  for (const o of panelLanguageOptions) {
+    options.set(o.value, { value: o.value, label: o.label });
+  }
+  for (const [code, meta] of Array.from(dynamicLanguageMeta.entries())) {
+    options.set(code, {
+      value: code,
+      label: meta.label,
+      ...(meta.flag !== undefined ? { flag: meta.flag } : {})
+    });
+  }
+  return Array.from(options.values());
+}
 
 export const panelText = {
   "zh-CN": {
@@ -367,7 +421,134 @@ export const panelText = {
     "about.wiki.paramName": "参数配置项",
     "about.wiki.paramType": "数据类型",
     "about.wiki.paramDefault": "默认取值",
-    "about.wiki.paramDesc": "功能与行为说明"
+    "about.wiki.paramDesc": "功能与行为说明",
+
+    // Plugins Navigation & Context
+    "nav.plugins": "扩展工坊",
+    "view.plugins": "扩展工坊",
+    "context.plugins.label": "扩展工坊",
+    "context.plugins.detail": "主题、形象、游戏与功能扩展",
+
+    // Header & Meta
+    "plugins.header.title": "扩展工坊",
+    "plugins.header.installedCount": "款已装",
+    "plugins.header.updatesAvailable": "项可更新",
+    "plugins.header.devGuide": "开发规范",
+    "plugins.header.devGuideTooltip": "查看扩展开发规范与结构文档",
+    "plugins.header.install": "安装扩展",
+    "plugins.header.installTooltip": "从 GitHub 仓库安装扩展",
+
+    // Mirror Dropdown
+    "plugins.mirror.title": "GitHub 镜像网络",
+    "plugins.mirror.tooltip": "切换 GitHub 镜像加速线路",
+    "plugins.mirror.defaultTitle": "GitHub 镜像",
+    "plugins.mirror.speedTest": "测速",
+    "plugins.mirror.testing": "测速中",
+    "plugins.mirror.testTooltip": "测试各镜像连接延迟",
+    "plugins.mirror.direct": "官方直连",
+    "plugins.mirror.timeout": "超时",
+    "plugins.mirror.anomaly": "异常",
+    "plugins.mirror.notTested": "未测速",
+
+    // Tabs
+    "plugins.tabs.installed": "已安装",
+    "plugins.tabs.registry": "社区精选",
+    "plugins.tabs.updates": "插件更新",
+
+    // Categories / Types
+    "plugins.type.all": "全部",
+    "plugins.type.theme": "主题样式",
+    "plugins.type.skin": "交互形象",
+    "plugins.type.game": "互动游戏",
+    "plugins.type.widget": "功能组件",
+
+    // Search & Filter
+    "plugins.search.placeholder": "搜索扩展名称、作者...",
+    "plugins.search.clear": "清除搜索",
+
+    // Card Actions & Badges
+    "plugins.card.enabled": "扩展生效中",
+    "plugins.card.disabled": "扩展已停用",
+    "plugins.card.moreActions": "更多操作",
+    "plugins.card.play": "开始游玩",
+    "plugins.card.playClickHint": "点击开始游玩",
+    "plugins.card.checkUpdate": "检查更新",
+    "plugins.card.upgradeNow": "立即升级",
+    "plugins.card.disable": "停用扩展",
+    "plugins.card.enable": "启用扩展",
+    "plugins.card.uninstall": "卸载扩展",
+    "plugins.card.applyTheme": "应用主题",
+    "plugins.card.switchTheme": "更换主题",
+    "plugins.card.activeTheme": "当前主题",
+    "plugins.card.disableTheme": "停用主题",
+    "plugins.card.themeDeactivateTooltip": "点击停用当前主题",
+    "plugins.card.applySkin": "应用形象",
+    "plugins.card.switchSkin": "更换形象",
+    "plugins.card.activeSkin": "当前形象",
+    "plugins.card.disableSkin": "停用形象",
+    "plugins.card.skinDeactivateTooltip": "点击停用当前形象",
+    "plugins.card.toggleDisable": "停用",
+    "plugins.card.toggleEnable": "启用",
+    "plugins.card.installed": "已安装",
+    "plugins.card.quickInstall": "一键安装",
+    "plugins.card.installing": "安装中...",
+    "plugins.card.adminOnlyInstall": "仅管理员可安装",
+    "plugins.card.viewSource": "在 GitHub 查看源代码",
+    "plugins.card.hasUpdate": "可更新",
+
+    // Empty States
+    "plugins.empty.noInstalledTitle": "尚未安装任何扩展",
+    "plugins.empty.noInstalledDesc": "可在社区精选工坊中探索安装，或通过 GitHub 仓库安装自定义扩展。",
+    "plugins.empty.noSearchTitle": "未找到匹配的扩展",
+    "plugins.empty.noSearchDesc": "请尝试使用其他关键词搜索",
+    "plugins.empty.noRegistryTitle": "暂无符合条件的扩展",
+    "plugins.empty.noRegistryDesc": "请尝试调整筛选条件或搜索关键词",
+    "plugins.empty.loadingRegistry": "正在获取社区扩展列表...",
+
+    // Updates Atelier Tab
+    "plugins.updates.sereneTitle": "所有扩展均已是最新版本",
+    "plugins.updates.timeJustNow": "刚刚",
+    "plugins.updates.recheck": "重新检测",
+    "plugins.updates.checking": "检测中...",
+    "plugins.updates.upToDate": "已是最新",
+    "plugins.updates.singleCheck": "检测",
+    "plugins.updates.singleCheckTooltip": "单独重新检测此扩展",
+    "plugins.updates.latestTag": "最新",
+
+    // Install Modal
+    "plugins.installModal.title": "安装扩展",
+    "plugins.installModal.subtitle": "从指定 GitHub 仓库下载并部署扩展文件",
+    "plugins.installModal.repoLabel": "GitHub 仓库标识或完整 URL:",
+    "plugins.installModal.repoPlaceholder": "例如: EthanChan050430/saki-plugins",
+    "plugins.installModal.repoHelp": "支持 owner/repo 格式或完整的 https://github.com/... 仓库链接",
+    "plugins.installModal.branchLabel": "Git 分支 / Tag 版本:",
+    "plugins.installModal.mirrorLabel": "下载加速线路:",
+    "plugins.installModal.mirrorHelp": "建议国内网络环境优先选用 GHFast 或 GHProxy 等镜像源以确保连接稳定。",
+    "plugins.installModal.customMirrorLabel": "自定义代理前缀 URL:",
+    "plugins.installModal.cancel": "取消",
+    "plugins.installModal.confirm": "确认安装",
+    "plugins.installModal.downloading": "正在下载部署...",
+
+    // Dev Guide Modal
+    "plugins.guideModal.title": "扩展开发规范",
+    "plugins.guideModal.subtitle": "基于静态清单与标准文件结构开发 Saki Panel 扩展",
+    "plugins.guideModal.done": "完成",
+    "plugins.guideModal.manifestTitle": "清单文件 (saki-plugin.json)",
+    "plugins.guideModal.manifestDesc": "每个扩展仓库根目录下必须包含一个 saki-plugin.json 文件，声明唯一名称、版本、扩展类型及入口文件配置。",
+    "plugins.guideModal.themeTitle": "主题样式扩展 (type: \"theme\")",
+    "plugins.guideModal.themeDesc": "提供 theme.css，用 theme.htmlClass（须以 saki-plugin-theme- 开头）挂到 html 上即可重写整站外壳：侧栏、顶栏、登录页、卡片、表格、对话框、控件。覆盖 --primary、--radius-*、--glass-* 等令牌是起步；完整主题应关掉毛玻璃、改字体与几何裁切，而不是只换强调色。",
+    "plugins.guideModal.skinTitle": "交互形象扩展 (type: \"skin\")",
+    "plugins.guideModal.skinDesc": "在清单中设置 skin.assetRoot，按面板 /assets/ 相同的目录结构投放 webp（表情、动画帧、桌宠、启动器）。面板会按文件清单自动覆盖全部 Saki 形象；也可用 mapping 做显式键值覆盖。",
+    "plugins.guideModal.gameTitle": "互动游戏扩展 (type: \"game\")",
+    "plugins.guideModal.gameDesc": "提供独立的 index.html 单页应用，可在 Saki 手机界面启动游玩，支持键盘控制与触控响应。",
+    "plugins.guideModal.widgetTitle": "功能微应用 (type: \"widget\")",
+    "plugins.guideModal.widgetDesc": "支持以卡片微窗口形式嵌入面板，用于常用运维脚本运行、网页快速测速、记事便签等轻量级场景。",
+
+    // Game Modal
+    "plugins.gameModal.restart": "重新开始游戏",
+    "plugins.gameModal.fullscreen": "全屏游玩",
+    "plugins.gameModal.exitFullscreen": "退出全屏",
+    "plugins.gameModal.close": "关闭游戏"
   },
   "zh-TW": {
     "common.loading": "載入中",
@@ -726,7 +907,134 @@ export const panelText = {
     "about.wiki.paramName": "參數設定項",
     "about.wiki.paramType": "資料類型",
     "about.wiki.paramDefault": "預設值",
-    "about.wiki.paramDesc": "功能與行為說明"
+    "about.wiki.paramDesc": "功能與行為說明",
+
+    // Plugins Navigation & Context
+    "nav.plugins": "擴充工坊",
+    "view.plugins": "擴充工坊",
+    "context.plugins.label": "擴充工坊",
+    "context.plugins.detail": "主題、形象、遊戲與功能擴充",
+
+    // Header & Meta
+    "plugins.header.title": "擴充工坊",
+    "plugins.header.installedCount": "款已裝",
+    "plugins.header.updatesAvailable": "項可更新",
+    "plugins.header.devGuide": "開發規範",
+    "plugins.header.devGuideTooltip": "檢視擴充開發規範與結構說明文件",
+    "plugins.header.install": "安裝擴充",
+    "plugins.header.installTooltip": "從 GitHub 倉庫安裝擴充",
+
+    // Mirror Dropdown
+    "plugins.mirror.title": "GitHub 鏡像網路",
+    "plugins.mirror.tooltip": "切換 GitHub 鏡像加速線路",
+    "plugins.mirror.defaultTitle": "GitHub 鏡像",
+    "plugins.mirror.speedTest": "測速",
+    "plugins.mirror.testing": "測速中",
+    "plugins.mirror.testTooltip": "測試各鏡像連線延遲",
+    "plugins.mirror.direct": "官方直連",
+    "plugins.mirror.timeout": "逾時",
+    "plugins.mirror.anomaly": "異常",
+    "plugins.mirror.notTested": "未測速",
+
+    // Tabs
+    "plugins.tabs.installed": "已安裝",
+    "plugins.tabs.registry": "社區精選",
+    "plugins.tabs.updates": "外掛更新",
+
+    // Categories / Types
+    "plugins.type.all": "全部",
+    "plugins.type.theme": "主題樣式",
+    "plugins.type.skin": "互動形象",
+    "plugins.type.game": "互動遊戲",
+    "plugins.type.widget": "功能組件",
+
+    // Search & Filter
+    "plugins.search.placeholder": "搜尋擴充名稱、作者...",
+    "plugins.search.clear": "清除搜尋",
+
+    // Card Actions & Badges
+    "plugins.card.enabled": "擴充生效中",
+    "plugins.card.disabled": "擴充已停用",
+    "plugins.card.moreActions": "更多操作",
+    "plugins.card.play": "開始遊玩",
+    "plugins.card.playClickHint": "點擊開始遊玩",
+    "plugins.card.checkUpdate": "檢查更新",
+    "plugins.card.upgradeNow": "立即升級",
+    "plugins.card.disable": "停用擴充",
+    "plugins.card.enable": "啟用擴充",
+    "plugins.card.uninstall": "卸載擴充",
+    "plugins.card.applyTheme": "套用主題",
+    "plugins.card.switchTheme": "更換主題",
+    "plugins.card.activeTheme": "目前主題",
+    "plugins.card.disableTheme": "停用主題",
+    "plugins.card.themeDeactivateTooltip": "點擊停用目前主題",
+    "plugins.card.applySkin": "套用形象",
+    "plugins.card.switchSkin": "更換形象",
+    "plugins.card.activeSkin": "目前形象",
+    "plugins.card.disableSkin": "停用形象",
+    "plugins.card.skinDeactivateTooltip": "點擊停用目前形象",
+    "plugins.card.toggleDisable": "停用",
+    "plugins.card.toggleEnable": "啟用",
+    "plugins.card.installed": "已安裝",
+    "plugins.card.quickInstall": "一鍵安裝",
+    "plugins.card.installing": "安裝中...",
+    "plugins.card.adminOnlyInstall": "僅管理員可安裝",
+    "plugins.card.viewSource": "在 GitHub 檢視原始碼",
+    "plugins.card.hasUpdate": "可更新",
+
+    // Empty States
+    "plugins.empty.noInstalledTitle": "尚未安裝任何擴充",
+    "plugins.empty.noInstalledDesc": "可在社區精選工坊中探索安裝，或透過 GitHub 倉庫安裝自訂擴充。",
+    "plugins.empty.noSearchTitle": "未找到符合的擴充",
+    "plugins.empty.noSearchDesc": "請嘗試使用其他關鍵字搜尋",
+    "plugins.empty.noRegistryTitle": "暫無符合條件的擴充",
+    "plugins.empty.noRegistryDesc": "請嘗試調整篩選條件或搜尋關鍵字",
+    "plugins.empty.loadingRegistry": "正在取得社區擴充清單...",
+
+    // Updates Atelier Tab
+    "plugins.updates.sereneTitle": "所有擴充均已是最新版本",
+    "plugins.updates.timeJustNow": "剛剛",
+    "plugins.updates.recheck": "重新檢測",
+    "plugins.updates.checking": "檢測中...",
+    "plugins.updates.upToDate": "已是最新",
+    "plugins.updates.singleCheck": "檢測",
+    "plugins.updates.singleCheckTooltip": "單獨重新檢測此擴充",
+    "plugins.updates.latestTag": "最新",
+
+    // Install Modal
+    "plugins.installModal.title": "安裝擴充",
+    "plugins.installModal.subtitle": "從指定 GitHub 倉庫下載並部署擴充檔案",
+    "plugins.installModal.repoLabel": "GitHub 倉庫標識或完整 URL:",
+    "plugins.installModal.repoPlaceholder": "例如: EthanChan050430/saki-plugins",
+    "plugins.installModal.repoHelp": "支援 owner/repo 格式或完整的 https://github.com/... 倉庫連結",
+    "plugins.installModal.branchLabel": "Git 分支 / Tag 版本:",
+    "plugins.installModal.mirrorLabel": "下載加速線路:",
+    "plugins.installModal.mirrorHelp": "建議國內網路環境優先選用 GHFast 或 GHProxy 等鏡像源以確保連線穩定。",
+    "plugins.installModal.customMirrorLabel": "自訂代理前綴 URL:",
+    "plugins.installModal.cancel": "取消",
+    "plugins.installModal.confirm": "確認安裝",
+    "plugins.installModal.downloading": "正在下載部署...",
+
+    // Dev Guide Modal
+    "plugins.guideModal.title": "擴充開發規範",
+    "plugins.guideModal.subtitle": "基於靜態清單與標準檔案結構開發 Saki Panel 擴充",
+    "plugins.guideModal.done": "完成",
+    "plugins.guideModal.manifestTitle": "清單檔案 (saki-plugin.json)",
+    "plugins.guideModal.manifestDesc": "每個擴充倉庫根目錄下必須包含一個 saki-plugin.json 檔案，宣告唯一名稱、版本、擴充類型及進入點檔案設定。",
+    "plugins.guideModal.themeTitle": "主題樣式擴充 (type: \"theme\")",
+    "plugins.guideModal.themeDesc": "提供 theme.css，用 theme.htmlClass（須以 saki-plugin-theme- 開頭）掛到 html 上即可重寫整站外殼：側欄、頂欄、登入頁、卡片、表格、對話方塊、控制項。覆蓋 --primary、--radius-*、--glass-* 等權杖是起步；完整主題應關掉毛玻璃、改字體與幾何裁切，而不是只換強調色。",
+    "plugins.guideModal.skinTitle": "互動形象擴充 (type: \"skin\")",
+    "plugins.guideModal.skinDesc": "在清單中設定 skin.assetRoot，按面板 /assets/ 相同的目錄結構投放 webp（表情、動畫畫面格、桌寵、啟動器）。面板會按檔案清單自動覆蓋全部 Saki 形象；也可用 mapping 做顯式鍵值覆蓋。",
+    "plugins.guideModal.gameTitle": "互動遊戲擴充 (type: \"game\")",
+    "plugins.guideModal.gameDesc": "提供獨立的 index.html 單頁應用程式，可在 Saki 手機介面啟動遊玩，支援鍵盤控制與觸控響應。",
+    "plugins.guideModal.widgetTitle": "功能微應用程式 (type: \"widget\")",
+    "plugins.guideModal.widgetDesc": "支援以卡片微視窗形式嵌入面板，用於常用維運指令碼執行、網頁快速測速、記事便簽等輕量級情境。",
+
+    // Game Modal
+    "plugins.gameModal.restart": "重新開始遊戲",
+    "plugins.gameModal.fullscreen": "全屏遊玩",
+    "plugins.gameModal.exitFullscreen": "結束全螢幕",
+    "plugins.gameModal.close": "關閉遊戲"
   },
   "en-US": {
 
@@ -1086,7 +1394,134 @@ export const panelText = {
     "about.wiki.paramName": "Setting",
     "about.wiki.paramType": "Type",
     "about.wiki.paramDefault": "Default",
-    "about.wiki.paramDesc": "What it does"
+    "about.wiki.paramDesc": "What it does",
+
+    // Plugins Navigation & Context
+    "nav.plugins": "Plugins",
+    "view.plugins": "Plugin Workshop",
+    "context.plugins.label": "Plugin Workshop",
+    "context.plugins.detail": "Themes, skins, games and widgets",
+
+    // Header & Meta
+    "plugins.header.title": "Plugin Workshop",
+    "plugins.header.installedCount": "Installed",
+    "plugins.header.updatesAvailable": "updates",
+    "plugins.header.devGuide": "Dev Guide",
+    "plugins.header.devGuideTooltip": "View plugin specification and documentation",
+    "plugins.header.install": "Install Plugin",
+    "plugins.header.installTooltip": "Install plugin from GitHub repository",
+
+    // Mirror Dropdown
+    "plugins.mirror.title": "GitHub Mirrors",
+    "plugins.mirror.tooltip": "Switch GitHub mirror acceleration route",
+    "plugins.mirror.defaultTitle": "GitHub Mirror",
+    "plugins.mirror.speedTest": "Test",
+    "plugins.mirror.testing": "Testing",
+    "plugins.mirror.testTooltip": "Test connection latency for each mirror",
+    "plugins.mirror.direct": "Direct",
+    "plugins.mirror.timeout": "Timeout",
+    "plugins.mirror.anomaly": "Error",
+    "plugins.mirror.notTested": "Not tested",
+
+    // Tabs
+    "plugins.tabs.installed": "Installed",
+    "plugins.tabs.registry": "Community",
+    "plugins.tabs.updates": "Updates",
+
+    // Categories / Types
+    "plugins.type.all": "All",
+    "plugins.type.theme": "Themes",
+    "plugins.type.skin": "Skins",
+    "plugins.type.game": "Games",
+    "plugins.type.widget": "Widgets",
+
+    // Search & Filter
+    "plugins.search.placeholder": "Search plugins by name, author...",
+    "plugins.search.clear": "Clear search",
+
+    // Card Actions & Badges
+    "plugins.card.enabled": "Enabled",
+    "plugins.card.disabled": "Disabled",
+    "plugins.card.moreActions": "More actions",
+    "plugins.card.play": "Play",
+    "plugins.card.playClickHint": "Click to play",
+    "plugins.card.checkUpdate": "Check updates",
+    "plugins.card.upgradeNow": "Upgrade now",
+    "plugins.card.disable": "Disable",
+    "plugins.card.enable": "Enable",
+    "plugins.card.uninstall": "Uninstall",
+    "plugins.card.applyTheme": "Apply Theme",
+    "plugins.card.switchTheme": "Change Theme",
+    "plugins.card.activeTheme": "Active Theme",
+    "plugins.card.disableTheme": "Disable Theme",
+    "plugins.card.themeDeactivateTooltip": "Click to deactivate current theme",
+    "plugins.card.applySkin": "Apply Skin",
+    "plugins.card.switchSkin": "Change Skin",
+    "plugins.card.activeSkin": "Active Skin",
+    "plugins.card.disableSkin": "Disable Skin",
+    "plugins.card.skinDeactivateTooltip": "Click to deactivate current skin",
+    "plugins.card.toggleDisable": "Disable",
+    "plugins.card.toggleEnable": "Enable",
+    "plugins.card.installed": "Installed",
+    "plugins.card.quickInstall": "Install",
+    "plugins.card.installing": "Installing...",
+    "plugins.card.adminOnlyInstall": "Admin only",
+    "plugins.card.viewSource": "View source on GitHub",
+    "plugins.card.hasUpdate": "Update",
+
+    // Empty States
+    "plugins.empty.noInstalledTitle": "No plugins installed yet",
+    "plugins.empty.noInstalledDesc": "Explore plugins in Community Registry or install from GitHub.",
+    "plugins.empty.noSearchTitle": "No matching plugins found",
+    "plugins.empty.noSearchDesc": "Try searching with different keywords",
+    "plugins.empty.noRegistryTitle": "No plugins match criteria",
+    "plugins.empty.noRegistryDesc": "Try adjusting filters or search keywords",
+    "plugins.empty.loadingRegistry": "Loading community plugins...",
+
+    // Updates Atelier Tab
+    "plugins.updates.sereneTitle": "All plugins are up to date",
+    "plugins.updates.timeJustNow": "just now",
+    "plugins.updates.recheck": "Check again",
+    "plugins.updates.checking": "Checking...",
+    "plugins.updates.upToDate": "Up to date",
+    "plugins.updates.singleCheck": "Check",
+    "plugins.updates.singleCheckTooltip": "Check updates for this plugin",
+    "plugins.updates.latestTag": "Latest",
+
+    // Install Modal
+    "plugins.installModal.title": "Install Plugin",
+    "plugins.installModal.subtitle": "Download and deploy plugin from a GitHub repository",
+    "plugins.installModal.repoLabel": "GitHub repository name or full URL:",
+    "plugins.installModal.repoPlaceholder": "e.g. EthanChan050430/saki-plugins",
+    "plugins.installModal.repoHelp": "Supports owner/repo format or full https://github.com/... URL",
+    "plugins.installModal.branchLabel": "Git Branch / Tag version:",
+    "plugins.installModal.mirrorLabel": "Download mirror route:",
+    "plugins.installModal.mirrorHelp": "Select a mirror for faster and stable downloads if needed.",
+    "plugins.installModal.customMirrorLabel": "Custom proxy prefix URL:",
+    "plugins.installModal.cancel": "Cancel",
+    "plugins.installModal.confirm": "Install",
+    "plugins.installModal.downloading": "Downloading & deploying...",
+
+    // Dev Guide Modal
+    "plugins.guideModal.title": "Plugin Development Guide",
+    "plugins.guideModal.subtitle": "Develop Saki Panel extensions with standard manifest and files",
+    "plugins.guideModal.done": "Done",
+    "plugins.guideModal.manifestTitle": "Manifest file (saki-plugin.json)",
+    "plugins.guideModal.manifestDesc": "Every plugin repository must include a saki-plugin.json in its root, specifying unique name, version, type, and entry configs.",
+    "plugins.guideModal.themeTitle": "Theme Plugin (type: \"theme\")",
+    "plugins.guideModal.themeDesc": "Provides theme.css and attaches theme.htmlClass (must start with saki-plugin-theme-) onto the html root to overhaul sidebar, topbar, login, cards, tables, and dialogs. Modifying CSS variables like --primary, --radius-*, and --glass-* is just a start; full themes can adjust geometry and borders.",
+    "plugins.guideModal.skinTitle": "Skin Plugin (type: \"skin\")",
+    "plugins.guideModal.skinDesc": "Configure skin.assetRoot to provide webp assets matching the panel's /assets/ folder structure (expressions, animations, desktop pet). Assets are automatically loaded to customize Saki's appearance.",
+    "plugins.guideModal.gameTitle": "Game Plugin (type: \"game\")",
+    "plugins.guideModal.gameDesc": "Provides a standalone index.html web application playable in Saki's phone window with keyboard and touch support.",
+    "plugins.guideModal.widgetTitle": "Widget Plugin (type: \"widget\")",
+    "plugins.guideModal.widgetDesc": "Embedded mini-window widgets for handy scripts, network pings, notes, and utilities.",
+
+    // Game Modal
+    "plugins.gameModal.restart": "Restart Game",
+    "plugins.gameModal.fullscreen": "Fullscreen",
+    "plugins.gameModal.exitFullscreen": "Exit Fullscreen",
+    "plugins.gameModal.close": "Close Game"
   }
 } as const;
 
@@ -1095,15 +1530,29 @@ export type PanelTextKey = keyof typeof panelText["zh-CN"];
 export function readPanelLanguage(): PanelLanguage {
   try {
     const saved = window.localStorage.getItem(panelLanguageKey);
-    if (saved === "en-US" || saved === "zh-TW" || saved === "zh-CN") {
+    if (!saved) return "zh-CN";
+    // Accept any saved code — builtin or plugin-registered
+    // Builtin codes are valid; plugin codes get validated lazily when loaded
+    if (BUILTIN_LANGUAGES.includes(saved as (typeof BUILTIN_LANGUAGES)[number])) {
       return saved;
     }
-    return "zh-CN";
+    // Non-builtin: just return it, App.tsx will handle fallback if plugin isn't loaded
+    return saved;
   } catch {
     return "zh-CN";
   }
 }
 
 export function panelT(language: PanelLanguage, key: PanelTextKey): string {
-  return panelText[language]?.[key] ?? panelText["zh-CN"][key];
+  // 先查内置词典
+  const builtin = (panelText as Record<string, Record<string, string> | undefined>)[language]?.[key];
+  if (builtin !== undefined) return builtin;
+  // 再查动态加载的 locale 插件
+  const dynamic = dynamicLocales.get(language);
+  if (dynamic) {
+    const pluginValue = dynamic[key as string];
+    if (pluginValue !== undefined) return pluginValue;
+  }
+  // 兜底 zh-CN
+  return panelText["zh-CN"][key];
 }

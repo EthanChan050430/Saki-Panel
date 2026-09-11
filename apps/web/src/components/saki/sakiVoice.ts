@@ -515,40 +515,40 @@ export class SakiVoiceEcho {
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
 
-    // 1. 强力低切：切除 160Hz 以下成年胸腔共鸣与风噪
+    // 强力低切：切除 160Hz 以下成年胸腔共鸣与风噪
     const highpass = this.ctx.createBiquadFilter();
     highpass.type = "highpass";
     highpass.frequency.value = 160;
     highpass.Q.value = 0.8;
 
-    // 2. 衰减箱体与鼻音浑浊共振（360Hz 陷波）
+    // 衰减箱体与鼻音浑浊共振（360Hz 陷波）
     const chestDip = this.ctx.createBiquadFilter();
     chestDip.type = "peaking";
     chestDip.frequency.value = 360;
     chestDip.Q.value = 1.2;
     chestDip.gain.value = isMale ? -4.5 : -2.5;
 
-    // 3. Saki F1 第一共振峰增益（1100Hz 元气甜美共鸣）
+    // Saki F1 第一共振峰增益（1100Hz 元气甜美共鸣）
     const formant1 = this.ctx.createBiquadFilter();
     formant1.type = "peaking";
     formant1.frequency.value = 1100;
     formant1.Q.value = 1.4;
     formant1.gain.value = 3.2;
 
-    // 4. Saki F2 第二共振峰增益（2850Hz 咬字清晰度与清亮感）
+    // Saki F2 第二共振峰增益（2850Hz 咬字清晰度与清亮感）
     const formant2 = this.ctx.createBiquadFilter();
     formant2.type = "peaking";
     formant2.frequency.value = 2850;
     formant2.Q.value = 1.2;
     formant2.gain.value = 2.8;
 
-    // 5. 空气感与甜美高频（7500Hz 高架滤波）
+    // 空气感与甜美高频（7500Hz 高架滤波）
     const airShelf = this.ctx.createBiquadFilter();
     airShelf.type = "highshelf";
     airShelf.frequency.value = 7500;
     airShelf.gain.value = 1.8;
 
-    // 6. 高频低通滤波：剔除 11500Hz 以上高频电子底噪
+    // 高频低通滤波：剔除 11500Hz 以上高频电子底噪
     const lowpass = this.ctx.createBiquadFilter();
     lowpass.type = "lowpass";
     lowpass.frequency.value = 11500;

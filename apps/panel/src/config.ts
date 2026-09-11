@@ -99,6 +99,7 @@ export const isProduction = process.env.NODE_ENV?.toLowerCase() === "production"
 
 export const panelPaths = {
   dataDir: path.resolve(rootDir, "data", "panel"),
+  pluginsDir: path.resolve(rootDir, "data", "plugins"),
   sessionSettingsFile: path.resolve(rootDir, "data", "panel", "session-settings.json"),
   sakiConfigFile: path.resolve(rootDir, "data", "panel", "saki-settings.json"),
   sakiSkillsDir: path.resolve(rootDir, "data", "panel", "saki-skills")

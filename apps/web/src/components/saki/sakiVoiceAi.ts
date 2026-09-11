@@ -258,7 +258,7 @@ class SakiVoiceAiManager {
   async ensureReady(): Promise<boolean> {
     if (this.initialized && this.state === "ready") return true;
 
-    // 1. 探测客户端 WebGPU / WASM 硬件环境
+    // 探测客户端 WebGPU / WASM 硬件环境
     this.notify("downloading", 20, "正在检测本地客户端 WebGPU / WASM 硬件加速...");
     const gpuCheck = await checkWebGPUSupport();
     const gpuLabel = gpuCheck.supported ? ` (${gpuCheck.adapterName})` : " (WASM 纯本地回退)";

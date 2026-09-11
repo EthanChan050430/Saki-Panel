@@ -686,7 +686,7 @@ export async function registerTemplateRoutes(app: FastifyInstance): Promise<void
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 工具函数
 // ---------------------------------------------------------------------------
 
 function extractPrefix(workingDirectory: string): string {

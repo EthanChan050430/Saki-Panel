@@ -170,7 +170,7 @@
   justify-content: center;
   gap: 8px;
   border: 0;
-  border-radius: 14px;
+  border-radius: var(--radius-control, 14px);
   font-family: inherit;
   cursor: pointer;
   transition:
@@ -223,7 +223,7 @@
   padding: 0 16px;
   font-size: 13px;
   font-weight: 500;
-  border-radius: 12px;
+  border-radius: var(--radius-control-sm, 12px);
 }
 
 .ghost-button {
@@ -241,14 +241,16 @@
 }
 
 .small-button.primary {
-  background: linear-gradient(180deg, #6366f1, #4f46e5);
-  border: 1px solid rgba(99, 102, 241, 0.45);
+  background: var(--primary, #ff75ac);
+  border: 1px solid rgba(255, 117, 172, 0.4);
   color: #fff;
-  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.25);
+  box-shadow: 0 4px 12px rgba(255, 117, 172, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
 
 .small-button.primary:hover:not(:disabled) {
-  filter: brightness(1.05);
+  background: var(--primary-hover, #ff5b9a);
+  border-color: rgba(255, 117, 172, 0.55);
+  box-shadow: 0 6px 16px rgba(255, 117, 172, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 
 .primary-button.mini,

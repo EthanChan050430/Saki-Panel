@@ -85,6 +85,11 @@
   --tbody-hover-bg: rgba(255, 255, 255, 0.45);
   --saki-ctx-bg: rgba(255, 117, 172, 0.08);
   --saki-ctx-border: rgba(255, 117, 172, 0.2);
+  --radius-control: 14px;
+  --radius-control-sm: 12px;
+  --radius-modal: 20px;
+  --radius-card: 16px;
+  --radius-chip: 999px;
 }
 
 /* --- DARK THEME (iOS 26 Liquid Obsidian with Pink Accent) --- */

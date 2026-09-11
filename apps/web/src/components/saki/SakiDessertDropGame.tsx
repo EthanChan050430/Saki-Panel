@@ -268,8 +268,7 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
   const [maxCombo, setMaxCombo] = useState(0);
   const [timeLeft, setTimeLeft] = useState(30);
   const [gameOver, setGameOver] = useState(false);
-  const [basketX, setBasketX] = useState(50);
-  const [basketTilt, setBasketTilt] = useState(0);
+  const [items, setItems] = useState<GameFallingItem[]>([]);
   const [floatTexts, setFloatTexts] = useState<GameFloatText[]>([]);
   const [particles, setParticles] = useState<GameParticle[]>([]);
   const [shockwaves, setShockwaves] = useState<GameShockwave[]>([]);
@@ -285,21 +284,65 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
 
   const soundFxRef = useRef<GameSoundFX>(new GameSoundFX());
   const gameAreaRef = useRef<HTMLDivElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const basketRef = useRef<HTMLDivElement | null>(null);
 
   const itemsRef = useRef<GameFallingItem[]>([]);
   const particlesRef = useRef<GameParticle[]>([]);
-  const [, setTick] = useState(0);
+  const itemElsRef = useRef<Map<number, HTMLDivElement>>(new Map());
+  const particleElsRef = useRef<Map<number, HTMLDivElement>>(new Map());
+  const stageSizeRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
   const scoreRef = useRef(0);
   const comboRef = useRef(0);
   const maxComboRef = useRef(0);
   const basketXRef = useRef(50);
+  const basketTiltRef = useRef(0);
+  const basketTiltTimeoutRef = useRef<number | null>(null);
   const lastBasketXRef = useRef(50);
   const isGameOverRef = useRef(false);
 
   scoreRef.current = score;
   comboRef.current = combo;
   maxComboRef.current = maxCombo;
-  basketXRef.current = basketX;
+
+  // Percent-of-stage -> pixel transform, including the element-centering offset
+  const posTransform = (x: number, y: number) => {
+    const { w, h } = stageSizeRef.current;
+    return `translate(${(x / 100) * w}px, ${(y / 100) * h}px) translate(-50%, -50%)`;
+  };
+
+  // Writes the basket position/tilt straight to the DOM (no React re-render)
+  const applyBasketTransform = () => {
+    const el = basketRef.current;
+    if (!el) return;
+    const { w } = stageSizeRef.current;
+    el.style.transform = `translate(${(basketXRef.current / 100) * w}px, 0px) translateX(-50%) rotate(${basketTiltRef.current}deg)`;
+  };
+
+  // Measure the stage once (and on resize) so the rAF loop never reads layout
+  useEffect(() => {
+    const measure = () => {
+      const el = stageRef.current;
+      if (el) {
+        stageSizeRef.current = { w: el.clientWidth, h: el.clientHeight };
+      }
+      if (basketRef.current) {
+        basketRef.current.style.left = "0px";
+      }
+      applyBasketTransform();
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (basketTiltTimeoutRef.current !== null) {
+        window.clearTimeout(basketTiltTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     soundFxRef.current.setMuted(soundMuted);
@@ -396,8 +439,10 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
       if (isGameOverRef.current) return;
 
       const now = Date.now();
+      let itemsDirty = false;
       if (now - lastSpawn > 620) {
         spawnItem();
+        itemsDirty = true;
         lastSpawn = now;
       }
 
@@ -418,10 +463,21 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
           remaining.push(item);
         }
       }
+      if (remaining.length !== itemsRef.current.length) itemsDirty = true;
       itemsRef.current = remaining;
+
+      // Move items by writing transforms directly (compositor-only, no re-render)
+      const { w: stageW, h: stageH } = stageSizeRef.current;
+      for (const item of remaining) {
+        const el = itemElsRef.current.get(item.id);
+        if (el) {
+          el.style.transform = `translate(${(item.x / 100) * stageW}px, ${(item.y / 100) * stageH}px) translate(-50%, -50%)`;
+        }
+      }
 
       // Update particle physics
       if (particlesRef.current.length > 0) {
+        const prevPartCount = particlesRef.current.length;
         const remainingParts: GameParticle[] = [];
         for (const p of particlesRef.current) {
           p.x += p.vx * 0.7;
@@ -433,7 +489,22 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
           }
         }
         particlesRef.current = remainingParts;
-        setParticles(remainingParts);
+        for (const p of remainingParts) {
+          const el = particleElsRef.current.get(p.id);
+          if (el) {
+            el.style.transform = `translate(${(p.x / 100) * stageW}px, ${(p.y / 100) * stageH}px) translate(-50%, -50%)`;
+            el.style.opacity = String(p.life);
+          }
+        }
+        // Only re-render when particles are removed; positions/opacity go through refs
+        if (remainingParts.length !== prevPartCount) {
+          setParticles([...remainingParts]);
+        }
+      }
+
+      // Only re-render when the item list membership changes (spawn/catch/expire)
+      if (itemsDirty) {
+        setItems([...itemsRef.current]);
       }
 
       if (caughtList.length > 0) {
@@ -479,7 +550,6 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
         });
       }
 
-      setTick((t) => (t + 1) % 10000);
       animFrame = requestAnimationFrame(loop);
     };
 
@@ -529,10 +599,18 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
       soundFxRef.current.playWhoosh();
     }
     lastBasketXRef.current = clamped;
-    const tilt = Math.max(-16, Math.min(16, delta * 3.5));
-    setBasketTilt(tilt);
-    setBasketX(clamped);
-    setTimeout(() => setBasketTilt(0), 120);
+    // Refs are the single source of truth; the rAF loop reads basketXRef for collisions
+    basketXRef.current = clamped;
+    basketTiltRef.current = Math.max(-16, Math.min(16, delta * 3.5));
+    applyBasketTransform();
+    if (basketTiltTimeoutRef.current !== null) {
+      window.clearTimeout(basketTiltTimeoutRef.current);
+    }
+    basketTiltTimeoutRef.current = window.setTimeout(() => {
+      basketTiltRef.current = 0;
+      applyBasketTransform();
+      basketTiltTimeoutRef.current = null;
+    }, 120);
   };
 
   const expReward = Math.max(15, Math.round(score * 0.35));
@@ -607,7 +685,7 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
       </div>
 
       {!gameOver ? (
-        <div className="saki-game-stage">
+        <div className="saki-game-stage" ref={stageRef}>
           {/* Dynamic Glowing Arcade Combo & Fever Typography */}
           {combo >= 2 ? (
             <div
@@ -634,14 +712,20 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
             />
           ))}
 
-          {/* Particle Bursts */}
+          {/* Particle Bursts (boxShadow baked once at creation; transform/opacity via refs) */}
           {particles.map((p) => (
             <div
               key={p.id}
+              ref={(el) => {
+                if (el) {
+                  particleElsRef.current.set(p.id, el);
+                } else {
+                  particleElsRef.current.delete(p.id);
+                }
+              }}
               className={`saki-game-particle ${p.shape}`}
               style={{
-                left: `${p.x}%`,
-                top: `${p.y}%`,
+                transform: posTransform(p.x, p.y),
                 width: `${p.size}px`,
                 height: `${p.size}px`,
                 backgroundColor: p.color,
@@ -651,12 +735,19 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
             />
           ))}
 
-          {/* Falling Items */}
-          {itemsRef.current.map((item) => (
+          {/* Falling Items (positions driven by direct transform writes in the rAF loop) */}
+          {items.map((item) => (
             <div
               key={item.id}
+              ref={(el) => {
+                if (el) {
+                  itemElsRef.current.set(item.id, el);
+                } else {
+                  itemElsRef.current.delete(item.id);
+                }
+              }}
               className={`saki-game-item ${item.isBug ? "bug" : "sweet"}`}
-              style={{ left: `${item.x}%`, top: `${item.y}%` }}
+              style={{ transform: posTransform(item.x, item.y) }}
             >
               <img src={item.iconSrc} alt={item.name} draggable={false} />
             </div>
@@ -674,13 +765,11 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
             </div>
           ))}
 
-          {/* Catcher Basket with 3D Tilt */}
+          {/* Catcher Basket with 3D Tilt (moved via direct transform writes on pointermove) */}
           <div
+            ref={basketRef}
             className={`saki-game-basket ${isFeverMode ? "fever-glow" : ""}`}
-            style={{
-              left: `${basketX}%`,
-              transform: `translateX(-50%) rotate(${basketTilt}deg)`
-            }}
+            style={{ left: "50%", transform: "translateX(-50%)" }}
           >
             <img src="/assets/game/basket.webp" alt="接物盘" draggable={false} />
             <div className="saki-basket-glow-aura" />
@@ -693,52 +782,61 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
           {(() => {
             const isEn = language === "en-US";
             const isTw = language === "zh-TW";
+            const isJa = language === "ja-JP";
             const rankInfo =
               score >= 1000
                 ? {
                     grade: "SSS",
-                    title: isEn ? "Dessert Master" : isTw ? "甜點神捕手" : "甜点神捕手",
+                    title: isEn ? "Dessert Master" : isTw ? "甜點神捕手" : isJa ? "デザートマスター" : "甜点神捕手",
                     badgeColor: "gold",
                     expression: "/assets/expression/eating.webp",
                     quote: isEn
                       ? "Wowww! Caught so many desserts! Master is truly a dessert champion, amazing～ (੭ˊ꒳​ˋ)੭✧"
                       : isTw
                       ? "哇哇哇！接到超多甜點！主人簡直是甜點大師，太厲害啦～ (੭ˊ꒳​ˋ)੭✧"
+                      : isJa
+                      ? "わぁぁぁ！たくさんデザートをキャッチしたね！主人はデザートのチャンピオンだよ、すごい～ (੭ˊ꒳​ˋ)੭✧"
                       : "哇哇哇！接到超多甜点！主人简直是甜点大师，太厉害啦～ (੭ˊ꒳​ˋ)੭✧"
                   }
                 : score >= 600
                 ? {
                     grade: "S",
-                    title: isEn ? "Sweet Harvest" : isTw ? "美味大豐收" : "美味大丰收",
+                    title: isEn ? "Sweet Harvest" : isTw ? "美味大豐收" : isJa ? "おいしい大収穫" : "美味大丰收",
                     badgeColor: "pink",
                     expression: "/assets/expression/eating.webp",
                     quote: isEn
                       ? "Caught so many delicious pastries! Afternoon tea is all set, the donuts smell incredible～ (≧∇≦)ﾉ"
                       : isTw
                       ? "接到了好多美味點心！今天的下午茶有著落啦，甜甜圈超香的～ (≧∇≦)ﾉ"
+                      : isJa
+                      ? "おいしいお菓子をたくさんキャッチしたね！今日の午後のおやつはバッチリ、ドーナツの香りが最高～ (≧∇≦)ﾉ"
                       : "接到了好多美味点心！今天的下午茶有着落啦，甜甜圈超香的～ (≧∇≦)ﾉ"
                   }
                 : score >= 300
                 ? {
                     grade: "A",
-                    title: isEn ? "Full Basket" : isTw ? "滿載而歸" : "满载而归",
+                    title: isEn ? "Full Basket" : isTw ? "滿載而歸" : isJa ? "かごいっぱい" : "满载而归",
                     badgeColor: "cyan",
                     expression: "/assets/expression/wink.webp",
                     quote: isEn
                       ? "Phew～ Caught quite a few treats! We'll definitely catch even more together next time, hehe～ (๑>◡<๑)"
                       : isTw
                       ? "呼～接到了不少點心呢！下次我們配合一定能接到更多，嘿嘿～ (๑>◡<๑)"
+                      : isJa
+                      ? "ふぅ～結構たくさんキャッチしたね！次はもっとたくさん取れるように頑張ろうね、へへっ～ (๑>◡<๑)"
                       : "呼～接到了不少点心呢！下次我们配合一定能接到更多，嘿嘿～ (๑>◡<๑)"
                   }
                 : {
                     grade: "B",
-                    title: isEn ? "Keep It Up" : isTw ? "繼續加油" : "继续加油",
+                    title: isEn ? "Keep It Up" : isTw ? "繼續加油" : isJa ? "もっと頑張って" : "继续加油",
                     badgeColor: "purple",
                     expression: "/assets/expression/cry.webp",
                     quote: isEn
                       ? "Aww, just missed by a little bit... But having Master play with me makes me super happy! Next time will be even better～ (´,,•ω•,,)"
                       : isTw
                       ? "嗚嗚就差一點點了... 不過有主人陪我玩就超開心！下次一定更棒～ (´,,•ω•,,)"
+                      : isJa
+                      ? "あぁ、あと少しだったのに…でも主人が一緒に遊んでくれてすごく嬉しい！次はもっと上手になるね～ (´,,•ω•,,)"
                       : "呜呜就差一点点了... 不过有主人陪我玩就超开心！下次一定更棒～ (´,,•ω•,,)"
                   };
 
@@ -750,7 +848,7 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
                   <span className="rank-divider">·</span>
                   <span className="rank-title">{rankInfo.title}</span>
                 </div>
-                <h3 className="settlement-title">{isEn ? "Challenge Complete!" : isTw ? "挑戰完成！" : "挑战完成！"}</h3>
+                <h3 className="settlement-title">{isEn ? "Challenge Complete!" : isTw ? "挑戰完成！" : isJa ? "チャレンジクリア！" : "挑战完成！"}</h3>
 
                 <div className="settlement-character-wrap">
                   <div className="character-halo" aria-hidden="true" />

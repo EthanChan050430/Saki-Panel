@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, Plus, Trash2, X } from "lucide-react";
+import { Check, ListMusic, Pause, Play, Plus, Repeat, Repeat1, SkipBack, SkipForward, Trash2, Upload, Volume2, X } from "lucide-react";
 import type { SakiPetController, SakiPetNote, SakiPetSticker } from "./sakiPetState.js";
 import { weatherGlyph, weatherLabel } from "./sakiPetState.js";
+import { formatTrackTime, sakiMusicAccept } from "./sakiPetMusic.js";
 
 function formatClock(ms: number) {
   const d = new Date(ms);
@@ -47,11 +48,14 @@ export function SakiPetDesktopBits({
       {pet.pomodoro.running
         ? createPortal(
             <div className={`saki-pet-pomo-chip ${pet.pomodoro.mode}`} title="番茄钟">
-              <span>{pet.pomodoro.mode === "focus" ? "Focus" : language === "en-US" ? "Break" : "休息"}</span>
+              <span>{pet.pomodoro.mode === "focus" ? "Focus" : language === "en-US" ? "Break" : language === "ja-JP" ? "休憩" : "休息"}</span>
               <strong>{formatPomodoro(pet.pomodoro.remainingMs)}</strong>
             </div>,
             document.body
           )
+        : null}
+      {pet.music.playing || pet.music.current
+        ? createPortal(<SakiMusicBar pet={pet} isEn={language === "en-US"} />, document.body)
         : null}
     </>
   );
@@ -65,12 +69,21 @@ function DesktopNote({ note, pet }: { note: SakiPetNote; pet: SakiPetController 
         style={{ left: note.x, top: note.y, background: note.color }}
         onPointerDown={(event) => {
           if ((event.target as HTMLElement).closest("button, textarea")) return;
+          const el = event.currentTarget;
           const ox = event.clientX - note.x;
           const oy = event.clientY - note.y;
-          const move = (ev: PointerEvent) => pet.updateNote(note.id, { x: ev.clientX - ox, y: ev.clientY - oy });
+          let latest = { x: note.x, y: note.y };
+          const move = (ev: PointerEvent) => {
+            latest = { x: ev.clientX - ox, y: ev.clientY - oy };
+            el.style.transform = `translate(${latest.x - note.x}px, ${latest.y - note.y}px)`;
+          };
           const up = () => {
             window.removeEventListener("pointermove", move);
             window.removeEventListener("pointerup", up);
+            el.style.transform = "";
+            if (latest.x !== note.x || latest.y !== note.y) {
+              pet.updateNote(note.id, { x: latest.x, y: latest.y });
+            }
           };
           window.addEventListener("pointermove", move);
           window.addEventListener("pointerup", up);
@@ -97,12 +110,21 @@ function DesktopSticker({ sticker, pet }: { sticker: SakiPetSticker; pet: SakiPe
       style={{ left: sticker.x, top: sticker.y, transform: `scale(${sticker.scale})` }}
       onPointerDown={(event) => {
         if ((event.target as HTMLElement).closest("button")) return;
+        const el = event.currentTarget;
         const ox = event.clientX - sticker.x;
         const oy = event.clientY - sticker.y;
-        const move = (ev: PointerEvent) => pet.updateSticker(sticker.id, { x: ev.clientX - ox, y: ev.clientY - oy });
+        let latest = { x: sticker.x, y: sticker.y };
+        const move = (ev: PointerEvent) => {
+          latest = { x: ev.clientX - ox, y: ev.clientY - oy };
+          el.style.transform = `translate(${latest.x - sticker.x}px, ${latest.y - sticker.y}px) scale(${sticker.scale})`;
+        };
         const up = () => {
           window.removeEventListener("pointermove", move);
           window.removeEventListener("pointerup", up);
+          el.style.transform = `scale(${sticker.scale})`;
+          if (latest.x !== sticker.x || latest.y !== sticker.y) {
+            pet.updateSticker(sticker.id, { x: latest.x, y: latest.y });
+          }
         };
         window.addEventListener("pointermove", move);
         window.addEventListener("pointerup", up);
@@ -138,6 +160,7 @@ export function SakiPetWidgetCard({
 }) {
   if (!pet.widget) return null;
   const isEn = language === "en-US";
+  const isJa = language === "ja-JP";
   return (
     <div className={`saki-pet-widget-card edge-${edge} ${below ? "is-below" : ""}`} onPointerDown={(event) => event.stopPropagation()}>
       <header>
@@ -156,6 +179,8 @@ export function SakiPetWidgetCard({
             ? isEn ? "Screenshot stickers" : "截图贴图"
             : pet.widget === "skins"
             ? isEn ? "Outfits" : "换装"
+            : pet.widget === "music"
+            ? isEn ? "Sing" : "唱歌"
             : isEn ? "Calendar" : "日历"}
         </strong>
         <button type="button" onClick={pet.closeWidget} aria-label="关闭">
@@ -179,6 +204,7 @@ export function SakiPetWidgetCard({
       ) : null}
       {pet.widget === "calendar" ? <CalendarPanel pet={pet} language={language} /> : null}
       {pet.widget === "skins" ? <SkinsPanel pet={pet} isEn={isEn} /> : null}
+      {pet.widget === "music" ? <MusicPanel pet={pet} isEn={isEn} /> : null}
     </div>
   );
 }
@@ -332,7 +358,7 @@ function NotesPanel({ pet, isEn }: { pet: SakiPetController; isEn: boolean }) {
 
 function CalendarPanel({ pet, language }: { pet: SakiPetController; language?: string | undefined }) {
   const { year, month, cells, today } = useMemo(() => monthMatrix(pet.nowMs), [pet.nowMs]);
-  const week = language === "en-US" ? ["S", "M", "T", "W", "T", "F", "S"] : ["日", "一", "二", "三", "四", "五", "六"];
+  const week = language === "en-US" ? ["S", "M", "T", "W", "T", "F", "S"] : language === "ja-JP" ? ["日", "月", "火", "水", "木", "金", "土"] : ["日", "一", "二", "三", "四", "五", "六"];
   return (
     <div className="saki-pet-widget-body">
       <div className="saki-pet-clock-row">
@@ -368,6 +394,102 @@ function SkinsPanel({ isEn }: { pet: SakiPetController; isEn: boolean }) {
           ? "Outfit packs will be added through plugins. This is just the entry for now."
           : "皮肤包将通过插件添加，这里先留一个入口。"}
       </p>
+    </div>
+  );
+}
+
+function MusicPanel({ pet, isEn }: { pet: SakiPetController; isEn: boolean }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  return (
+    <div className="saki-pet-widget-body">
+      <p className="saki-pet-widget-hint">
+        {isEn ? "Upload songs. Saki will sing while they play." : "上传歌曲后，Saki 会边播边唱。"}
+      </p>
+      <input
+        ref={fileRef}
+        type="file"
+        accept={sakiMusicAccept}
+        multiple
+        hidden
+        onChange={(event) => {
+          const files = event.target.files;
+          if (files && files.length > 0) void pet.music.addFiles(files);
+          event.target.value = "";
+        }}
+      />
+      <button type="button" className="saki-pet-primary" onClick={() => fileRef.current?.click()}>
+        <Upload size={13} />
+        {isEn ? "Add songs" : "添加歌曲"}
+      </button>
+      <ul className="saki-pet-check-list saki-pet-music-list">
+        {pet.music.tracks.length === 0 ? <li className="empty">{isEn ? "Playlist is empty." : "播放列表还是空的～"}</li> : null}
+        {pet.music.tracks.map((track) => (
+          <li key={track.id} className={track.id === pet.music.currentId ? "active" : ""}>
+            <button type="button" className="saki-pet-music-name" onClick={() => pet.music.playTrack(track.id)}>
+              {track.name}
+              <small>{formatTrackTime(track.duration)}</small>
+            </button>
+            <button type="button" className="saki-pet-music-remove" onClick={() => void pet.music.removeTrack(track.id)} aria-label="删除">
+              <Trash2 size={12} />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function SakiMusicBar({ pet, isEn }: { pet: SakiPetController; isEn: boolean }) {
+  const music = pet.music;
+  const title = music.current?.name ?? (isEn ? "No song" : "还没选歌");
+  const duration = music.duration || 1;
+  return (
+    <div className="saki-pet-music-bar" onPointerDown={(event) => event.stopPropagation()}>
+      <button type="button" onClick={music.playPrev} aria-label={isEn ? "Previous" : "上一首"}>
+        <SkipBack size={14} />
+      </button>
+      <button type="button" className="saki-pet-music-play" onClick={() => void music.togglePlay()} aria-label={music.playing ? "暂停" : "播放"}>
+        {music.playing ? <Pause size={15} /> : <Play size={15} />}
+      </button>
+      <button type="button" onClick={music.playNext} aria-label={isEn ? "Next" : "下一首"}>
+        <SkipForward size={14} />
+      </button>
+      <div className="saki-pet-music-meta">
+        <strong title={title}>{title}</strong>
+        <input
+          type="range"
+          min={0}
+          max={duration}
+          step={0.1}
+          value={Math.min(music.currentTime, duration)}
+          onChange={(event) => music.seek(Number(event.target.value))}
+        />
+        <span>
+          {formatTrackTime(music.currentTime)} / {formatTrackTime(music.duration)}
+        </span>
+      </div>
+      <label className="saki-pet-music-vol">
+        <Volume2 size={13} />
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={music.volume}
+          onChange={(event) => music.setVolume(Number(event.target.value))}
+        />
+      </label>
+      <button
+        type="button"
+        className={music.loop !== "off" ? "active" : ""}
+        onClick={() => music.setLoop(music.loop === "all" ? "one" : music.loop === "one" ? "off" : "all")}
+        title={music.loop === "one" ? (isEn ? "Repeat one" : "单曲循环") : music.loop === "all" ? (isEn ? "Repeat all" : "列表循环") : isEn ? "No repeat" : "不循环"}
+      >
+        {music.loop === "one" ? <Repeat1 size={14} /> : <Repeat size={14} />}
+      </button>
+      <button type="button" onClick={() => pet.openWidget("music")} aria-label={isEn ? "Playlist" : "播放列表"}>
+        <ListMusic size={14} />
+      </button>
     </div>
   );
 }

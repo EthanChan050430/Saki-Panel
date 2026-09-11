@@ -308,6 +308,7 @@ export function SettingsView({
       modelPointsMultipliers: form.modelPointsMultipliers || {},
       searchEnabled: form.searchEnabled,
       mcpEnabled: form.mcpEnabled,
+      allowCrossInstanceEnforcement: form.allowCrossInstanceEnforcement ?? true,
       imageGen: form.imageGen,
       systemPrompt: form.systemPrompt ?? "",
       appearance: form.appearance
@@ -963,6 +964,10 @@ export function SettingsView({
                   mcpEnabled={form.mcpEnabled ?? false}
                   onMcpEnabledChange={(enabled) =>
                     setForm((current) => ({ ...current, mcpEnabled: enabled }))
+                  }
+                  allowCrossInstanceEnforcement={form.allowCrossInstanceEnforcement ?? true}
+                  onAllowCrossInstanceEnforcementChange={(enabled) =>
+                    setForm((current) => ({ ...current, allowCrossInstanceEnforcement: enabled }))
                   }
                   voiceEchoEngine={voiceEchoEngine}
                   onVoiceEchoEngineChange={handleVoiceEchoEngineChange}

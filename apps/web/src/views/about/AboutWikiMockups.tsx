@@ -91,7 +91,7 @@ export function WikiLegendWrapper({
 }
 
 /**
- * 1. 实例快捷操作面板图例 (glass-panel instance-side-card instance-actions-panel-card)
+ * 实例快捷操作面板图例 (glass-panel instance-side-card instance-actions-panel-card)
  */
 export function InstanceActionsMockup() {
   return (
@@ -164,7 +164,7 @@ export function InstanceActionsMockup() {
 }
 
 /**
- * 2. 实例核心概要卡片图例 (instance-summary-card)
+ * 实例核心概要卡片图例 (instance-summary-card)
  */
 export function InstanceSummaryMockup() {
   return (
@@ -233,7 +233,7 @@ export function InstanceSummaryMockup() {
 }
 
 /**
- * 3. 进程实时性能探针图例 (instance-probe-card)
+ * 进程实时性能探针图例 (instance-probe-card)
  */
 export function InstanceProbeMockup() {
   return (
@@ -329,7 +329,7 @@ export function InstanceProbeMockup() {
 }
 
 /**
- * 4. 网页终端控制台图例 (TerminalConsoleMockup)
+ * 网页终端控制台图例 (TerminalConsoleMockup)
  */
 export function TerminalConsoleMockup() {
   return (
@@ -529,7 +529,7 @@ export function TerminalConsoleMockup() {
 }
 
 /**
- * 5. 在线文件管理器图例 (FileManagerMockup)
+ * 在线文件管理器图例 (FileManagerMockup)
  */
 export function FileManagerMockup() {
   return (
@@ -616,7 +616,7 @@ export function FileManagerMockup() {
 }
 
 /**
- * 6. Saki AI 故障诊断与 Git Diff 补丁审核图例 (SakiPatchDiffMockup)
+ * Saki AI 故障诊断与 Git Diff 补丁审核图例 (SakiPatchDiffMockup)
  */
 export function SakiPatchDiffMockup() {
   return (
@@ -692,7 +692,7 @@ export function SakiPatchDiffMockup() {
 }
 
 /**
- * 7. 分布式节点集群状态卡片图例 (NodeClusterMockup)
+ * 分布式节点集群状态卡片图例 (NodeClusterMockup)
  */
 export function NodeClusterMockup() {
   return (
@@ -776,7 +776,7 @@ export function NodeClusterMockup() {
 }
 
 /**
- * 8. 内置数据库管家图例 (DatabaseProbeMockup)
+ * 内置数据库管家图例 (DatabaseProbeMockup)
  */
 export function DatabaseProbeMockup() {
   return (
@@ -810,7 +810,7 @@ export function DatabaseProbeMockup() {
 }
 
 /**
- * 9. 用户角色 RBAC 与积分配额图例 (RbacQuotaMockup)
+ * 用户角色 RBAC 与积分配额图例 (RbacQuotaMockup)
  */
 export function RbacQuotaMockup() {
   return (
@@ -857,7 +857,7 @@ export function RbacQuotaMockup() {
 }
 
 /**
- * 10. Saki AI 智能体悬浮交互与多模态工作区图例 (SakiAssistantWindowMockup)
+ * Saki AI 智能体悬浮交互与多模态工作区图例 (SakiAssistantWindowMockup)
  */
 export function SakiAssistantWindowMockup() {
   return (
@@ -966,14 +966,16 @@ export function SakiCompanionMockup() {
   const { language } = usePanelLanguage();
   const foodMenu = getLocalizedFoodMenu(language);
   const favTitle =
-    language === "en-US" ? "Affection Lv.3 · Intimate" : language === "zh-TW" ? "好感度 Lv.3 · 親密" : "好感度 Lv.3 · 亲密";
+    language === "en-US" ? "Affection Lv.3 · Intimate" : language === "zh-TW" ? "好感度 Lv.3 · 親密" : language === "ja-JP" ? "親密度 Lv.3 · 親密" : "好感度 Lv.3 · 亲密";
   const pokeHint =
     language === "en-US"
       ? "Tap to poke me, hold to speak and I'll copy you ♪"
       : language === "zh-TW"
         ? "點按戳戳我，長按說話我會學你～ ♪"
+        : language === "ja-JP"
+        ? "タップでつついて、長押しで話すと真似するよ～ ♪"
         : "点按戳戳我，长按说话我会学你～ ♪";
-  const costUnit = language === "en-US" ? "pt" : language === "zh-TW" ? "點" : "分";
+  const costUnit = language === "en-US" ? "pt" : language === "zh-TW" ? "點" : language === "ja-JP" ? "pt" : "分";
   return (
     <WikiLegendWrapper
       title="Saki 陪伴房间 · 好感度与投喂"

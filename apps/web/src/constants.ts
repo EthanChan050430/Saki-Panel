@@ -130,55 +130,84 @@ export const sakiArtAssets = {
   petEatF3: "/assets/pet/eat_f3.webp",
   petEatF4: "/assets/pet/eat_f4.webp",
   petEatF5: "/assets/pet/eat_f5.webp",
-  petEatF6: "/assets/pet/eat_f6.webp"
-} as const;
+  petEatF6: "/assets/pet/eat_f6.webp",
+  singingF1: "/assets/expression/anim/singing_f1.webp",
+  singingF2: "/assets/expression/anim/singing_f2.webp",
+  singingF3: "/assets/expression/anim/singing_f3.webp",
+  singingF4: "/assets/expression/anim/singing_f4.webp",
+  singingF5: "/assets/expression/anim/singing_f5.webp",
+  singingF6: "/assets/expression/anim/singing_f6.webp"
+};
 
-export const sakiIdleLauncherAssets = [sakiArtAssets.launcher, sakiArtAssets.launcher2] as const;
-export const sakiSpeakingAssets = [sakiArtAssets.speaking1, sakiArtAssets.speaking2] as const;
-export const sakiPetWalkFrames = [
+export let sakiIdleLauncherAssets: readonly string[] = [sakiArtAssets.launcher, sakiArtAssets.launcher2];
+export let sakiSpeakingAssets: readonly string[] = [sakiArtAssets.speaking1, sakiArtAssets.speaking2];
+export let sakiPetWalkFrames: readonly string[] = [
   sakiArtAssets.petWalkF1,
   sakiArtAssets.petWalkF2,
   sakiArtAssets.petWalkF3,
   sakiArtAssets.petWalkF4,
   sakiArtAssets.petWalkF5,
   sakiArtAssets.petWalkF6
-] as const;
-export const sakiPetClimbFrames = [
+];
+export let sakiPetClimbFrames: readonly string[] = [
   sakiArtAssets.petClimbF1,
   sakiArtAssets.petClimbF2,
   sakiArtAssets.petClimbF3,
   sakiArtAssets.petClimbF4,
   sakiArtAssets.petClimbF5,
   sakiArtAssets.petClimbF6
-] as const;
-export const sakiPetBathFrames = [
+];
+export let sakiPetBathFrames: readonly string[] = [
   sakiArtAssets.petBathF1,
   sakiArtAssets.petBathF2,
   sakiArtAssets.petBathF3,
   sakiArtAssets.petBathF4,
   sakiArtAssets.petBathF5,
   sakiArtAssets.petBathF6
-] as const;
-export const sakiPetDoctorFrames = [
+];
+export let sakiPetDoctorFrames: readonly string[] = [
   sakiArtAssets.petDoctorF1,
   sakiArtAssets.petDoctorF2,
   sakiArtAssets.petDoctorF3,
   sakiArtAssets.petDoctorF4,
   sakiArtAssets.petDoctorF5,
   sakiArtAssets.petDoctorF6
-] as const;
-export const sakiPetEatFrames = [
+];
+export let sakiPetSingingFrames: readonly string[] = [
+  sakiArtAssets.singingF1,
+  sakiArtAssets.singingF2,
+  sakiArtAssets.singingF3,
+  sakiArtAssets.singingF4,
+  sakiArtAssets.singingF5,
+  sakiArtAssets.singingF6
+];
+export let sakiPetEatFrames: readonly string[] = [
   sakiArtAssets.petEatF1,
   sakiArtAssets.petEatF2,
   sakiArtAssets.petEatF3,
   sakiArtAssets.petEatF4,
   sakiArtAssets.petEatF5,
   sakiArtAssets.petEatF6
-] as const;
+];
 
 function expressionAnimFrames(name: string): readonly string[] {
   return [1, 2, 3, 4, 5, 6].map((i) => `/assets/expression/anim/${name}_f${i}.webp`);
 }
+
+export const sakiExpressionPlayOnce = new Set([
+  "surprised",
+  "OK",
+  "wink",
+  "sorry",
+  "cry",
+  "blocked",
+  "happy",
+  "shy",
+  "pout",
+  "upset",
+  "rollback",
+  "middlefinger"
+]);
 
 export const sakiExpressionAnimFrames: Record<string, readonly string[]> = {
   happy: expressionAnimFrames("happy"),
@@ -205,7 +234,9 @@ export const sakiExpressionAnimFrames: Record<string, readonly string[]> = {
   search: expressionAnimFrames("search"),
   diagnose: expressionAnimFrames("diagnose"),
   rollback: expressionAnimFrames("rollback"),
-  blocked: expressionAnimFrames("blocked")
+  blocked: expressionAnimFrames("blocked"),
+  middlefinger: expressionAnimFrames("middlefinger"),
+  singing: expressionAnimFrames("singing")
 };
 
 export const expressionImages = {
@@ -243,4 +274,118 @@ export const expressionImages = {
   daemonOffline: "/assets/expression/daemon_offline.webp",
   page404: "/assets/expression/page_404.webp",
   middlefinger: "/assets/expression/middlefinger.webp"
-} as const;
+};
+
+export const defaultSakiArtAssets: Record<string, string> = { ...sakiArtAssets };
+const defaultExpressionImages = { ...expressionImages };
+const defaultExpressionAnimFrames: Record<string, readonly string[]> = Object.fromEntries(
+  Object.entries(sakiExpressionAnimFrames).map(([key, frames]) => [key, [...frames]])
+);
+
+let skinRevision = 0;
+const skinChangeListeners = new Set<() => void>();
+
+export function getSkinRevision(): number {
+  return skinRevision;
+}
+
+export function subscribeSkinChange(listener: () => void): () => void {
+  skinChangeListeners.add(listener);
+  return () => {
+    skinChangeListeners.delete(listener);
+  };
+}
+
+function rebuildDerivedSkinArrays() {
+  sakiIdleLauncherAssets = [sakiArtAssets.launcher, sakiArtAssets.launcher2];
+  sakiSpeakingAssets = [sakiArtAssets.speaking1, sakiArtAssets.speaking2];
+  sakiPetWalkFrames = [
+    sakiArtAssets.petWalkF1,
+    sakiArtAssets.petWalkF2,
+    sakiArtAssets.petWalkF3,
+    sakiArtAssets.petWalkF4,
+    sakiArtAssets.petWalkF5,
+    sakiArtAssets.petWalkF6
+  ];
+  sakiPetClimbFrames = [
+    sakiArtAssets.petClimbF1,
+    sakiArtAssets.petClimbF2,
+    sakiArtAssets.petClimbF3,
+    sakiArtAssets.petClimbF4,
+    sakiArtAssets.petClimbF5,
+    sakiArtAssets.petClimbF6
+  ];
+  sakiPetBathFrames = [
+    sakiArtAssets.petBathF1,
+    sakiArtAssets.petBathF2,
+    sakiArtAssets.petBathF3,
+    sakiArtAssets.petBathF4,
+    sakiArtAssets.petBathF5,
+    sakiArtAssets.petBathF6
+  ];
+  sakiPetDoctorFrames = [
+    sakiArtAssets.petDoctorF1,
+    sakiArtAssets.petDoctorF2,
+    sakiArtAssets.petDoctorF3,
+    sakiArtAssets.petDoctorF4,
+    sakiArtAssets.petDoctorF5,
+    sakiArtAssets.petDoctorF6
+  ];
+  sakiPetSingingFrames = [
+    sakiArtAssets.singingF1,
+    sakiArtAssets.singingF2,
+    sakiArtAssets.singingF3,
+    sakiArtAssets.singingF4,
+    sakiArtAssets.singingF5,
+    sakiArtAssets.singingF6
+  ];
+  sakiPetEatFrames = [
+    sakiArtAssets.petEatF1,
+    sakiArtAssets.petEatF2,
+    sakiArtAssets.petEatF3,
+    sakiArtAssets.petEatF4,
+    sakiArtAssets.petEatF5,
+    sakiArtAssets.petEatF6
+  ];
+}
+
+function publishSkinChange() {
+  skinRevision += 1;
+  rebuildDerivedSkinArrays();
+  skinChangeListeners.forEach((fn) => fn());
+}
+
+export function applySkinAssetOverrides(
+  overrides: Record<string, string>,
+  pathRemap?: (originalPath: string) => string | null
+) {
+  Object.assign(sakiArtAssets, defaultSakiArtAssets);
+  Object.assign(expressionImages, defaultExpressionImages);
+  for (const [key, frames] of Object.entries(defaultExpressionAnimFrames)) {
+    sakiExpressionAnimFrames[key] = [...frames];
+  }
+
+  const art = sakiArtAssets as Record<string, string>;
+  const expr = expressionImages as Record<string, string>;
+
+  for (const [key, value] of Object.entries(overrides)) {
+    if (key in art) art[key] = value;
+    if (key in expr) expr[key] = value;
+  }
+
+  for (const [key, frames] of Object.entries(defaultExpressionAnimFrames)) {
+    sakiExpressionAnimFrames[key] = frames.map((original) => pathRemap?.(original) || original);
+  }
+
+  publishSkinChange();
+}
+
+export function resetSkinAssetOverrides() {
+  Object.assign(sakiArtAssets, defaultSakiArtAssets);
+  Object.assign(expressionImages, defaultExpressionImages);
+  for (const [key, frames] of Object.entries(defaultExpressionAnimFrames)) {
+    sakiExpressionAnimFrames[key] = [...frames];
+  }
+  publishSkinChange();
+}
+

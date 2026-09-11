@@ -414,16 +414,17 @@ export function getFavorabilityLevelInfo(totalExp: number, language?: string): F
   const exp = Math.max(0, Math.floor(Number(totalExp) || 0));
   const isEn = language === "en-US";
   const isTw = language === "zh-TW";
+  const isJa = language === "ja-JP";
 
   const baseTiers = [
-    { level: 1, title: isEn ? "Acquaintance" : isTw ? "初識" : "初识", minExp: 0, maxExp: 100 },
-    { level: 2, title: isEn ? "Rapport" : isTw ? "默契" : "默契", minExp: 100, maxExp: 250 },
-    { level: 3, title: isEn ? "Intimate" : isTw ? "親密" : "亲密", minExp: 250, maxExp: 500 },
-    { level: 4, title: isEn ? "Best Friends" : isTw ? "摯友" : "挚友", minExp: 500, maxExp: 900 },
-    { level: 5, title: isEn ? "Kindred Spirits" : isTw ? "心有靈犀" : "心有灵犀", minExp: 900, maxExp: 1400 },
-    { level: 6, title: isEn ? "Incomparable" : isTw ? "獨一無二" : "独一无二", minExp: 1400, maxExp: 2000 },
-    { level: 7, title: isEn ? "Galaxy Vow" : isTw ? "星河誓約" : "星河誓约", minExp: 2000, maxExp: 3000 },
-    { level: 8, title: isEn ? "Eternal Bond" : isTw ? "永恆羈絆" : "永恒羁绊", minExp: 3000, maxExp: 5000 }
+    { level: 1, title: isEn ? "Acquaintance" : isTw ? "初識" : isJa ? "知り合い" : "初识", minExp: 0, maxExp: 100 },
+    { level: 2, title: isEn ? "Rapport" : isTw ? "默契" : isJa ? "信頼関係" : "默契", minExp: 100, maxExp: 250 },
+    { level: 3, title: isEn ? "Intimate" : isTw ? "親密" : isJa ? "親密" : "亲密", minExp: 250, maxExp: 500 },
+    { level: 4, title: isEn ? "Best Friends" : isTw ? "摯友" : isJa ? "親友" : "挚友", minExp: 500, maxExp: 900 },
+    { level: 5, title: isEn ? "Kindred Spirits" : isTw ? "心有靈犀" : isJa ? "以心伝心" : "心有灵犀", minExp: 900, maxExp: 1400 },
+    { level: 6, title: isEn ? "Incomparable" : isTw ? "獨一無二" : isJa ? "かけがえのない" : "独一无二", minExp: 1400, maxExp: 2000 },
+    { level: 7, title: isEn ? "Galaxy Vow" : isTw ? "星河誓約" : isJa ? "星河の誓い" : "星河誓约", minExp: 2000, maxExp: 3000 },
+    { level: 8, title: isEn ? "Eternal Bond" : isTw ? "永恆羈絆" : isJa ? "永遠の絆" : "永恒羁绊", minExp: 3000, maxExp: 5000 }
   ];
 
   if (exp < 5000) {

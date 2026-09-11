@@ -606,7 +606,7 @@ export function SakiPlantSlayerGame({
 
     // 各阶段与元素大招效果
     if (p.stage === 1) {
-      // 1. 基础豌豆射手大招
+      // 基础豌豆射手大招
       setSakiShout(isEn ? "🌱 MEGA PEA CANNON BURST!! 💣" : isTw ? "🌱 巨型毀滅豌豆加農炮連發——！！💣" : "🌱 巨型毁灭豌豆加农炮连发——！！💣");
       shockwavesRef.current.push({
         id: nextEntityId.current++,
@@ -634,7 +634,7 @@ export function SakiPlantSlayerGame({
         });
       }
     } else if (p.stage === 2) {
-      // 2. 双发射手大招
+      // 双发射手大招
       setSakiShout(isEn ? "🌿 TWIN HELIX PLASMA STORM!! 🌀" : isTw ? "🌿 雙螺旋等離子風暴——！！🌀" : "🌿 双螺旋等离子风暴——！！🌀");
       shockwavesRef.current.push({
         id: nextEntityId.current++,
@@ -662,7 +662,7 @@ export function SakiPlantSlayerGame({
         });
       }
     } else if (p.stage === 3) {
-      // 3. 三线射手大招
+      // 三线射手大招
       setSakiShout(isEn ? "🎯 THREE-HEADED 360° BULLET HELL!! 🌪️" : isTw ? "🎯 三頭全域360°彈幕狂歡地獄——！！🌪️" : "🎯 三头全域360°弹幕狂欢地狱——！！🌪️");
       for (let ring = 0; ring < 3; ring++) {
         shockwavesRef.current.push({
@@ -692,7 +692,7 @@ export function SakiPlantSlayerGame({
         });
       }
     } else if (p.stage === 4) {
-      // 4. 机枪射手大招
+      // 机枪射手大招
       setSakiShout(isEn ? "🎖️ SUPERSONIC METALSTORM SHREDDER!! 💥" : isTw ? "🎖️ 戰術金屬風暴加特林絞殺——！！💥" : "🎖️ 战术金属风暴加特林绞杀——！！💥");
       shockwavesRef.current.push({
         id: nextEntityId.current++,
@@ -720,7 +720,7 @@ export function SakiPlantSlayerGame({
         });
       }
     } else if (p.stage === 5 && !p.element) {
-      // 5. 超级机枪射手大招
+      // 超级机枪射手大招
       setSakiShout(isEn ? "👑 HYPER-NOVA ZENITH PULSE!! 🌟" : isTw ? "👑 五維天頂超頻等離子脈衝——！！🌟" : "👑 五维天顶超频等离子脉冲——！！🌟");
       shockwavesRef.current.push({
         id: nextEntityId.current++,
@@ -743,7 +743,7 @@ export function SakiPlantSlayerGame({
         });
       });
     } else if (p.element === "fire") {
-      // 6. 火焰元素大招
+      // 火焰元素大招
       setSakiShout(isEn ? "🔥 INFERNO HELLFIRE MELTDOWN!! 🌋" : isTw ? "🔥 滅世紅蓮流星煉獄焚燒——！！🌋" : "🔥 灭世红莲流星炼狱焚烧——！！🌋");
       shockwavesRef.current.push({
         id: nextEntityId.current++,
@@ -776,7 +776,7 @@ export function SakiPlantSlayerGame({
         z.hp -= 200;
       });
     } else if (p.element === "poison") {
-      // 6. 毒液元素大招
+      // 毒液元素大招
       setSakiShout(isEn ? "🧪 BIOHAZARD ACID TSUNAMI!! ☣️" : isTw ? "🧪 劇毒生化酸雨海嘯溶蝕——！！☣️" : "🧪 剧毒生化酸雨海啸溶蚀——！！☣️");
       shockwavesRef.current.push({
         id: nextEntityId.current++,
@@ -811,7 +811,7 @@ export function SakiPlantSlayerGame({
         z.hitFlashTimer = 0.15;
       });
     } else if (p.element === "lightning") {
-      // 6. 电能元素大招
+      // 电能元素大招
       setSakiShout(isEn ? "⚡ BILLION-VOLT EMP SUPERSTORM!! 🌩️" : isTw ? "⚡ 億伏特超導電磁雷暴核爆——！！🌩️" : "⚡ 亿伏特超导电磁雷暴核爆——！！🌩️");
       shockwavesRef.current.push({
         id: nextEntityId.current++,
@@ -855,7 +855,7 @@ export function SakiPlantSlayerGame({
         }
       });
     } else if (p.element === "ice") {
-      // 6. 寒冰元素大招
+      // 寒冰元素大招
       setSakiShout(isEn ? "❄️ ABSOLUTE ZERO GLACIATION!! 🧊" : isTw ? "❄️ 絕對零度極凍冰河世紀——！！🧊" : "❄️ 绝对零度极冻冰河世纪——！！🧊");
       shockwavesRef.current.push({
         id: nextEntityId.current++,

@@ -397,10 +397,8 @@ async function saveAntigravityDirectApiKey(apiKey: string): Promise<SakiAntigrav
 }
 
 /**
- * Single source of truth for the antigravity connection scheme.
- * Explicit `providerConfig.mode` always wins; for legacy configs without a mode,
- * an API key starting with "AIzaSy" implies "direct", anything else implies "proxy".
- * This is the ONLY place where the AIzaSy prefix is sniffed.
+ * antigravity 连接方式的判定逻辑就在这一处。
+ * 用户显式配了 mode 就用 mode；没配的话，AIzaSy 开头的 API key 走 direct，其他走 proxy。
  */
 export function resolveAntigravityMode(providerConfig: SakiProviderConfig): AntigravityMode {
   if (providerConfig.mode === "proxy" || providerConfig.mode === "direct") {
@@ -1036,7 +1034,7 @@ export async function exchangeAntigravityOAuthCode(
 
   const expiryDate = Date.now() + (tokenJson.expires_in ?? 3600) * 1000;
 
-  // 1. Write oauth_creds.json
+  // 写 oauth 凭证
   const oauthCredsContent = {
     access_token: tokenJson.access_token,
     refresh_token: tokenJson.refresh_token,
@@ -1049,12 +1047,12 @@ export async function exchangeAntigravityOAuthCode(
     writeFileSync(oauthCredsPath, JSON.stringify(oauthCredsContent, null, 2), "utf8");
   } catch {}
 
-  // 2. Write cliTokenPath
+  // 写 cli token 文件
   try {
     writeFileSync(cliTokenPath, tokenJson.access_token, "utf8");
   } catch {}
 
-  // 3. Update google_accounts.json
+  // 更新 google_accounts.json（把旧 active 挪进 old 列表）
   try {
     let existingGoogleAccounts: { active?: string; old?: string[] } = {};
     if (existsSync(googleAccountsPath)) {
@@ -1081,7 +1079,7 @@ export async function exchangeAntigravityOAuthCode(
     );
   } catch {}
 
-  // 4. Update Saki account vault
+  // 同步到 Saki 面板账户库
   try {
     let sakiVault: SakiAccountsVault = {};
     if (existsSync(vaultPath)) {
@@ -1192,12 +1190,12 @@ export async function loginAntigravityAccount(
   const cliDir = join(geminiDir, "antigravity-cli");
   mkdirSync(cliDir, { recursive: true });
 
-  // 1. Write antigravity-oauth-token
+  // 写 antigravity-oauth-token
   try {
     writeFileSync(join(cliDir, "antigravity-oauth-token"), accessToken, "utf8");
   } catch {}
 
-  // 2. Write oauth_creds.json
+  // 写 oauth_creds.json
   try {
     const credsData = {
       access_token: accessToken,
@@ -1207,7 +1205,7 @@ export async function loginAntigravityAccount(
     writeFileSync(join(geminiDir, "oauth_creds.json"), JSON.stringify(credsData, null, 2), "utf8");
   } catch {}
 
-  // 3. Update google_accounts.json
+  // 更新 google_accounts.json
   const googleAccountsPath = join(geminiDir, "google_accounts.json");
   let googleAccounts: { active?: string; old?: string[] } = {};
   try {
@@ -1225,7 +1223,7 @@ export async function loginAntigravityAccount(
     writeFileSync(googleAccountsPath, JSON.stringify(googleAccounts, null, 2), "utf8");
   } catch {}
 
-  // 4. Update saki_antigravity_accounts.json
+  // 更新面板的 antigravity 账户库
   const sakiVaultPath = join(geminiDir, "saki_antigravity_accounts.json");
   let sakiVault: { active?: string; accounts?: Record<string, SakiSavedAccountRecord> } = {};
   try {

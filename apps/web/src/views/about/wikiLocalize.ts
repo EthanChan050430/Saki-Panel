@@ -84,17 +84,20 @@ export function wikiUi(language: PanelLanguage, text: string): string {
   if (!text) return text;
   if (language === "zh-CN") return text;
   if (language === "zh-TW") return toTraditionalChinese(text);
+  if (language === "ja-JP") return translateDomText(text, "ja-JP");
   return WIKI_UI_EN[text] ?? translateDomText(text, "en-US");
 }
 
 export function getWikiCategories(language: PanelLanguage) {
   if (language === "en-US") return WIKI_CATEGORIES_EN;
   if (language === "zh-TW") return mapWikiValue(WIKI_CATEGORIES, toTraditionalChinese);
+  if (language === "ja-JP") return WIKI_CATEGORIES;
   return WIKI_CATEGORIES;
 }
 
 export function getWikiChapters(language: PanelLanguage): WikiChapter[] {
   if (language === "en-US") return WIKI_CHAPTERS_EN;
   if (language === "zh-TW") return mapWikiValue(WIKI_CHAPTERS, toTraditionalChinese);
+  if (language === "ja-JP") return WIKI_CHAPTERS;
   return WIKI_CHAPTERS;
 }

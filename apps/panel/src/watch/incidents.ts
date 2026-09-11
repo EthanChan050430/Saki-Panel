@@ -523,10 +523,8 @@ export async function publishOpenCounts(): Promise<void> {
   publishIncidentCounts();
 }
 
-// 面板重启后恢复卡死的 incident：runningInstanceIds / active task 都是纯内存态，
-// 重启后 diagnosing/applying/awaiting_approval/verifying 状态的单子会永久卡死
-// （evaluateCrash 认为 watch 仍在运行，confirmWatchDiagnosis 也不接受这些状态）。
-// 这里在启动时把它们重置为可恢复状态，并清掉残留的 restart lease（内存态本就是空的，防御性清理）。
+// 面板重启后，runningInstanceIds / restart lease 都是纯内存态，diagnosing/applying/awaiting_approval/verifying 状态的单子会永久卡死。
+// 这里在启动时把它们重置为可恢复状态，并清掉残留的 restart lease。
 export async function recoverStuckWatchIncidents(): Promise<void> {
   const stuck = await prisma.incident.findMany({
     where: { status: { in: ["diagnosing", "applying", "awaiting_approval", "verifying"] } },

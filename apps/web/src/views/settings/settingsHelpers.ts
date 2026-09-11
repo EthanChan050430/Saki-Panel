@@ -32,6 +32,7 @@ export const emptySakiConfig: SakiConfigResponse = {
   modelPointsMultipliers: {},
   searchEnabled: true,
   mcpEnabled: false,
+  allowCrossInstanceEnforcement: true,
   imageGen: { ...defaultSakiImageGenConfig },
   systemPrompt: "",
   appearance: defaultPanelAppearance,

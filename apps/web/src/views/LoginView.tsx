@@ -15,6 +15,7 @@ import {
 import type { CurrentUser, PanelAppearanceSettings, RegisterRequest, RegistrationIdentity } from "@webops/shared";
 import { api, ApiError } from "../api.js";
 import { sakiArtAssets, tokenKey } from "../constants.js";
+import { useSkinRevision } from "../plugins/SkinLoader.js";
 import { panelLanguageOptions, type PanelLanguage, usePanelLanguage, usePanelT } from "../i18n/index.js";
 import {
   clearRememberedLogin,
@@ -36,6 +37,7 @@ export function LoginView({
   darkMode: boolean;
   onToggleDarkMode: (e?: React.MouseEvent<HTMLElement>) => void;
 }) {
+  useSkinRevision();
   const t = usePanelT();
   const { language, setLanguage } = usePanelLanguage();
   const rememberedLogin = useMemo(() => readRememberedLogin(), []);
@@ -134,6 +136,15 @@ export function LoginView({
         "歡迎來到 Saki Panel~ 🌸",
         "登入後就可以和 Saki 一起玩啦！",
         "加油工作呀~ ฅ'ω'ฅ"
+      ];
+    }
+    if (language === "ja-JP") {
+      return [
+        "Saki がログインを見守ってるよ～ ✨",
+        "今日も元気いっぱいでいこうね！(｡♥‿♥｡)",
+        "Saki Panel へようこそ～ 🌸",
+        "ログインしたら一緒に遊ぼう！",
+        "今日も頑張ってね～ ฅ'ω'ฅ"
       ];
     }
     return [

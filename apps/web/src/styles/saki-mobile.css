@@ -1592,9 +1592,9 @@
 
 .about-wiki-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  grid-template-columns: minmax(0, 1fr) 320px;
   gap: 18px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .about-toc,
@@ -1608,18 +1608,19 @@
 }
 
 .about-side-column {
-  position: sticky;
-  top: 92px;
   min-width: 0;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 14px;
-  align-self: start;
+  align-self: stretch;
+  position: relative;
 }
 
 .about-toc {
   display: grid;
   gap: 4px;
   padding: 14px 10px;
+  will-change: transform;
 }
 
 .about-toc-heading {
@@ -2129,7 +2130,7 @@
 
 @media (max-width: 1180px) {
   .about-wiki-layout {
-    grid-template-columns: minmax(0, 1fr) minmax(248px, 292px);
+    grid-template-columns: minmax(0, 1fr) 292px;
   }
 
   .about-update-panel {
@@ -2149,6 +2150,7 @@
   .about-side-column {
     order: -1;
     position: static;
+    align-self: auto;
   }
 
   .about-toc {

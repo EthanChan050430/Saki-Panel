@@ -1,5 +1,6 @@
 import React from "react";
 import { sakiArtAssets } from "../../constants.js";
+import { useSkinRevision } from "../../plugins/SkinLoader.js";
 
 export interface SakiEmptyStateProps {
   imageSrc?: string;
@@ -26,6 +27,7 @@ export function SakiEmptyState({
   className = "",
   style
 }: SakiEmptyStateProps) {
+  useSkinRevision();
   let resolvedSrc = imageSrc;
   if (!resolvedSrc && illustration) {
     switch (illustration) {

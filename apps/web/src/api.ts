@@ -52,6 +52,10 @@ import type {
   ManagedUser,
   PanelAppearanceSettings,
   PanelSessionSettings,
+  InstalledPlugin,
+  PluginRegistryItem,
+  PluginStoreState,
+  PluginUpdateStatus,
   RegisterRequest,
   SakiChatRequest,
   SakiChatResponse,
@@ -2019,6 +2023,88 @@ export const api = {
     return requestJson<{ ok: boolean; message?: string }>(
       "/api/databases/test-connection",
       { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  // ===================== Plugin System APIs =====================
+  plugins(token: string) {
+    return requestJson<{ ok: boolean; state: PluginStoreState }>("/api/plugins", {}, token);
+  },
+  pluginRegistry(token: string) {
+    return requestJson<{ ok: boolean; items: PluginRegistryItem[] }>("/api/plugins/registry", {}, token);
+  },
+  pluginFiles(token: string, id: string) {
+    return requestJson<{ ok: boolean; files: string[] }>(
+      `/api/plugins/${encodeURIComponent(id)}/files`,
+      {},
+      token
+    );
+  },
+  installPlugin(token: string, input: {
+    repoOrUrl: string;
+    mirrorId?: string;
+    customMirrorUrl?: string;
+    ref?: string;
+    pluginName?: string;
+  }) {
+    return requestJson<{ ok: boolean; plugins: InstalledPlugin[]; message: string }>(
+      "/api/plugins/install",
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  togglePlugin(token: string, id: string, enabled?: boolean) {
+    return requestJson<{ ok: boolean; plugin: InstalledPlugin }>(
+      `/api/plugins/${encodeURIComponent(id)}/toggle`,
+      { method: "POST", body: JSON.stringify({ enabled }) },
+      token
+    );
+  },
+  setActivePlugin(token: string, id: string, input: { type: "theme" | "skin"; active: boolean }) {
+    return requestJson<{ ok: boolean; state: PluginStoreState }>(
+      `/api/plugins/${encodeURIComponent(id)}/active`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  uninstallPlugin(token: string, id: string) {
+    return requestJson<{ ok: boolean; message: string }>(
+      `/api/plugins/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+      token
+    );
+  },
+  testMirrors(token: string, customMirrorUrl?: string) {
+    return requestJson<{
+      ok: boolean;
+      results: Array<{ mirrorId: string; name: string; pingMs: number; ok: boolean; error?: string }>;
+    }>("/api/plugins/mirror-test", { method: "POST", body: JSON.stringify({ customMirrorUrl }) }, token);
+  },
+  saveMirrorConfig(token: string, input: { mirrorId: string; customMirrorUrl?: string }) {
+    return requestJson<{ ok: boolean; state: PluginStoreState }>(
+      "/api/plugins/mirror-config",
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  checkPluginUpdates(
+    token: string,
+    input?: { ids?: string[]; mirrorId?: string; customMirrorUrl?: string }
+  ) {
+    return requestJson<{ ok: boolean; statuses: PluginUpdateStatus[] }>(
+      "/api/plugins/check-updates",
+      { method: "POST", body: JSON.stringify(input ?? {}) },
+      token
+    );
+  },
+  updatePlugin(
+    token: string,
+    id: string,
+    input?: { mirrorId?: string; customMirrorUrl?: string }
+  ) {
+    return requestJson<{ ok: boolean; plugin: InstalledPlugin; message: string }>(
+      `/api/plugins/${encodeURIComponent(id)}/update`,
+      { method: "POST", body: JSON.stringify(input ?? {}) },
       token
     );
   }

@@ -25,6 +25,7 @@ import { SakiPhoneLauncher } from "../phone/SakiPhoneLauncher.js";
 import { SakiSweetMatchGame } from "../games/SakiSweetMatchGame.js";
 import { SakiPlantSlayerGame } from "../games/SakiPlantSlayerGame.js";
 import { MarkdownContent } from "../../common/MarkdownContent.js";
+import { usePlugins } from "../../../plugins/PluginContext.js";
 import {
   getFavorabilityLevelInfo,
   type FavorabilityLevelInfo
@@ -119,10 +120,12 @@ export const SakiVideoPane = memo(function SakiVideoPane({
   toggleSpeechInput
 }: SakiVideoPaneProps) {
   const favInfo = getFavorabilityLevelInfo(sakiFavorabilityExp, language);
+  const { pluginGames } = usePlugins();
   const isEn = language === "en-US";
   const isTw = language === "zh-TW";
+  const isJa = language === "ja-JP";
 
-  const [activeGame, setActiveGame] = useState<"dessert_drop" | "sweet_match" | "plant_slayer" | null>(null);
+  const [activeGame, setActiveGame] = useState<string | null>(null);
 
   useEffect(() => {
     if (!miniGameActive) {
@@ -190,6 +193,41 @@ export const SakiVideoPane = memo(function SakiVideoPane({
               handleMiniGameFinish(score, expReward);
             }}
           />
+        ) : activeGame && pluginGames.some((pg) => pg.id === activeGame) ? (
+          (() => {
+            const pg = pluginGames.find((p) => p.id === activeGame)!;
+            const entry = pg.manifest.game?.entry ? pg.manifest.game.entry.replace(/^[/\\]+/, "") : "index.html";
+            const gameUrl = `/api/plugins/${encodeURIComponent(pg.id)}/assets/${entry}`;
+            return (
+              <div style={{ position: "absolute", inset: 0, zIndex: 50, background: "#000", display: "flex", flexDirection: "column" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 14px", background: "rgba(255,255,255,0.08)", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+                  <span style={{ color: "#fff", fontSize: "0.85rem", fontWeight: 600 }}>{pg.manifest.game?.title || pg.manifest.displayName}</span>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button
+                      type="button"
+                      onClick={() => setActiveGame(null)}
+                      style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", fontSize: "0.8rem" }}
+                    >
+                      返回手机
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setMiniGameActive(false); setActiveGame(null); }}
+                      style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", fontSize: "1rem" }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+                <iframe
+                  src={gameUrl}
+                  title={pg.manifest.displayName}
+                  sandbox="allow-scripts allow-pointer-lock"
+                  style={{ width: "100%", height: "100%", border: "none" }}
+                />
+              </div>
+            );
+          })()
         ) : (
           <SakiPhoneLauncher
             favorabilityLevel={favInfo.level}
@@ -285,7 +323,7 @@ export const SakiVideoPane = memo(function SakiVideoPane({
 
             <div className="saki-favorability-tooltip" role="tooltip">
               <div className="tooltip-title">
-                {isEn ? "Affection " : isTw ? "好感度 " : "好感度 "}Lv.{favInfo.level} · {favInfo.title}
+                {isEn ? "Affection " : isTw ? "好感度 " : isJa ? "好感度 " : "好感度 "}Lv.{favInfo.level} · {favInfo.title}
               </div>
               <div className="tooltip-exp-bar">
                 <div className="tooltip-exp-fill" style={{ width: `${favInfo.levelProgress}%` }} />
@@ -306,8 +344,8 @@ export const SakiVideoPane = memo(function SakiVideoPane({
           <button
             className="saki-video-close-btn"
             type="button"
-            title={isEn ? "Close Saki" : isTw ? "關閉 Saki" : "关闭 Saki"}
-            aria-label={isEn ? "Close Saki" : isTw ? "關閉 Saki" : "关闭 Saki"}
+            title={isEn ? "Close Saki" : isTw ? "關閉 Saki" : isJa ? "咲を閉じる" : "关闭 Saki"}
+            aria-label={isEn ? "Close Saki" : isTw ? "關閉 Saki" : isJa ? "咲を閉じる" : "关闭 Saki"}
             onClick={closeSakiPanel}
           >
             <X size={15} />
@@ -330,7 +368,7 @@ export const SakiVideoPane = memo(function SakiVideoPane({
               handleSakiPoke();
             }
           }}
-          title={isEn ? "Tap to poke, hold to speak" : isTw ? "點按戳戳，長按說話" : "点按戳戳，长按说话"}
+          title={isEn ? "Tap to poke, hold to speak" : isTw ? "點按戳戳，長按說話" : isJa ? "タップでつつく、長押しで話す" : "点按戳戳，长按说话"}
           role="button"
           tabIndex={0}
         >
@@ -372,10 +410,10 @@ export const SakiVideoPane = memo(function SakiVideoPane({
             {getLocalizedFoodMenu(language).map((food) => {
               const canAfford = isUnlimitedPoints || numericSakiPoints >= food.cost;
               const isCurrentDragging = Boolean(draggingFood && draggingFood.food.id === food.id && draggingFood.isDragging);
-              const costUnit = isEn ? " pt" : isTw ? " 點" : "分";
+              const costUnit = isEn ? " pt" : isTw ? " 點" : isJa ? " pt" : "分";
               const costTooltip = canAfford
-                ? `${food.name} (${food.cost} ${isEn ? "pts" : isTw ? "積分" : "积分"})`
-                : `${isEn ? "Insufficient points" : isTw ? "積分不足" : "积分不足"} (${food.cost})`;
+                ? `${food.name} (${food.cost} ${isEn ? "pts" : isTw ? "積分" : isJa ? "ポイント" : "积分"})`
+                : `${isEn ? "Insufficient points" : isTw ? "積分不足" : isJa ? "ポイント不足" : "积分不足"} (${food.cost})`;
               return (
                 <button
                   key={food.id}
@@ -427,7 +465,7 @@ export const SakiVideoPane = memo(function SakiVideoPane({
         <button
           className={`saki-video-btn ${miniGameActive ? "active" : ""}`}
           type="button"
-          title={isEn ? "Saki Phone (Mini-games)" : isTw ? "星夢手機 (選擇小遊戲玩耍)" : "星梦手机 (选择小游戏玩耍)"}
+          title={isEn ? "Saki Phone (Mini-games)" : isTw ? "星夢手機 (選擇小遊戲玩耍)" : isJa ? "咲フォン（ミニゲーム）" : "星梦手机 (选择小游戏玩耍)"}
           aria-label={isEn ? "Mini-games" : "小游戏中心"}
           onClick={() => {
             setFeedMenuOpen(false);

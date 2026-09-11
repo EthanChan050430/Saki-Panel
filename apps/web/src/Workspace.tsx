@@ -103,6 +103,7 @@ import {
   usePanelT
 } from "./i18n/index.js";
 import { defaultPanelAppearance, sakiArtAssets } from "./constants.js";
+import { useSkinRevision } from "./plugins/SkinLoader.js";
 import { AccountAvatar } from "./components/common/AccountAvatar.js";
 import { UserAccountModal } from "./components/common/UserAccountModal.js";
 import { AccessEmptyView } from "./components/common/CommonUI.js";
@@ -121,6 +122,7 @@ import { AuditView } from "./views/AuditView.js";
 import { AboutView } from "./views/AboutView.js";
 import { SettingsView } from "./views/SettingsView.js";
 import { ReliabilityView } from "./views/ReliabilityView.js";
+import { PluginStoreView } from "./views/PluginStoreView.js";
 import { IncidentBell } from "./IncidentInbox.js";
 import { AgentMonitorBell } from "./AgentMonitorBell.js";
 import { cssImageUrl } from "./utils/appearance.js";
@@ -153,6 +155,7 @@ export function Workspace({
   onToggleDarkMode: (e?: React.MouseEvent<HTMLElement>) => void;
   themeSwitching: boolean;
 }) {
+  useSkinRevision();
   const initialRoute = useMemo(() => parseHashRoute(), []);
   const [activeView, setActiveView] = useState<ViewMode>(initialRoute.view);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(initialRoute.instanceId);
@@ -171,10 +174,14 @@ export function Workspace({
   const [accountOpen, setAccountOpen] = useState(false);
   const [sakiLieMode, setSakiLieMode] = useState<boolean>(() => {
     try {
-      const saved = globalThis.localStorage?.getItem("saki_lie_mode");
-      return saved !== null ? saved === "true" : true;
+      const legacyLie = globalThis.localStorage?.getItem("saki_lie_mode");
+      if (legacyLie !== null) {
+        globalThis.localStorage?.removeItem("saki_lie_mode");
+      }
+      const saved = globalThis.localStorage?.getItem("webops.saki.lieMode");
+      return saved === "true";
     } catch {
-      return true;
+      return false;
     }
   });
   const [sakiWakeCount, setSakiWakeCount] = useState(0);
@@ -219,7 +226,8 @@ export function Workspace({
     setSakiLieMode(false);
     setSakiWakeCount((c) => c + 1);
     try {
-      globalThis.localStorage?.setItem("saki_lie_mode", "false");
+      globalThis.localStorage?.setItem("webops.saki.lieMode", "false");
+      globalThis.localStorage?.removeItem("saki_lie_mode");
     } catch {}
   }, []);
 
@@ -242,7 +250,6 @@ export function Workspace({
     };
     liePressRef.current = session;
     setSakiLieHolding(true);
-    event.preventDefault();
 
     const onMove = (moveEvent: PointerEvent) => {
       if (moveEvent.pointerId !== session.pointerId) return;
@@ -258,6 +265,7 @@ export function Workspace({
     };
     const onUp = (upEvent: PointerEvent) => {
       if (upEvent.pointerId !== session.pointerId) return;
+      const wasLongPressed = session.longPressed;
       if (session.timer !== null) {
         window.clearTimeout(session.timer);
         session.timer = null;
@@ -269,6 +277,13 @@ export function Workspace({
       liePressMoveRef.current = null;
       liePressUpRef.current = null;
       liePressRef.current = null;
+
+      if (!wasLongPressed) {
+        const movedDist = Math.hypot(upEvent.clientX - session.startX, upEvent.clientY - session.startY);
+        if (movedDist < 14) {
+          handleWakeSakiFromLie();
+        }
+      }
     };
     liePressMoveRef.current = onMove;
     liePressUpRef.current = onUp;
@@ -283,7 +298,8 @@ export function Workspace({
       setSakiLieHolding(false);
       setSakiLieMode(false);
       try {
-        globalThis.localStorage?.setItem("saki_lie_mode", "false");
+        globalThis.localStorage?.setItem("webops.saki.lieMode", "false");
+        globalThis.localStorage?.removeItem("saki_lie_mode");
       } catch {}
       setSakiPullDrag({
         pointerId: session.pointerId,
@@ -298,17 +314,14 @@ export function Workspace({
   const handleLieClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    if (lieClickSuppressedRef.current) {
-      lieClickSuppressedRef.current = false;
-      return;
-    }
     handleWakeSakiFromLie();
   }, [handleWakeSakiFromLie]);
 
   const handleReturnSakiToLie = useCallback(() => {
     setSakiLieMode(true);
     try {
-      globalThis.localStorage?.setItem("saki_lie_mode", "true");
+      globalThis.localStorage?.setItem("webops.saki.lieMode", "true");
+      globalThis.localStorage?.removeItem("saki_lie_mode");
     } catch {}
   }, []);
   const sidebarRef = useRef<HTMLElement | null>(null);
@@ -340,6 +353,7 @@ export function Workspace({
     if (canOpenAudit) views.push("audit");
     if (canUseSaki) views.push("reliability");
     if (canConfigureSaki) views.push("settings");
+    views.push("plugins");
     if (canOpenAbout) views.push("about");
     return views;
   }, [
@@ -700,6 +714,10 @@ export function Workspace({
                   {t("nav.settings")}
                 </button>
               ) : null}
+              <button className={`nav-item-plugins ${effectiveView === "plugins" ? "active" : ""}`} onClick={() => selectView("plugins")}>
+                <Layers size={18} />
+                {t("nav.plugins")}
+              </button>
               {canOpenAbout ? (
                 <button className={`nav-item-about ${effectiveView === "about" ? "active" : ""}`} onClick={() => selectView("about")}>
                   <Info size={18} />
@@ -766,9 +784,11 @@ export function Workspace({
                                 ? t("view.reliability")
                                 : effectiveView === "users"
                                 ? t("view.users")
-                                : effectiveView === "about"
-                                  ? t("nav.about")
-                                  : t("view.audit")}
+                                : effectiveView === "plugins"
+                                  ? t("view.plugins")
+                                  : effectiveView === "about"
+                                    ? t("nav.about")
+                                    : t("view.audit")}
                 </h1>
               </div>
               <div className="topbar-actions">
@@ -918,6 +938,8 @@ export function Workspace({
               language={language}
               onLanguageChange={onLanguageChange}
             />
+          ) : effectiveView === "plugins" ? (
+            <PluginStoreView token={token} currentUser={user} />
           ) : effectiveView === "about" ? (
             <AboutView token={token} />
           ) : (

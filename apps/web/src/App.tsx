@@ -30,6 +30,7 @@ import { LoginView } from "./views/LoginView.js";
 import { Workspace } from "./Workspace.js";
 import { GlobalEventProvider } from "./GlobalEventContext.js";
 import { NotificationProvider, NotificationBar } from "./NotificationCenter.js";
+import { PluginProvider } from "./plugins/PluginContext.js";
 
 export function App() {
   const [token, setToken] = useState(() => localStorage.getItem(tokenKey));
@@ -248,6 +249,16 @@ export function App() {
     const frame = window.requestAnimationFrame(applyLanguage);
     const observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
+        // Cheap early-exit: never run DOM translation inside subtrees
+        // explicitly opted out via data-no-i18n (e.g. high-frequency
+        // streaming regions). One ancestor check is far cheaper than the
+        // translation pass it prevents.
+        const mutationTarget = mutation.target;
+        const targetElement =
+          mutationTarget instanceof Element ? mutationTarget : mutationTarget.parentElement;
+        if (targetElement?.closest("[data-no-i18n]")) {
+          continue;
+        }
         if (mutation.type === "characterData" && mutation.target instanceof Text) {
           const target = mutation.target;
           if (nodesBeingTranslated.has(target)) {
@@ -389,17 +400,19 @@ export function App() {
   if (!token || !user) {
     return (
       <PanelLanguageContext.Provider value={languageContextValue}>
-        <AppBackground appearance={appearance} darkMode={darkMode} />
-        <ElegantCursor />
-        <LoginView
-          appearance={appearance}
-          darkMode={darkMode}
-          onToggleDarkMode={toggleDarkMode}
-          onLogin={(nextToken, nextUser) => {
-            setToken(nextToken);
-            setUser(nextUser);
-          }}
-        />
+        <PluginProvider token={null}>
+          <AppBackground appearance={appearance} darkMode={darkMode} />
+          <ElegantCursor />
+          <LoginView
+            appearance={appearance}
+            darkMode={darkMode}
+            onToggleDarkMode={toggleDarkMode}
+            onLogin={(nextToken, nextUser) => {
+              setToken(nextToken);
+              setUser(nextUser);
+            }}
+          />
+        </PluginProvider>
       </PanelLanguageContext.Provider>
     );
   }
@@ -410,20 +423,22 @@ export function App() {
     <PanelLanguageContext.Provider value={languageContextValue}>
       <AppBackground appearance={appearance} darkMode={darkMode} />
       <ElegantCursor />
-      <Workspace
-        token={token}
-        user={user}
-        appearance={appearance}
-        language={language}
-        onLogout={logout}
-        onSwitchUser={switchSession}
-        onUserChange={setUser}
-        onAppearanceChange={updateAppearanceState}
-        onLanguageChange={changeLanguage}
-        darkMode={darkMode}
-        onToggleDarkMode={toggleDarkMode}
-        themeSwitching={themeSwitching}
-      />
+      <PluginProvider token={token}>
+        <Workspace
+          token={token}
+          user={user}
+          appearance={appearance}
+          language={language}
+          onLogout={logout}
+          onSwitchUser={switchSession}
+          onUserChange={setUser}
+          onAppearanceChange={updateAppearanceState}
+          onLanguageChange={changeLanguage}
+          darkMode={darkMode}
+          onToggleDarkMode={toggleDarkMode}
+          themeSwitching={themeSwitching}
+        />
+      </PluginProvider>
       <NotificationBar />
     </PanelLanguageContext.Provider>
     </NotificationProvider>

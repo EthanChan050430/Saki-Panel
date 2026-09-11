@@ -120,7 +120,7 @@ export function AboutView({ token }: AboutViewProps = {}) {
       let hasUpdate = false;
       let detectedMode: "git" | "release" = "release";
 
-      // 1. First attempt update check via Panel backend API
+      // 先走后端 API 查版本
       try {
         const backendRes = await api.checkSystemUpdate(true, token);
         if (backendRes) {
@@ -134,7 +134,7 @@ export function AboutView({ token }: AboutViewProps = {}) {
         // Fall back to direct browser fetch if backend check fails
       }
 
-      // 2. Client-side fallback to GitHub APIs / Mirrors
+      // 后端拿不到就浏览器直连 GitHub / 镜像兜底
       if (!resolvedVersion) {
         const clientSources = [
           "https://api.github.com/repos/EthanChan050430/Saki-Panel/releases/latest",
@@ -266,8 +266,152 @@ export function AboutView({ token }: AboutViewProps = {}) {
     });
   }, [searchQuery, selectedCategory, wikiChapters]);
 
+  // Flag to ignore observer events during programmatic smooth scroll
+  const isProgrammaticScrollRef = useRef(false);
+
+  // Refs for JS-driven sticky positioning of the TOC
+  const sideColumnRef = useRef<HTMLElement>(null);
+  const tocRef = useRef<HTMLElement>(null);
+  const wikiLayoutRef = useRef<HTMLDivElement>(null);
+
+  // JS-driven sticky scroll following for .about-toc
+  useEffect(() => {
+    const toc = tocRef.current;
+    const sideCol = sideColumnRef.current;
+    const wikiLayout = wikiLayoutRef.current;
+    if (!toc || !sideCol || !wikiLayout) return;
+
+    let rafId = 0;
+
+    const updateTocPosition = () => {
+      // In narrow/mobile screens (<=900px), TOC is displayed horizontally above the article
+      if (window.innerWidth <= 900) {
+        if (toc.style.transform) toc.style.transform = "";
+        return;
+      }
+
+      const sideColRect = sideCol.getBoundingClientRect();
+      const naturalTocOffset = toc.offsetTop;
+      const naturalViewportTop = sideColRect.top + naturalTocOffset;
+      const topGap = 20;
+
+      let translateY = 0;
+      if (naturalViewportTop < topGap) {
+        translateY = topGap - naturalViewportTop;
+        const maxTranslateY = sideCol.offsetHeight - naturalTocOffset - toc.offsetHeight;
+        if (maxTranslateY > 0) {
+          translateY = Math.min(translateY, maxTranslateY);
+        } else {
+          translateY = 0;
+        }
+      }
+
+      const nextTransform = translateY > 0 ? `translate3d(0, ${Math.round(translateY)}px, 0)` : "";
+      if (toc.style.transform !== nextTransform) {
+        toc.style.transform = nextTransform;
+      }
+    };
+
+    const scheduleUpdate = () => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(updateTocPosition);
+    };
+
+    window.addEventListener("scroll", scheduleUpdate, { passive: true });
+    window.addEventListener("resize", scheduleUpdate);
+
+    const ro = new ResizeObserver(scheduleUpdate);
+    ro.observe(wikiLayout);
+    ro.observe(sideCol);
+    ro.observe(toc);
+
+    updateTocPosition();
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.removeEventListener("scroll", scheduleUpdate);
+      window.removeEventListener("resize", scheduleUpdate);
+      ro.disconnect();
+    };
+  }, [filteredChapters.length]);
+
+  // Sync active chapter with scroll position via IntersectionObserver
+  useEffect(() => {
+    if (filteredChapters.length === 0) return;
+
+    const sectionIds = filteredChapters.map((ch) => ch.id);
+    const sections = sectionIds
+      .map((id) => document.getElementById(id))
+      .filter((el): el is HTMLElement => el !== null);
+
+    if (sections.length === 0) return;
+
+    const stickyTop = 80;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (isProgrammaticScrollRef.current) return;
+
+        const visibleEntries = entries.filter((e) => e.isIntersecting);
+        if (visibleEntries.length === 0) return;
+
+        // Pick the topmost intersecting section that's at or below the sticky zone
+        const candidate = visibleEntries
+          .filter((e) => e.boundingClientRect.top >= stickyTop - 20)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+
+        const chosen = candidate ?? visibleEntries[0];
+        if (!chosen) return;
+        const id = chosen.target.id;
+        setActiveChapterId((prev) => (prev === id ? prev : id));
+      },
+      {
+        rootMargin: `-${stickyTop - 10}px 0px -60% 0px`,
+        threshold: [0, 0.1, 0.25]
+      }
+    );
+
+    sections.forEach((el) => observer.observe(el));
+
+    // Fallback selector — sync current chapter on load/filter change
+    const syncActive = () => {
+      const firstVisible =
+        [...sections].reverse().find((el) => el.getBoundingClientRect().top <= stickyTop) ??
+        sections.find((el) => el.getBoundingClientRect().top >= stickyTop);
+      if (firstVisible) {
+        setActiveChapterId((prev) => (prev === firstVisible.id ? prev : firstVisible.id));
+      }
+    };
+    const rafId = requestAnimationFrame(syncActive);
+    const resizeHandler = () => syncActive();
+    window.addEventListener("resize", resizeHandler);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.removeEventListener("resize", resizeHandler);
+      observer.disconnect();
+    };
+  }, [filteredChapters]);
+
+  // Auto-scroll the active TOC item into view within the sidebar list
+  useEffect(() => {
+    if (!activeChapterId) return;
+    const tocList = document.querySelector<HTMLElement>(".wiki-toc-list");
+    if (!tocList) return;
+    const activeItem = tocList.querySelector<HTMLElement>(`.wiki-toc-item.active`);
+    if (!activeItem) return;
+
+    const listRect = tocList.getBoundingClientRect();
+    const itemRect = activeItem.getBoundingClientRect();
+
+    if (itemRect.top < listRect.top || itemRect.bottom > listRect.bottom) {
+      activeItem.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [activeChapterId]);
+
   // Scroll to Chapter Anchor
   const scrollToChapter = useCallback((chapterId: string) => {
+    isProgrammaticScrollRef.current = true;
     setActiveChapterId(chapterId);
     const elem = document.getElementById(chapterId);
     if (elem) {
@@ -278,6 +422,12 @@ export function AboutView({ token }: AboutViewProps = {}) {
         top: offsetPosition,
         behavior: "smooth"
       });
+      // Release the flag after smooth scroll settles
+      window.setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+      }, 800);
+    } else {
+      isProgrammaticScrollRef.current = false;
     }
   }, []);
 
@@ -427,7 +577,7 @@ export function AboutView({ token }: AboutViewProps = {}) {
         </div>
       </div>
 
-      <div className="about-wiki-layout">
+      <div ref={wikiLayoutRef} className="about-wiki-layout">
         {/* Main Documentation Articles Column */}
         <article className="about-article">
           <header className="wiki-clean-header">
@@ -573,7 +723,7 @@ export function AboutView({ token }: AboutViewProps = {}) {
         </article>
 
         {/* Right Sticky Column: Infobox + Updates + Wiki Table of Contents */}
-        <aside className="about-side-column" aria-label={t("about.sidebar")}>
+        <aside ref={sideColumnRef} className="about-side-column" aria-label={t("about.sidebar")}>
           {/* Infobox & Update Checker */}
           <section className="about-infobox" aria-label={t("about.projectInfo")}>
             <div className="about-infobox-title">
@@ -684,7 +834,7 @@ export function AboutView({ token }: AboutViewProps = {}) {
           </section>
 
           {/* Dynamic Wiki Table of Contents */}
-          <nav className="about-toc" aria-label={t("about.wiki.tocAria")}>
+          <nav ref={tocRef} className="about-toc" aria-label={t("about.wiki.tocAria")}>
             <div className="about-toc-heading" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span>{t("about.toc")} ({filteredChapters.length})</span>
               {searchQuery && (

@@ -20,7 +20,8 @@ export const validViews: readonly ViewMode[] = [
   "audit",
   "settings",
   "about",
-  "reliability"
+  "reliability",
+  "plugins"
 ];
 
 export function parseHashRoute(): PanelRoute {

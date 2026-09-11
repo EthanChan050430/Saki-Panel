@@ -4,7 +4,7 @@ import { applyPatchToContent, parseWorkspacePatch, patchHunkStartLine } from "./
 import type { CreateScheduledTaskRequest, PermissionCode, SakiAgentAction, SakiAgentRiskLevel, SakiChatRequest, SakiInputAttachment, UpdateScheduledTaskRequest } from "@webops/shared";
 import { prisma } from "../../db.js";
 import { writeAuditLog } from "../../audit.js";
-import { classifyCommandRisk, findDangerousCommandReason } from "../../security.js";
+import { classifyCommandRisk, findCrossInstanceCommandEscape, findDangerousCommandReason } from "../../security.js";
 import { instanceAccessInclude, listVisibleInstances, loadVisibleInstance } from "../../instance-access.js";
 import type { DaemonInstanceSpec } from "../../daemon-client.js";
 import {
@@ -431,12 +431,28 @@ async function ensureAgentVisibleTask(userId: string, taskId: string) {
   return task;
 }
 
+function crossInstanceEnforcementDisabled(runtime: SakiAgentRuntime): boolean {
+  return runtime.config.allowCrossInstanceEnforcement === false;
+}
+
+function assertCrossInstanceAccessAllowed(runtime: SakiAgentRuntime, instance: InstanceWithNode): void {
+  if (!crossInstanceEnforcementDisabled(runtime)) return;
+  const contextInstance = runtime.context.instance;
+  if (!contextInstance) {
+    throw new RouteError("已关闭跨实例执法且当前没有实例上下文，无法确定“当前实例”。请从某个实例页面打开 Saki 后再试。", 400);
+  }
+  if (instance.id !== contextInstance.id) {
+    throw new RouteError("已关闭跨实例执法，Saki 只能操作当前实例。", 400);
+  }
+}
+
 async function resolveAgentInstance(runtime: SakiAgentRuntime, args: Record<string, unknown>): Promise<InstanceWithNode> {
   const lookup = stringArg(args, "instanceId") || stringArg(args, "id") || stringArg(args, "instance");
   if (lookup) {
     requireUserPermission(runtime.permissions, "instance.view");
     const instance = await findInstanceByLookup(runtime.userId, lookup);
     if (!instance) throw new RouteError("Instance not found.", 404);
+    assertCrossInstanceAccessAllowed(runtime, instance);
     return instance;
   }
   return activeInstance(runtime);
@@ -868,9 +884,12 @@ export async function executeSakiAgentTool(
         const query = stringArg(args, "query").toLowerCase();
         const limit = numericArg(args.limit, 50, 1, 100);
         const instances = await listVisibleInstances(runtime.userId, limit);
-        const filtered = query
-          ? instances.filter((instance) => `${instance.id} ${instance.name} ${instance.status} ${instance.node.name} ${instance.workingDirectory}`.toLowerCase().includes(query))
+        const scoped = crossInstanceEnforcementDisabled(runtime)
+          ? instances.filter((instance) => instance.id === runtime.context.instance?.id)
           : instances;
+        const filtered = query
+          ? scoped.filter((instance) => `${instance.id} ${instance.name} ${instance.status} ${instance.node.name} ${instance.workingDirectory}`.toLowerCase().includes(query))
+          : scoped;
         observation = filtered.map(formatInstanceSummary).join("\n\n") || "No instances found.";
       } else if (toolName === "describeinstance") {
         requireUserPermission(runtime.permissions, "instance.view");
@@ -1221,6 +1240,12 @@ export async function executeSakiAgentTool(
         if (!command) throw new RouteError("runCommand requires a command.", 400);
         const commandRisk = classifyCommandRisk(command);
         if (commandRisk.risk === "critical") throw new RouteError(commandRisk.reason, 400);
+        if (crossInstanceEnforcementDisabled(runtime)) {
+          const escapeToken = findCrossInstanceCommandEscape(command);
+          if (escapeToken) {
+            throw new RouteError(`已关闭跨实例执法，命令中包含可能越界访问其他目录的路径（${escapeToken}），已被拦截。`, 400);
+          }
+        }
         const timeoutMs = numericArg(args.timeoutMs, 30000, 1000, 120000);
         const { daemonWorkingDirectory } = commandWorkingDirectoryForAgent(instance, args);
         try {
@@ -1314,6 +1339,12 @@ export async function executeSakiAgentTool(
         if (taskInput.instanceId && !(await loadVisibleInstance(runtime.userId, taskInput.instanceId))) {
           throw new RouteError("Instance not found.", 404);
         }
+        if (crossInstanceEnforcementDisabled(runtime)) {
+          const contextId = runtime.context.instance?.id;
+          if (!contextId || taskInput.instanceId !== contextId) {
+            throw new RouteError("已关闭跨实例执法，Saki 只能为当前实例创建定时任务。", 400);
+          }
+        }
         const task = await createScheduledTask(taskInput, runtime.userId);
         checkpoint = { id: checkpointId(), type: "createdTask", taskId: task.id, actionId: currentActionId, createdAt: new Date().toISOString() };
         await persistCheckpoint(runtime, checkpoint);
@@ -1323,6 +1354,12 @@ export async function executeSakiAgentTool(
         const taskId = stringArg(args, "taskId");
         if (!taskId) throw new RouteError("updateScheduledTask requires a task id.", 400);
         const existing = await ensureAgentVisibleTask(runtime.userId, taskId);
+        if (crossInstanceEnforcementDisabled(runtime)) {
+          const contextId = runtime.context.instance?.id;
+          if (!contextId || (existing.instanceId && existing.instanceId !== contextId)) {
+            throw new RouteError("已关闭跨实例执法，Saki 只能操作当前实例的定时任务。", 400);
+          }
+        }
         checkpoint = {
           id: checkpointId(),
           type: "updatedTask",
@@ -1335,6 +1372,9 @@ export async function executeSakiAgentTool(
         const next = taskUpdateFromArgs(args);
         if (next.instanceId && !(await loadVisibleInstance(runtime.userId, next.instanceId))) {
           throw new RouteError("Instance not found.", 404);
+        }
+        if (crossInstanceEnforcementDisabled(runtime) && next.instanceId && next.instanceId !== runtime.context.instance?.id) {
+          throw new RouteError("已关闭跨实例执法，Saki 只能操作当前实例的定时任务。", 400);
         }
         const task = await updateScheduledTask(taskId, next);
         observation = `Success: updated task ${task.id} (${task.name}).`;
@@ -1349,7 +1389,13 @@ export async function executeSakiAgentTool(
         requireUserPermission(runtime.permissions, "task.run");
         const taskId = stringArg(args, "taskId");
         if (!taskId) throw new RouteError("runTask requires a task id.", 400);
-        await ensureAgentVisibleTask(runtime.userId, taskId);
+        const task = await ensureAgentVisibleTask(runtime.userId, taskId);
+        if (crossInstanceEnforcementDisabled(runtime)) {
+          const contextId = runtime.context.instance?.id;
+          if (!contextId || (task.instanceId && task.instanceId !== contextId)) {
+            throw new RouteError("已关闭跨实例执法，Saki 只能运行当前实例的定时任务。", 400);
+          }
+        }
         const run = await executeScheduledTask(taskId, { trigger: "manual", ...(runtime.request ? { request: runtime.request } : {}), userId: runtime.userId });
         observation = `Task run ${run.id}: ${run.status}\nOutput: ${run.output ?? "-"}\nError: ${run.error ?? "-"}`;
       } else if (toolName === "taskruns") {

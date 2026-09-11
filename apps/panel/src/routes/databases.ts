@@ -571,7 +571,6 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     return { ok: true, deleted: true };
   });
 
-  // Helper to load instance and resolve node credentials
   async function loadInstanceAndNode(id: string, userId?: string) {
     const current = await readVisualizers();
     const inst = current.find((item) => item.id === id);
@@ -597,7 +596,6 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     return { inst, creds };
   }
 
-  // Helper to build full connection payload for daemon (works for both SQLite and MySQL)
   function buildConnectionPayload(inst: DatabaseVisualizerInstance) {
     return {
       path: inst.config.path,

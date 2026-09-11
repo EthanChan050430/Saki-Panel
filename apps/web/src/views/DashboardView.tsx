@@ -42,7 +42,7 @@ function formatRelativeTime(value: string | null | undefined, language: PanelLan
   const diff = new Date(value).getTime() - Date.now();
   if (!Number.isFinite(diff)) return "-";
   const abs = Math.abs(diff);
-  const locale = language === "en-US" ? "en" : language === "zh-TW" ? "zh-Hant" : "zh-Hans";
+  const locale = language === "en-US" ? "en" : language === "zh-TW" ? "zh-Hant" : language === "ja-JP" ? "ja" : "zh-Hans";
   const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
   if (abs < 60_000) return rtf.format(0, "second");
   if (abs < 3_600_000) return rtf.format(Math.round(diff / 60_000), "minute");

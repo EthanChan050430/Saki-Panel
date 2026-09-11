@@ -59,6 +59,28 @@ const approvalCommandPatterns: RegExp[] = [
   /\|\s*(?:sh|bash|cmd|powershell|pwsh)\b/i
 ];
 
+/**
+ * Detects command tokens that could reach outside the instance working
+ * directory (absolute paths, UNC paths, or `..` traversal). Used only when
+ * Saki cross-instance enforcement is disabled, as a second line of defense
+ * for runCommand (the daemon only jails the cwd, not the command body).
+ * Short Windows-style flags such as `/s` or `/q` are allowed to avoid
+ * false positives on benign commands.
+ */
+export function findCrossInstanceCommandEscape(command: string): string | null {
+  const normalized = command.replace(/\s+/g, " ").trim();
+  if (!normalized) return null;
+  for (const rawToken of normalized.split(" ")) {
+    const token = rawToken.replace(/^["']+/, "");
+    if (!token) continue;
+    if (/^[A-Za-z]:[\\/]/.test(token)) return rawToken;
+    if (token.startsWith("\\\\")) return rawToken;
+    if (token.startsWith("/") && (token.length > 3 || token.slice(1).includes("/") || token.includes("\\"))) return rawToken;
+    if (token === ".." || /(^|[\\/])\.\.([\\/]|$)/.test(token)) return rawToken;
+  }
+  return null;
+}
+
 export function findDangerousCommandReason(command: string): string | null {
   const normalized = command.replace(/\s+/g, " ").trim();
   for (const pattern of dangerousCommandPatterns) {

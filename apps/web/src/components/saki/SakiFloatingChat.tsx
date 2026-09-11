@@ -208,6 +208,7 @@ import {
   sakiLauncherAttachedEdgeForPosition,
   sakiLauncherAttachedSize,
   sakiLauncherEdgeForPosition,
+  sakiLauncherExpandedSize,
   sakiLauncherSnapEdgeForPosition,
   sameSakiLauncherPosition,
   sealSakiTimelineDelta,
@@ -379,7 +380,10 @@ export function SakiFloatingChat({
   const lastRunCompletedRef = useRef(false);
   const [sakiActivityMood, setSakiActivityMood] = useState<SakiActivityMood>(null);
   const [skillsLoading, setSkillsLoading] = useState(false);
-  const [launcherPosition, setLauncherPosition] = useState<SakiLauncherPosition | null>(() => readSakiLauncherPosition());
+  const [launcherPosition, setLauncherPosition] = useState<SakiLauncherPosition | null>(() => {
+    const raw = readSakiLauncherPosition();
+    return raw ? clampSakiLauncherPosition(raw, null, "expanded") : null;
+  });
   const [launcherDragging, setLauncherDragging] = useState(false);
 
   useEffect(() => {
@@ -391,12 +395,31 @@ export function SakiFloatingChat({
       );
       setLauncherPosition(targetPos);
       writeSakiLauncherPosition(targetPos);
+      const stage = petStageRef.current;
+      if (stage) {
+        stage.style.left = "0px";
+        stage.style.top = "0px";
+        stage.style.right = "auto";
+        stage.style.bottom = "auto";
+        stage.style.transform = `translate(${targetPos.x}px, ${targetPos.y}px)`;
+      }
     }
   }, [wakeCount, pullDragRequest]);
+
+  const launcherWindowListenersRef = useRef<{
+    onMove: (e: PointerEvent) => void;
+    onUp: (e: PointerEvent) => void;
+  } | null>(null);
 
   useEffect(() => {
     return () => {
       onLauncherDraggingChange?.(false);
+      if (launcherWindowListenersRef.current) {
+        window.removeEventListener("pointermove", launcherWindowListenersRef.current.onMove, true);
+        window.removeEventListener("pointerup", launcherWindowListenersRef.current.onUp, true);
+        window.removeEventListener("pointercancel", launcherWindowListenersRef.current.onUp, true);
+        launcherWindowListenersRef.current = null;
+      }
     };
   }, [onLauncherDraggingChange]);
   const { language } = usePanelLanguage();
@@ -514,12 +537,15 @@ export function SakiFloatingChat({
       if (newLevel > oldLevel) {
         const isEn = language === "en-US";
         const isTw = language === "zh-TW";
+        const isJa = language === "ja-JP";
         setSakiPokeMood("happy");
         setSakiVideoBubble(
           isEn
             ? `🎉 Wow! Affection leveled up! Reached Lv.${newLevel}～✨`
             : isTw
             ? `🎉 哇！好感度升級啦！達到 Lv.${newLevel}～✨`
+            : isJa
+            ? `🎉 わぁ！親密度がレベルアップしたよ！Lv.${newLevel} になった～✨`
             : `🎉 哇！好感度升级啦！达到 Lv.${newLevel}～✨`
         );
         if (pokeTimerRef.current) window.clearTimeout(pokeTimerRef.current);
@@ -564,6 +590,8 @@ export function SakiFloatingChat({
           ? "Not enough Saki points to buy this～ Chat more with me to earn points! ✨"
           : language === "zh-TW"
           ? "目前 Saki 積分不夠買這個呢～可以多和我聊天賺取積分哦！✨"
+          : language === "ja-JP"
+          ? "これを買うのに足りるだけの Saki ポイントがないよ～もっとおしゃべりしてポイントを貯めよう！✨"
           : "当前 Saki 积分不够买这个呢～可以多和我聊天赚取积分哦！✨"
       );
       if (pokeTimerRef.current) window.clearTimeout(pokeTimerRef.current);
@@ -681,6 +709,7 @@ export function SakiFloatingChat({
   function handleMiniGameFinish(score: number, expReward: number) {
     const isEn = language === "en-US";
     const isTw = language === "zh-TW";
+    const isJa = language === "ja-JP";
     addFavorabilityExp(expReward);
     setSakiPokeMood("gaming");
     setSakiVideoBubble(
@@ -688,6 +717,8 @@ export function SakiFloatingChat({
         ? `Awesome! Scored ${score} pts, earned ${expReward} Affection EXP～✨`
         : isTw
         ? `太棒啦！得了 ${score} 分，獲得了 ${expReward} 點好感度經驗～✨`
+        : isJa
+        ? `すごい！${score} 点取ったよ、親密度経験値を ${expReward} 獲得した～✨`
         : `太棒啦！得了 ${score} 分，获得了 ${expReward} 点好感度经验～✨`
     );
     if (pokeTimerRef.current) window.clearTimeout(pokeTimerRef.current);
@@ -1611,50 +1642,65 @@ export function SakiFloatingChat({
     const centerY = rect.top + rect.height / 2;
     const dist = Math.hypot(clientX - centerX, clientY - centerY);
     const isNear =
-      dist < 140 ||
-      (clientX >= rect.left - 60 && clientX <= rect.right + 60 && clientY >= rect.top - 60 && clientY <= rect.bottom + 80);
+      dist < 60 ||
+      (clientX >= rect.left - 20 && clientX <= rect.right + 20 && clientY >= rect.top - 20 && clientY <= rect.bottom + 30);
     companionPanel.classList.toggle("is-drag-near", isNear);
   }
 
   function isOverLieDropTarget(clientX: number, clientY: number): boolean {
     const companionPanel = document.querySelector(".topbar-companion-panel") as HTMLElement | null;
     const lieSlot = document.querySelector(".topbar-lie-slot") as HTMLElement | null;
-    if (companionPanel) {
-      const rect = (lieSlot ?? companionPanel).getBoundingClientRect();
+    if (lieSlot || companionPanel) {
+      const rect = (lieSlot ?? companionPanel)!.getBoundingClientRect();
       const centerX = rect.left + rect.width / 2;
       const centerY = rect.top + rect.height / 2;
       const dist = Math.hypot(clientX - centerX, clientY - centerY);
       return (
-        dist < 140 ||
-        (clientX >= rect.left - 60 && clientX <= rect.right + 60 && clientY >= rect.top - 60 && clientY <= rect.bottom + 80)
+        dist < 45 ||
+        (clientX >= rect.left - 10 && clientX <= rect.right + 10 && clientY >= rect.top - 10 && clientY <= rect.bottom + 15)
       );
     }
-    const viewportWidth = globalThis.innerWidth || 1200;
-    return clientX >= viewportWidth - 260 && clientY <= 130;
+    return false;
   }
 
   function updateLauncherDrag(pointerId: number, clientX: number, clientY: number, sizeElement?: HTMLElement | null) {
     const drag = launcherDragRef.current;
     if (!drag || drag.pointerId !== pointerId) return;
     const distance = Math.hypot(clientX - drag.startX, clientY - drag.startY);
-    if (distance > (drag.slop ?? 4)) {
-      if (!drag.moved) {
-        drag.moved = true;
-        pet.dismissMenu();
-        setDraggingExpression(Math.random() > 0.5 ? sakiArtAssets.pickup1 : sakiArtAssets.pickup2);
-        setLauncherDragging(true);
-        onLauncherDraggingChange?.(true);
+    if (!drag.moved) {
+      if (distance <= (drag.slop ?? 3)) return;
+      drag.moved = true;
+      pet.dismissMenu();
+      setDraggingExpression(Math.random() > 0.5 ? sakiArtAssets.pickup1 : sakiArtAssets.pickup2);
+      setLauncherDragging(true);
+      onLauncherDraggingChange?.(true);
+      const stage = petStageRef.current ?? (sizeElement as HTMLElement | null);
+      if (stage) {
+        stage.style.left = "0px";
+        stage.style.top = "0px";
+        stage.style.right = "auto";
+        stage.style.bottom = "auto";
       }
     }
-    if (!drag.moved) return;
+
     highlightLieDropTarget(clientX, clientY);
-    setLauncherPosition(
-      clampSakiLauncherPosition(
-        { x: clientX - drag.offsetX, y: clientY - drag.offsetY },
-        sizeElement ?? launcherRef.current,
-        "expanded"
-      )
+
+    const stage = petStageRef.current ?? (sizeElement as HTMLElement | null);
+    const rawX = clientX - drag.offsetX;
+    const rawY = clientY - drag.offsetY;
+    const livePosition = clampSakiLauncherPosition(
+      { x: rawX, y: rawY },
+      stage,
+      "dragging"
     );
+
+    if (stage) {
+      stage.style.left = "0px";
+      stage.style.top = "0px";
+      stage.style.right = "auto";
+      stage.style.bottom = "auto";
+      stage.style.transform = `translate(${livePosition.x}px, ${livePosition.y}px)`;
+    }
   }
 
   function completeLauncherDrag(pointerId: number, clientX: number, clientY: number, sizeElement?: HTMLElement | null) {
@@ -1666,7 +1712,7 @@ export function SakiFloatingChat({
       try {
         target.releasePointerCapture(pointerId);
       } catch {
-        // Pointer capture may already be released after a topbar pull-out.
+        // Pointer capture may already be released.
       }
     }
 
@@ -1684,13 +1730,24 @@ export function SakiFloatingChat({
     }
 
     if (drag.moved) {
+      const stage = petStageRef.current ?? (sizeElement as HTMLElement | null);
+      const rawX = clientX - drag.offsetX;
+      const rawY = clientY - drag.offsetY;
       const dragPosition = clampSakiLauncherPosition(
-        { x: clientX - drag.offsetX, y: clientY - drag.offsetY },
-        target,
-        "expanded"
+        { x: rawX, y: rawY },
+        stage,
+        "dragging"
       );
       const snapEdge = sakiLauncherSnapEdgeForPosition(dragPosition);
       const nextPosition = snapEdge ? snapSakiLauncherPositionToEdge(dragPosition, snapEdge) : dragPosition;
+
+      if (stage) {
+        stage.style.left = "0px";
+        stage.style.top = "0px";
+        stage.style.right = "auto";
+        stage.style.bottom = "auto";
+        stage.style.transform = `translate(${nextPosition.x}px, ${nextPosition.y}px)`;
+      }
       setLauncherPosition(nextPosition);
       writeSakiLauncherPosition(nextPosition);
       suppressLauncherClickRef.current = true;
@@ -1707,33 +1764,70 @@ export function SakiFloatingChat({
 
   function handleLauncherPointerDown(event: React.PointerEvent<HTMLButtonElement>) {
     if (event.button !== 0) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const dragOrigin = launcherEdgeAttached
-      ? clampSakiLauncherPosition({ x: rect.left, y: rect.top }, event.currentTarget, "expanded")
-      : { x: rect.left, y: rect.top };
+    const stage = petStageRef.current;
+    const rect = (stage ?? event.currentTarget).getBoundingClientRect();
+    const pointerId = event.pointerId;
+
+    const isAttached = launcherEdgeAttached;
+    const offsetX = isAttached
+      ? sakiLauncherExpandedSize.width / 2
+      : event.clientX - rect.left;
+    const offsetY = isAttached
+      ? sakiLauncherExpandedSize.height / 2
+      : event.clientY - rect.top;
+
     launcherDragRef.current = {
-      pointerId: event.pointerId,
-      offsetX: event.clientX - dragOrigin.x,
-      offsetY: event.clientY - dragOrigin.y,
+      pointerId,
+      offsetX,
+      offsetY,
       startX: event.clientX,
       startY: event.clientY,
       moved: false,
-      slop: event.pointerType === "touch" || event.pointerType === "pen" ? 12 : 4
+      slop: event.pointerType === "touch" || event.pointerType === "pen" ? 10 : 3
     };
-    event.currentTarget.setPointerCapture(event.pointerId);
+
+    if (launcherWindowListenersRef.current) {
+      window.removeEventListener("pointermove", launcherWindowListenersRef.current.onMove, true);
+      window.removeEventListener("pointerup", launcherWindowListenersRef.current.onUp, true);
+      window.removeEventListener("pointercancel", launcherWindowListenersRef.current.onUp, true);
+      launcherWindowListenersRef.current = null;
+    }
+
+    const onMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      updateLauncherDrag(moveEvent.pointerId, moveEvent.clientX, moveEvent.clientY, stage);
+    };
+
+    const onUp = (upEvent: PointerEvent) => {
+      if (upEvent.pointerId !== pointerId) return;
+      window.removeEventListener("pointermove", onMove, true);
+      window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("pointercancel", onUp, true);
+      launcherWindowListenersRef.current = null;
+      completeLauncherDrag(upEvent.pointerId, upEvent.clientX, upEvent.clientY, stage);
+    };
+
+    launcherWindowListenersRef.current = { onMove, onUp };
+    window.addEventListener("pointermove", onMove, true);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", onUp, true);
   }
 
   function handleLauncherPointerMove(event: React.PointerEvent<HTMLButtonElement>) {
     const drag = launcherDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 4) {
+    if (drag && drag.pointerId === event.pointerId && drag.moved) {
       event.preventDefault();
     }
-    updateLauncherDrag(event.pointerId, event.clientX, event.clientY, event.currentTarget);
   }
 
   function finishLauncherDrag(event: React.PointerEvent<HTMLButtonElement>) {
-    completeLauncherDrag(event.pointerId, event.clientX, event.clientY, event.currentTarget);
+    if (launcherWindowListenersRef.current) {
+      window.removeEventListener("pointermove", launcherWindowListenersRef.current.onMove, true);
+      window.removeEventListener("pointerup", launcherWindowListenersRef.current.onUp, true);
+      window.removeEventListener("pointercancel", launcherWindowListenersRef.current.onUp, true);
+      launcherWindowListenersRef.current = null;
+    }
+    completeLauncherDrag(event.pointerId, event.clientX, event.clientY, petStageRef.current);
   }
 
   useLayoutEffect(() => {
@@ -1745,6 +1839,14 @@ export function SakiFloatingChat({
       "expanded"
     );
     setLauncherPosition(startPosition);
+    const stage = petStageRef.current;
+    if (stage) {
+      stage.style.left = "0px";
+      stage.style.top = "0px";
+      stage.style.right = "auto";
+      stage.style.bottom = "auto";
+      stage.style.transform = `translate(${startPosition.x}px, ${startPosition.y}px)`;
+    }
     launcherDragRef.current = {
       pointerId: request.pointerId,
       offsetX: request.offsetX,
@@ -1785,6 +1887,7 @@ export function SakiFloatingChat({
       suppressLauncherClickRef.current = false;
       return;
     }
+    setSakiSleepy(false);
     if (isSakiPetTouchUi()) {
       event.preventDefault();
       pet.toggleMenu();
@@ -2318,7 +2421,7 @@ export function SakiFloatingChat({
 
   async function capturePetSticker() {
     if (!navigator.mediaDevices?.getDisplayMedia) {
-      pet.showBubble(language === "en-US" ? "This browser cannot capture the screen." : "当前浏览器不支持截图贴图。");
+      pet.showBubble(language === "en-US" ? "This browser cannot capture the screen." : language === "ja-JP" ? "このブラウザはスクリーンショット撮影に対応していません。" : "当前浏览器不支持截图贴图。");
       return;
     }
     let stream: MediaStream | null = null;
@@ -2341,7 +2444,7 @@ export function SakiFloatingChat({
       const dataUrl = canvas.toDataURL("image/webp", 0.72);
       pet.addSticker(dataUrl, Math.round((globalThis.innerWidth || 800) / 2 - 90), 96);
       pet.closeWidget();
-      pet.showBubble(language === "en-US" ? "Sticker placed～" : "贴图放好啦～");
+      pet.showBubble(language === "en-US" ? "Sticker placed～" : language === "ja-JP" ? "シールを貼ったよ～" : "贴图放好啦～");
     } catch (err) {
       pet.showBubble(err instanceof Error ? err.message : "截图已取消");
     } finally {
@@ -3269,10 +3372,11 @@ export function SakiFloatingChat({
   const launcherEdge = launcherAttachedEdge ?? (launcherPosition ? sakiLauncherEdgeForPosition(launcherPosition) : "right");
   const launcherStyle = launcherPosition
     ? {
-        left: `${launcherPosition.x}px`,
-        top: `${launcherPosition.y}px`,
+        left: 0,
+        top: 0,
         right: "auto",
-        bottom: "auto"
+        bottom: "auto",
+        ...(launcherDragging ? {} : { transform: `translate(${launcherPosition.x}px, ${launcherPosition.y}px)` })
       }
     : undefined;
 
@@ -3293,6 +3397,15 @@ export function SakiFloatingChat({
         "有什麼想問的儘管告訴我哦～ (◕ᴗ◕✿)",
         "隨時待命！(๑•̀ㅂ•́)و✧",
         "誒嘿，隨時都可以呼叫我～ (≧∇≦)ﾉ"
+      ];
+    }
+    if (language === "ja-JP") {
+      return [
+        "ここにいるよ！いつでも助けるね～ (*╹▽╹*)",
+        "今日も一緒に頑張ろう！(ง •_•)ง",
+        "聞きたいことがあればなんでも聞いて～ (◕ᴗ◕✿)",
+        "いつでも待機中！(๑•̀ㅂ•́)و✧",
+        "えへ、いつでも呼んでね～ (≧∇≦)ﾉ"
       ];
     }
     return [
@@ -3330,6 +3443,13 @@ export function SakiFloatingChat({
             "哼！中指奉上，可以消停一下了吧～才沒有生氣呢。",
             "……被煩到了啦。自己看去。傲嬌什麼的，才不是在說我！"
           ]
+        : language === "ja-JP"
+        ? [
+            "はぁ？そんなにつつかないで…じゃあ、これをあげる。恥ずかしくなんてないんだからね！(￣^￣)",
+            "まだつつくならターミナル閉じるよ…って冗談だよ、バカ。ふん。",
+            "ふん！中指をプレゼント。もう落ち着いてくれるかな～怒ってないんだからね。",
+            "……もう、うるさいな。見ればいいじゃない。ツンデレなんて私じゃないもん！"
+          ]
         : [
             "哈啊？戳这么多次很闲吗……给你这个，看清楚了吗！才、才没有害羞！(￣^￣)",
             "再戳就把你的终端关掉哦？……开玩笑的，笨蛋。哼。",
@@ -3354,6 +3474,8 @@ export function SakiFloatingChat({
       ? "I'm here! Ready to help anytime～ (*╹▽╹*)"
       : language === "zh-TW"
       ? "我在呢！隨時為你提供幫助～ (*╹▽╹*)"
+      : language === "ja-JP"
+      ? "ここにいるよ！いつでも助けるね～ (*╹▽╹*)"
       : "我在呢！随时为你提供帮助～ (*╹▽╹*)";
     const randomGreeting: string = sakiGreetings[Math.floor(Math.random() * sakiGreetings.length)] ?? defaultGreeting;
     setSakiPokeMood(randomMood);
@@ -3476,15 +3598,48 @@ export function SakiFloatingChat({
   }, [sakiActivityMood]);
 
   useEffect(() => {
-    if (loading || sakiActivityMood || sakiPokeMood || listening || sakiEchoState !== "idle" || miniGameActive || draggingFood) {
+    if (
+      open ||
+      launcherDragging ||
+      pet.hovered ||
+      pet.widget !== null ||
+      loading ||
+      sakiActivityMood ||
+      sakiPokeMood ||
+      listening ||
+      sakiEchoState !== "idle" ||
+      miniGameActive ||
+      draggingFood
+    ) {
       setSakiSleepy(false);
       return;
     }
     const timer = window.setTimeout(() => setSakiSleepy(true), 50000);
     return () => window.clearTimeout(timer);
-  }, [loading, sakiActivityMood, sakiPokeMood, listening, sakiEchoState, miniGameActive, draggingFood]);
+  }, [
+    open,
+    launcherDragging,
+    pet.hovered,
+    pet.widget,
+    loading,
+    sakiActivityMood,
+    sakiPokeMood,
+    listening,
+    sakiEchoState,
+    miniGameActive,
+    draggingFood
+  ]);
 
-  const effectiveActivityMood = echoActivityMood ?? sakiPokeMood ?? sakiActivityMood ?? (sakiSleepy ? "sleepy" : null);
+  // Once sleepy nods off, gently settle back to normal idle after 20 seconds instead of looping forever
+  useEffect(() => {
+    if (!sakiSleepy) return;
+    const timer = window.setTimeout(() => setSakiSleepy(false), 20000);
+    return () => window.clearTimeout(timer);
+  }, [sakiSleepy]);
+
+  const effectiveActivityMood = pet.music.playing
+    ? "singing"
+    : echoActivityMood ?? sakiPokeMood ?? sakiActivityMood ?? (sakiSleepy ? "sleepy" : null);
 
   const activeStreamingAssistant = [...messages].reverse().find((message) => message.role === "assistant" && message.streaming);
   const activeStreamingContent = activeStreamingAssistant?.content?.trim();
@@ -3496,23 +3651,23 @@ export function SakiFloatingChat({
     : (activeStreamingAssistant && activeStreamingContent)
     ? activeStreamingContent
     : (activeStreamingAssistant && activeStreamingThinking)
-    ? (language === "en-US" ? "Thinking carefully... (•̀ᴗ•́)و" : language === "zh-TW" ? "正在認真思考中... (•̀ᴗ•́)و" : "正在认真思考中... (•̀ᴗ•́)و")
+    ? (language === "en-US" ? "Thinking carefully... (•̀ᴗ•́)و" : language === "zh-TW" ? "正在認真思考中... (•̀ᴗ•́)و" : language === "ja-JP" ? "真剣に考え中... (•̀ᴗ•́)و" : "正在认真思考中... (•̀ᴗ•́)و")
     : loading && !hasStreamingAssistant
-    ? (language === "en-US" ? "Thinking carefully... (•̀ᴗ•́)و" : language === "zh-TW" ? "正在認真思考中... (•̀ᴗ•́)و" : "正在认真思考中... (•̀ᴗ•́)و")
+    ? (language === "en-US" ? "Thinking carefully... (•̀ᴗ•́)و" : language === "zh-TW" ? "正在認真思考中... (•̀ᴗ•́)و" : language === "ja-JP" ? "真剣に考え中... (•̀ᴗ•́)و" : "正在认真思考中... (•̀ᴗ•́)و")
     : hasStreamingAssistant
-    ? (language === "en-US" ? "Replying... (*╹▽╹*)" : language === "zh-TW" ? "正在回覆中... (*╹▽╹*)" : "正在回复中... (*╹▽╹*)")
+    ? (language === "en-US" ? "Replying... (*╹▽╹*)" : language === "zh-TW" ? "正在回覆中... (*╹▽╹*)" : language === "ja-JP" ? "返信中... (*╹▽╹*)" : "正在回复中... (*╹▽╹*)")
     : sakiActivityMood === "working"
-    ? (language === "en-US" ? "Working on code tasks... (ง •_•)ง" : language === "zh-TW" ? "正在處理程式碼任務... (ง •_•)ง" : "正在处理代码任务... (ง •_•)ง")
+    ? (language === "en-US" ? "Working on code tasks... (ง •_•)ง" : language === "zh-TW" ? "正在處理程式碼任務... (ง •_•)ง" : language === "ja-JP" ? "コード作業中... (ง •_•)ง" : "正在处理代码任务... (ง •_•)ง")
     : sakiActivityMood === "reading"
-    ? (language === "en-US" ? "Analyzing project... (๑•̀ㅂ•́)و" : language === "zh-TW" ? "正在分析專案中... (๑•̀ㅂ•́)و" : "正在分析项目中... (๑•̀ㅂ•́)و")
+    ? (language === "en-US" ? "Analyzing project... (๑•̀ㅂ•́)و" : language === "zh-TW" ? "正在分析專案中... (๑•̀ㅂ•́)و" : language === "ja-JP" ? "プロジェクト分析中... (๑•̀ㅂ•́)و" : "正在分析项目中... (๑•̀ㅂ•́)و")
     : sakiActivityMood === "checkfiles"
-    ? (language === "en-US" ? "Checking file changes... (oﾟ▽ﾟ)o" : language === "zh-TW" ? "正在檢查檔案變更... (oﾟ▽ﾟ)o" : "正在检查文件变动... (oﾟ▽ﾟ)o")
+    ? (language === "en-US" ? "Checking file changes... (oﾟ▽ﾟ)o" : language === "zh-TW" ? "正在檢查檔案變更... (oﾟ▽ﾟ)o" : language === "ja-JP" ? "ファイル変更確認中... (oﾟ▽ﾟ)o" : "正在检查文件变动... (oﾟ▽ﾟ)o")
     : listening
-    ? (language === "en-US" ? "Dictating what you say... (◕ᴗ◕✿)" : language === "zh-TW" ? "正在聽寫你說的話... (◕ᴗ◕✿)" : "正在听写你说的话... (◕ᴗ◕✿)")
+    ? (language === "en-US" ? "Dictating what you say... (◕ᴗ◕✿)" : language === "zh-TW" ? "正在聽寫你說的話... (◕ᴗ◕✿)" : language === "ja-JP" ? "話していることを書き起こし中... (◕ᴗ◕✿)" : "正在听写你说的话... (◕ᴗ◕✿)")
     : sakiEchoState === "hearing"
-    ? (language === "en-US" ? "Release and I'll mimic your voice～" : language === "zh-TW" ? "放開後我會學你說話～" : "松开后我会学你说话～")
+    ? (language === "en-US" ? "Release and I'll mimic your voice～" : language === "zh-TW" ? "放開後我會學你說話～" : language === "ja-JP" ? "離したら真似してみるね～" : "松开后我会学你说话～")
     : sakiEchoState === "speaking"
-    ? (language === "en-US" ? "♪ Mimicking your voice～" : language === "zh-TW" ? "♪ 學你說話～" : "♪ 学你说话～")
+    ? (language === "en-US" ? "♪ Mimicking your voice～" : language === "zh-TW" ? "♪ 學你說話～" : language === "ja-JP" ? "♪ 真似中～" : "♪ 学你说话～")
     : null;
 
   useEffect(() => {
@@ -3538,6 +3693,7 @@ export function SakiFloatingChat({
         sakiFileHoverActive={sakiFileHoverActive}
         fileDragActive={fileDragActive}
         artMood={artMood}
+        activityMood={effectiveActivityMood}
         draggingExpression={draggingExpression}
         pet={pet}
         language={language}

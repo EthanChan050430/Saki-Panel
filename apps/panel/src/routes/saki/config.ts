@@ -75,6 +75,7 @@ export async function readEffectiveSakiConfig(): Promise<SakiConfigResponse> {
     modelPointsMultipliers: settings.modelPointsMultipliers ?? {},
     searchEnabled: settings.searchEnabled !== false,
     mcpEnabled: Boolean(settings.mcpEnabled),
+    allowCrossInstanceEnforcement: settings.allowCrossInstanceEnforcement !== false,
     imageGen: sanitizeSakiImageGenConfig(settings.imageGen),
     systemPrompt,
     appearance: sanitizePanelAppearance(settings.appearance),
@@ -129,6 +130,10 @@ export async function saveSakiConfig(input: UpdateSakiConfigRequest): Promise<Sa
     modelPointsMultipliers: sanitizedMultipliers,
     searchEnabled: input.searchEnabled !== undefined ? Boolean(input.searchEnabled) : current.searchEnabled,
     mcpEnabled: input.mcpEnabled !== undefined ? Boolean(input.mcpEnabled) : current.mcpEnabled,
+    allowCrossInstanceEnforcement:
+      input.allowCrossInstanceEnforcement !== undefined
+        ? Boolean(input.allowCrossInstanceEnforcement)
+        : current.allowCrossInstanceEnforcement !== false,
     imageGen: sanitizeSakiImageGenConfig(input.imageGen !== undefined ? input.imageGen : current.imageGen),
     appearance: input.appearance !== undefined ? sanitizePanelAppearance(input.appearance, current.appearance) : current.appearance
   };

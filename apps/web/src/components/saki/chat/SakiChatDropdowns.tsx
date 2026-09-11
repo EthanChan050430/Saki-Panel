@@ -197,9 +197,10 @@ export const SakiChatDropdowns = React.memo(function SakiChatDropdowns({
                 const multiplier = resolveSakiModelPointsMultiplier(modelPointsMultipliers, model);
                 const isEn = language === "en-US";
                 const isTw = language === "zh-TW";
+                const isJa = language === "ja-JP";
                 const multiplierText =
                   multiplier === 0
-                    ? isEn ? "Free" : isTw ? "免費" : "免费"
+                    ? isEn ? "Free" : isTw ? "免費" : isJa ? "無料" : "免费"
                     : formatSakiModelMultiplier(multiplier);
                 return (
                   <button
@@ -214,7 +215,7 @@ export const SakiChatDropdowns = React.memo(function SakiChatDropdowns({
                     <span className="saki-model-option-meta">
                       <span
                         className={`saki-model-multiplier ${multiplier === 0 ? "free" : multiplier !== 1 ? "custom" : ""}`}
-                        title={isEn ? "Points cost multiplier" : isTw ? "積分消耗乘區" : "积分消耗乘区"}
+                        title={isEn ? "Points cost multiplier" : isTw ? "積分消耗乘區" : isJa ? "ポイント消費倍率" : "积分消耗乘区"}
                       >
                         {multiplierText}
                       </span>

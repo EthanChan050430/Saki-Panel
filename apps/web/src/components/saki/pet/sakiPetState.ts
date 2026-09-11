@@ -6,6 +6,7 @@ import {
   type SakiLauncherPosition
 } from "../SakiComponents.js";
 import { newClientId } from "../../../utils/id.js";
+import { useSakiPetMusic } from "./sakiPetMusic.js";
 
 export function isSakiPetTouchUi(): boolean {
   if (typeof window === "undefined") return false;
@@ -46,7 +47,8 @@ export type SakiPetWidget =
   | "notes"
   | "sticker"
   | "calendar"
-  | "skins";
+  | "skins"
+  | "music";
 export type SakiPetFx = "none" | "hearts" | "zzz" | "soap" | "sparkle";
 export type SakiPetFacing = "left" | "right";
 
@@ -147,13 +149,14 @@ function writePersist(partial: PersistShape) {
 
 export function weatherLabel(code: number, language?: string): string {
   const isEn = language === "en-US";
-  if (code === 0) return isEn ? "Clear" : "晴";
-  if (code <= 3) return isEn ? "Cloudy" : "多云";
-  if (code <= 48) return isEn ? "Fog" : "雾";
-  if (code <= 67) return isEn ? "Rain" : "雨";
-  if (code <= 77) return isEn ? "Snow" : "雪";
-  if (code <= 82) return isEn ? "Showers" : "阵雨";
-  return isEn ? "Storm" : "雷雨";
+  const isJa = language === "ja-JP";
+  if (code === 0) return isEn ? "Clear" : isJa ? "晴れ" : "晴";
+  if (code <= 3) return isEn ? "Cloudy" : isJa ? "曇り" : "多云";
+  if (code <= 48) return isEn ? "Fog" : isJa ? "霧" : "雾";
+  if (code <= 67) return isEn ? "Rain" : isJa ? "雨" : "雨";
+  if (code <= 77) return isEn ? "Snow" : isJa ? "雪" : "雪";
+  if (code <= 82) return isEn ? "Showers" : isJa ? "にわか雨" : "阵雨";
+  return isEn ? "Storm" : isJa ? "雷雨" : "雷雨";
 }
 
 export function weatherGlyph(code: number): string {
@@ -215,6 +218,7 @@ export function useSakiPet({
   const [bubble, setBubble] = useState<string | null>(null);
   const [weather, setWeather] = useState<SakiPetWeather | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const music = useSakiPetMusic();
 
   const mouseRef = useRef({ x: 0, y: 0 });
   const behaviorUntilRef = useRef(Date.now() + 8000);
@@ -224,12 +228,30 @@ export function useSakiPet({
   const fxTimerRef = useRef<number | null>(null);
   const hoverTimerRef = useRef<number | null>(null);
   const lastPersistRef = useRef(0);
+  const persistTimerRef = useRef<number | null>(null);
+  const pendingPersistRef = useRef<PersistShape>({});
 
-  const paused = !enabled || dragging || chatOpen || hovered || widget !== null;
+  const paused = !enabled || dragging || chatOpen || hovered || widget !== null || music.playing;
 
-  const persist = useCallback((partial: PersistShape) => {
-    writePersist(partial);
+  const flushPersist = useCallback(() => {
+    if (persistTimerRef.current !== null) {
+      window.clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+    const pending = pendingPersistRef.current;
+    pendingPersistRef.current = {};
+    if (Object.keys(pending).length > 0) writePersist(pending);
   }, []);
+
+  // Trailing-debounced so high-frequency callers (e.g. drags) do not hit
+  // localStorage on every pointermove; the trailing call persists the final state.
+  const persist = useCallback((partial: PersistShape) => {
+    pendingPersistRef.current = { ...pendingPersistRef.current, ...partial };
+    if (persistTimerRef.current !== null) window.clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = window.setTimeout(flushPersist, 250);
+  }, [flushPersist]);
+
+  useEffect(() => () => flushPersist(), [flushPersist]);
 
   const showBubble = useCallback((text: string, ms = 2800) => {
     setBubble(text);
@@ -345,10 +367,14 @@ export function useSakiPet({
     return () => window.removeEventListener("pointermove", onMove);
   }, []);
 
+  // 1 s tick only while the clock is visible (hover chrome / open widget);
+  // a 30 s idle tick keeps dueEvents (15-minute window) correct cheaply.
+  const clockActive = hovered || widget !== null || group !== "none";
   useEffect(() => {
-    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    if (clockActive) setNowMs(Date.now());
+    const id = window.setInterval(() => setNowMs(Date.now()), clockActive ? 1000 : 30000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [clockActive]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -436,10 +462,11 @@ export function useSakiPet({
     (next: SakiLauncherPosition, extras?: { face?: SakiPetFacing; look?: number }) => {
       const stage = stageRef?.current;
       if (!stage) return;
-      stage.style.left = `${next.x}px`;
-      stage.style.top = `${next.y}px`;
+      stage.style.left = "0px";
+      stage.style.top = "0px";
       stage.style.right = "auto";
       stage.style.bottom = "auto";
+      stage.style.transform = `translate(${next.x}px, ${next.y}px)`;
       if (extras?.face) stage.style.setProperty("--saki-face", extras.face === "left" ? "-1" : "1");
       if (typeof extras?.look === "number") stage.style.setProperty("--saki-look", `${extras.look}deg`);
     },
@@ -485,20 +512,15 @@ export function useSakiPet({
 
   useEffect(() => {
     if (!enabled || chatOpen) return;
-    let frame = 0;
-    let last = performance.now();
-    const tick = (ts: number) => {
-      frame = requestAnimationFrame(tick);
-      const dt = Math.min(0.05, (ts - last) / 1000);
-      last = ts;
-      if (dragging) return;
-      if (paused || edgeAttached) return;
-
+    let timer: number | null = null;
+    const fire = () => {
+      timer = null;
+      if (dragging || paused || edgeAttached) {
+        // Keep waiting while behavior is suspended; re-check shortly.
+        timer = window.setTimeout(fire, 500);
+        return;
+      }
       if (Date.now() >= behaviorUntilRef.current) {
-        if (paused) {
-          startBehavior("idle", 12000);
-          return;
-        }
         const hour = new Date().getHours();
         const roll = Math.random();
         if (stats.hunger < 22 && roll < 0.45) startBehavior(Math.random() < 0.5 ? "sit" : "sleep");
@@ -509,25 +531,13 @@ export function useSakiPet({
         else if (roll < 0.62) startBehavior("yawn", 2800);
         else startBehavior("idle", 14000);
       }
+      timer = window.setTimeout(fire, Math.max(0, behaviorUntilRef.current - Date.now()));
     };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [
-    behavior,
-    chaseMouse,
-    chatOpen,
-    commitPosition,
-    currentPosition,
-    dragging,
-    edgeAttached,
-    enabled,
-    paused,
-    pickTarget,
-    applyStageStyle,
-    setPosition,
-    startBehavior,
-    stats.hunger
-  ]);
+    timer = window.setTimeout(fire, Math.max(0, behaviorUntilRef.current - Date.now()));
+    return () => {
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [chatOpen, dragging, edgeAttached, enabled, paused, startBehavior, stats.hunger]);
 
   const applyCare = useCallback(
     (kind: "feed" | "pet" | "sleep" | "bath" | "doctor" | "play", amount = 0) => {
@@ -730,7 +740,8 @@ export function useSakiPet({
     togglePomodoro,
     resetPomodoro,
     applyCare,
-    unlockedSkins
+    unlockedSkins,
+    music
   };
 }
 

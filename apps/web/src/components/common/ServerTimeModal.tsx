@@ -306,7 +306,8 @@ export const ServerTimeModal = React.memo(function ServerTimeModal({
   const { language } = usePanelLanguage();
   const isEn = language === "en-US";
   const isTw = language === "zh-TW";
-  const locale = isEn ? "en-US" : isTw ? "zh-TW" : "zh-CN";
+  const isJa = language === "ja-JP";
+  const locale = isEn ? "en-US" : isTw ? "zh-TW" : isJa ? "ja-JP" : "zh-CN";
 
   const {
     now,
@@ -386,6 +387,8 @@ export const ServerTimeModal = React.memo(function ServerTimeModal({
                   ? "Server Time & World Clock"
                   : isTw
                   ? "伺服器時間與世界時鐘校準"
+                  : isJa
+                  ? "サーバー時刻と世界時計"
                   : "服务器时间与世界时钟校准"}
               </h3>
               <p className="modal-fullscreen-subtitle">
@@ -394,12 +397,14 @@ export const ServerTimeModal = React.memo(function ServerTimeModal({
                     ? "Synchronized with server clock"
                     : isTw
                     ? "高精度同步伺服器時鐘，支援全球時區校準"
+                    : isJa
+                    ? "サーバー時計と高精度同期、タイムゾーン調整対応"
                     : "高精度同步服务器时钟，支持全球时区校准"}
                 </span>
                 <span className="server-time-sync-pill">
                   <Wifi size={11} />
                   <span>
-                    {isEn ? `Latency: ${latencyMs}ms` : `延迟: ${latencyMs}ms`}
+                    {isEn ? `Latency: ${latencyMs}ms` : isJa ? `遅延: ${latencyMs}ms` : `延迟: ${latencyMs}ms`}
                   </span>
                 </span>
               </p>
@@ -408,7 +413,7 @@ export const ServerTimeModal = React.memo(function ServerTimeModal({
           <button
             className="icon-button mini modal-fullscreen-close-btn"
             type="button"
-            title={isEn ? "Close" : "关闭"}
+            title={isEn ? "Close" : isJa ? "閉じる" : "关闭"}
             onClick={onClose}
           >
             <X size={18} />
@@ -429,11 +434,15 @@ export const ServerTimeModal = React.memo(function ServerTimeModal({
                         ? "Calibrated Timezone Active"
                         : isTw
                         ? "已校準顯示時區"
+                        : isJa
+                        ? "キャリブレート済みタイムゾーン有効"
                         : "已校准显示时区"
                       : isEn
                       ? "Server Native Timezone"
                       : isTw
                       ? "伺服器原生時區"
+                      : isJa
+                      ? "サーバー標準タイムゾーン"
                       : "服务器原生时区"}
                   </strong>
                 </div>
@@ -443,10 +452,10 @@ export const ServerTimeModal = React.memo(function ServerTimeModal({
                       className="ghost-button mini reset-tz-btn"
                       type="button"
                       onClick={resetToServerTimezone}
-                      title={isEn ? "Reset to server native timezone" : "恢复服务器时区"}
+                      title={isEn ? "Reset to server native timezone" : isJa ? "サーバーのタイムゾーンにリセット" : "恢复服务器时区"}
                     >
                       <RotateCcw size={12} />
-                      <span>{isEn ? "Reset to Server" : isTw ? "恢復伺服器時區" : "恢复服务器时区"}</span>
+                      <span>{isEn ? "Reset to Server" : isTw ? "恢復伺服器時區" : isJa ? "サーバーにリセット" : "恢复服务器时区"}</span>
                     </button>
                   ) : null}
                   <button
@@ -454,10 +463,10 @@ export const ServerTimeModal = React.memo(function ServerTimeModal({
                     type="button"
                     disabled={isSyncing}
                     onClick={() => void syncWithServer()}
-                    title={isEn ? "Sync with server now" : "立即重新同步"}
+                    title={isEn ? "Sync with server now" : isJa ? "今すぐサーバーと同期" : "立即重新同步"}
                   >
                     <RotateCcw size={12} className={isSyncing ? "spin" : ""} />
-                    <span>{isSyncing ? (isEn ? "Syncing..." : "同步中...") : (isEn ? "Sync Now" : "立即同步")}</span>
+                    <span>{isSyncing ? (isEn ? "Syncing..." : isJa ? "同期中..." : "同步中...") : (isEn ? "Sync Now" : isJa ? "今すぐ同期" : "立即同步")}</span>
                   </button>
                 </div>
               </div>
@@ -478,13 +487,15 @@ export const ServerTimeModal = React.memo(function ServerTimeModal({
               <div className="server-time-section-header">
                 <div className="section-title-wrap">
                   <Clock size={16} className="section-icon" />
-                  <h4>{isEn ? "Major World Cities" : isTw ? "全球主要城市時鐘" : "全球主要城市时钟"}</h4>
+                  <h4>{isEn ? "Major World Cities" : isTw ? "全球主要城市時鐘" : isJa ? "世界の主要都市" : "全球主要城市时钟"}</h4>
                 </div>
                 <span className="section-tip">
                   {isEn
                     ? "Click 'Calibrate' to set as topbar clock"
                     : isTw
                     ? "點擊「校準為頂欄時間」即可即時切換"
+                    : isJa
+                    ? "「トップバーに合わせる」ですぐ切り替え"
                     : "点击「校准为顶栏时间」即可实时切换"}
                 </span>
               </div>
@@ -501,17 +512,23 @@ export const ServerTimeModal = React.memo(function ServerTimeModal({
                         ? "Same as server"
                         : isTw
                         ? "與伺服器一致"
+                        : isJa
+                        ? "サーバーと同じ"
                         : "与服务器一致"
                       : diffHours > 0
                       ? isEn
                         ? `+${diffHours}h from server`
                         : isTw
                         ? `比伺服器快 ${diffHours} 小時`
+                        : isJa
+                        ? `サーバーより +${diffHours}時間`
                         : `比服务器快 ${diffHours} 小时`
                       : isEn
                       ? `${diffHours}h from server`
                       : isTw
                       ? `比伺服器慢 ${Math.abs(diffHours)} 小時`
+                      : isJa
+                      ? `サーバーより ${Math.abs(diffHours)}時間遅い`
                       : `比服务器慢 ${Math.abs(diffHours)} 小时`;
 
                   const cityName = isEn ? city.nameEn : isTw ? city.nameTw : city.nameZh;
@@ -544,7 +561,7 @@ export const ServerTimeModal = React.memo(function ServerTimeModal({
                         {isCurrentActive ? (
                           <div className="city-active-tag">
                             <Check size={13} />
-                            <span>{isEn ? "Active in Topbar" : isTw ? "目前頂欄顯示" : "当前顶栏显示"}</span>
+                            <span>{isEn ? "Active in Topbar" : isTw ? "目前頂欄顯示" : isJa ? "トップバーに表示中" : "当前顶栏显示"}</span>
                           </div>
                         ) : (
                           <button
@@ -553,7 +570,7 @@ export const ServerTimeModal = React.memo(function ServerTimeModal({
                             onClick={() => setCalibratedTimezone(city.timeZone)}
                           >
                             <Sparkles size={12} />
-                            <span>{isEn ? "Calibrate Topbar" : isTw ? "校準到此時區" : "校准到此时区"}</span>
+                            <span>{isEn ? "Calibrate Topbar" : isTw ? "校準到此時區" : isJa ? "トップバーに合わせる" : "校准到此时区"}</span>
                           </button>
                         )}
                       </div>
@@ -568,7 +585,7 @@ export const ServerTimeModal = React.memo(function ServerTimeModal({
               <div className="server-time-section-header">
                 <div className="section-title-wrap">
                   <Search size={16} className="section-icon" />
-                  <h4>{isEn ? "Search Any Timezone" : isTw ? "搜尋全球任意時區" : "搜索全球任意时区"}</h4>
+                  <h4>{isEn ? "Search Any Timezone" : isTw ? "搜尋全球任意時區" : isJa ? "タイムゾーンを検索" : "搜索全球任意时区"}</h4>
                 </div>
               </div>
 
@@ -583,6 +600,8 @@ export const ServerTimeModal = React.memo(function ServerTimeModal({
                     placeholder={
                       isEn
                         ? "Type city or timezone (e.g. Cairo, Toronto, Honolulu, Bangkok)..."
+                        : isJa
+                        ? "都市またはタイムゾーンを入力（例：Cairo、Toronto、Honolulu、Bangkok）..."
                         : "输入城市或时区名搜索（如 Cairo、Toronto、Honolulu、Bangkok）..."
                     }
                   />
@@ -611,7 +630,7 @@ export const ServerTimeModal = React.memo(function ServerTimeModal({
                           {isCurr ? (
                             <span className="city-active-tag">
                               <Check size={12} />
-                              <span>{isEn ? "Active" : "生效中"}</span>
+                              <span>{isEn ? "Active" : isJa ? "有効" : "生效中"}</span>
                             </span>
                           ) : (
                             <button
@@ -622,7 +641,7 @@ export const ServerTimeModal = React.memo(function ServerTimeModal({
                                 setSearchQuery("");
                               }}
                             >
-                              <span>{isEn ? "Select" : "校准到此时区"}</span>
+                              <span>{isEn ? "Select" : isJa ? "選択" : "校准到此时区"}</span>
                             </button>
                           )}
                         </div>
@@ -631,7 +650,7 @@ export const ServerTimeModal = React.memo(function ServerTimeModal({
                   </div>
                 ) : searchQuery ? (
                   <div className="timezone-search-empty">
-                    <span>{isEn ? "No matching timezones found." : "未找到匹配的时区。"}</span>
+                    <span>{isEn ? "No matching timezones found." : isJa ? "タイムゾーンが見つかりません。" : "未找到匹配的时区。"}</span>
                   </div>
                 ) : null}
               </div>
@@ -648,6 +667,8 @@ export const ServerTimeModal = React.memo(function ServerTimeModal({
                   ? "Tip: The topbar clock can be hidden anytime in Settings -> Appearance."
                   : isTw
                   ? "提示：頂欄時間顯示可在【Saki 設定 -> 外觀設定】中隨時開啟或隱藏。"
+                  : isJa
+                  ? "ヒント：トップバーの時計は設定 → 外観設定でいつでも非表示にできます。"
                   : "提示：顶栏时间显示可在【Saki 设置 -> 外观设置】中随时开启或隐藏。"}
               </span>
               {onOpenSettings ? (
@@ -660,12 +681,12 @@ export const ServerTimeModal = React.memo(function ServerTimeModal({
                   }}
                 >
                   <ExternalLink size={12} />
-                  <span>{isEn ? "Open Settings" : isTw ? "前往外觀設定" : "前往外观设置"}</span>
+                  <span>{isEn ? "Open Settings" : isTw ? "前往外觀設定" : isJa ? "設定を開く" : "前往外观设置"}</span>
                 </button>
               ) : null}
             </div>
             <button className="primary-button" type="button" onClick={onClose}>
-              {isEn ? "Done" : isTw ? "完成" : "完成"}
+              {isEn ? "Done" : isTw ? "完成" : isJa ? "完了" : "完成"}
             </button>
           </div>
         </footer>

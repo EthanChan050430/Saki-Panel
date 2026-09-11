@@ -4406,6 +4406,11 @@ export function translateDomText(value: string, language: PanelLanguage = "en-US
     return translatedTw === trimmed ? value : value.replace(trimmed, translatedTw);
   }
 
+  // Only en-US has built-in DOM translations; plugin locales (ja-JP, etc.)
+  // must NOT fall through to the en-US branch — they return the original zh-CN
+  // text and rely on panelT() for keyed translations where possible.
+  if (language !== "en-US") return value;
+
   // en-US translation logic
   const exactEn = domExactTranslationsEn[trimmed];
   if (exactEn) return value.replace(trimmed, exactEn);

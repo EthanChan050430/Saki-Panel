@@ -25,6 +25,105 @@ interface FlashBloom {
 const maxStardust = 40;
 const maxBlooms = 6;
 
+type GlowStop = readonly [number, string];
+interface GlowVariant {
+  radius: number;
+  stops: readonly GlowStop[];
+}
+type GlowVariantKey =
+  | "agent-dark"
+  | "agent-light"
+  | "hover-dark"
+  | "base-dark"
+  | "hover-light"
+  | "base-light"
+  | "glint-agent-dark"
+  | "glint-agent-light"
+  | "glint-hover-dark"
+  | "glint-hover-light";
+
+// Precomputed gradient definitions (identical colors/alphas/stops as before).
+// Each variant is rendered once onto an offscreen sprite canvas and blitted
+// with drawImage, so the rAF loop allocates zero gradients per frame.
+const GLOW_VARIANTS: Record<GlowVariantKey, GlowVariant> = {
+  "agent-dark": {
+    radius: 115,
+    stops: [
+      [0, "rgba(255, 255, 255, 0.07)"],
+      [0.45, "rgba(235, 242, 255, 0.025)"],
+      [1, "rgba(255, 255, 255, 0)"]
+    ]
+  },
+  "agent-light": {
+    radius: 115,
+    stops: [
+      [0, "rgba(255, 255, 255, 0.11)"],
+      [0.45, "rgba(255, 248, 252, 0.035)"],
+      [1, "rgba(255, 255, 255, 0)"]
+    ]
+  },
+  "hover-dark": {
+    radius: 200,
+    stops: [
+      [0, "rgba(255, 155, 200, 0.18)"],
+      [0.4, "rgba(192, 132, 252, 0.08)"],
+      [1, "rgba(255, 255, 255, 0)"]
+    ]
+  },
+  "base-dark": {
+    radius: 160,
+    stops: [
+      [0, "rgba(255, 155, 200, 0.12)"],
+      [0.4, "rgba(192, 132, 252, 0.05)"],
+      [1, "rgba(255, 255, 255, 0)"]
+    ]
+  },
+  "hover-light": {
+    radius: 200,
+    stops: [
+      [0, "rgba(255, 117, 172, 0.14)"],
+      [0.4, "rgba(168, 85, 247, 0.06)"],
+      [1, "rgba(255, 255, 255, 0)"]
+    ]
+  },
+  "base-light": {
+    radius: 160,
+    stops: [
+      [0, "rgba(255, 117, 172, 0.09)"],
+      [0.4, "rgba(168, 85, 247, 0.035)"],
+      [1, "rgba(255, 255, 255, 0)"]
+    ]
+  },
+  "glint-agent-dark": {
+    radius: 20,
+    stops: [
+      [0, "rgba(255, 255, 255, 0.12)"],
+      [1, "rgba(255, 255, 255, 0)"]
+    ]
+  },
+  "glint-agent-light": {
+    radius: 20,
+    stops: [
+      [0, "rgba(255, 255, 255, 0.22)"],
+      [1, "rgba(255, 255, 255, 0)"]
+    ]
+  },
+  "glint-hover-dark": {
+    radius: 32,
+    stops: [
+      [0, "rgba(255, 180, 215, 0.22)"],
+      [1, "rgba(255, 255, 255, 0)"]
+    ]
+  },
+  "glint-hover-light": {
+    radius: 32,
+    stops: [
+      [0, "rgba(255, 150, 190, 0.18)"],
+      [1, "rgba(255, 255, 255, 0)"]
+    ]
+  }
+};
+
 export function ElegantCursor() {
   const [mounted, setMounted] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -59,12 +158,60 @@ export function ElegantCursor() {
     const stardusts: Stardust[] = [];
     const blooms: FlashBloom[] = [];
 
+    // Offscreen sprite per glow variant, rendered once (per DPR) and reused
+    // via drawImage — radial glows are position-independent, only the blit
+    // origin moves with the cursor.
+    const glowSpriteCache = new Map<GlowVariantKey, HTMLCanvasElement>();
+    function getGlowSprite(key: GlowVariantKey): HTMLCanvasElement | null {
+      const cached = glowSpriteCache.get(key);
+      if (cached) return cached;
+      const variant = GLOW_VARIANTS[key];
+      const size = Math.max(2, Math.ceil(variant.radius * 2 * dpr));
+      const sprite = document.createElement("canvas");
+      sprite.width = size;
+      sprite.height = size;
+      const spriteCtx = sprite.getContext("2d");
+      if (!spriteCtx) return null;
+      spriteCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const r = variant.radius;
+      const grad = spriteCtx.createRadialGradient(r, r, 0, r, r, r);
+      for (const [offset, color] of variant.stops) {
+        grad.addColorStop(offset, color);
+      }
+      spriteCtx.fillStyle = grad;
+      spriteCtx.beginPath();
+      spriteCtx.arc(r, r, r, 0, Math.PI * 2);
+      spriteCtx.fill();
+      glowSpriteCache.set(key, sprite);
+      return sprite;
+    }
+
+    // Cache for particle color strings: keyed by (hue, theme, kind, alpha
+    // quantized to 1/1000) so the draw loop does not allocate a new
+    // `hsla(...)` string per particle per frame.
+    const fxColorCache = new Map<number, string>();
+    function fxColor(hue: number, dark: boolean, kind: 0 | 1, alpha: number): string {
+      const q = alpha <= 0 ? 0 : alpha >= 1 ? 1000 : Math.round(alpha * 1000);
+      const key = ((hue * 2 + (dark ? 1 : 0)) * 2 + kind) * 1001 + q;
+      const cached = fxColorCache.get(key);
+      if (cached !== undefined) return cached;
+      const a = q / 1000;
+      const s =
+        kind === 0
+          ? `hsla(${hue}, 85%, ${dark ? "72%" : "65%"}, ${a})`
+          : `hsla(${hue}, 90%, ${dark ? "78%" : "68%"}, ${a})`;
+      fxColorCache.set(key, s);
+      return s;
+    }
+
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d", { alpha: true, desynchronized: true });
 
     function resizeCanvas() {
       if (!canvas) return;
-      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const nextDpr = Math.min(window.devicePixelRatio || 1, 2);
+      if (nextDpr !== dpr) glowSpriteCache.clear();
+      dpr = nextDpr;
       canvas.width = Math.floor(window.innerWidth * dpr);
       canvas.height = Math.floor(window.innerHeight * dpr);
       canvas.style.width = `${window.innerWidth}px`;
@@ -230,60 +377,35 @@ export function ElegantCursor() {
 
         if (isVisible && glowX > -100 && glowY > -100) {
           const breathing = recentlyMoved ? Math.sin(time) * 8 : 0;
-          const baseRadius = (isAgentInput ? 115 : isHovering ? 200 : 160) + breathing;
-          const grad = ctx.createRadialGradient(glowX, glowY, 0, glowX, glowY, baseRadius);
-
-          if (isAgentInput) {
-            // Refined soft white glass specular sheen
-            if (isDark) {
-              const coreAlpha = 0.07;
-              const midAlpha = 0.025;
-              grad.addColorStop(0, `rgba(255, 255, 255, ${coreAlpha})`);
-              grad.addColorStop(0.45, `rgba(235, 242, 255, ${midAlpha})`);
-              grad.addColorStop(1, "rgba(255, 255, 255, 0)");
-            } else {
-              const coreAlpha = 0.11;
-              const midAlpha = 0.035;
-              grad.addColorStop(0, `rgba(255, 255, 255, ${coreAlpha})`);
-              grad.addColorStop(0.45, `rgba(255, 248, 252, ${midAlpha})`);
-              grad.addColorStop(1, "rgba(255, 255, 255, 0)");
-            }
-          } else if (isDark) {
-            const coreAlpha = isHovering ? 0.18 : 0.12;
-            const midAlpha = isHovering ? 0.08 : 0.05;
-            grad.addColorStop(0, `rgba(255, 155, 200, ${coreAlpha})`);
-            grad.addColorStop(0.4, `rgba(192, 132, 252, ${midAlpha})`);
-            grad.addColorStop(1, "rgba(255, 255, 255, 0)");
-          } else {
-            const coreAlpha = isHovering ? 0.14 : 0.09;
-            const midAlpha = isHovering ? 0.06 : 0.035;
-            grad.addColorStop(0, `rgba(255, 117, 172, ${coreAlpha})`);
-            grad.addColorStop(0.4, `rgba(168, 85, 247, ${midAlpha})`);
-            grad.addColorStop(1, "rgba(255, 255, 255, 0)");
+          const variantKey: GlowVariantKey = isAgentInput
+            ? isDark
+              ? "agent-dark"
+              : "agent-light"
+            : isDark
+              ? isHovering
+                ? "hover-dark"
+                : "base-dark"
+              : isHovering
+                ? "hover-light"
+                : "base-light";
+          const variant = GLOW_VARIANTS[variantKey];
+          const baseRadius = variant.radius + breathing;
+          const glowSprite = getGlowSprite(variantKey);
+          if (glowSprite) {
+            ctx.drawImage(glowSprite, glowX - baseRadius, glowY - baseRadius, baseRadius * 2, baseRadius * 2);
           }
-
-          ctx.fillStyle = grad;
-          ctx.beginPath();
-          ctx.arc(glowX, glowY, baseRadius, 0, Math.PI * 2);
-          ctx.fill();
 
           if (isAgentInput) {
             // Subtle, pure translucent glass glint highlight
-            const glintGrad = ctx.createRadialGradient(mouseX, mouseY, 0, mouseX, mouseY, 20);
-            glintGrad.addColorStop(0, isDark ? "rgba(255, 255, 255, 0.12)" : "rgba(255, 255, 255, 0.22)");
-            glintGrad.addColorStop(1, "rgba(255, 255, 255, 0)");
-            ctx.fillStyle = glintGrad;
-            ctx.beginPath();
-            ctx.arc(mouseX, mouseY, 20, 0, Math.PI * 2);
-            ctx.fill();
+            const glintSprite = getGlowSprite(isDark ? "glint-agent-dark" : "glint-agent-light");
+            if (glintSprite) {
+              ctx.drawImage(glintSprite, mouseX - 20, mouseY - 20, 40, 40);
+            }
           } else if (isHovering) {
-            const glintGrad = ctx.createRadialGradient(mouseX, mouseY, 0, mouseX, mouseY, 32);
-            glintGrad.addColorStop(0, isDark ? "rgba(255, 180, 215, 0.22)" : "rgba(255, 150, 190, 0.18)");
-            glintGrad.addColorStop(1, "rgba(255, 255, 255, 0)");
-            ctx.fillStyle = glintGrad;
-            ctx.beginPath();
-            ctx.arc(mouseX, mouseY, 32, 0, Math.PI * 2);
-            ctx.fill();
+            const glintSprite = getGlowSprite(isDark ? "glint-hover-dark" : "glint-hover-light");
+            if (glintSprite) {
+              ctx.drawImage(glintSprite, mouseX - 32, mouseY - 32, 64, 64);
+            }
           }
         }
 
@@ -294,7 +416,7 @@ export function ElegantCursor() {
           b.alpha *= 0.87;
           ctx.beginPath();
           ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
-          ctx.strokeStyle = `hsla(${b.hue}, 85%, ${isDark ? "72%" : "65%"}, ${b.alpha})`;
+          ctx.strokeStyle = fxColor(b.hue, isDark, 0, b.alpha);
           ctx.lineWidth = 2 * (b.alpha / 0.85);
           ctx.stroke();
           if (b.alpha < 0.02 || b.radius >= b.maxRadius - 1) blooms.splice(i, 1);
@@ -310,7 +432,7 @@ export function ElegantCursor() {
           p.life++;
           const progress = p.life / p.maxLife;
           const currentAlpha = (1 - progress) * p.alpha;
-          ctx.fillStyle = `hsla(${p.hue}, 90%, ${isDark ? "78%" : "68%"}, ${currentAlpha})`;
+          ctx.fillStyle = fxColor(p.hue, isDark, 1, currentAlpha);
           ctx.beginPath();
           ctx.arc(p.x, p.y, p.size * (1 - progress * 0.4), 0, Math.PI * 2);
           ctx.fill();

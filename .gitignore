@@ -93,5 +93,7 @@ scripts/create-release-assets.mjs
 saki-panel*
 *.bat
 releases/
+saki-plugins/
+tmp_saki_plugins/
 
 

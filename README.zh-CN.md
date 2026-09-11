@@ -15,12 +15,13 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/)
 [![Fastify](https://img.shields.io/badge/Fastify-5-000000.svg)](https://fastify.dev/)
 [![Node](https://img.shields.io/badge/Node-%3E%3D22.13-339933.svg)](https://nodejs.org/)
+[![Plugins](https://img.shields.io/badge/plugins-saki--plugins-FF75AC.svg)](https://github.com/EthanChan050430/saki-plugins)
 
 <p>
   <a href="README.md">English</a> · <b>简体中文</b>
 </p>
 
-[为什么做 Saki?](#为什么做-saki-panel和其他面板有什么区别) · [界面长啥样](#界面长啥样) · [AI 助手 Saki](#ai-助手-saki) · [Saki Watch 崩溃自愈](#saki-watch-故障自愈机制) · [作为面板它能干啥](#作为面板它能干啥) · [快速上手](#快速上手) · [系统架构](#系统架构) · [部署到生产环境](#部署到生产环境)
+[为什么做 Saki?](#为什么做-saki-panel和其他面板有什么区别) · [界面长啥样](#界面长啥样) · [AI 助手 Saki](#ai-助手-saki) · [Saki Watch 崩溃自愈](#saki-watch-故障自愈机制) · [作为面板它能干啥](#作为面板它能干啥) · [插件工坊](#插件工坊) · [快速上手](#快速上手) · [系统架构](#系统架构) · [部署到生产环境](#部署到生产环境)
 
 </div>
 
@@ -43,25 +44,15 @@
 
 ## 为什么做 Saki Panel？（核心同类面板横向对比）
 
-目前市面上的主流面板各有侧重：**MCSManager** 专精游戏服与轻量进程、**1Panel** 专注现代 Linux 建站与通用 Docker、**Pterodactyl (翼龙)** 专为多租户商用开服设计、**宝塔** 偏重传统建站。
+MCSManager、1Panel、Pterodactyl（翼龙）、宝塔各有各的好，但它们都有一个共同点：**纯手工、被动**。半夜服务挂了，只能无脑重启，翻日志的活儿还是得你自己来。
 
-但它们都有一个共同的痛点：**全都是“纯手工”面板**。半夜服务挂了只能无脑循环重启，排查错误服主/运维必须自己人肉翻几百行 log，出了故障也没有带后悔药的自动回滚机制。
+| 别人怎么做 | **Saki Panel** |
+|:---|:---|
+| 没有 AI，日志全靠自己看 | **原生驻守工作区：直接读实时日志、文件和指标，再用受限工具动手修复** |
+| 无脑循环重启，人工排查 | **Saki Watch：提取错误指纹、起草补丁、等你确认、再崩自动回滚** |
+| AI 只能上云，配置出内网 | **本地直连 Ollama & LM Studio，零成本断网可用，隐私不出内网** |
 
-| 对比维度 | **MCSManager** | **1Panel** | **Pterodactyl (翼龙)** | **宝塔 / aaPanel** | **Saki Panel** |
-|:---|:---:|:---:|:---:|:---:|:---:|
-| **AI 运维 Agent** | 无（纯手工排查） | 仅应用市场/简单问答，无法同工作区诊断 | 无 | 商业外挂问答框，日志数据上传云端 | **原生驻守工作区：直接读日志/配置并执行修复补丁** |
-| **崩溃排障与自愈** | 仅异常硬重启，模组报错全靠猜 | 依赖 Docker restart 策略 | 仅容器重启策略 | 仅 Supervisor 等进程守护硬启 | **Saki Watch：提取错误指纹、定位根因、人工过目补丁、再崩自动回滚** |
-| **本地大模型 / 隐私** | 无 | 需自行搭容器再手动调 API | 无 | 依赖云端商业 API，强制手机号实名 | **原生直连 Ollama & LM Studio，零成本断网可用，隐私不出内网** |
-| **安全风控与防逃逸** | 基础用户权限，无操作风险审核 | 基础 Linux / 容器权限 | 严格 Docker 沙盒，但无命令级审查 | 无分级风控，root 跑脚本易翻车 | **4 级风险审批机制，高危写操作弹窗确认，底层硬拦截高危命令** |
-| **支持的实例负载** | 通用进程、Docker、游戏服 | 偏重 Docker 容器与 Web 建站 | 必须运行在 Docker 容器内 | 偏重建站（LNMP/LAMP 依赖较重） | **通吃 9 种类型（CLI 进程、Node、Python、JAR、Docker/Compose、游戏服）** |
-| **游戏服专属体验** | 专为服主打造，原生体验好 | 需自建 Docker 镜像，缺专用控制台优化 | 专为开服设计（Eggs 模板生态完善） | 体验较差，仅普通终端 | **原生支持 Minecraft 控制台彩色代码、Steam 专用服、崩溃报错精准解析** |
-| **多节点与集群架构** | Panel + Daemon 分布式 | 早期仅单机，多机需商业版/独立部署 | Panel + Wings 分布式（功能强大） | 多机需付费购买宝塔云控 | **Panel + 超轻量 Node Daemon，密钥秒级配对，开箱即用** |
-| **部署与上手成本** | 简单（Node.js / 一键脚本） | 简单（Go 二进制 + Docker） | 极繁琐（PHP+Laravel+MySQL+Redis+Go Wings） | 简单，但深度修改宿主机底层环境 | **简单快速（Fastify 5 + React 19 + SQLite，极轻量丝滑）** |
-
-> **选型建议：**
-> - 如果你需要做商业游戏服租赁、多租户严格计费限额：**Pterodactyl** 依然是工业级标准；
-> - 如果你只是想在 Linux 上快速建站、配置 Nginx 反代与证书：**1Panel** 体验非常扎实；
-> - 如果你想要一台**自带 24 小时 AI SRE 运维助手**、既能管日常各种进程/Docker、又能丝滑开游戏服、并且服务崩了能自动分析修补还不怕搞崩系统的下一代面板：**选 Saki Panel 就对了**。
+商用多租户开服，Pterodactyl 依然是工业标准；传统 Linux 建站，1Panel 也很稳。想要一台自带 24 小时 AI SRE 的下一代面板，**选 Saki Panel 就对了**。
 
 ---
 
@@ -130,6 +121,27 @@ SAKI_OLLAMA_URL=http://localhost:11434
 - **分布式多节点**：一台做主控（Panel），其他机器只要跑一个轻量的 Node 守护进程（Daemon），用密钥一对一加密通信，不用繁琐的 VPN 组网。
 - **定时任务 (Cron)**：定时跑脚本、定时做冷备份、定时清理日志，每一次跑的输出日志全部存留可查。
 - **权限与模板**：RBAC 多角色分权，会话防暴力破解；常用启动命令和环境变量存为模板，下次建新实例一键套用。
+
+---
+
+## 插件工坊
+
+不满足于默认界面？Saki Panel 内置了**插件工坊**——主题、形象、游戏、组件、语言包一键安装，不用重新构建、不用重启服务。精选插件都放在 [saki-plugins](https://github.com/EthanChan050430/saki-plugins) 仓库里。
+
+<p align="center">
+  <a href="https://github.com/EthanChan050430/saki-plugins">
+    <img alt="saki-plugins repository" src="https://img.shields.io/badge/plugin%20repository-saki--plugins-FF75AC?style=for-the-badge&logo=github" />
+  </a>
+</p>
+
+| 插件 | 类型 | 它给你带来什么 |
+|:---|:---:|:---|
+| **简约几何** · `saki-theme-geo` | ![theme](https://img.shields.io/badge/type-theme-FF75AC) | 把整站从液态玻璃换成构成主义几何：炭黑侧栏、米白纸面、钴蓝强调、切角硬边。 |
+| **女仆装** · `saki-skin-maid` | ![skin](https://img.shields.io/badge/type-skin-8B5CF6) | 把 Saki 全套表情立绘和 6 帧循环动画换成法式女仆装。 |
+| **切水果** · `saki-game-fruit-slice` | ![game](https://img.shields.io/badge/type-game-10B981) | 街机切水果：滑动切开飞来的水果，躲开炸弹，连击越高分越高。 |
+| **日本語** · `saki-locale-ja` | ![locale](https://img.shields.io/badge/type-locale-3B82F6) | 面板界面整体日语本地化。 |
+
+支持主题、形象、游戏、组件、语言包五种插件类型。想自己写一个？[插件开发指南](https://github.com/EthanChan050430/saki-plugins#readme) 手把手带你从一个空文件夹写起。
 
 ---
 

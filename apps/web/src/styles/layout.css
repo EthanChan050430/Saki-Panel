@@ -206,8 +206,8 @@ html.theme-transitioning select {
   border-radius: 18px;
   color: #1d1d1f;
   background: rgba(255, 255, 255, 0.28);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
   text-align: left;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.85);
   transition: all var(--duration-normal) var(--ease-spring);
@@ -308,8 +308,8 @@ html.theme-transitioning select {
 .account-backdrop {
   z-index: 42;
   background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   will-change: opacity;
   animation: glassModalOverlayIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
@@ -323,8 +323,8 @@ html.theme-transitioning select {
   border: 1px solid rgba(255, 255, 255, 0.75);
   border-radius: 24px;
   background: rgba(255, 255, 255, 0.75);
-  backdrop-filter: blur(40px) saturate(180%);
-  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
   box-shadow: 0 28px 88px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.95);
   will-change: opacity, transform;
   animation: glassModalContainerIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
@@ -342,8 +342,8 @@ html.theme-transitioning select {
   padding: 18px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.6);
   background: rgba(255, 255, 255, 0.75);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
 .account-avatar-button {
@@ -581,8 +581,8 @@ html.theme-transitioning select {
   gap: 16px;
   padding: 6px 10px 6px 18px;
   background: rgba(255, 255, 255, 0.65);
-  backdrop-filter: blur(28px) saturate(190%);
-  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  backdrop-filter: blur(16px) saturate(190%);
+  -webkit-backdrop-filter: blur(16px) saturate(190%);
   border: 1px solid rgba(255, 255, 255, 0.8);
   border-radius: 9999px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05), inset 0 1px 1px rgba(255, 255, 255, 0.95);
@@ -1125,8 +1125,8 @@ html.theme-transitioning select {
   border: 1px solid rgba(255, 255, 255, 0.75);
   border-radius: 20px;
   background: rgba(255, 255, 255, 0.65);
-  backdrop-filter: blur(28px) saturate(190%);
-  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  backdrop-filter: blur(16px) saturate(190%);
+  -webkit-backdrop-filter: blur(16px) saturate(190%);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.04), inset 0 1px 1px rgba(255, 255, 255, 0.9);
   transition:
     transform var(--duration-normal) var(--ease-spring),
@@ -1267,8 +1267,8 @@ button.metric-tile {
   border: 1px solid rgba(255, 255, 255, 0.75);
   border-radius: 22px;
   background: rgba(255, 255, 255, 0.65);
-  backdrop-filter: blur(28px) saturate(190%);
-  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  backdrop-filter: blur(16px) saturate(190%);
+  -webkit-backdrop-filter: blur(16px) saturate(190%);
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.05), inset 0 1px 1px rgba(255, 255, 255, 0.9);
   transition:
     transform var(--duration-normal) var(--ease-spring),
@@ -1390,10 +1390,21 @@ button.metric-tile {
 }
 
 .recent-instance-icon.running {
+  position: relative;
   color: #047857;
   background: rgba(209, 250, 229, 0.88);
   border-color: rgba(52, 211, 153, 0.4);
-  box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.35);
+}
+
+/* Compositor-only pulse ring (was an always-on box-shadow animation) */
+.recent-instance-icon.running::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.35);
+  opacity: 0;
+  pointer-events: none;
   animation: recent-instance-pulse 2.4s ease-out infinite;
 }
 
@@ -1424,18 +1435,21 @@ button.metric-tile {
 
 @keyframes recent-instance-pulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.32);
+    opacity: 0.9;
+    transform: scale(1);
   }
   70% {
-    box-shadow: 0 0 0 8px rgba(52, 211, 153, 0);
+    opacity: 0;
+    transform: scale(1.35);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
+    opacity: 0;
+    transform: scale(1.35);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .recent-instance-icon.running {
+  .recent-instance-icon.running::after {
     animation: none;
   }
 }
@@ -1526,8 +1540,8 @@ button.metric-tile {
   box-shadow:
     0 32px 80px rgba(15, 23, 42, 0.22),
     inset 0 1px 1px rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(36px) saturate(180%);
-  -webkit-backdrop-filter: blur(36px) saturate(180%);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
   animation: metric-detail-rise 280ms var(--ease-spring);
 }
 
@@ -1978,6 +1992,21 @@ td strong {
   background: rgba(16, 185, 129, 0.12);
   border: 1px solid rgba(16, 185, 129, 0.25);
   box-shadow: 0 2px 8px rgba(16, 185, 129, 0.15);
+}
+
+/* Compositor-only glow pulse (was an always-on box-shadow animation) */
+.status-pill.online {
+  position: relative;
+}
+
+.status-pill.online::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 4px 12px rgba(255, 117, 172, 0.25);
+  opacity: 0.4;
+  pointer-events: none;
   animation: status-online-pulse 2s ease-in-out infinite;
 }
 
@@ -2008,10 +2037,10 @@ td strong {
 
 @keyframes status-online-pulse {
   0%, 100% {
-    box-shadow: 0 2px 8px rgba(255, 117, 172, 0.15);
+    opacity: 0.4;
   }
   50% {
-    box-shadow: 0 4px 12px rgba(255, 117, 172, 0.25);
+    opacity: 1;
   }
 }
 
@@ -2198,8 +2227,8 @@ input[type="checkbox"].checkbox-input:focus-visible {
 .settings-group {
   align-self: start;
   background: rgba(255, 255, 255, 0.65);
-  backdrop-filter: blur(40px) saturate(180%);
-  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.7);
   border-radius: 20px;
   padding: 24px;
@@ -2633,8 +2662,8 @@ input[type="checkbox"].checkbox-input:focus-visible {
   gap: 14px;
   padding: 16px 20px;
   background: rgba(255, 255, 255, 0.65);
-  backdrop-filter: blur(40px) saturate(180%);
-  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
   border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.7);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.95);
@@ -3068,8 +3097,8 @@ input[type="checkbox"].checkbox-input:focus-visible {
 
 .glass-panel {
   background: rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.4);
   border-radius: 16px;
   box-shadow: 0 8px 32px rgba(31, 38, 135, 0.05);
@@ -3262,8 +3291,8 @@ input[type="checkbox"].checkbox-input:focus-visible {
   padding: 16px 24px;
   border-radius: 22px;
   background: rgba(255, 255, 255, 0.65);
-  backdrop-filter: blur(40px) saturate(190%);
-  -webkit-backdrop-filter: blur(40px) saturate(190%);
+  backdrop-filter: blur(16px) saturate(190%);
+  -webkit-backdrop-filter: blur(16px) saturate(190%);
   border: 1px solid rgba(255, 255, 255, 0.75);
   box-shadow:
     0 12px 36px rgba(0, 0, 0, 0.04),
@@ -3383,8 +3412,8 @@ input[type="checkbox"].checkbox-input:focus-visible {
   position: sticky;
   top: 16px;
   background: rgba(255, 255, 255, 0.65);
-  backdrop-filter: blur(40px) saturate(190%);
-  -webkit-backdrop-filter: blur(40px) saturate(190%);
+  backdrop-filter: blur(16px) saturate(190%);
+  -webkit-backdrop-filter: blur(16px) saturate(190%);
   border: 1px solid rgba(255, 255, 255, 0.75);
   border-radius: 22px;
   padding: 12px;
@@ -3525,8 +3554,8 @@ input[type="checkbox"].checkbox-input:focus-visible {
 
 .settings-group {
   background: rgba(255, 255, 255, 0.65);
-  backdrop-filter: blur(40px) saturate(190%);
-  -webkit-backdrop-filter: blur(40px) saturate(190%);
+  backdrop-filter: blur(16px) saturate(190%);
+  -webkit-backdrop-filter: blur(16px) saturate(190%);
   border: 1px solid rgba(255, 255, 255, 0.75);
   border-radius: 24px;
   padding: 28px 32px;
@@ -4011,8 +4040,8 @@ input[type="checkbox"].checkbox-input:focus-visible {
   padding: 14px 24px;
   border-radius: 22px;
   background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(40px) saturate(190%);
-  -webkit-backdrop-filter: blur(40px) saturate(190%);
+  backdrop-filter: blur(16px) saturate(190%);
+  -webkit-backdrop-filter: blur(16px) saturate(190%);
   border: 1px solid rgba(255, 255, 255, 0.85);
   box-shadow:
     0 20px 50px rgba(0, 0, 0, 0.08),
@@ -4082,8 +4111,8 @@ input[type="checkbox"].checkbox-input:focus-visible {
     padding: 6px 8px !important;
     border-radius: 18px !important;
     background: rgba(255, 255, 255, 0.88) !important;
-    backdrop-filter: blur(28px) saturate(180%) !important;
-    -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
+    backdrop-filter: blur(16px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06) !important;
     overflow-x: auto !important;
     overflow-y: hidden !important;
@@ -4379,4 +4408,63 @@ body.has-desktop-video-bg {
 .ghost-button.mini.reset-btn:hover {
   color: #ef4444;
   background: rgba(239, 68, 68, 0.08);
+}
+
+/* ==========================================================================
+   Perf-lite: disable backdrop blur on the heaviest glass surfaces
+   (modals, tiles, settings panels; paired with opaque fallbacks)
+   ========================================================================== */
+
+html.perf-lite .account-backdrop,
+html.perf-lite .account-modal,
+html.perf-lite .metric-detail-modal,
+html.perf-lite .metric-tile,
+html.perf-lite .panel-block,
+html.perf-lite .glass-panel,
+html.perf-lite .settings-group,
+html.perf-lite .settings-toc,
+html.perf-lite .settings-liquid-header,
+html.perf-lite .settings-actions,
+html.perf-lite .settings-sticky-footer,
+html.perf-lite .topbar-inner {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.perf-lite .account-backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+html.perf-lite .account-modal,
+html.perf-lite .metric-detail-modal {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+html.perf-lite .metric-tile,
+html.perf-lite .panel-block,
+html.perf-lite .glass-panel,
+html.perf-lite .settings-group,
+html.perf-lite .settings-toc,
+html.perf-lite .settings-liquid-header,
+html.perf-lite .settings-actions,
+html.perf-lite .settings-sticky-footer,
+html.perf-lite .topbar-inner {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+html.perf-lite[data-theme="dark"] .account-modal,
+html.perf-lite[data-theme="dark"] .metric-detail-modal {
+  background: rgba(18, 22, 34, 0.96);
+}
+
+html.perf-lite[data-theme="dark"] .metric-tile,
+html.perf-lite[data-theme="dark"] .panel-block,
+html.perf-lite[data-theme="dark"] .glass-panel,
+html.perf-lite[data-theme="dark"] .settings-group,
+html.perf-lite[data-theme="dark"] .settings-toc,
+html.perf-lite[data-theme="dark"] .settings-liquid-header,
+html.perf-lite[data-theme="dark"] .settings-actions,
+html.perf-lite[data-theme="dark"] .settings-sticky-footer,
+html.perf-lite[data-theme="dark"] .topbar-inner {
+  background: rgba(24, 28, 38, 0.92);
 }
