@@ -14,12 +14,13 @@ High-risk work waits for your OK. Crashes get a fingerprint, a reviewed patch, a
 [![React](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/)
 [![Fastify](https://img.shields.io/badge/Fastify-5-000000.svg)](https://fastify.dev/)
 [![Node](https://img.shields.io/badge/Node-%3E%3D22.13-339933.svg)](https://nodejs.org/)
+[![Plugins](https://img.shields.io/badge/plugins-saki--plugins-FF75AC.svg)](https://github.com/EthanChan050430/saki-plugins)
 
 <p>
   <b>English</b> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-[Why Saki?](#why-saki) · [Saki](#saki) · [Watch](#saki-watch) · [Panel](#panel) · [Quick Start](#quick-start) · [Architecture](#architecture) · [Deploy](#deploy)
+[Why Saki?](#why-saki) · [Saki](#saki) · [Watch](#saki-watch) · [Panel](#panel) · [Plugins](#plugins) · [Quick Start](#quick-start) · [Architecture](#architecture) · [Deploy](#deploy)
 
 </div>
 
@@ -131,6 +132,27 @@ When a watched instance exits unexpectedly:
 | `docker_compose` | Compose stacks |
 | `minecraft` | Dedicated MC servers, console parsing |
 | `steam_game_server` | Steam dedicated servers |
+
+---
+
+## Plugins
+
+Every surface can be restyled and extended. Saki Panel ships a **Plugin Workshop** — themes, skins, games, widgets and language packs install in one click, with no rebuild and no restart. A curated collection lives in the [saki-plugins](https://github.com/EthanChan050430/saki-plugins) repository.
+
+<p align="center">
+  <a href="https://github.com/EthanChan050430/saki-plugins">
+    <img alt="saki-plugins repository" src="https://img.shields.io/badge/plugin%20repository-saki--plugins-FF75AC?style=for-the-badge&logo=github" />
+  </a>
+</p>
+
+| Plugin | Type | What it gives you |
+|:---|:---:|:---|
+| **简约几何** · `saki-theme-geo` | ![theme](https://img.shields.io/badge/type-theme-FF75AC) | Replaces the liquid-glass UI with a constructivist geometric shell: charcoal sidebar, cobalt accent, chamfered corners. |
+| **女仆装** · `saki-skin-maid` | ![skin](https://img.shields.io/badge/type-skin-8B5CF6) | Swaps every Saki expression and six-frame loop into a French maid outfit. |
+| **切水果** · `saki-game-fruit-slice` | ![game](https://img.shields.io/badge/type-game-10B981) | An arcade fruit-slicer: swipe flying fruit, dodge bombs, chase combos. |
+| **日本語** · `saki-locale-ja` | ![locale](https://img.shields.io/badge/type-locale-3B82F6) | A full Japanese interface pack for the panel. |
+
+Five plugin types are supported — `theme`, `skin`, `game`, `widget` and `locale`. Want to write your own? The [plugin guide](https://github.com/EthanChan050430/saki-plugins#readme) walks you from an empty folder to something the Workshop can see.
 
 ---
 
