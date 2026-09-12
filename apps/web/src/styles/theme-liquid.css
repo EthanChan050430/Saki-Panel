@@ -2833,6 +2833,29 @@
   color: #b0bec5;
 }
 
+[data-theme="dark"] .instance-list-name,
+[data-theme="dark"] .link-button.instance-list-name {
+  color: #f1f5f9 !important;
+}
+
+[data-theme="dark"] .instance-list-copy > span {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .instance-list-meta {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .instance-list-meta svg {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .instance-list-actions {
+  border-top-color: rgba(255, 255, 255, 0.06);
+}
+
 [data-theme="dark"] .instance-graph-node {
   background: var(--surface-bg);
   border: 1px solid var(--surface-border);

@@ -62,6 +62,8 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
     updatePlugin
   } = usePlugins();
 
+  const canManage = currentUser.isSuperAdmin || currentUser.isAdmin || currentUser.permissions.includes("plugin.manage");
+
   const [activeTab, setActiveTab] = useState<"installed" | "registry" | "updates">("installed");
   const [selectedType, setSelectedType] = useState<PluginType | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -707,12 +709,12 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                         type="button"
                         className={`plugin-mirror-option-item ${isSelected ? "is-active" : ""}`}
                         onClick={() => {
-                          if (currentUser.isAdmin) {
+                          if (canManage) {
                             void handleMirrorChange(m.id);
                           }
                           setMirrorDropdownOpen(false);
                         }}
-                        disabled={!currentUser.isAdmin}
+                        disabled={!canManage}
                       >
                         <span className="mirror-opt-name">{m.name}</span>
                         {ping ? (
@@ -746,7 +748,7 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
             <span>{t("plugins.header.devGuide")}</span>
           </button>
 
-          {currentUser.isAdmin ? (
+          {canManage ? (
             <button
               type="button"
               className="plugin-header-primary-btn"
@@ -898,7 +900,7 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                           title={p.enabled ? t("plugins.card.enabled") : t("plugins.card.disabled")}
                         />
 
-                        {currentUser.isAdmin ? (
+                        {canManage ? (
                           <div className="plugin-card-menu-container">
                             <button
                               type="button"
@@ -1024,22 +1026,29 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                     <div className="plugin-art-footer">
                       {p.manifest.type === "theme" ? (
                         isCurrentTheme ? (
-                          <button
-                            type="button"
-                            className="plugin-art-applied-badge is-interactive"
-                            onClick={() => void setActiveTheme(null)}
-                            title={t("plugins.card.themeDeactivateTooltip")}
-                          >
-                            <span className="badge-applied-text">
+                          canManage ? (
+                            <button
+                              type="button"
+                              className="plugin-art-applied-badge is-interactive"
+                              onClick={() => void setActiveTheme(null)}
+                              title={t("plugins.card.themeDeactivateTooltip")}
+                            >
+                              <span className="badge-applied-text">
+                                <Check size={13} />
+                                <span>{t("plugins.card.activeTheme")}</span>
+                              </span>
+                              <span className="badge-hover-text">
+                                <Power size={13} />
+                                <span>{t("plugins.card.disableTheme")}</span>
+                              </span>
+                            </button>
+                          ) : (
+                            <div className="plugin-art-applied-badge">
                               <Check size={13} />
                               <span>{t("plugins.card.activeTheme")}</span>
-                            </span>
-                            <span className="badge-hover-text">
-                              <Power size={13} />
-                              <span>{t("plugins.card.disableTheme")}</span>
-                            </span>
-                          </button>
-                        ) : (
+                            </div>
+                          )
+                        ) : canManage ? (
                           <button
                             type="button"
                             className="plugin-art-action-btn"
@@ -1047,27 +1056,34 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                           >
                             <span>{t("plugins.card.applyTheme")}</span>
                           </button>
-                        )
+                        ) : null
                       ) : null}
 
                       {p.manifest.type === "skin" ? (
                         isCurrentSkin ? (
-                          <button
-                            type="button"
-                            className="plugin-art-applied-badge is-interactive"
-                            onClick={() => void setActiveSkin(null)}
-                            title={t("plugins.card.skinDeactivateTooltip")}
-                          >
-                            <span className="badge-applied-text">
+                          canManage ? (
+                            <button
+                              type="button"
+                              className="plugin-art-applied-badge is-interactive"
+                              onClick={() => void setActiveSkin(null)}
+                              title={t("plugins.card.skinDeactivateTooltip")}
+                            >
+                              <span className="badge-applied-text">
+                                <Check size={13} />
+                                <span>{t("plugins.card.activeSkin")}</span>
+                              </span>
+                              <span className="badge-hover-text">
+                                <Power size={13} />
+                                <span>{t("plugins.card.disableSkin")}</span>
+                              </span>
+                            </button>
+                          ) : (
+                            <div className="plugin-art-applied-badge">
                               <Check size={13} />
                               <span>{t("plugins.card.activeSkin")}</span>
-                            </span>
-                            <span className="badge-hover-text">
-                              <Power size={13} />
-                              <span>{t("plugins.card.disableSkin")}</span>
-                            </span>
-                          </button>
-                        ) : (
+                            </div>
+                          )
+                        ) : canManage ? (
                           <button
                             type="button"
                             className="plugin-art-action-btn"
@@ -1075,10 +1091,10 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                           >
                             <span>{t("plugins.card.switchSkin")}</span>
                           </button>
-                        )
+                        ) : null
                       ) : null}
 
-                      {p.manifest.type === "game" || p.manifest.type === "widget" || p.manifest.type === "locale" ? (
+                      {canManage && (p.manifest.type === "game" || p.manifest.type === "widget" || p.manifest.type === "locale") ? (
                         <button
                           type="button"
                           className={`plugin-art-action-btn ${p.enabled ? "is-subtle is-danger-hover" : ""}`}
@@ -1189,7 +1205,7 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                           <Check size={13} />
                           <span>{t("plugins.card.installed")}</span>
                         </div>
-                      ) : currentUser.isAdmin ? (
+                      ) : canManage ? (
                         <button
                           type="button"
                           className="plugin-art-action-btn is-install"
@@ -1236,7 +1252,7 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                   </p>
                 </div>
                 <div className="serene-actions">
-                  {currentUser.isAdmin ? (
+                  {canManage ? (
                     <button
                       type="button"
                       className="plugin-art-action-btn is-subtle serene-btn"
@@ -1309,7 +1325,7 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                       </div>
 
                       <div className="update-row-action">
-                        {currentUser.isAdmin ? (
+                        {canManage ? (
                           <button
                             type="button"
                             className="update-row-icon-btn"
@@ -1374,7 +1390,7 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                     </span>
                   </label>
 
-                  {currentUser.isAdmin ? (
+                  {canManage ? (
                     <>
                       <button
                         type="button"
@@ -1505,7 +1521,7 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                       </div>
 
                       <div className="update-row-action">
-                        {currentUser.isAdmin ? (
+                        {canManage ? (
                           hasUpdate ? (
                             <button
                               type="button"

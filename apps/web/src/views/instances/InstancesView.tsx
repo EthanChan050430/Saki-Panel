@@ -70,6 +70,7 @@ import {
   Mic,
   MicOff,
   Minimize2,
+  Minus,
   Moon,
   MoreHorizontal,
   MoreVertical,
@@ -481,6 +482,17 @@ export function InstancesView({
       typeof window !== "undefined" ? window.localStorage.getItem("webops.instanceDirectoryView") : null;
     return savedView === "list" || savedView === "graph" || savedView === "cards" ? savedView : "cards";
   });
+  const [graphLayoutMode, setGraphLayoutMode] = useState<"orbit" | "cluster">("orbit");
+  const [graphNodeMode, setGraphNodeMode] = useState<"card" | "compact">("card");
+  const [graphZoom, setGraphZoom] = useState(1);
+  const [graphPan, setGraphPan] = useState({ x: 0, y: 0 });
+  const [graphHoveredId, setGraphHoveredId] = useState<string | null>(null);
+  const [graphStatusFilter, setGraphStatusFilter] = useState<string | null>(null);
+  const [isGraphDragging, setIsGraphDragging] = useState(false);
+  const isGraphDraggingRef = useRef(false);
+  const dragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+  const graphPanelRef = useRef<HTMLDivElement>(null);
+  const touchStartRef = useRef<{ dist: number; panX: number; panY: number; x: number; y: number } | null>(null);
   const [form, setForm] = useState({
     nodeId: "",
     name: "demo-command",
@@ -614,7 +626,6 @@ export function InstancesView({
         instances: ManagedInstance[];
       }
     >();
-    const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
     for (const instance of sortedInstances) {
       const instanceNode = nodeById.get(instance.nodeId) ?? null;
@@ -632,20 +643,77 @@ export function InstancesView({
     }
 
     const groupEntries = Array.from(groups.values());
+    const isCompact = graphNodeMode === "compact";
+    const isCluster = graphLayoutMode === "cluster";
     const hubCount = Math.max(groupEntries.length, 1);
+
+    // Calculate clearance radius needed for each hub based on its instance count
+    const hubRadii = groupEntries.map((group) => {
+      const n = group.instances.length;
+      if (isCluster) {
+        const cols = Math.min(Math.ceil(Math.sqrt(Math.max(n, 1) * 1.6)), 7);
+        const rows = Math.ceil(Math.max(n, 1) / cols);
+        const w = cols * (isCompact ? 125 : 155);
+        const h = rows * (isCompact ? 50 : 80) + 120;
+        return { group, width: w, height: h, radius: Math.max(w, h) / 2 };
+      }
+      // Orbit mode
+      const ring0Cap = isCompact ? 8 : 6;
+      const ring1Cap = isCompact ? 15 : 11;
+      const ring2Cap = isCompact ? 22 : 16;
+      let maxRx = isCompact ? 150 : 185;
+      let maxRy = isCompact ? 105 : 130;
+      if (n > ring0Cap) {
+        maxRx += isCompact ? 115 : 135;
+        maxRy += isCompact ? 80 : 95;
+      }
+      if (n > ring0Cap + ring1Cap) {
+        maxRx += isCompact ? 115 : 135;
+        maxRy += isCompact ? 80 : 95;
+      }
+      if (n > ring0Cap + ring1Cap + ring2Cap) {
+        const extraRings = Math.ceil((n - ring0Cap - ring1Cap - ring2Cap) / (isCompact ? 26 : 20));
+        maxRx += extraRings * (isCompact ? 115 : 135);
+        maxRy += extraRings * (isCompact ? 80 : 95);
+      }
+      return { group, maxRx, maxRy, radius: Math.max(maxRx, maxRy) };
+    });
+
+    const maxHubRadius = Math.max(...hubRadii.map((h) => h.radius), 180);
+    const canvasWidth = hubCount === 1 
+      ? Math.max(maxHubRadius * 2 + 380, 1100) 
+      : Math.max((maxHubRadius * 2 + 280) * Math.sqrt(hubCount) * 1.15, 1400);
+    const canvasHeight = hubCount === 1 
+      ? Math.max(maxHubRadius * 2 + 320, 850) 
+      : Math.max((maxHubRadius * 2 + 240) * Math.sqrt(hubCount) * 0.95, 1000);
+
+    const centerX = canvasWidth / 2;
+    const centerY = canvasHeight / 2;
+
     const hubs = groupEntries.map((group, index) => {
+      if (hubCount === 1) {
+        return {
+          id: group.id,
+          label: group.label,
+          detail: group.detail,
+          count: group.instances.length,
+          x: centerX,
+          y: isCluster ? centerY - 120 : centerY
+        };
+      }
       const angle = -Math.PI / 2 + (2 * Math.PI * index) / hubCount;
-      const radiusX = groupEntries.length === 1 ? 0 : 27;
-      const radiusY = groupEntries.length === 1 ? 0 : 19;
+      const hubDist = maxHubRadius + 180;
       return {
         id: group.id,
         label: group.label,
         detail: group.detail,
         count: group.instances.length,
-        x: clamp(50 + Math.cos(angle) * radiusX, 18, 82),
-        y: clamp(50 + Math.sin(angle) * radiusY, 18, 82)
+        x: centerX + Math.cos(angle) * hubDist,
+        y: centerY + Math.sin(angle) * (hubDist * 0.78)
       };
     });
+
+    const hubsById = new Map(hubs.map((h) => [h.id, h]));
     const instancePoints: Array<{
       instance: ManagedInstance;
       nodeLabel: string;
@@ -655,34 +723,122 @@ export function InstancesView({
       y: number;
       hubX: number;
       hubY: number;
+      hubId: string;
     }> = [];
 
     groupEntries.forEach((group, groupIndex) => {
       const hub = hubs[groupIndex];
       if (!hub) return;
-      const ringCapacity = group.instances.length > 12 ? 10 : 8;
-      group.instances.forEach((instance, index) => {
-        const ring = Math.floor(index / ringCapacity);
-        const ringIndex = index % ringCapacity;
-        const itemsInRing = Math.min(ringCapacity, group.instances.length - ring * ringCapacity);
-        const angleOffset = groupEntries.length > 1 ? groupIndex * 0.42 : 0;
-        const angle = -Math.PI / 2 + angleOffset + (2 * Math.PI * ringIndex) / Math.max(itemsInRing, 1);
-        const baseRadiusX = groupEntries.length > 2 ? 15 : 21;
-        const baseRadiusY = groupEntries.length > 2 ? 11 : 15;
-        const x = clamp(hub.x + Math.cos(angle) * (baseRadiusX + ring * 8), 8, 92);
-        const y = clamp(hub.y + Math.sin(angle) * (baseRadiusY + ring * 6), 10, 90);
-        instancePoints.push({
-          instance,
-          nodeLabel: group.label,
-          nodeDetail: group.detail,
-          meta: instanceStatusMeta(instance.status),
-          x,
-          y,
-          hubX: hub.x,
-          hubY: hub.y
+      const count = group.instances.length;
+      if (count === 0) return;
+
+      if (isCluster) {
+        const cols = Math.min(Math.ceil(Math.sqrt(count * 1.6)), 7);
+        const colSpacing = isCompact ? 125 : 155;
+        const rowSpacing = isCompact ? 48 : 80;
+        const startX = hub.x - ((cols - 1) * colSpacing) / 2;
+        const startY = hub.y + 70;
+
+        group.instances.forEach((instance, index) => {
+          const col = index % cols;
+          const row = Math.floor(index / cols);
+          instancePoints.push({
+            instance,
+            nodeLabel: group.label,
+            nodeDetail: group.detail,
+            meta: instanceStatusMeta(instance.status),
+            x: startX + col * colSpacing,
+            y: startY + row * rowSpacing,
+            hubX: hub.x,
+            hubY: hub.y,
+            hubId: hub.id
+          });
         });
-      });
+      } else {
+        // Orbit mode: concentric staggered rings with increasing capacities
+        const ring0Cap = isCompact ? 8 : 6;
+        const ring1Cap = isCompact ? 15 : 11;
+        const ring2Cap = isCompact ? 22 : 16;
+        const ringCaps = [ring0Cap, ring1Cap, ring2Cap, 26, 32, 40];
+
+        let assigned = 0;
+        let ringIdx = 0;
+        while (assigned < count) {
+          const cap = ringCaps[ringIdx] || (ringIdx * 8 + 10);
+          const inThisRing = Math.min(cap, count - assigned);
+          const rx = (isCompact ? 150 : 185) + ringIdx * (isCompact ? 115 : 135);
+          const ry = (isCompact ? 105 : 130) + ringIdx * (isCompact ? 80 : 95);
+          // Honeycomb angular offset for alternating rings
+          const stagger = (ringIdx % 2 === 1) ? (Math.PI / inThisRing) : 0;
+
+          for (let j = 0; j < inThisRing; j++) {
+            const instance = group.instances[assigned + j];
+            if (!instance) continue;
+            const angle = -Math.PI / 2 + stagger + (2 * Math.PI * j) / inThisRing;
+            instancePoints.push({
+              instance,
+              nodeLabel: group.label,
+              nodeDetail: group.detail,
+              meta: instanceStatusMeta(instance.status),
+              x: hub.x + Math.cos(angle) * rx,
+              y: hub.y + Math.sin(angle) * ry,
+              hubX: hub.x,
+              hubY: hub.y,
+              hubId: hub.id
+            });
+          }
+          assigned += inThisRing;
+          ringIdx++;
+        }
+      }
     });
+
+    // Physics collision relaxation pass to guarantee zero overlap
+    const nodeW = isCompact ? 118 : 148;
+    const nodeH = isCompact ? 44 : 76;
+
+    for (let iter = 0; iter < 28; iter++) {
+      for (let i = 0; i < instancePoints.length; i++) {
+        const p1 = instancePoints[i];
+        if (!p1) continue;
+        for (let j = i + 1; j < instancePoints.length; j++) {
+          const p2 = instancePoints[j];
+          if (!p2) continue;
+          const dx = p2.x - p1.x;
+          const dy = p2.y - p1.y;
+          const nx = dx / nodeW;
+          const ny = dy / nodeH;
+          const dSq = nx * nx + ny * ny;
+          if (dSq < 1 && dSq > 0.0001) {
+            const d = Math.sqrt(dSq);
+            const overlap = (1 - d) * 0.52;
+            const pushX = (nx / d) * overlap * nodeW;
+            const pushY = (ny / d) * overlap * nodeH;
+            p1.x -= pushX;
+            p1.y -= pushY;
+            p2.x += pushX;
+            p2.y += pushY;
+          }
+        }
+
+        const hub = hubsById.get(p1.hubId);
+        if (hub) {
+          const dx = p1.x - hub.x;
+          const dy = p1.y - hub.y;
+          const hw = isCompact ? 120 : 150;
+          const hh = isCompact ? 50 : 65;
+          const nx = dx / hw;
+          const ny = dy / hh;
+          const dSq = nx * nx + ny * ny;
+          if (dSq < 1 && dSq > 0.0001) {
+            const d = Math.sqrt(dSq);
+            const push = (1 - d) * 0.75;
+            p1.x += (nx / d) * push * hw;
+            p1.y += (ny / d) * push * hh;
+          }
+        }
+      }
+    }
 
     return {
       hubs,
@@ -694,9 +850,206 @@ export function InstancesView({
         y1: point.hubY,
         x2: point.x,
         y2: point.y
-      }))
+      })),
+      width: canvasWidth,
+      height: canvasHeight
     };
-  }, [nodes, sortedInstances]);
+  }, [nodes, sortedInstances, graphLayoutMode, graphNodeMode]);
+
+  const handleFitView = useCallback(() => {
+    const panel = graphPanelRef.current;
+    if (!panel || graphLayout.instances.length === 0) return;
+    const rect = panel.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+
+    for (const hub of graphLayout.hubs) {
+      minX = Math.min(minX, hub.x - 90);
+      maxX = Math.max(maxX, hub.x + 90);
+      minY = Math.min(minY, hub.y - 35);
+      maxY = Math.max(maxY, hub.y + 35);
+    }
+
+    const nodeHalfW = graphNodeMode === "compact" ? 65 : 85;
+    const nodeHalfH = graphNodeMode === "compact" ? 25 : 45;
+
+    for (const point of graphLayout.instances) {
+      minX = Math.min(minX, point.x - nodeHalfW);
+      maxX = Math.max(maxX, point.x + nodeHalfW);
+      minY = Math.min(minY, point.y - nodeHalfH);
+      maxY = Math.max(maxY, point.y + nodeHalfH);
+    }
+
+    if (!isFinite(minX)) {
+      setGraphZoom(1);
+      setGraphPan({ x: 0, y: 0 });
+      return;
+    }
+
+    const margin = 48;
+    const contentW = Math.max(maxX - minX, 200);
+    const contentH = Math.max(maxY - minY, 160);
+
+    const scaleX = (rect.width - margin * 2) / contentW;
+    const scaleY = (rect.height - margin * 2) / contentH;
+    const newZoom = Math.min(Math.max(Math.min(scaleX, scaleY), 0.35), 1.2);
+
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    const newPanX = rect.width / 2 - centerX * newZoom;
+    const newPanY = rect.height / 2 - centerY * newZoom;
+
+    setGraphZoom(newZoom);
+    setGraphPan({ x: newPanX, y: newPanY });
+  }, [graphLayout, graphNodeMode]);
+
+  const handleZoomChange = useCallback((factor: number) => {
+    const panel = graphPanelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    setGraphZoom((currZoom) => {
+      const nextZoom = Math.min(Math.max(currZoom * factor, 0.25), 2.5);
+      setGraphPan((currPan) => ({
+        x: cx - (cx - currPan.x) * (nextZoom / currZoom),
+        y: cy - (cy - currPan.y) * (nextZoom / currZoom)
+      }));
+      return nextZoom;
+    });
+  }, []);
+
+  const handleResetZoom = useCallback(() => {
+    handleFitView();
+  }, [handleFitView]);
+
+  const handleFocusHub = useCallback((hub: { x: number; y: number }) => {
+    const panel = graphPanelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    const nextZoom = 0.95;
+    const nextPanX = rect.width / 2 - hub.x * nextZoom;
+    const nextPanY = rect.height / 2 - hub.y * nextZoom;
+    setGraphZoom(nextZoom);
+    setGraphPan({ x: nextPanX, y: nextPanY });
+  }, []);
+
+  useEffect(() => {
+    if (directoryView === "graph") {
+      const timer = setTimeout(() => {
+        handleFitView();
+      }, 80);
+      return () => clearTimeout(timer);
+    }
+  }, [directoryView, graphLayoutMode, graphNodeMode, handleFitView]);
+
+  const handleGraphMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (
+      target.closest(".instance-graph-toolbar") ||
+      target.closest(".instance-graph-node") ||
+      target.closest(".instance-graph-hub")
+    ) {
+      return;
+    }
+    isGraphDraggingRef.current = true;
+    setIsGraphDragging(true);
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      panX: graphPan.x,
+      panY: graphPan.y
+    };
+  };
+
+  const handleGraphMouseMove = (e: React.MouseEvent) => {
+    if (!isGraphDraggingRef.current) return;
+    setGraphPan({
+      x: dragStartRef.current.panX + (e.clientX - dragStartRef.current.x),
+      y: dragStartRef.current.panY + (e.clientY - dragStartRef.current.y)
+    });
+  };
+
+  const handleGraphMouseUp = () => {
+    isGraphDraggingRef.current = false;
+    setIsGraphDragging(false);
+  };
+
+  const handleGraphWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const panel = graphPanelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
+    setGraphZoom((currZoom) => {
+      const nextZoom = Math.min(Math.max(currZoom * zoomFactor, 0.25), 2.5);
+      setGraphPan((currPan) => ({
+        x: mouseX - (mouseX - currPan.x) * (nextZoom / currZoom),
+        y: mouseY - (mouseY - currPan.y) * (nextZoom / currZoom)
+      }));
+      return nextZoom;
+    });
+  };
+
+  const handleGraphTouchStart = (e: React.TouchEvent) => {
+    const t0 = e.touches[0];
+    const t1 = e.touches[1];
+    if (e.touches.length === 1 && t0) {
+      touchStartRef.current = {
+        dist: 0,
+        panX: graphPan.x,
+        panY: graphPan.y,
+        x: t0.clientX,
+        y: t0.clientY
+      };
+    } else if (e.touches.length >= 2 && t0 && t1) {
+      const dx = t0.clientX - t1.clientX;
+      const dy = t0.clientY - t1.clientY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      touchStartRef.current = {
+        dist,
+        panX: graphPan.x,
+        panY: graphPan.y,
+        x: (t0.clientX + t1.clientX) / 2,
+        y: (t0.clientY + t1.clientY) / 2
+      };
+    }
+  };
+
+  const handleGraphTouchMove = (e: React.TouchEvent) => {
+    if (!touchStartRef.current) return;
+    const t0 = e.touches[0];
+    const t1 = e.touches[1];
+    if (e.touches.length === 1 && t0) {
+      const dx = t0.clientX - touchStartRef.current.x;
+      const dy = t0.clientY - touchStartRef.current.y;
+      setGraphPan({
+        x: touchStartRef.current.panX + dx,
+        y: touchStartRef.current.panY + dy
+      });
+    } else if (e.touches.length >= 2 && t0 && t1) {
+      const dx = t0.clientX - t1.clientX;
+      const dy = t0.clientY - t1.clientY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (touchStartRef.current.dist > 0) {
+        const factor = dist / touchStartRef.current.dist;
+        setGraphZoom((z) => Math.min(Math.max(z * factor, 0.25), 2.5));
+        touchStartRef.current.dist = dist;
+      }
+    }
+  };
+
+  const handleGraphTouchEnd = () => {
+    touchStartRef.current = null;
+  };
   const updateInstanceStatus = useCallback((id: string, status: InstanceStatus, exitCode?: number | null) => {
     setInstances((current) => {
       let changed = false;
@@ -2391,47 +2744,51 @@ export function InstancesView({
               const nodeDetail = nodeEndpointLabel(instanceNode) || (instance.nodeName ?? instance.nodeId);
               return (
                 <div className={`instance-list-row ${meta.className}`} role="row" key={instance.id}>
-                  <div className="instance-list-primary" role="cell">
-                    <span className="instance-list-icon">
-                      <InstanceStatusIcon status={instance.status} size={18} />
-                    </span>
-                    <div className="instance-list-copy">
-                      <button
-                        className="link-button instance-list-name"
-                        type="button"
-                        onClick={() => setSelectedId(instance.id)}
-                      >
-                        {instance.name}
-                      </button>
-                      <span title={instance.startCommand}>{compactCommand(instance.startCommand, 86)}</span>
+                  <div className="instance-list-top">
+                    <div className="instance-list-primary" role="cell">
+                      <span className="instance-list-icon">
+                        <InstanceStatusIcon status={instance.status} size={18} />
+                      </span>
+                      <div className="instance-list-copy">
+                        <button
+                          className="link-button instance-list-name"
+                          type="button"
+                          onClick={() => setSelectedId(instance.id)}
+                        >
+                          {instance.name}
+                        </button>
+                        <span title={instance.startCommand}>{compactCommand(instance.startCommand, 86)}</span>
+                      </div>
+                    </div>
+                    <div className="instance-list-status" role="cell">
+                      <InstanceStatusBadge status={instance.status} compact />
                     </div>
                   </div>
-                  <div className="instance-list-status" role="cell">
-                    <InstanceStatusBadge status={instance.status} compact />
-                  </div>
-                  <div className="instance-list-meta" role="cell" title={nodeDetail}>
-                    <Server size={14} />
-                    <span>{nodeName}</span>
-                  </div>
-                  <div
-                    className="instance-list-meta"
-                    role="cell"
-                    title={instance.workingDirectory || "未设置工作目录"}
-                  >
-                    <HardDrive size={14} />
-                    <span>{compactPathLabel(instance.workingDirectory)}</span>
-                  </div>
-                  <div
-                    className="instance-list-meta instance-owner-meta"
-                    role="cell"
-                    title={`创建者 ${instanceCreatorLabel(instance)} · 负责人 ${instanceAssigneeLabel(instance)}`}
-                  >
-                    <UserCheck size={14} />
-                    <span>{instanceAssigneeLabel(instance)}</span>
-                  </div>
-                  <div className="instance-list-meta" role="cell" title="更新">
-                    <Clock size={14} />
-                    <span>{formatDate(instance.updatedAt)}</span>
+                  <div className="instance-list-metas">
+                    <div className="instance-list-meta" role="cell" title={nodeDetail}>
+                      <Server size={14} />
+                      <span>{nodeName}</span>
+                    </div>
+                    <div
+                      className="instance-list-meta"
+                      role="cell"
+                      title={instance.workingDirectory || "未设置工作目录"}
+                    >
+                      <HardDrive size={14} />
+                      <span>{compactPathLabel(instance.workingDirectory)}</span>
+                    </div>
+                    <div
+                      className="instance-list-meta instance-owner-meta"
+                      role="cell"
+                      title={`创建者 ${instanceCreatorLabel(instance)} · 负责人 ${instanceAssigneeLabel(instance)}`}
+                    >
+                      <UserCheck size={14} />
+                      <span>{instanceAssigneeLabel(instance)}</span>
+                    </div>
+                    <div className="instance-list-meta" role="cell" title="更新">
+                      <Clock size={14} />
+                      <span>{formatDate(instance.updatedAt)}</span>
+                    </div>
                   </div>
                   <div className="instance-list-actions" role="cell">
                     <button
@@ -2457,45 +2814,49 @@ export function InstancesView({
 
               return (
                 <div className="instance-list-row database-list-row" role="row" key={`db-${db.id}`}>
-                  <div className="instance-list-primary" role="cell">
-                    <span className="instance-list-icon db-icon-badge">
-                      <Database size={17} />
-                    </span>
-                    <div className="instance-list-copy">
-                      <button
-                        className="link-button instance-list-name"
-                        type="button"
-                        onClick={() => setSelectedDatabaseId(db.id)}
-                      >
-                        {db.name}
-                      </button>
-                      <span title={endpointLabel}>
-                        [{db.engine.toUpperCase()}] {endpointLabel}
+                  <div className="instance-list-top">
+                    <div className="instance-list-primary" role="cell">
+                      <span className="instance-list-icon db-icon-badge">
+                        <Database size={17} />
                       </span>
+                      <div className="instance-list-copy">
+                        <button
+                          className="link-button instance-list-name"
+                          type="button"
+                          onClick={() => setSelectedDatabaseId(db.id)}
+                        >
+                          {db.name}
+                        </button>
+                        <span title={endpointLabel}>
+                          [{db.engine.toUpperCase()}] {endpointLabel}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="instance-list-status" role="cell">
+                      <span className="status-pill blue compact">就绪</span>
                     </div>
                   </div>
-                  <div className="instance-list-status" role="cell">
-                    <span className="status-pill blue compact">就绪</span>
-                  </div>
-                  <div className="instance-list-meta" role="cell" title={nodeName}>
-                    <Server size={14} />
-                    <span>{nodeName}</span>
-                  </div>
-                  <div className="instance-list-meta" role="cell" title={endpointLabel}>
-                    <HardDrive size={14} />
-                    <span>{endpointLabel}</span>
-                  </div>
-                  <div
-                    className="instance-list-meta instance-owner-meta"
-                    role="cell"
-                    title={`创建者 ${instanceCreatorLabel(db)} · 负责人 ${instanceAssigneeLabel(db)}`}
-                  >
-                    <UserCheck size={14} />
-                    <span>{instanceAssigneeLabel(db)}</span>
-                  </div>
-                  <div className="instance-list-meta" role="cell" title="更新">
-                    <Clock size={14} />
-                    <span>{formatDate(db.updatedAt)}</span>
+                  <div className="instance-list-metas">
+                    <div className="instance-list-meta" role="cell" title={nodeName}>
+                      <Server size={14} />
+                      <span>{nodeName}</span>
+                    </div>
+                    <div className="instance-list-meta" role="cell" title={endpointLabel}>
+                      <HardDrive size={14} />
+                      <span>{endpointLabel}</span>
+                    </div>
+                    <div
+                      className="instance-list-meta instance-owner-meta"
+                      role="cell"
+                      title={`创建者 ${instanceCreatorLabel(db)} · 负责人 ${instanceAssigneeLabel(db)}`}
+                    >
+                      <UserCheck size={14} />
+                      <span>{instanceAssigneeLabel(db)}</span>
+                    </div>
+                    <div className="instance-list-meta" role="cell" title="更新">
+                      <Clock size={14} />
+                      <span>{formatDate(db.updatedAt)}</span>
+                    </div>
                   </div>
                   <div className="instance-list-actions" role="cell">
                     <button
@@ -2549,51 +2910,200 @@ export function InstancesView({
           </div>
         ) : (
           <div className="instance-graph-view">
-            <div className="instance-graph-panel">
-              <svg className="instance-graph-links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                {graphLayout.edges.map((edge) => (
-                  <line
-                    className={`instance-graph-link ${edge.className}`}
-                    x1={edge.x1}
-                    y1={edge.y1}
-                    x2={edge.x2}
-                    y2={edge.y2}
-                    vectorEffect="non-scaling-stroke"
-                    key={edge.id}
-                  />
-                ))}
-              </svg>
-              {graphLayout.hubs.map((hub) => (
-                <div
-                  className="instance-graph-hub"
-                  style={{ left: `${hub.x}%`, top: `${hub.y}%` }}
-                  title={hub.detail}
-                  key={hub.id}
-                >
-                  <Server size={17} />
-                  <span>{hub.label}</span>
-                  <strong>{hub.count}</strong>
+            <div
+              className={`instance-graph-panel ${isGraphDragging ? "dragging" : ""}`}
+              ref={graphPanelRef}
+              onMouseDown={handleGraphMouseDown}
+              onMouseMove={handleGraphMouseMove}
+              onMouseUp={handleGraphMouseUp}
+              onMouseLeave={handleGraphMouseUp}
+              onWheel={handleGraphWheel}
+              onTouchStart={handleGraphTouchStart}
+              onTouchMove={handleGraphTouchMove}
+              onTouchEnd={handleGraphTouchEnd}
+              onDoubleClick={handleFitView}
+              role="region"
+              aria-label="实例拓扑图谱画布"
+            >
+              {/* Floating Graph Controls */}
+              <div className="instance-graph-toolbar" role="toolbar" aria-label="图谱画布控制器">
+                <div className="graph-toolbar-group">
+                  <button
+                    className="graph-toolbar-btn"
+                    type="button"
+                    title="放大画布"
+                    onClick={() => handleZoomChange(1.2)}
+                  >
+                    <Plus size={14} />
+                  </button>
+                  <button
+                    className="graph-toolbar-btn"
+                    type="button"
+                    title="缩小画布"
+                    onClick={() => handleZoomChange(0.83)}
+                  >
+                    <Minus size={14} />
+                  </button>
+                  <button
+                    className="graph-toolbar-btn graph-zoom-label"
+                    type="button"
+                    title="双击或点击重置全景"
+                    onClick={handleResetZoom}
+                  >
+                    {Math.round(graphZoom * 100)}%
+                  </button>
+                  <button
+                    className="graph-toolbar-btn"
+                    type="button"
+                    title="全景自适应"
+                    onClick={handleFitView}
+                  >
+                    <Maximize2 size={13} />
+                  </button>
                 </div>
-              ))}
-              {graphLayout.instances.map((point) => (
-                <button
-                  className={`instance-graph-node ${point.meta.className}`}
-                  style={{ left: `${point.x}%`, top: `${point.y}%` }}
-                  title={`${point.instance.name} · ${point.nodeDetail}`}
-                  type="button"
-                  onClick={() => setSelectedId(point.instance.id)}
-                  key={point.instance.id}
+
+                <div className="graph-toolbar-divider" />
+
+                <div className="graph-toolbar-group">
+                  <button
+                    className={`graph-toolbar-toggle ${graphLayoutMode === "orbit" ? "active" : ""}`}
+                    type="button"
+                    title="星环轨道拓扑"
+                    onClick={() => setGraphLayoutMode("orbit")}
+                  >
+                    <Layers size={13} />
+                    <span>星环</span>
+                  </button>
+                  <button
+                    className={`graph-toolbar-toggle ${graphLayoutMode === "cluster" ? "active" : ""}`}
+                    type="button"
+                    title="集群矩阵结构"
+                    onClick={() => setGraphLayoutMode("cluster")}
+                  >
+                    <LayoutGrid size={13} />
+                    <span>集群</span>
+                  </button>
+                </div>
+
+                <div className="graph-toolbar-divider" />
+
+                <div className="graph-toolbar-group">
+                  <button
+                    className={`graph-toolbar-toggle ${graphNodeMode === "compact" ? "active" : ""}`}
+                    type="button"
+                    title={graphNodeMode === "compact" ? "切换为卡片大视图" : "切换为紧凑微型节点"}
+                    onClick={() => setGraphNodeMode((m) => (m === "compact" ? "card" : "compact"))}
+                  >
+                    <span>{graphNodeMode === "compact" ? "紧凑节点" : "卡片节点"}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Transformable Canvas Stage */}
+              <div
+                className="instance-graph-stage"
+                style={{
+                  width: `${graphLayout.width}px`,
+                  height: `${graphLayout.height}px`,
+                  transform: `translate(${graphPan.x}px, ${graphPan.y}px) scale(${graphZoom})`,
+                  transformOrigin: "0 0"
+                }}
+              >
+                <svg
+                  className="instance-graph-links"
+                  width={graphLayout.width}
+                  height={graphLayout.height}
+                  viewBox={`0 0 ${graphLayout.width} ${graphLayout.height}`}
+                  aria-hidden="true"
                 >
-                  <span className="instance-graph-pulse" aria-hidden="true" />
-                  <span className="instance-graph-icon">
-                    <InstanceStatusIcon status={point.instance.status} size={17} />
-                  </span>
-                  <span className="instance-graph-label">{point.instance.name}</span>
-                  <small>
-                    {instanceTypeLabel(point.instance.type)} · {point.meta.shortLabel}
-                  </small>
-                </button>
-              ))}
+                  {graphLayout.edges.map((edge) => {
+                    const isHovered = graphHoveredId === edge.id;
+                    const isDimmed = graphHoveredId && !isHovered;
+                    return (
+                      <line
+                        className={`instance-graph-link ${edge.className} ${
+                          isHovered ? "highlighted" : isDimmed ? "dimmed" : ""
+                        }`}
+                        x1={edge.x1}
+                        y1={edge.y1}
+                        x2={edge.x2}
+                        y2={edge.y2}
+                        key={edge.id}
+                      />
+                    );
+                  })}
+                </svg>
+
+                {graphLayout.hubs.map((hub) => (
+                  <div
+                    className="instance-graph-hub"
+                    style={{ left: `${hub.x}px`, top: `${hub.y}px` }}
+                    title={hub.detail}
+                    key={hub.id}
+                  >
+                    <Server size={17} />
+                    <span>{hub.label}</span>
+                    <strong>{hub.count}</strong>
+                  </div>
+                ))}
+
+                {graphLayout.instances.map((point) => {
+                  const isHovered = graphHoveredId === point.instance.id;
+                  const isFilteredOut =
+                    graphStatusFilter &&
+                    (graphStatusFilter === "RUNNING"
+                      ? point.instance.status !== "RUNNING"
+                      : graphStatusFilter === "TRANSITION"
+                      ? point.instance.status !== "STARTING" && point.instance.status !== "STOPPING"
+                      : graphStatusFilter === "CRASHED"
+                      ? point.instance.status !== "CRASHED"
+                      : graphStatusFilter === "IDLE"
+                      ? point.instance.status !== "STOPPED" && point.instance.status !== "CREATED"
+                      : false);
+
+                  return (
+                    <button
+                      className={`instance-graph-node ${
+                        graphNodeMode === "compact" ? "compact-node" : ""
+                      } ${point.meta.className} ${isHovered ? "hovered" : ""} ${
+                        isFilteredOut ? "dimmed" : ""
+                      }`}
+                      style={{ left: `${point.x}px`, top: `${point.y}px` }}
+                      title={`${point.instance.name} · ${point.nodeDetail} (${point.meta.label})`}
+                      type="button"
+                      onClick={() => setSelectedId(point.instance.id)}
+                      onMouseEnter={() => setGraphHoveredId(point.instance.id)}
+                      onMouseLeave={() => setGraphHoveredId(null)}
+                      key={point.instance.id}
+                    >
+                      <span className="instance-graph-pulse" aria-hidden="true" />
+                      <span
+                        className={
+                          graphNodeMode === "compact" ? "compact-node-icon" : "instance-graph-icon"
+                        }
+                      >
+                        <InstanceStatusIcon
+                          status={point.instance.status}
+                          size={graphNodeMode === "compact" ? 14 : 17}
+                        />
+                      </span>
+                      <span
+                        className={`instance-graph-label ${
+                          graphNodeMode === "compact" ? "compact-label" : ""
+                        }`}
+                      >
+                        {point.instance.name}
+                      </span>
+                      {graphNodeMode !== "compact" ? (
+                        <small>
+                          {instanceTypeLabel(point.instance.type)} · {point.meta.shortLabel}
+                        </small>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+
               {instances.length === 0 ? (
                 <SakiEmptyState
                   illustration="instances"
@@ -2602,6 +3112,7 @@ export function InstancesView({
                 />
               ) : null}
             </div>
+
             <aside className="instance-graph-sidebar" aria-label="图谱概览">
               <div className="instance-graph-stats">
                 <span>
@@ -2615,14 +3126,124 @@ export function InstancesView({
                   <strong>{instances.length}</strong>
                 </span>
               </div>
+
+              {/* Status Filter Chips */}
+              <div className="instance-graph-status-section">
+                <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", marginBottom: "4px" }}>
+                  状态快速过滤
+                </div>
+                <div className="instance-graph-filter-list">
+                  <button
+                    className={`graph-filter-chip ${!graphStatusFilter ? "active" : ""}`}
+                    type="button"
+                    onClick={() => setGraphStatusFilter(null)}
+                  >
+                    全部 {sortedInstances.length}
+                  </button>
+                  {instanceStats.counts.RUNNING > 0 ? (
+                    <button
+                      className={`graph-filter-chip ${graphStatusFilter === "RUNNING" ? "active" : ""}`}
+                      type="button"
+                      onClick={() =>
+                        setGraphStatusFilter((f) => (f === "RUNNING" ? null : "RUNNING"))
+                      }
+                    >
+                      <span
+                        style={{
+                          display: "inline-block",
+                          width: 6,
+                          height: 6,
+                          borderRadius: "50%",
+                          background: "#10b981"
+                        }}
+                      />
+                      运行中 {instanceStats.counts.RUNNING}
+                    </button>
+                  ) : null}
+                  {instanceStats.counts.STARTING + instanceStats.counts.STOPPING > 0 ? (
+                    <button
+                      className={`graph-filter-chip ${graphStatusFilter === "TRANSITION" ? "active" : ""}`}
+                      type="button"
+                      onClick={() =>
+                        setGraphStatusFilter((f) => (f === "TRANSITION" ? null : "TRANSITION"))
+                      }
+                    >
+                      <span
+                        style={{
+                          display: "inline-block",
+                          width: 6,
+                          height: 6,
+                          borderRadius: "50%",
+                          background: "#0ea5e9"
+                        }}
+                      />
+                      过渡中 {instanceStats.counts.STARTING + instanceStats.counts.STOPPING}
+                    </button>
+                  ) : null}
+                  {instanceStats.counts.STOPPED + instanceStats.counts.CREATED > 0 ? (
+                    <button
+                      className={`graph-filter-chip ${graphStatusFilter === "IDLE" ? "active" : ""}`}
+                      type="button"
+                      onClick={() =>
+                        setGraphStatusFilter((f) => (f === "IDLE" ? null : "IDLE"))
+                      }
+                    >
+                      <span
+                        style={{
+                          display: "inline-block",
+                          width: 6,
+                          height: 6,
+                          borderRadius: "50%",
+                          background: "#94a3b8"
+                        }}
+                      />
+                      未运行 {instanceStats.counts.STOPPED + instanceStats.counts.CREATED}
+                    </button>
+                  ) : null}
+                  {instanceStats.counts.CRASHED > 0 ? (
+                    <button
+                      className={`graph-filter-chip ${graphStatusFilter === "CRASHED" ? "active" : ""}`}
+                      type="button"
+                      onClick={() =>
+                        setGraphStatusFilter((f) => (f === "CRASHED" ? null : "CRASHED"))
+                      }
+                    >
+                      <span
+                        style={{
+                          display: "inline-block",
+                          width: 6,
+                          height: 6,
+                          borderRadius: "50%",
+                          background: "#ef4444"
+                        }}
+                      />
+                      异常 {instanceStats.counts.CRASHED}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
+              <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", marginTop: "4px" }}>
+                拓扑节点定位
+              </div>
               <div className="instance-graph-node-list">
                 {graphLayout.hubs.map((hub) => (
-                  <span title={hub.detail} key={hub.id}>
+                  <button
+                    className="instance-graph-hub-btn"
+                    title={`点击聚焦定位 ${hub.label} (${hub.detail})`}
+                    type="button"
+                    key={hub.id}
+                    onClick={() => handleFocusHub(hub)}
+                  >
                     <Server size={13} />
                     <span>{hub.label}</span>
                     <strong>{hub.count}</strong>
-                  </span>
+                  </button>
                 ))}
+              </div>
+
+              <div className="graph-canvas-hint">
+                💡 滚轮缩放 · 拖动画布 · 双击自适应全景
               </div>
             </aside>
           </div>

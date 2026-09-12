@@ -163,7 +163,10 @@ export async function ensureBootstrapData(): Promise<void> {
     "saki.chat",
     "saki.agent",
     "saki.skills",
-    "audit.view"
+    "audit.view",
+    "reliability.view",
+    "plugin.view",
+    "plugin.manage"
   ]);
   const readonlyPermissions = new Set([
     "dashboard.view",

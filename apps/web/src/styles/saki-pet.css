@@ -4,8 +4,10 @@
 
 .saki-pet-stage {
   position: fixed;
-  right: 24px;
-  bottom: 24px;
+  left: 0;
+  top: 0;
+  right: auto;
+  bottom: auto;
   z-index: 120;
   width: 86px;
   height: 118px;
@@ -15,6 +17,9 @@
   scale: var(--saki-pet-scale, 1);
   --saki-face: 1;
   --saki-look: 0deg;
+  --saki-x: 0px;
+  --saki-y: 0px;
+  transform: translate(var(--saki-x, 0px), var(--saki-y, 0px));
 }
 
 .saki-pet-stage.is-touch {
@@ -35,11 +40,11 @@
 }
 
 .saki-pet-stage.edge-right {
-  transform-origin: right bottom;
+  transform-origin: center bottom;
 }
 
 .saki-pet-stage.edge-left {
-  transform-origin: left bottom;
+  transform-origin: center bottom;
 }
 
 .saki-pet-stage.edge-right .saki-character-image-edge {

@@ -8,6 +8,7 @@ import {
   Cpu,
   FileArchive,
   FolderTree,
+  Layers,
   Server,
   Sparkles,
   Terminal as TerminalIcon,
@@ -20,6 +21,7 @@ export const PERMISSION_GROUPS: { groupKey: PanelTextKey; items: { code: Permiss
     items: [
       { code: "dashboard.view", labelKey: "permissions.dashboard.view" },
       { code: "system.view", labelKey: "permissions.system.view" },
+      { code: "reliability.view", labelKey: "permissions.reliability.view" },
       { code: "audit.view", labelKey: "permissions.audit.view" }
     ]
   },
@@ -99,6 +101,13 @@ export const PERMISSION_GROUPS: { groupKey: PanelTextKey; items: { code: Permiss
       { code: "saki.skills", labelKey: "permissions.saki.skills" },
       { code: "saki.configure", labelKey: "permissions.saki.configure" }
     ]
+  },
+  {
+    groupKey: "permissions.group.plugins",
+    items: [
+      { code: "plugin.view", labelKey: "permissions.plugin.view" },
+      { code: "plugin.manage", labelKey: "permissions.plugin.manage" }
+    ]
   }
 ];
 
@@ -111,7 +120,8 @@ export const PERM_GROUP_ICONS: Record<string, React.ReactNode> = {
   "permissions.group.tasks": <Clock size={14} />,
   "permissions.group.templates": <FileArchive size={14} />,
   "permissions.group.users": <UserCog size={14} />,
-  "permissions.group.saki": <Sparkles size={14} />
+  "permissions.group.saki": <Sparkles size={14} />,
+  "permissions.group.plugins": <Layers size={14} />
 };
 
 export const elevatedRoleNamesForUi = new Set(["super_admin", "admin", "administrator", "operator"]);
@@ -127,7 +137,8 @@ export const elevatedRolePermissionHintsForUi = new Set<PermissionCode>([
   "user.delete",
   "role.view",
   "role.update",
-  "system.view"
+  "system.view",
+  "plugin.manage"
 ]);
 
 export function isNoRolePermissionRole(role: ManagedRole): boolean {

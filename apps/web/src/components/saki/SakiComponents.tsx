@@ -255,6 +255,18 @@ export function sakiActivityMoodForTool(tool?: string | null, status?: string | 
   return "working";
 }
 
+export function isSakiWorkMood(mood?: SakiActivityMood): boolean {
+  return (
+    mood === "working" ||
+    mood === "reading" ||
+    mood === "checkfiles" ||
+    mood === "search" ||
+    mood === "writing" ||
+    mood === "terminal" ||
+    mood === "diagnose"
+  );
+}
+
 function pickSakiAsset(assets: readonly string[]): string {
   return assets[Math.floor(Math.random() * assets.length)] ?? assets[0] ?? sakiArtAssets.normal;
 }
@@ -295,31 +307,62 @@ export interface StoredSakiConversation {
   updatedAt: string;
 }
 
+function sakiTimestampMs(value: string | null | undefined): number {
+  if (!value) return 0;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function sakiConversationTimestamp(conversation: StoredSakiConversation): number {
+  let latest = Math.max(sakiTimestampMs(conversation.updatedAt), sakiTimestampMs(conversation.createdAt));
+  const messages = conversation.messages;
+  if (messages?.length) {
+    const last = messages[messages.length - 1];
+    latest = Math.max(latest, sakiTimestampMs(last?.createdAt));
+    for (let i = messages.length - 1; i >= 0 && i >= messages.length - 8; i -= 1) {
+      latest = Math.max(latest, sakiTimestampMs(messages[i]?.createdAt));
+    }
+  }
+  return latest;
+}
+
+export function sortSakiConversationsByTime(conversations: StoredSakiConversation[]): StoredSakiConversation[] {
+  return conversations
+    .map((conversation, index) => ({ conversation, index }))
+    .sort((left, right) => {
+      const delta = sakiConversationTimestamp(right.conversation) - sakiConversationTimestamp(left.conversation);
+      if (delta !== 0) return delta;
+      return left.index - right.index;
+    })
+    .map((item) => item.conversation);
+}
+
 export function readSakiConversations(): StoredSakiConversation[] {
   try {
     const raw = globalThis.localStorage?.getItem(sakiConversationStorageKey);
     const parsed = raw ? (JSON.parse(raw) as unknown) : [];
     if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((item): StoredSakiConversation | null => {
-        if (!item || typeof item !== "object") return null;
-        const value = item as Partial<StoredSakiConversation>;
-        if (!value.id || !value.contextKey || !Array.isArray(value.messages)) return null;
-        return {
-          id: value.id,
-          contextKey: value.contextKey,
-          label: value.label ?? "Saki",
-          detail: value.detail ?? "",
-          instanceId: value.instanceId ?? null,
-          title: value.title ?? "新对话",
-          messages: value.messages,
-          createdAt: value.createdAt ?? new Date().toISOString(),
-          updatedAt: value.updatedAt ?? new Date().toISOString()
-        };
-      })
-      .filter((item): item is StoredSakiConversation => Boolean(item))
-      .filter((conversation) => hasPersistableSakiSpeech(conversation.messages))
-      .slice(0, 80);
+    return sortSakiConversationsByTime(
+      parsed
+        .map((item): StoredSakiConversation | null => {
+          if (!item || typeof item !== "object") return null;
+          const value = item as Partial<StoredSakiConversation>;
+          if (!value.id || !value.contextKey || !Array.isArray(value.messages)) return null;
+          return {
+            id: value.id,
+            contextKey: value.contextKey,
+            label: value.label ?? "Saki",
+            detail: value.detail ?? "",
+            instanceId: value.instanceId ?? null,
+            title: value.title ?? "新对话",
+            messages: value.messages,
+            createdAt: value.createdAt ?? new Date().toISOString(),
+            updatedAt: value.updatedAt ?? new Date().toISOString()
+          };
+        })
+        .filter((item): item is StoredSakiConversation => Boolean(item))
+        .filter((conversation) => hasPersistableSakiSpeech(conversation.messages))
+    ).slice(0, 80);
   } catch {
     return [];
   }
@@ -327,7 +370,10 @@ export function readSakiConversations(): StoredSakiConversation[] {
 
 export function writeSakiConversations(conversations: StoredSakiConversation[]) {
   try {
-    globalThis.localStorage?.setItem(sakiConversationStorageKey, JSON.stringify(conversations.slice(0, 80)));
+    globalThis.localStorage?.setItem(
+      sakiConversationStorageKey,
+      JSON.stringify(sortSakiConversationsByTime(conversations).slice(0, 80))
+    );
   } catch {
     // Storage may be unavailable in private or restricted browser contexts.
   }
@@ -349,9 +395,7 @@ export function sakiConversationTitle(messages: LocalSakiMessage[]): string {
 }
 
 export function latestSakiConversationForContext(conversations: StoredSakiConversation[], contextKey: string): StoredSakiConversation | null {
-  return conversations
-    .filter((conversation) => conversation.contextKey === contextKey)
-    .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())[0] ?? null;
+  return sortSakiConversationsByTime(conversations.filter((conversation) => conversation.contextKey === contextKey))[0] ?? null;
 }
 
 export function isSakiLauncherPosition(value: unknown): value is SakiLauncherPosition {
@@ -379,35 +423,57 @@ export function writeSakiLauncherPosition(position: SakiLauncherPosition) {
   }
 }
 
-export function sakiLauncherSize(element: HTMLElement | null, mode: SakiLauncherSizeMode = "current") {
-  if (mode === "expanded" || mode === "dragging") return sakiLauncherExpandedSize;
-  if (mode === "attached") return sakiLauncherAttachedSize;
-  const rect = element?.getBoundingClientRect();
+export function sakiLauncherSize(element: HTMLElement | null, mode: SakiLauncherSizeMode = "current", scale = 1) {
+  const s = Math.max(0.1, Number.isFinite(scale) ? scale : 1);
+  const base =
+    mode === "attached"
+      ? sakiLauncherAttachedSize
+      : (element && element.offsetWidth && element.offsetHeight)
+      ? { width: element.offsetWidth, height: element.offsetHeight }
+      : sakiLauncherExpandedSize;
   return {
-    width: rect?.width || sakiLauncherExpandedSize.width,
-    height: rect?.height || sakiLauncherExpandedSize.height
+    width: Math.round(base.width * s),
+    height: Math.round(base.height * s),
+    baseWidth: base.width,
+    baseHeight: base.height
   };
 }
 
 export function clampSakiLauncherPosition(
   position: SakiLauncherPosition,
   element: HTMLElement | null,
-  mode: SakiLauncherSizeMode = "current"
+  mode: SakiLauncherSizeMode = "current",
+  scale = 1
 ): SakiLauncherPosition {
-  const { width, height } = sakiLauncherSize(element, mode);
-  const viewportWidth = globalThis.innerWidth || width + sakiLauncherEdgePadding * 2;
-  const viewportHeight = globalThis.innerHeight || height + sakiLauncherEdgePadding * 2;
+  const s = Math.max(0.1, Number.isFinite(scale) ? scale : 1);
+  const { width: visualWidth, height: visualHeight, baseWidth, baseHeight } = sakiLauncherSize(element, mode, s);
+  const viewportWidth = globalThis.innerWidth || visualWidth + sakiLauncherEdgePadding * 2;
+  const viewportHeight = globalThis.innerHeight || visualHeight + sakiLauncherEdgePadding * 2;
   const sidePadding = mode === "attached" || mode === "dragging" ? 0 : sakiLauncherEdgePadding;
-  const maxX = Math.max(0, viewportWidth - width - sidePadding);
-  const maxY = Math.max(0, viewportHeight - height - (mode === "dragging" ? 0 : sakiLauncherEdgePadding));
-  const minX = sidePadding;
   const minY = mode === "dragging" ? 0 : sakiLauncherEdgePadding;
+  const maxYPadding = mode === "dragging" ? 0 : sakiLauncherEdgePadding;
 
-  const clampedX = Math.min(Math.max(minX, position.x), maxX);
-  const clampedY = Math.min(Math.max(minY, position.y), maxY);
+  // Visual position derived from translation (X, Y) and scale with transform-origin: center bottom
+  // visualLeft = X + (baseWidth / 2) * (1 - s)
+  // visualTop  = Y + baseHeight * (1 - s)
+  const visualLeft = position.x + (baseWidth / 2) * (1 - s);
+  const visualTop = position.y + baseHeight * (1 - s);
 
-  const isLeft = clampedX <= 2;
-  const isRight = viewportWidth - (clampedX + sakiLauncherAttachedSize.width) <= 4;
+  const minVisualLeft = sidePadding;
+  const maxVisualLeft = Math.max(minVisualLeft, viewportWidth - visualWidth - sidePadding);
+  const minVisualTop = minY;
+  const maxVisualTop = Math.max(minVisualTop, viewportHeight - visualHeight - maxYPadding);
+
+  const clampedVisualLeft = Math.min(Math.max(minVisualLeft, visualLeft), maxVisualLeft);
+  const clampedVisualTop = Math.min(Math.max(minVisualTop, visualTop), maxVisualTop);
+
+  // Convert clamped visual position back to translation (X, Y)
+  const clampedX = Math.round(clampedVisualLeft - (baseWidth / 2) * (1 - s));
+  const clampedY = Math.round(clampedVisualTop - baseHeight * (1 - s));
+
+  const attachedWidth = sakiLauncherAttachedSize.width * s;
+  const isLeft = clampedVisualLeft <= 4;
+  const isRight = viewportWidth - (clampedVisualLeft + (mode === "attached" ? attachedWidth : visualWidth)) <= 6;
   const edge = isLeft ? "left" : isRight ? "right" : undefined;
 
   return {
@@ -417,37 +483,64 @@ export function clampSakiLauncherPosition(
   };
 }
 
-export function sakiLauncherEdgeForPosition(position: SakiLauncherPosition): SakiLauncherEdge {
-  const viewportWidth = globalThis.innerWidth || sakiLauncherExpandedSize.width + sakiLauncherEdgePadding * 2;
-  return position.x + sakiLauncherExpandedSize.width / 2 < viewportWidth / 2 ? "left" : "right";
+export function sakiLauncherEdgeForPosition(position: SakiLauncherPosition, scale = 1): SakiLauncherEdge {
+  const s = Math.max(0.1, Number.isFinite(scale) ? scale : 1);
+  const baseWidth = sakiLauncherExpandedSize.width;
+  const visualLeft = position.x + (baseWidth / 2) * (1 - s);
+  const visualWidth = baseWidth * s;
+  const viewportWidth = globalThis.innerWidth || visualWidth + sakiLauncherEdgePadding * 2;
+  return visualLeft + visualWidth / 2 < viewportWidth / 2 ? "left" : "right";
 }
 
-export function sakiLauncherSnapEdgeForPosition(position: SakiLauncherPosition): SakiLauncherEdge | null {
-  const viewportWidth = globalThis.innerWidth || sakiLauncherExpandedSize.width + sakiLauncherEdgePadding * 2;
-  const rightGap = viewportWidth - (position.x + sakiLauncherExpandedSize.width);
-  if (position.x <= sakiLauncherEdgeSnapDistance) return "left";
+export function sakiLauncherSnapEdgeForPosition(position: SakiLauncherPosition, scale = 1): SakiLauncherEdge | null {
+  const s = Math.max(0.1, Number.isFinite(scale) ? scale : 1);
+  const baseWidth = sakiLauncherExpandedSize.width;
+  const visualLeft = position.x + (baseWidth / 2) * (1 - s);
+  const visualWidth = baseWidth * s;
+  const viewportWidth = globalThis.innerWidth || visualWidth + sakiLauncherEdgePadding * 2;
+  const rightGap = viewportWidth - (visualLeft + visualWidth);
+  if (visualLeft <= sakiLauncherEdgeSnapDistance) return "left";
   if (rightGap <= sakiLauncherEdgeSnapDistance) return "right";
   return null;
 }
 
-export function sakiLauncherAttachedEdgeForPosition(position: SakiLauncherPosition): SakiLauncherEdge | null {
-  const viewportWidth = globalThis.innerWidth || sakiLauncherAttachedSize.width + sakiLauncherEdgePadding * 2;
-  const rightEdgeX = Math.max(0, viewportWidth - sakiLauncherAttachedSize.width);
-  if (position.x <= 2) return "left";
-  if (Math.abs(position.x - rightEdgeX) <= 4 || viewportWidth - (position.x + sakiLauncherAttachedSize.width) <= 4) return "right";
+export function sakiLauncherAttachedEdgeForPosition(position: SakiLauncherPosition, scale = 1): SakiLauncherEdge | null {
+  const s = Math.max(0.1, Number.isFinite(scale) ? scale : 1);
+  const baseWidth = sakiLauncherExpandedSize.width;
+  const visualLeft = position.x + (baseWidth / 2) * (1 - s);
+  const attachedWidth = sakiLauncherAttachedSize.width * s;
+  const viewportWidth = globalThis.innerWidth || attachedWidth + sakiLauncherEdgePadding * 2;
+  const rightEdgeVisualLeft = Math.max(0, viewportWidth - attachedWidth);
+  if (visualLeft <= 4) return "left";
+  if (Math.abs(visualLeft - rightEdgeVisualLeft) <= 6 || viewportWidth - visualLeft <= attachedWidth + 6) return "right";
   return null;
 }
 
 export function snapSakiLauncherPositionToEdge(
   position: SakiLauncherPosition,
-  edge: SakiLauncherEdge = sakiLauncherEdgeForPosition(position)
+  edge: SakiLauncherEdge = sakiLauncherEdgeForPosition(position, 1),
+  scale = 1
 ): SakiLauncherPosition {
-  const viewportWidth = globalThis.innerWidth || sakiLauncherAttachedSize.width + sakiLauncherEdgePadding * 2;
-  const viewportHeight = globalThis.innerHeight || sakiLauncherAttachedSize.height + sakiLauncherEdgePadding * 2;
-  const maxY = Math.max(sakiLauncherEdgePadding, viewportHeight - sakiLauncherAttachedSize.height - sakiLauncherEdgePadding);
+  const s = Math.max(0.1, Number.isFinite(scale) ? scale : 1);
+  const baseWidth = sakiLauncherExpandedSize.width;
+  const baseHeight = sakiLauncherExpandedSize.height;
+  const attachedWidth = sakiLauncherAttachedSize.width * s;
+  const attachedHeight = sakiLauncherAttachedSize.height * s;
+  const viewportWidth = globalThis.innerWidth || attachedWidth + sakiLauncherEdgePadding * 2;
+  const viewportHeight = globalThis.innerHeight || attachedHeight + sakiLauncherEdgePadding * 2;
+  const visualHeight = baseHeight * s;
+  const maxY = Math.max(sakiLauncherEdgePadding, viewportHeight - visualHeight - sakiLauncherEdgePadding);
+
+  const visualTop = position.y + baseHeight * (1 - s);
+  const clampedVisualTop = Math.min(Math.max(sakiLauncherEdgePadding, visualTop), maxY);
+  const clampedY = Math.round(clampedVisualTop - baseHeight * (1 - s));
+
+  const visualLeft = edge === "left" ? 0 : Math.max(0, viewportWidth - attachedWidth);
+  const clampedX = Math.round(visualLeft - (baseWidth / 2) * (1 - s));
+
   return {
-    x: edge === "left" ? 0 : Math.max(0, viewportWidth - sakiLauncherAttachedSize.width),
-    y: Math.min(Math.max(sakiLauncherEdgePadding, position.y), maxY),
+    x: clampedX,
+    y: clampedY,
     edge
   };
 }

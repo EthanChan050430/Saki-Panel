@@ -165,6 +165,8 @@ const devProxy = {
   "/api": {
     target: panelTarget,
     changeOrigin: true,
+    // Panel TLS cert is issued for the public hostname, not 127.0.0.1.
+    secure: false,
     timeout: 0,
     proxyTimeout: 0,
     configure(proxy: { on: (event: string, listener: (...args: any[]) => void) => void }) {
@@ -177,8 +179,8 @@ const devProxy = {
       });
     }
   },
-  "/ws": { target: panelTarget, ws: true, changeOrigin: true },
-  "/health": { target: panelTarget, changeOrigin: true }
+  "/ws": { target: panelTarget, ws: true, changeOrigin: true, secure: false },
+  "/health": { target: panelTarget, changeOrigin: true, secure: false }
 };
 
 function manualChunks(id: string): string | undefined {

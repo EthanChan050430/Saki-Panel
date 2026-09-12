@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
-import { loadCurrentUser } from "../auth.js";
+import { loadCurrentUser, requireAnyPermission, requirePermission } from "../auth.js";
 import { pluginManager } from "../plugins/plugin-manager.js";
 import { testAllMirrors } from "../plugins/github-mirror.js";
 
@@ -49,7 +49,7 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
     };
   });
 
-  app.get("/api/plugins", { preHandler: [app.authenticate] }, async (request, reply) => {
+  app.get("/api/plugins", { preHandler: requireAnyPermission(["plugin.view", "plugin.manage"]) }, async (request, reply) => {
     const user = await loadCurrentUser(request.user.sub);
     if (!user) {
       reply.code(401).send({ message: "Unauthorized" });
@@ -61,7 +61,7 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
     };
   });
 
-  app.get("/api/plugins/registry", { preHandler: [app.authenticate] }, async (request, reply) => {
+  app.get("/api/plugins/registry", { preHandler: requireAnyPermission(["plugin.view", "plugin.manage"]) }, async (request, reply) => {
     const user = await loadCurrentUser(request.user.sub);
     if (!user) {
       reply.code(401).send({ message: "Unauthorized" });
@@ -73,7 +73,7 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
     };
   });
 
-  app.get("/api/plugins/:id/files", { preHandler: [app.authenticate] }, async (request, reply) => {
+  app.get("/api/plugins/:id/files", { preHandler: requireAnyPermission(["plugin.view", "plugin.manage"]) }, async (request, reply) => {
     const user = await loadCurrentUser(request.user.sub);
     if (!user) {
       reply.code(401).send({ message: "Unauthorized" });
@@ -84,14 +84,14 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
     return { ok: true, files };
   });
 
-  app.post("/api/plugins/install", { preHandler: [app.authenticate] }, async (request, reply) => {
+  app.post("/api/plugins/install", { preHandler: requirePermission("plugin.manage") }, async (request, reply) => {
     const user = await loadCurrentUser(request.user.sub);
     if (!user) {
       reply.code(401).send({ message: "Unauthorized" });
       return;
     }
-    if (!user.isAdmin) {
-      reply.code(403).send({ message: "Only administrators can install plugins" });
+    if (!user.isAdmin && !user.permissions.includes("plugin.manage")) {
+      reply.code(403).send({ message: "Only administrators and plugin managers can install plugins" });
       return;
     }
 
@@ -128,14 +128,14 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
     }
   });
 
-  app.post("/api/plugins/:id/toggle", { preHandler: [app.authenticate] }, async (request, reply) => {
+  app.post("/api/plugins/:id/toggle", { preHandler: requirePermission("plugin.manage") }, async (request, reply) => {
     const user = await loadCurrentUser(request.user.sub);
     if (!user) {
       reply.code(401).send({ message: "Unauthorized" });
       return;
     }
-    if (!user.isAdmin) {
-      reply.code(403).send({ message: "Only administrators can toggle plugins" });
+    if (!user.isAdmin && !user.permissions.includes("plugin.manage")) {
+      reply.code(403).send({ message: "Only administrators and plugin managers can toggle plugins" });
       return;
     }
 
@@ -154,10 +154,14 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
     };
   });
 
-  app.post("/api/plugins/:id/active", { preHandler: [app.authenticate] }, async (request, reply) => {
+  app.post("/api/plugins/:id/active", { preHandler: requirePermission("plugin.manage") }, async (request, reply) => {
     const user = await loadCurrentUser(request.user.sub);
     if (!user) {
       reply.code(401).send({ message: "Unauthorized" });
+      return;
+    }
+    if (!user.isAdmin && !user.permissions.includes("plugin.manage")) {
+      reply.code(403).send({ message: "Only administrators and plugin managers can activate themes/skins" });
       return;
     }
 
@@ -181,14 +185,14 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
     return { ok: true, state: pluginManager.getState() };
   });
 
-  app.delete("/api/plugins/:id", { preHandler: [app.authenticate] }, async (request, reply) => {
+  app.delete("/api/plugins/:id", { preHandler: requirePermission("plugin.manage") }, async (request, reply) => {
     const user = await loadCurrentUser(request.user.sub);
     if (!user) {
       reply.code(401).send({ message: "Unauthorized" });
       return;
     }
-    if (!user.isAdmin) {
-      reply.code(403).send({ message: "Only administrators can uninstall plugins" });
+    if (!user.isAdmin && !user.permissions.includes("plugin.manage")) {
+      reply.code(403).send({ message: "Only administrators and plugin managers can uninstall plugins" });
       return;
     }
 
@@ -202,20 +206,20 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
     return { ok: true, message: "Plugin successfully uninstalled" };
   });
 
-  app.post("/api/plugins/mirror-test", { preHandler: [app.authenticate] }, async (request) => {
+  app.post("/api/plugins/mirror-test", { preHandler: requireAnyPermission(["plugin.view", "plugin.manage"]) }, async (request) => {
     const body = (request.body ?? {}) as { customMirrorUrl?: string };
     const results = await testAllMirrors(body.customMirrorUrl);
     return { ok: true, results };
   });
 
-  app.post("/api/plugins/mirror-config", { preHandler: [app.authenticate] }, async (request, reply) => {
+  app.post("/api/plugins/mirror-config", { preHandler: requirePermission("plugin.manage") }, async (request, reply) => {
     const user = await loadCurrentUser(request.user.sub);
     if (!user) {
       reply.code(401).send({ message: "Unauthorized" });
       return;
     }
-    if (!user.isAdmin) {
-      reply.code(403).send({ message: "Only administrators can configure global mirrors" });
+    if (!user.isAdmin && !user.permissions.includes("plugin.manage")) {
+      reply.code(403).send({ message: "Only administrators and plugin managers can configure global mirrors" });
       return;
     }
 
@@ -229,14 +233,14 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
     return { ok: true, state: pluginManager.getState() };
   });
 
-  app.post("/api/plugins/check-updates", { preHandler: [app.authenticate] }, async (request, reply) => {
+  app.post("/api/plugins/check-updates", { preHandler: requirePermission("plugin.manage") }, async (request, reply) => {
     const user = await loadCurrentUser(request.user.sub);
     if (!user) {
       reply.code(401).send({ message: "Unauthorized" });
       return;
     }
-    if (!user.isAdmin) {
-      reply.code(403).send({ message: "Only administrators can check for updates" });
+    if (!user.isAdmin && !user.permissions.includes("plugin.manage")) {
+      reply.code(403).send({ message: "Only administrators and plugin managers can check for updates" });
       return;
     }
 
@@ -259,14 +263,14 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
     }
   });
 
-  app.post("/api/plugins/:id/update", { preHandler: [app.authenticate] }, async (request, reply) => {
+  app.post("/api/plugins/:id/update", { preHandler: requirePermission("plugin.manage") }, async (request, reply) => {
     const user = await loadCurrentUser(request.user.sub);
     if (!user) {
       reply.code(401).send({ message: "Unauthorized" });
       return;
     }
-    if (!user.isAdmin) {
-      reply.code(403).send({ message: "Only administrators can update plugins" });
+    if (!user.isAdmin && !user.permissions.includes("plugin.manage")) {
+      reply.code(403).send({ message: "Only administrators and plugin managers can update plugins" });
       return;
     }
 

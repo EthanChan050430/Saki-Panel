@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from "react";
 import type { InstalledPlugin, PluginStoreState, GitHubMirrorOption, PluginUpdateStatus } from "@webops/shared";
-import { api } from "../api.js";
+import { api, ApiError } from "../api.js";
 import { applyPluginTheme, applyPublicTheme } from "./ThemeLoader.js";
 import { applyPluginSkin } from "./SkinLoader.js";
 import { registerLocaleDictionary, unregisterLocaleDictionary, subscribeLocaleChange } from "../i18n/translations.js";
@@ -74,7 +74,21 @@ export function PluginProvider({
         setState(res.state);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (err instanceof ApiError && (err.status === 403 || err.status === 401)) {
+        try {
+          const res = await fetch("/api/plugins/active-theme");
+          if (res.ok) {
+            const data = (await res.json()) as { ok?: boolean; theme?: Parameters<typeof applyPublicTheme>[0] };
+            applyPublicTheme(data.theme ?? null);
+          } else {
+            applyPluginTheme(null);
+          }
+        } catch {
+          applyPluginTheme(null);
+        }
+      } else {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       setLoading(false);
     }

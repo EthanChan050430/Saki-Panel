@@ -466,6 +466,8 @@ export function useSakiPet({
       stage.style.top = "0px";
       stage.style.right = "auto";
       stage.style.bottom = "auto";
+      stage.style.setProperty("--saki-x", `${next.x}px`);
+      stage.style.setProperty("--saki-y", `${next.y}px`);
       stage.style.transform = `translate(${next.x}px, ${next.y}px)`;
       if (extras?.face) stage.style.setProperty("--saki-face", extras.face === "left" ? "-1" : "1");
       if (typeof extras?.look === "number") stage.style.setProperty("--saki-look", `${extras.look}deg`);
@@ -475,7 +477,7 @@ export function useSakiPet({
 
   const commitPosition = useCallback(
     (next: SakiLauncherPosition, persistPos = false) => {
-      const clamped = clampSakiLauncherPosition(next, null, "expanded");
+      const clamped = clampSakiLauncherPosition(next, null, "expanded", scale);
       livePosRef.current = clamped;
       applyStageStyle(clamped);
       if (persistPos) {
@@ -483,7 +485,7 @@ export function useSakiPet({
         writeSakiLauncherPosition(clamped);
       }
     },
-    [applyStageStyle, setPosition]
+    [applyStageStyle, setPosition, scale]
   );
 
   const pickTarget = useCallback((): SakiLauncherPosition => {

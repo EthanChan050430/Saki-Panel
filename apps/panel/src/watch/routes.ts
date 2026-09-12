@@ -429,7 +429,7 @@ export async function registerWatchRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- 可靠性报告 ----
-  app.get("/api/incidents/report", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+  app.get("/api/incidents/report", { preHandler: requirePermission("reliability.view") }, async (request) => {
     const { days } = request.query as { days?: string };
     return buildIncidentReport(Number(days) || 7);
   });

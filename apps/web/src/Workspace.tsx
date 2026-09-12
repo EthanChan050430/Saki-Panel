@@ -341,6 +341,8 @@ export function Workspace({
   const canOpenTemplates = user.permissions.includes("template.view");
   const canOpenUsers = user.permissions.includes("user.view") || (user.isAdmin && user.permissions.includes("instance.update"));
   const canOpenAudit = hasAssignedRole && user.isAdmin && user.permissions.includes("audit.view");
+  const canOpenReliability = user.permissions.includes("reliability.view") || user.isSuperAdmin;
+  const canOpenPlugins = user.permissions.includes("plugin.view") || user.permissions.includes("plugin.manage") || user.isSuperAdmin;
   const canOpenAbout = true;
   const t = useCallback((key: PanelTextKey) => panelT(language, key), [language]);
   const availableViews = useMemo<ViewMode[]>(() => {
@@ -351,9 +353,9 @@ export function Workspace({
     if (canOpenTemplates) views.push("templates");
     if (canOpenUsers) views.push("users");
     if (canOpenAudit) views.push("audit");
-    if (canUseSaki) views.push("reliability");
+    if (canOpenReliability) views.push("reliability");
     if (canConfigureSaki) views.push("settings");
-    views.push("plugins");
+    if (canOpenPlugins) views.push("plugins");
     if (canOpenAbout) views.push("about");
     return views;
   }, [
@@ -363,9 +365,10 @@ export function Workspace({
     canOpenDashboard,
     canOpenInstances,
     canOpenNodes,
+    canOpenPlugins,
+    canOpenReliability,
     canOpenTemplates,
-    canOpenUsers,
-    canUseSaki
+    canOpenUsers
   ]);
   const hasAnyAccessibleView = availableViews.length > 0;
   const effectiveView = availableViews.includes(activeView) ? activeView : availableViews[0] ?? activeView;
@@ -702,7 +705,7 @@ export function Workspace({
                   {t("nav.audit")}
                 </button>
               ) : null}
-              {canUseSaki ? (
+              {canOpenReliability ? (
                 <button className={`nav-item-reliability ${effectiveView === "reliability" ? "active" : ""}`} onClick={() => selectView("reliability")}>
                   <HeartPulse size={18} />
                   {t("nav.reliability")}
@@ -714,10 +717,12 @@ export function Workspace({
                   {t("nav.settings")}
                 </button>
               ) : null}
-              <button className={`nav-item-plugins ${effectiveView === "plugins" ? "active" : ""}`} onClick={() => selectView("plugins")}>
-                <Layers size={18} />
-                {t("nav.plugins")}
-              </button>
+              {canOpenPlugins ? (
+                <button className={`nav-item-plugins ${effectiveView === "plugins" ? "active" : ""}`} onClick={() => selectView("plugins")}>
+                  <Layers size={18} />
+                  {t("nav.plugins")}
+                </button>
+              ) : null}
               {canOpenAbout ? (
                 <button className={`nav-item-about ${effectiveView === "about" ? "active" : ""}`} onClick={() => selectView("about")}>
                   <Info size={18} />

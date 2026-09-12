@@ -46,6 +46,7 @@ export const permissions = [
   "saki.skills",
   "saki.configure",
   "system.view",
+  "reliability.view",
   "plugin.view",
   "plugin.manage"
 ] as const;

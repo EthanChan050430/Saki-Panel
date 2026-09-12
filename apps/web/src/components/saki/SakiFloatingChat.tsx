@@ -190,6 +190,7 @@ import {
   isSakiFileEditTool,
   isSakiFileRollbackAction,
   isSakiRollbackableFileEdit,
+  isSakiWorkMood,
   latestSakiConversationForContext,
   mergeSakiActionList,
   mergeSakiFinalText,
@@ -197,6 +198,7 @@ import {
   mergeSakiTimelineActions,
   persistableSakiMessages,
   readSakiConversations,
+  sortSakiConversationsByTime,
   readSakiLauncherPosition,
   renderableSakiTimeline,
   sakiActivityMoodForTool,
@@ -380,31 +382,17 @@ export function SakiFloatingChat({
   const lastRunCompletedRef = useRef(false);
   const [sakiActivityMood, setSakiActivityMood] = useState<SakiActivityMood>(null);
   const [skillsLoading, setSkillsLoading] = useState(false);
-  const [launcherPosition, setLauncherPosition] = useState<SakiLauncherPosition | null>(() => {
+  const [launcherPosition, setLauncherPosition] = useState<SakiLauncherPosition>(() => {
     const raw = readSakiLauncherPosition();
-    return raw ? clampSakiLauncherPosition(raw, null, "expanded") : null;
+    if (raw) return clampSakiLauncherPosition(raw, null, "expanded");
+    const vw = globalThis.innerWidth || 1200;
+    const vh = globalThis.innerHeight || 800;
+    return {
+      x: Math.max(12, vw - sakiLauncherExpandedSize.width - 24),
+      y: Math.max(12, vh - sakiLauncherExpandedSize.height - 24)
+    };
   });
   const [launcherDragging, setLauncherDragging] = useState(false);
-
-  useEffect(() => {
-    if (wakeCount > 0 && !pullDragRequest) {
-      const viewportWidth = globalThis.innerWidth || 1200;
-      const targetPos: SakiLauncherPosition = snapSakiLauncherPositionToEdge(
-        { x: viewportWidth - sakiLauncherAttachedSize.width, y: 180 },
-        "right"
-      );
-      setLauncherPosition(targetPos);
-      writeSakiLauncherPosition(targetPos);
-      const stage = petStageRef.current;
-      if (stage) {
-        stage.style.left = "0px";
-        stage.style.top = "0px";
-        stage.style.right = "auto";
-        stage.style.bottom = "auto";
-        stage.style.transform = `translate(${targetPos.x}px, ${targetPos.y}px)`;
-      }
-    }
-  }, [wakeCount, pullDragRequest]);
 
   const launcherWindowListenersRef = useRef<{
     onMove: (e: PointerEvent) => void;
@@ -491,10 +479,33 @@ export function SakiFloatingChat({
     chatOpen: open,
     edgeAttached: Boolean(launcherPosition?.edge),
     position: launcherPosition,
-    setPosition: setLauncherPosition,
+    setPosition: (next) => setLauncherPosition((curr) => (typeof next === "function" ? next(curr) ?? curr : next)),
     stageRef: petStageRef,
     intimacyLevel: getFavorabilityLevelInfoHelper(sakiFavorabilityExp, language).level
   });
+
+  useEffect(() => {
+    if (wakeCount > 0 && !pullDragRequest) {
+      const viewportWidth = globalThis.innerWidth || 1200;
+      const targetPos: SakiLauncherPosition = snapSakiLauncherPositionToEdge(
+        { x: viewportWidth - sakiLauncherAttachedSize.width, y: 180 },
+        "right",
+        pet.scale
+      );
+      setLauncherPosition(targetPos);
+      writeSakiLauncherPosition(targetPos);
+      const stage = petStageRef.current;
+      if (stage) {
+        stage.style.left = "0px";
+        stage.style.top = "0px";
+        stage.style.right = "auto";
+        stage.style.bottom = "auto";
+        stage.style.setProperty("--saki-x", `${targetPos.x}px`);
+        stage.style.setProperty("--saki-y", `${targetPos.y}px`);
+        stage.style.transform = `translate(${targetPos.x}px, ${targetPos.y}px)`;
+      }
+    }
+  }, [wakeCount, pullDragRequest, pet.scale]);
 
   const [feedMenuOpen, setFeedMenuOpen] = useState(false);
   const [miniGameActive, setMiniGameActive] = useState(false);
@@ -778,7 +789,7 @@ export function SakiFloatingChat({
   const restoringContextRef = useRef(false);
   const initialConversationLoadedRef = useRef(false);
   const annotationModeRef = useRef(false);
-  const launcherAttachedEdge = launcherPosition ? sakiLauncherAttachedEdgeForPosition(launcherPosition) : null;
+  const launcherAttachedEdge = launcherPosition ? sakiLauncherAttachedEdgeForPosition(launcherPosition, pet.scale) : null;
   const launcherEdgeAttached = Boolean(launcherAttachedEdge) && !open && !launcherDragging && !sakiFileHoverActive && !fileDragActive;
 
   useEffect(() => {
@@ -990,7 +1001,13 @@ export function SakiFloatingChat({
     const checkActiveTask = async () => {
       try {
         const result = await api.sakiGetActiveTask(token, instance?.id);
-        if (seq !== reconnectSeqRef.current || !result.hasActiveTask || !result.task) return;
+        if (seq !== reconnectSeqRef.current) return;
+        if (!result.hasActiveTask || !result.task || result.task.status !== "running") {
+          activeTaskIdRef.current = null;
+          setSakiActivityMood((prev) => (isSakiWorkMood(prev) ? null : prev));
+          settleInterruptedSakiMessage();
+          return;
+        }
         const task = result.task;
         if (task.status === "running") {
           activeTaskIdRef.current = task.id;
@@ -1156,6 +1173,15 @@ export function SakiFloatingChat({
             if (streamEvent.type === "done") {
               const response = streamEvent.response;
               activeTaskIdRef.current = null;
+              const finishedActions = response.actions ?? [];
+              if (finishedActions.some((action) => action.status === "pending_approval")) {
+                setSakiActivityMood("waiting");
+              } else if (finishedActions.some((action) => action.status === "failed" || action.ok === false)) {
+                setSakiActivityMood("sorry");
+              } else {
+                const doneMoods: NonNullable<SakiActivityMood>[] = ["happy", "OK", "wink"];
+                setSakiActivityMood(doneMoods[Math.floor(Math.random() * doneMoods.length)] ?? "happy");
+              }
               setMessages((current) => {
                 const next = current.map((message) => {
                   if (message.id !== assistantId) return message;
@@ -1220,6 +1246,15 @@ export function SakiFloatingChat({
           try {
             const finalResp = await api.sakiStreamTaskReconnect(token, task.id, applyStreamEvent, abortController.signal);
             activeTaskIdRef.current = null;
+            const finishedActions = finalResp.actions ?? [];
+            if (finishedActions.some((action) => action.status === "pending_approval")) {
+              setSakiActivityMood("waiting");
+            } else if (finishedActions.some((action) => action.status === "failed" || action.ok === false)) {
+              setSakiActivityMood("sorry");
+            } else {
+              const doneMoods: NonNullable<SakiActivityMood>[] = ["happy", "OK", "wink"];
+              setSakiActivityMood(doneMoods[Math.floor(Math.random() * doneMoods.length)] ?? "happy");
+            }
             if (finalResp.usage?.isUnlimited) {
               onPointsBalanceChange?.({ points: 0, unlimitedPoints: true });
             } else if (typeof finalResp.usage?.remainingPoints === "number") {
@@ -1258,7 +1293,7 @@ export function SakiFloatingChat({
             settleInterruptedSakiMessage(assistantId);
           } finally {
             setLoading(false);
-            setSakiActivityMood(null);
+            setSakiActivityMood((prev) => (isSakiWorkMood(prev) ? null : prev));
             activeTaskIdRef.current = null;
           }
         }
@@ -1429,9 +1464,10 @@ export function SakiFloatingChat({
           updatedAt: now
         };
         nextToPersist = nextConversation;
-        const next = [nextConversation, ...current.filter((conversation) => conversation.id !== targetId)]
-          .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
-          .slice(0, 80);
+        const next = sortSakiConversationsByTime([
+          nextConversation,
+          ...current.filter((conversation) => conversation.id !== targetId)
+        ]).slice(0, 80);
         writeSakiConversations(next);
         return next;
       });
@@ -1532,9 +1568,7 @@ export function SakiFloatingChat({
               });
             }
           }
-          const merged = [...map.values()]
-            .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-            .slice(0, 80);
+          const merged = sortSakiConversationsByTime([...map.values()]).slice(0, 80);
           writeSakiConversations(merged);
 
           if (!hasPersistableSakiSpeech(messages)) {
@@ -1615,12 +1649,11 @@ export function SakiFloatingChat({
   useEffect(() => {
     function clampCurrentLauncherPosition() {
       setLauncherPosition((current) => {
-        if (!current) return current;
-        const attachedEdge = sakiLauncherAttachedEdgeForPosition(current);
+        const attachedEdge = sakiLauncherAttachedEdgeForPosition(current, pet.scale);
         const nextPosition = attachedEdge
-          ? snapSakiLauncherPositionToEdge(current, attachedEdge)
-          : clampSakiLauncherPosition(current, launcherRef.current, "expanded");
-        if (current && sameSakiLauncherPosition(current, nextPosition)) return current;
+          ? snapSakiLauncherPositionToEdge(current, attachedEdge, pet.scale)
+          : clampSakiLauncherPosition(current, launcherRef.current, "expanded", pet.scale);
+        if (sameSakiLauncherPosition(current, nextPosition)) return current;
         writeSakiLauncherPosition(nextPosition);
         return nextPosition;
       });
@@ -1631,7 +1664,7 @@ export function SakiFloatingChat({
     return () => {
       globalThis.removeEventListener?.("resize", clampCurrentLauncherPosition);
     };
-  }, []);
+  }, [pet.scale]);
 
   function highlightLieDropTarget(clientX: number, clientY: number) {
     const lieSlot = document.querySelector(".topbar-lie-slot") as HTMLElement | null;
@@ -1686,12 +1719,19 @@ export function SakiFloatingChat({
     highlightLieDropTarget(clientX, clientY);
 
     const stage = petStageRef.current ?? (sizeElement as HTMLElement | null);
-    const rawX = clientX - drag.offsetX;
-    const rawY = clientY - drag.offsetY;
+    const desiredVisualLeft = clientX - drag.offsetX;
+    const desiredVisualTop = clientY - drag.offsetY;
+    const scale = pet.scale || 1;
+    const baseWidth = sakiLauncherExpandedSize.width;
+    const baseHeight = sakiLauncherExpandedSize.height;
+    const rawX = desiredVisualLeft - (baseWidth / 2) * (1 - scale);
+    const rawY = desiredVisualTop - baseHeight * (1 - scale);
+
     const livePosition = clampSakiLauncherPosition(
       { x: rawX, y: rawY },
       stage,
-      "dragging"
+      "dragging",
+      scale
     );
 
     if (stage) {
@@ -1699,6 +1739,8 @@ export function SakiFloatingChat({
       stage.style.top = "0px";
       stage.style.right = "auto";
       stage.style.bottom = "auto";
+      stage.style.setProperty("--saki-x", `${livePosition.x}px`);
+      stage.style.setProperty("--saki-y", `${livePosition.y}px`);
       stage.style.transform = `translate(${livePosition.x}px, ${livePosition.y}px)`;
     }
   }
@@ -1731,21 +1773,29 @@ export function SakiFloatingChat({
 
     if (drag.moved) {
       const stage = petStageRef.current ?? (sizeElement as HTMLElement | null);
-      const rawX = clientX - drag.offsetX;
-      const rawY = clientY - drag.offsetY;
+      const desiredVisualLeft = clientX - drag.offsetX;
+      const desiredVisualTop = clientY - drag.offsetY;
+      const scale = pet.scale || 1;
+      const baseWidth = sakiLauncherExpandedSize.width;
+      const baseHeight = sakiLauncherExpandedSize.height;
+      const rawX = desiredVisualLeft - (baseWidth / 2) * (1 - scale);
+      const rawY = desiredVisualTop - baseHeight * (1 - scale);
       const dragPosition = clampSakiLauncherPosition(
         { x: rawX, y: rawY },
         stage,
-        "dragging"
+        "dragging",
+        scale
       );
-      const snapEdge = sakiLauncherSnapEdgeForPosition(dragPosition);
-      const nextPosition = snapEdge ? snapSakiLauncherPositionToEdge(dragPosition, snapEdge) : dragPosition;
+      const snapEdge = sakiLauncherSnapEdgeForPosition(dragPosition, scale);
+      const nextPosition = snapEdge ? snapSakiLauncherPositionToEdge(dragPosition, snapEdge, scale) : dragPosition;
 
       if (stage) {
         stage.style.left = "0px";
         stage.style.top = "0px";
         stage.style.right = "auto";
         stage.style.bottom = "auto";
+        stage.style.setProperty("--saki-x", `${nextPosition.x}px`);
+        stage.style.setProperty("--saki-y", `${nextPosition.y}px`);
         stage.style.transform = `translate(${nextPosition.x}px, ${nextPosition.y}px)`;
       }
       setLauncherPosition(nextPosition);
@@ -1768,13 +1818,8 @@ export function SakiFloatingChat({
     const rect = (stage ?? event.currentTarget).getBoundingClientRect();
     const pointerId = event.pointerId;
 
-    const isAttached = launcherEdgeAttached;
-    const offsetX = isAttached
-      ? sakiLauncherExpandedSize.width / 2
-      : event.clientX - rect.left;
-    const offsetY = isAttached
-      ? sakiLauncherExpandedSize.height / 2
-      : event.clientY - rect.top;
+    const offsetX = event.clientX - rect.left;
+    const offsetY = event.clientY - rect.top;
 
     launcherDragRef.current = {
       pointerId,
@@ -1833,10 +1878,22 @@ export function SakiFloatingChat({
   useLayoutEffect(() => {
     if (!pullDragRequest || sakiLieMode) return;
     const request = pullDragRequest;
+    const scale = pet.scale || 1;
+    const baseWidth = sakiLauncherExpandedSize.width;
+    const baseHeight = sakiLauncherExpandedSize.height;
+    const offsetX = (baseWidth * scale) / 2;
+    const offsetY = Math.min(36, (baseHeight * scale) / 3);
+
+    const desiredVisualLeft = request.clientX - offsetX;
+    const desiredVisualTop = request.clientY - offsetY;
+    const rawX = desiredVisualLeft - (baseWidth / 2) * (1 - scale);
+    const rawY = desiredVisualTop - baseHeight * (1 - scale);
+
     const startPosition = clampSakiLauncherPosition(
-      { x: request.clientX - request.offsetX, y: request.clientY - request.offsetY },
+      { x: rawX, y: rawY },
       launcherRef.current,
-      "expanded"
+      "dragging",
+      scale
     );
     setLauncherPosition(startPosition);
     const stage = petStageRef.current;
@@ -1845,12 +1902,14 @@ export function SakiFloatingChat({
       stage.style.top = "0px";
       stage.style.right = "auto";
       stage.style.bottom = "auto";
+      stage.style.setProperty("--saki-x", `${startPosition.x}px`);
+      stage.style.setProperty("--saki-y", `${startPosition.y}px`);
       stage.style.transform = `translate(${startPosition.x}px, ${startPosition.y}px)`;
     }
     launcherDragRef.current = {
       pointerId: request.pointerId,
-      offsetX: request.offsetX,
-      offsetY: request.offsetY,
+      offsetX,
+      offsetY,
       startX: request.clientX,
       startY: request.clientY,
       moved: true,
@@ -1878,7 +1937,7 @@ export function SakiFloatingChat({
       window.removeEventListener("pointerup", onUp, { capture: true });
       window.removeEventListener("pointercancel", onUp, { capture: true });
     };
-  }, [pullDragRequest, sakiLieMode]);
+  }, [pullDragRequest, sakiLieMode, pet.scale]);
 
   function handleLauncherClick(event: React.MouseEvent<HTMLButtonElement>) {
     if (suppressLauncherClickRef.current) {
@@ -1938,9 +1997,7 @@ export function SakiFloatingChat({
                   });
                 }
               }
-              const merged = [...map.values()]
-                .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-                .slice(0, 80);
+              const merged = sortSakiConversationsByTime([...map.values()]).slice(0, 80);
               writeSakiConversations(merged);
               return merged;
             });
@@ -2093,20 +2150,38 @@ export function SakiFloatingChat({
   async function decideAction(action: SakiAgentAction, decision: "approve" | "reject" | "rollback") {
     if (actionBusyId) return;
     setActionBusyId(action.id);
-    if (decision === "approve") setLoading(true);
+    if (decision === "approve") {
+      setLoading(true);
+      setSakiActivityMood("working");
+    }
     try {
       const response = await api.sakiAction(token, action.id, decision);
       replaceAction(response.action);
       if (decision === "approve") {
         appendActionCompletionThought(response.action);
-        setSakiActivityMood("working");
+        if (response.response) {
+          applyActionContinuationResponse(action.id, response.response);
+          const contActions = response.response.actions ?? [];
+          if (contActions.some((a) => a.status === "pending_approval")) {
+            setSakiActivityMood("waiting");
+          } else if (contActions.some((a) => a.status === "failed" || a.ok === false)) {
+            setSakiActivityMood("sorry");
+          } else {
+            const doneMoods: NonNullable<SakiActivityMood>[] = ["happy", "OK", "wink"];
+            setSakiActivityMood(doneMoods[Math.floor(Math.random() * doneMoods.length)] ?? "happy");
+          }
+        } else {
+          if (response.action.ok) {
+            const doneMoods: NonNullable<SakiActivityMood>[] = ["happy", "OK", "wink"];
+            setSakiActivityMood(doneMoods[Math.floor(Math.random() * doneMoods.length)] ?? "happy");
+          } else {
+            setSakiActivityMood("sorry");
+          }
+        }
       } else if (decision === "reject") {
         setSakiActivityMood("pout");
       } else if (decision === "rollback") {
         setSakiActivityMood("rollback");
-      }
-      if (response.response) {
-        applyActionContinuationResponse(action.id, response.response);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Saki action failed";
@@ -2116,6 +2191,7 @@ export function SakiFloatingChat({
         status: "failed",
         observation: message
       });
+      setSakiActivityMood("sorry");
     } finally {
       setActionBusyId(null);
       if (decision === "approve") setLoading(false);
@@ -2558,6 +2634,7 @@ export function SakiFloatingChat({
   }
 
   function settleInterruptedSakiMessage(assistantId?: string) {
+    setSakiActivityMood((prev) => (isSakiWorkMood(prev) ? null : prev));
     setMessages((current) =>
       current.map((message) =>
         message.role === "assistant" && (assistantId ? message.id === assistantId : message.streaming)
@@ -3338,6 +3415,10 @@ export function SakiFloatingChat({
   const isAgentBusy = Boolean(loading || hasStreamingAssistant);
   useEffect(() => {
     if (prevBusyRef.current && !isAgentBusy) {
+      if (sakiActivityMood && isSakiWorkMood(sakiActivityMood)) {
+        const doneMoods: NonNullable<SakiActivityMood>[] = ["happy", "OK", "wink"];
+        setSakiActivityMood(doneMoods[Math.floor(Math.random() * doneMoods.length)] ?? "happy");
+      }
       if (mobileActiveTab === "video") {
         setChatPulseAlert(true);
         const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant" && m.content?.trim());
@@ -3362,23 +3443,34 @@ export function SakiFloatingChat({
       }
     }
     prevBusyRef.current = isAgentBusy;
-  }, [isAgentBusy, mobileActiveTab, messages]);
+  }, [isAgentBusy, mobileActiveTab, messages, sakiActivityMood]);
+
+  useEffect(() => {
+    const handleActiveTaskUpdated = () => {
+      if (sakiStreamAbortRef.current && !sakiStreamAbortRef.current.signal.aborted) {
+        return;
+      }
+      void reconnectActiveTask();
+    };
+    window.addEventListener("saki:active_task_updated", handleActiveTaskUpdated);
+    return () => window.removeEventListener("saki:active_task_updated", handleActiveTaskUpdated);
+  }, [token, instance?.id]);
 
   useEffect(() => {
     if (mobileActiveTab === "chat") {
       setChatPulseAlert(false);
     }
   }, [mobileActiveTab]);
-  const launcherEdge = launcherAttachedEdge ?? (launcherPosition ? sakiLauncherEdgeForPosition(launcherPosition) : "right");
-  const launcherStyle = launcherPosition
-    ? {
-        left: 0,
-        top: 0,
-        right: "auto",
-        bottom: "auto",
-        ...(launcherDragging ? {} : { transform: `translate(${launcherPosition.x}px, ${launcherPosition.y}px)` })
-      }
-    : undefined;
+  const launcherEdge = launcherAttachedEdge ?? sakiLauncherEdgeForPosition(launcherPosition, pet.scale);
+  const launcherStyle: React.CSSProperties = {
+    left: 0,
+    top: 0,
+    right: "auto",
+    bottom: "auto",
+    ["--saki-x" as string]: `${launcherPosition.x}px`,
+    ["--saki-y" as string]: `${launcherPosition.y}px`,
+    ...(launcherDragging ? {} : { transform: `translate(${launcherPosition.x}px, ${launcherPosition.y}px)` })
+  };
 
   const sakiGreetings = useMemo(() => {
     if (language === "en-US") {
@@ -3591,11 +3683,15 @@ export function SakiFloatingChat({
       : null;
 
   useEffect(() => {
+    if (!isAgentBusy && isSakiWorkMood(sakiActivityMood)) {
+      setSakiActivityMood(null);
+      return;
+    }
     const settledMoods: SakiActivityMood[] = ["happy", "OK", "wink", "sorry", "cry", "pout", "rollback", "surprised"];
     if (!sakiActivityMood || !settledMoods.includes(sakiActivityMood)) return;
     const timer = window.setTimeout(() => setSakiActivityMood(null), 8000);
     return () => window.clearTimeout(timer);
-  }, [sakiActivityMood]);
+  }, [sakiActivityMood, isAgentBusy]);
 
   useEffect(() => {
     if (
@@ -3637,9 +3733,10 @@ export function SakiFloatingChat({
     return () => window.clearTimeout(timer);
   }, [sakiSleepy]);
 
+  const effectiveWorkMood = isAgentBusy ? sakiActivityMood : (isSakiWorkMood(sakiActivityMood) ? null : sakiActivityMood);
   const effectiveActivityMood = pet.music.playing
     ? "singing"
-    : echoActivityMood ?? sakiPokeMood ?? sakiActivityMood ?? (sakiSleepy ? "sleepy" : null);
+    : echoActivityMood ?? sakiPokeMood ?? effectiveWorkMood ?? (sakiSleepy ? "sleepy" : null);
 
   const activeStreamingAssistant = [...messages].reverse().find((message) => message.role === "assistant" && message.streaming);
   const activeStreamingContent = activeStreamingAssistant?.content?.trim();
@@ -3656,11 +3753,11 @@ export function SakiFloatingChat({
     ? (language === "en-US" ? "Thinking carefully... (•̀ᴗ•́)و" : language === "zh-TW" ? "正在認真思考中... (•̀ᴗ•́)و" : language === "ja-JP" ? "真剣に考え中... (•̀ᴗ•́)و" : "正在认真思考中... (•̀ᴗ•́)و")
     : hasStreamingAssistant
     ? (language === "en-US" ? "Replying... (*╹▽╹*)" : language === "zh-TW" ? "正在回覆中... (*╹▽╹*)" : language === "ja-JP" ? "返信中... (*╹▽╹*)" : "正在回复中... (*╹▽╹*)")
-    : sakiActivityMood === "working"
+    : isAgentBusy && sakiActivityMood === "working"
     ? (language === "en-US" ? "Working on code tasks... (ง •_•)ง" : language === "zh-TW" ? "正在處理程式碼任務... (ง •_•)ง" : language === "ja-JP" ? "コード作業中... (ง •_•)ง" : "正在处理代码任务... (ง •_•)ง")
-    : sakiActivityMood === "reading"
+    : isAgentBusy && sakiActivityMood === "reading"
     ? (language === "en-US" ? "Analyzing project... (๑•̀ㅂ•́)و" : language === "zh-TW" ? "正在分析專案中... (๑•̀ㅂ•́)و" : language === "ja-JP" ? "プロジェクト分析中... (๑•̀ㅂ•́)و" : "正在分析项目中... (๑•̀ㅂ•́)و")
-    : sakiActivityMood === "checkfiles"
+    : isAgentBusy && sakiActivityMood === "checkfiles"
     ? (language === "en-US" ? "Checking file changes... (oﾟ▽ﾟ)o" : language === "zh-TW" ? "正在檢查檔案變更... (oﾟ▽ﾟ)o" : language === "ja-JP" ? "ファイル変更確認中... (oﾟ▽ﾟ)o" : "正在检查文件变动... (oﾟ▽ﾟ)o")
     : listening
     ? (language === "en-US" ? "Dictating what you say... (◕ᴗ◕✿)" : language === "zh-TW" ? "正在聽寫你說的話... (◕ᴗ◕✿)" : language === "ja-JP" ? "話していることを書き起こし中... (◕ᴗ◕✿)" : "正在听写你说的话... (◕ᴗ◕✿)")

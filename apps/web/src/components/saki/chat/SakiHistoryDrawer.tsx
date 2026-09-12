@@ -1,6 +1,6 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Plus, Trash2, X } from "lucide-react";
-import type { StoredSakiConversation } from "../SakiComponents.js";
+import { sakiConversationTimestamp, sortSakiConversationsByTime, type StoredSakiConversation } from "../SakiComponents.js";
 
 export interface SakiHistoryDrawerProps {
   isOpen: boolean;
@@ -23,6 +23,11 @@ export const SakiHistoryDrawer = React.memo(function SakiHistoryDrawer({
   onDeleteConversation,
   formatDate
 }: SakiHistoryDrawerProps) {
+  const orderedConversations = useMemo(
+    () => sortSakiConversationsByTime(storedConversations),
+    [storedConversations]
+  );
+
   if (!isOpen) return null;
 
   return (
@@ -38,17 +43,20 @@ export const SakiHistoryDrawer = React.memo(function SakiHistoryDrawer({
         新对话
       </button>
       <div className="saki-history-list">
-        {storedConversations.length === 0 ? (
+        {orderedConversations.length === 0 ? (
           <p>暂无历史对话</p>
         ) : (
-          storedConversations.map((conversation) => (
+          orderedConversations.map((conversation) => {
+            const lastActive = sakiConversationTimestamp(conversation);
+            const lastActiveAt = lastActive > 0 ? new Date(lastActive).toISOString() : conversation.updatedAt;
+            return (
             <div
               className={conversation.id === activeConversationId ? "saki-history-item active" : "saki-history-item"}
               key={conversation.id}
             >
               <button type="button" onClick={() => onLoadConversation(conversation)}>
                 <strong>{conversation.title}</strong>
-                <span>{conversation.label} · {formatDate(conversation.updatedAt)}</span>
+                <span>{conversation.label} · {formatDate(lastActiveAt)}</span>
               </button>
               <button
                 className="icon-button mini danger-action"
@@ -59,7 +67,8 @@ export const SakiHistoryDrawer = React.memo(function SakiHistoryDrawer({
                 <Trash2 size={14} />
               </button>
             </div>
-          ))
+            );
+          })
         )}
       </div>
     </aside>
