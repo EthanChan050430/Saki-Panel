@@ -12,7 +12,7 @@ High-risk work waits for your OK. Crashes get a fingerprint, a reviewed patch, a
 https://github.com/user-attachments/assets/e404ea96-7a17-4af2-ab1f-d4a45af1caca
 
 <p>
-  <a href="https://ethanchan050430.github.io/Saki-Panel/"><b>▶ Play intro (2:04, 2K, with audio)</b></a>
+  <a href="https://ethanchan050430.github.io/Saki-Panel/"><b>▶ Play intro</b></a>
   ·
   <a href="https://github.com/EthanChan050430/Saki-Panel/releases/download/intro/Saki_Pannel_intro.mp4">Download 2K</a>
 </p>
