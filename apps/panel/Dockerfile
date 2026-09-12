@@ -2,6 +2,7 @@ FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages ./packages
+COPY scripts ./scripts
 COPY apps/panel ./apps/panel
 COPY prisma ./prisma
 RUN npm ci

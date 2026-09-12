@@ -4,6 +4,7 @@ ARG VITE_API_BASE_URL=
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages ./packages
+COPY scripts ./scripts
 COPY apps/web ./apps/web
 RUN npm ci
 RUN npm run build -w @webops/shared && npm run build -w @webops/web
