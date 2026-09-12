@@ -8,12 +8,10 @@
 不是右下角的玩具聊天窗，它能直接看日志、查状态、改配置、跑命令。  
 危险操作必须你点头才跑；服务崩了自动抓报错、提补丁，再崩还会自动滚回上个快照。
 
-<a href="https://ethanchan050430.github.io/Saki-Panel/">
-  <img src="docs/intro-poster.jpg" width="800" alt="Saki Panel 宣传片" />
-</a>
+https://github.com/user-attachments/assets/e404ea96-7a17-4af2-ab1f-d4a45af1caca
 
 <p>
-  <a href="https://ethanchan050430.github.io/Saki-Panel/"><b>▶ 播放宣传片（2:04 · 2K · 含声音）</b></a>
+  <a href="https://ethanchan050430.github.io/Saki-Panel/"><b>▶ 播放宣传片</b></a>
   ·
   <a href="https://github.com/EthanChan050430/Saki-Panel/releases/download/intro/Saki_Pannel_intro.mp4">下载 2K 原片</a>
 </p>
