@@ -7,9 +7,9 @@
 **A server ops panel with an agent that can see, change, and run.**  
 High-risk work waits for your OK. Crashes get a fingerprint, a reviewed patch, and a rollback if it happens again.
 
-<a href="https://ethanchan050430.github.io/Saki-Panel/">
-  <img src="docs/intro-poster.jpg" width="800" alt="Saki Panel intro" />
-</a>
+
+
+https://github.com/user-attachments/assets/e404ea96-7a17-4af2-ab1f-d4a45af1caca
 
 <p>
   <a href="https://ethanchan050430.github.io/Saki-Panel/"><b>▶ Play intro (2:04, 2K, with audio)</b></a>
