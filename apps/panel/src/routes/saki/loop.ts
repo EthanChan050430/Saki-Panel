@@ -24,7 +24,10 @@ import {
   redactSensitiveText,
   RouteError,
   stringArg,
+  dsmlMarkupStartIndex,
   logSakiModelEvent,
+  looksLikeDsmlMarkup,
+  looksLikeSpecialToolToken,
   sakiVerboseModelLogsEnabled,
   stripDsmlWrappers,
   stripThinking,
@@ -262,8 +265,9 @@ const sakiToolNameAlternation = sakiToolSchemas
   .join("|");
 
 function looksLikeToolCallPayload(text: string): boolean {
+  if (looksLikeDsmlMarkup(text) || looksLikeSpecialToolToken(text)) return true;
   const t = stripDsmlWrappers(text);
-  if (/<(?:tool_call|tool_calls|command|invoke|function|action|call)\b/i.test(t)) return true;
+  if (/<(?:tool_call|tool_calls|function_calls|command|invoke|function|action|call|calls)\b/i.test(t)) return true;
   if (/"?tool_calls"?\s*:/i.test(t) || /"?toolCalls"?\s*:/i.test(t)) return true;
   if (new RegExp(`"(?:${sakiToolNameAlternation})"\\s*:`, "i").test(t)) return true;
   if (new RegExp(`"name"\\s*:\\s*"(?:${sakiToolNameAlternation})"`, "i").test(t)) return true;
@@ -272,10 +276,14 @@ function looksLikeToolCallPayload(text: string): boolean {
 
 function extractNarrationBeforeToolCall(text: string): string {
   const cleaned = stripThinking(text).trim();
-  const xmlIndex = cleaned.search(/<(?:tool_call|tool_calls|command|invoke|function|action|call)\b/i);
-  if (xmlIndex > 0) {
-    return cleaned.slice(0, xmlIndex).trim();
+  const dsmlIndex = dsmlMarkupStartIndex(cleaned);
+  const specialIndex = cleaned.search(/<\|tool_call|✿FUNCTION✿|<\|tool_calls_section|<\|channel\|>[^\n]*\bto=|\[TOOL_REQUEST\]|<function\s*=/i);
+  const xmlIndex = cleaned.search(/<(?:tool_call|tool_calls|function_calls|command|invoke|function|action|call|calls)\b/i);
+  let cut = -1;
+  for (const idx of [dsmlIndex, specialIndex, xmlIndex]) {
+    if (idx > 0 && (cut === -1 || idx < cut)) cut = idx;
   }
+  if (cut > 0) return cleaned.slice(0, cut).trim();
   const jsonIndex = cleaned.indexOf("{");
   if (jsonIndex > 0 && looksLikeToolCallPayload(cleaned.slice(jsonIndex))) {
     return cleaned.slice(0, jsonIndex).trim();

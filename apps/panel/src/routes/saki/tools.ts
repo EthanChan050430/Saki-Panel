@@ -660,12 +660,25 @@ function parseXmlParameters(inner: string): Record<string, unknown> {
 
   const args: Record<string, unknown> = {};
 
-  const paramAttrRe = /<(?:parameter|arg|argument)\s+name=["']([^"']+)["']>([\s\S]*?)<\/(?:parameter|arg|argument)>/gi;
-  let hasParamAttr = false;
-  for (const match of inner.matchAll(paramAttrRe)) {
-    hasParamAttr = true;
+  const nestedParamRe = /<parameter\b[^>]*>\s*<name>([\s\S]*?)<\/name>\s*<value>([\s\S]*?)<\/value>\s*<\/parameter>/gi;
+  let hasNested = false;
+  for (const match of inner.matchAll(nestedParamRe)) {
     const key = match[1]?.trim();
     if (key) {
+      hasNested = true;
+      args[key] = cleanXmlParamValue(match[2] ?? "");
+    }
+  }
+  if (hasNested) return args;
+
+  const paramAttrRe = /<(?:parameter|arg|argument)\b([^>]*)>([\s\S]*?)<\/(?:parameter|arg|argument)>/gi;
+  let hasParamAttr = false;
+  for (const match of inner.matchAll(paramAttrRe)) {
+    const attrs = match[1] ?? "";
+    const nameMatch = attrs.match(/\bname=["']([^"']+)["']/i);
+    const key = nameMatch?.[1]?.trim();
+    if (key) {
+      hasParamAttr = true;
       args[key] = cleanXmlParamValue(match[2] ?? "");
     }
   }
@@ -676,7 +689,17 @@ function parseXmlParameters(inner: string): Record<string, unknown> {
     const key = match[1]?.trim();
     if (!key) continue;
     const lowerKey = key.toLowerCase();
-    if (lowerKey === "name" || lowerKey === "tool" || lowerKey === "function" || lowerKey === "tool_call" || lowerKey === "invoke") {
+    if (
+      lowerKey === "name" ||
+      lowerKey === "tool" ||
+      lowerKey === "function" ||
+      lowerKey === "tool_call" ||
+      lowerKey === "invoke" ||
+      lowerKey === "parameter" ||
+      lowerKey === "function_calls" ||
+      lowerKey === "calls" ||
+      lowerKey === "tool_calls"
+    ) {
       continue;
     }
     args[key] = cleanXmlParamValue(match[2] ?? "");
@@ -686,8 +709,8 @@ function parseXmlParameters(inner: string): Record<string, unknown> {
 
 export function parseXmlToolCalls(source: string): ParsedToolCall[] | null {
   let stripped = stripDsmlWrappers(stripThinking(source)).trim();
-  stripped = stripped.replace(/<\/?(?:tool_calls|commands)(?:\s+[^>]*)?>/gi, "").trim();
-  const toolTagRe = /<(tool_call|invoke|(?:command|function|action|call|tool|[a-zA-Z0-9_-]+))(?:\s+([^>]*))?>([\s\S]*?)(?:<\/\1>|(?=<(?:tool_call|invoke|[a-zA-Z0-9_-]+\s+[^>]*\b(?:name|tool|function)=))|$)/gi;
+  stripped = stripped.replace(/<\/?(?:tool_calls|function_calls|commands|calls|tools)(?:\s+[^>]*)?>/gi, "").trim();
+  const toolTagRe = /<(tool_call|invoke|(?:command|function|action|call|tool|[a-zA-Z0-9_-]+))(?:\s+([^>]*))?>([\s\S]*?)(?:<\/\1>|(?=<(?:tool_call|invoke|(?!parameter\b|arg\b|argument\b)[a-zA-Z0-9_-]+\s+[^>]*\b(?:name|tool|function)=))|$)/gi;
   const matches = [...stripped.matchAll(toolTagRe)];
   if (matches.length === 0) return null;
 
@@ -698,6 +721,7 @@ export function parseXmlToolCalls(source: string): ParsedToolCall[] | null {
     const attrs = match[2] ?? "";
     const inner = (match[3] ?? "").trim();
     if (!inner && !attrs) continue;
+    if (/^(?:parameter|arg|argument|function_calls|tool_calls|calls|commands|tools)$/i.test(tag)) continue;
 
     let toolName = "";
     const nameAttrMatch = attrs.match(/\b(?:name|tool|function)=["']([^"']+)["']/i);
@@ -859,26 +883,73 @@ function parseHermesFunctionCalls(source: string): ParsedToolCall[] {
   return calls;
 }
 
+function argsFromMaybeJson(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed) return {};
+  if (trimmed.startsWith("{")) {
+    try {
+      return parseJsonTolerant(extractBalancedJsonObject(trimmed) || trimmed);
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function pushNamedToolCall(calls: ParsedToolCall[], name: string, args: unknown): void {
+  if (!name || !canonicalToolSchema(name)) return;
+  try {
+    calls.push(normalizeStructuredToolCall({ name, arguments: args }));
+  } catch {
+    // Skip malformed named tool calls.
+  }
+}
+
 function parseSpecialTokenToolCalls(source: string): ParsedToolCall[] {
   const calls: ParsedToolCall[] = [];
-  const qwenRe = /(?:✿FUNCTION✿|<\|tool_call\|>)\s*([A-Za-z0-9_]+)\s*(?:✿ARGS✿|<\|tool_call_argument\|>)?\s*([\s\S]*?)(?=(?:✿FUNCTION✿|<\|tool_call\|>|$))/gi;
+  const qwenRe = /(?:✿FUNCTION✿|<\|tool_call\|?>)\s*([A-Za-z0-9_]+)\s*(?:✿ARGS✿|<\|tool_call_argument\|?>)?\s*([\s\S]*?)(?=(?:✿FUNCTION✿|<\|tool_call\|?>|$))/gi;
   for (const match of source.matchAll(qwenRe)) {
     const toolName = match[1]?.trim() ?? "";
-    if (!canonicalToolSchema(toolName)) continue;
-    const rawArgs = (match[2] ?? "").replace(/<\|tool_call\|>/g, "").trim();
-    let args: unknown = {};
-    if (rawArgs.startsWith("{")) {
-      try {
-        args = parseJsonTolerant(extractBalancedJsonObject(rawArgs) || rawArgs);
-      } catch {
-        args = {};
-      }
-    }
+    const rawArgs = (match[2] ?? "").replace(/<\|tool_call\|?>/g, "").replace(/<\|end_tool_call\|?>/g, "").trim();
+    pushNamedToolCall(calls, toolName, argsFromMaybeJson(rawArgs));
+  }
+  const qwenJsonRe = /<\|tool_call\|?>\s*(\{[\s\S]*?\})\s*(?:<\|end_tool_call\|?>)?/gi;
+  for (const match of source.matchAll(qwenJsonRe)) {
     try {
-      calls.push(normalizeStructuredToolCall({ name: toolName, arguments: args }));
+      const parsed = parseJsonTolerant(extractBalancedJsonObject(match[1] ?? "") || match[1] || "");
+      const item = objectValue(parsed);
+      const name = trimString(item?.name) || trimString(item?.tool);
+      if (name) pushNamedToolCall(calls, name, item?.arguments ?? item?.args ?? item);
     } catch {
-      // Skip malformed special-token blocks.
+      // Skip malformed JSON tool tokens.
     }
+  }
+  return calls;
+}
+
+function parseHarmonyToolCalls(source: string): ParsedToolCall[] {
+  const calls: ParsedToolCall[] = [];
+  const re = /<\|channel\|>[^\n<]*?\bto=(?:functions\.)?([A-Za-z0-9_]+)[\s\S]*?<\|message\|>([\s\S]*?)(?=<\|(?:channel|end)|$)/gi;
+  for (const match of source.matchAll(re)) {
+    pushNamedToolCall(calls, match[1]?.trim() ?? "", argsFromMaybeJson(match[2] ?? ""));
+  }
+  return calls;
+}
+
+function parseToolCallsSection(source: string): ParsedToolCall[] {
+  const calls: ParsedToolCall[] = [];
+  const re = /<\|tool_call_begin\|>\s*(?:functions\.)?([A-Za-z0-9_]+)(?::\d+)?\s*<\|tool_call_argument_begin\|>([\s\S]*?)<\|tool_call_argument_end\|>/gi;
+  for (const match of source.matchAll(re)) {
+    pushNamedToolCall(calls, match[1]?.trim() ?? "", argsFromMaybeJson(match[2] ?? ""));
+  }
+  return calls;
+}
+
+function parseBracketToolRequests(source: string): ParsedToolCall[] {
+  const calls: ParsedToolCall[] = [];
+  const re = /\[TOOL_REQUEST\]\s*([A-Za-z0-9_]+)\s*(\{[\s\S]*?\})\s*(?:\[END_TOOL_REQUEST\])?/gi;
+  for (const match of source.matchAll(re)) {
+    pushNamedToolCall(calls, match[1]?.trim() ?? "", argsFromMaybeJson(match[2] ?? ""));
   }
   return calls;
 }
@@ -897,6 +968,15 @@ export function parseAnyToolCalls(source: string): ParsedToolCall[] {
 
   const special = parseSpecialTokenToolCalls(prepared);
   if (special.length) return special;
+
+  const harmony = parseHarmonyToolCalls(prepared);
+  if (harmony.length) return harmony;
+
+  const section = parseToolCallsSection(prepared);
+  if (section.length) return section;
+
+  const bracket = parseBracketToolRequests(prepared);
+  if (bracket.length) return bracket;
 
   const jsonCalls: ParsedToolCall[] = [];
   for (const block of extractAllBalancedJsonObjects(prepared)) {

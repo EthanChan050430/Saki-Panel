@@ -6,6 +6,9 @@ import {
   currentAgentAbortSignal,
   errorMessageFromJson,
   logSakiModelEvent,
+  looksLikeDsmlMarkup,
+  looksLikeSpecialToolToken,
+  toolCallMarkupStartIndex,
   normalizeHttpBaseUrl,
   normalizeProviderId,
   objectValue,
@@ -234,6 +237,11 @@ export function summarizeModelResponsePayload(payload: unknown, text: string): R
   return summary;
 }
 
+/** First index in `text` where a tool-call / DSML payload begins, or -1. */
+export function findAgentStreamStopIndex(text: string): number {
+  return toolCallMarkupStartIndex(text);
+}
+
 export async function streamPromptAgentTurnWithFilteredDelta(
   contentStream: (onDelta: (text: string) => void) => Promise<string>,
   onDelta: (text: string) => void,
@@ -251,34 +259,12 @@ export async function streamPromptAgentTurnWithFilteredDelta(
       thinkingEmitted = thinking.length;
     }
   };
-  const stopPatterns = [
-    "```json",
-    '{"tool_calls"',
-    '{"toolcalls"',
-    "<tool_call",
-    "<tool_calls",
-    "<command",
-    "<invoke",
-    "<function",
-    "<action",
-    // DSML 协议包装标记
-    "< |DSML| |calls",
-    "< |DSML| |invoke",
-    "< |DSML| |command",
-    "< |DSML| |function",
-    "< |DSML| |action"
-  ];
-  const maxPrefixLen = Math.max(...stopPatterns.map((pattern) => pattern.length));
+  const maxPrefixLen = 64;
   const filteredDelta = (text: string) => {
     accumulated += text;
     emitThinking();
     if (stoppedStreaming) return;
-    const lower = accumulated.toLowerCase();
-    let stopIndex = -1;
-    for (const pattern of stopPatterns) {
-      const index = lower.indexOf(pattern.toLowerCase());
-      if (index !== -1 && (stopIndex === -1 || index < stopIndex)) stopIndex = index;
-    }
+    const stopIndex = findAgentStreamStopIndex(accumulated);
     if (stopIndex !== -1) {
       stoppedStreaming = true;
       if (stopIndex > forwardedIndex) onDelta(accumulated.slice(forwardedIndex, stopIndex));
@@ -294,14 +280,14 @@ export async function streamPromptAgentTurnWithFilteredDelta(
 
   const content = await contentStream(filteredDelta);
   emitThinking();
-  // 把 accumulated 里残留的 DSML 包装剥掉，避免流式尾段漏到前端
-  if (!stoppedStreaming) {
-    const visible = stripDsmlWrappers(stripThinking(accumulated));
-    if (forwardedIndex < visible.length) {
-      const tail = visible.slice(forwardedIndex);
-      if (tail && !/<(?:tool_call|tool_calls|command|invoke|function|action)\b/i.test(tail) && !/"?tool_calls"?\s*:/i.test(tail)) {
+  // 把 accumulated 里残留的工具调用 / DSML 包装拦住，避免流式尾段漏到前端
+  if (!stoppedStreaming && forwardedIndex < accumulated.length) {
+    const rest = accumulated.slice(forwardedIndex);
+    if (findAgentStreamStopIndex(rest) === -1 && findAgentStreamStopIndex(stripDsmlWrappers(rest)) === -1 && !looksLikeDsmlMarkup(rest) && !looksLikeSpecialToolToken(rest)) {
+      const tail = stripDsmlWrappers(stripThinking(rest));
+      if (tail && !/<(?:tool_call|tool_calls|function_calls|command|invoke|function|action|call|calls)\b/i.test(tail) && !/"?tool_calls"?\s*:/i.test(tail)) {
         onDelta(tail);
-        forwardedIndex = visible.length;
+        forwardedIndex = accumulated.length;
       }
     }
   }

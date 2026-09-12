@@ -580,7 +580,7 @@
     border-radius: 10px !important;
   }
 
-  /* Right: mode + model */
+  /* Right: mode + permission + model */
   .saki-toolbar-controls {
     flex: 0 0 auto;
     gap: 4px;
@@ -612,9 +612,39 @@
     border-radius: 12px;
   }
 
-  /* Permission selector hidden on mobile */
+  /* Permission selector — compact icon, same height as mode/model pills */
   .saki-permission-selector {
-    display: none !important;
+    display: inline-flex !important;
+    flex-shrink: 0;
+    align-items: center;
+  }
+
+  .saki-permission-btn,
+  .saki-permission-btn.icon-only {
+    height: 28px;
+    padding: 0 7px;
+    border-radius: 14px;
+    gap: 2px;
+    background: rgba(255, 255, 255, 0.85) !important;
+    border: 1px solid rgba(148, 163, 184, 0.45) !important;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+
+  [data-theme="dark"] .saki-permission-btn,
+  [data-theme="dark"] .saki-permission-btn.icon-only {
+    background: rgba(255, 255, 255, 0.15) !important;
+    border-color: rgba(255, 255, 255, 0.25) !important;
+  }
+
+  .saki-permission-btn .perm-icon {
+    width: 14px;
+    height: 14px;
+  }
+
+  .saki-permission-btn .perm-arrow {
+    width: 9px;
+    height: 9px;
   }
 
   /* Model selector — pill with short name */
@@ -864,7 +894,7 @@
     display: none !important;
   }
 
-  /* Right: mode + model, inline nowrap */
+  /* Right: mode + permission + model, inline nowrap */
   .saki-toolbar-controls {
     flex: 0 0 auto;
     gap: 5px;
@@ -891,9 +921,45 @@
     border-radius: 12px;
   }
 
-  /* Permission selector hidden on mobile */
+  /* Permission selector — compact icon, same height as mode/model pills */
   .saki-permission-selector {
-    display: none !important;
+    display: inline-flex !important;
+    flex-shrink: 0;
+    align-items: center;
+  }
+
+  .saki-permission-btn,
+  .saki-permission-btn.icon-only {
+    height: 28px;
+    padding: 0 7px;
+    border-radius: 14px;
+    gap: 2px;
+    background: rgba(255, 255, 255, 0.85) !important;
+    border: 1px solid rgba(148, 163, 184, 0.45) !important;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+
+  [data-theme="dark"] .saki-permission-btn,
+  [data-theme="dark"] .saki-permission-btn.icon-only {
+    background: rgba(255, 255, 255, 0.15) !important;
+    border-color: rgba(255, 255, 255, 0.25) !important;
+  }
+
+  .saki-permission-btn .perm-icon {
+    width: 14px;
+    height: 14px;
+  }
+
+  .saki-permission-btn .perm-arrow {
+    width: 9px;
+    height: 9px;
+  }
+
+  .saki-permission-dropdown {
+    min-width: min(210px, calc(100vw - 16px));
+    width: min(260px, calc(100vw - 16px));
+    max-width: calc(100vw - 16px);
   }
 
   /* Model selector — compact pill */
@@ -1247,6 +1313,14 @@
 
   .file-manager.mobile-browser-open.mobile-editor-open .file-editor {
     inset: 0 !important;
+  }
+
+  .saki-permission-btn .perm-arrow {
+    display: none;
+  }
+
+  .saki-model-btn .saki-model-short-name {
+    max-width: 48px;
   }
 }
 

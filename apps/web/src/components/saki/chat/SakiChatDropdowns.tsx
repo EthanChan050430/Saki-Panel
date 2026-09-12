@@ -137,7 +137,13 @@ export const SakiChatDropdowns = React.memo(function SakiChatDropdowns({
               className="saki-model-dropdown saki-permission-dropdown glass-panel"
               style={{
                 position: "fixed",
-                left: permissionSelectorRef.current.getBoundingClientRect().left,
+                left: Math.max(
+                  8,
+                  Math.min(
+                    permissionSelectorRef.current.getBoundingClientRect().left,
+                    window.innerWidth - Math.min(260, window.innerWidth - 16) - 8
+                  )
+                ),
                 bottom: window.innerHeight - permissionSelectorRef.current.getBoundingClientRect().top + 8
               }}
               onPointerDown={(e) => e.stopPropagation()}

@@ -508,20 +508,87 @@ export function stripThinking(text: string): string {
 }
 
 /**
- * 某些模型会把工具调用标记包装成 DSML 协议格式：
- *   < |DSML| |calls>...< |DSML| |invoke name="runCommand">...</ |DSML| |invoke>...</ |DSML| |calls>
+ * DSML / special-token tool-call wrappers. Models emit several glyphs:
+ *   <|DSML|function_calls> <|DSML|invoke name="runCommand"> ...
+ *   < |DSML| |calls> < |DSML| |invoke name="runCommand"> ...
+ *   <||DSML|| calls> <||DSML|| invoke name="runCommand"> ...
+ *   <｜｜DSML｜｜ calls>  (fullwidth U+FF5C pipes)
+ */
+const DSML_OPEN_RE = /<\s*(?:\|+|[\uFF5C]+)\s*DSML/i;
+
+export function looksLikeDsmlMarkup(text: string): boolean {
+  return DSML_OPEN_RE.test(text);
+}
+
+export function dsmlMarkupStartIndex(text: string): number {
+  return text.search(DSML_OPEN_RE);
+}
+
+/**
  * 把 DSML 壳剥掉，露出标准 XML（<invoke>...</invoke> 等），让 parseXmlToolCalls 能识别。
  */
 export function stripDsmlWrappers(text: string): string {
   if (!text) return text;
-  return text
-    // 干掉开/闭标签里的 DSML 包装段：
-    //   < |DSML| |invoke name="foo">  →  <invoke name="foo">
-    //   < / |DSML| |invoke>           →  </invoke>
-    // 注意要保留可选的 /（闭合标记），并确保标签名直接紧贴 < 或 </
-    .replace(/<\s*(\/)?\s*[\s|]*DSML[\s|]*/gi, "<$1")
-    // 标签尾端多余的 |（DSML 格式标签名后可能多一个 |）
-    .replace(/\|?\s*>/g, ">");
+  // Normalize fullwidth vertical bars so one regex covers both glyph styles.
+  let s = text.replace(/\uFF5C/g, "|");
+  // <|DSML|invoke ...>  /  < |DSML| |invoke ...>  /  <||DSML|| invoke ...>
+  // </|DSML|invoke>     /  </ |DSML| |invoke>
+  s = s.replace(/<\s*(\/)?\s*\|+\s*DSML(?:\s*\|+)+\s*/gi, "<$1");
+  // leftover `|` only at the end of a real XML tag: <invoke name="foo"|>
+  // Do NOT rewrite special tokens such as <|tool_call|>.
+  s = s.replace(/(<\/?[A-Za-z][\w:-]*\b[^>]*?)\|\s*>/g, "$1>");
+  return s;
+}
+
+/**
+ * First index of tool-call markup that must not be streamed to the chat UI.
+ * Includes XML tags, DSML, Qwen/Hermes special tokens, and Harmony channels that target a tool.
+ */
+export function toolCallMarkupStartIndex(text: string): number {
+  if (!text) return -1;
+  const lower = text.toLowerCase();
+  let stopIndex = -1;
+  const stringPatterns = [
+    "```json",
+    '{"tool_calls"',
+    '{"toolcalls"',
+    "<tool_call",
+    "<tool_calls",
+    "<command",
+    "<invoke",
+    "<function",
+    "<action",
+    "<|dsml",
+    "< |dsml",
+    "<||dsml",
+    "<\uFF5C",
+    "<|tool_call",
+    "✿function✿",
+    "<|tool_calls_section",
+    "[tool_request]"
+  ];
+  for (const pattern of stringPatterns) {
+    const index = lower.indexOf(pattern.toLowerCase());
+    if (index !== -1 && (stopIndex === -1 || index < stopIndex)) stopIndex = index;
+  }
+  const dsml = dsmlMarkupStartIndex(text);
+  if (dsml !== -1 && (stopIndex === -1 || dsml < stopIndex)) stopIndex = dsml;
+  const harmonyTool = text.search(/<\|channel\|>[^\n]*\bto=/i);
+  if (harmonyTool !== -1 && (stopIndex === -1 || harmonyTool < stopIndex)) stopIndex = harmonyTool;
+  return stopIndex;
+}
+
+export function looksLikeSpecialToolToken(text: string): boolean {
+  if (!text) return false;
+  return (
+    looksLikeDsmlMarkup(text) ||
+    /<\|tool_call/i.test(text) ||
+    /✿FUNCTION✿/i.test(text) ||
+    /<\|tool_calls_section/i.test(text) ||
+    /<\|channel\|>[^\n]*\bto=/i.test(text) ||
+    /\[TOOL_REQUEST\]/i.test(text) ||
+    /<function\s*=/i.test(text)
+  );
 }
 
 export type JsonSchema = Record<string, unknown>;
