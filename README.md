@@ -223,7 +223,25 @@ prisma/         SQLite schema
 
 ## Deploy
 
-### Docker Compose
+### Option A: Pre-built Images from GitHub Packages (Recommended)
+
+No Node.js or local compiling needed. Simply run with `docker-compose.ghcr.yml`:
+
+```bash
+# 1. Download compose file
+curl -O https://raw.githubusercontent.com/EthanChan050430/Saki-Panel/main/docker-compose.ghcr.yml
+
+# 2. Set environment variables
+export JWT_SECRET="your-secure-random-secret"
+export ADMIN_PASSWORD="your-strong-admin-password"
+export DAEMON_REGISTRATION_TOKEN="your-daemon-token"
+
+# 3. Pull images and launch
+docker compose -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.ghcr.yml up -d
+```
+
+### Option B: Build from Source with Docker Compose
 
 ```bash
 export JWT_SECRET="your-secure-random-secret"

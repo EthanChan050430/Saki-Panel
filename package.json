@@ -1,6 +1,6 @@
 {
   "name": "saki-panel",
-  "version": "3.5.0",
+  "version": "3.6.0",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -16,7 +16,8 @@
     "dev:panel": "npm run dev -w @webops/panel",
     "dev:daemon": "npm run dev -w @webops/daemon",
     "dev:web": "npm run dev -w @webops/web",
-    "daemon:key": "npm run key -w @webops/daemon"
+    "daemon:key": "npm run key -w @webops/daemon",
+    "release": "node scripts/create-release-assets.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

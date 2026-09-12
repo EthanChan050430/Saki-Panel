@@ -1,4 +1,4 @@
-export const PANEL_VERSION = "3.5";
+export const PANEL_VERSION = "3.6";
 
 export const noRolePermissionRoleName = "__no_role__";
 

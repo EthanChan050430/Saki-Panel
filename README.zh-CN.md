@@ -228,7 +228,25 @@ prisma/         SQLite 数据库 schema
 
 ## 部署到生产环境
 
-### Docker Compose 容器化一键拉起
+### 方式 A：使用 GitHub Packages 官方预构建镜像（推荐 · 无需编译）
+
+服务器无需安装 Node.js 或编译代码，只需 `docker-compose.ghcr.yml` 即可极速启动：
+
+```bash
+# 1. 下载预编译 Compose 配置
+curl -O https://raw.githubusercontent.com/EthanChan050430/Saki-Panel/main/docker-compose.ghcr.yml
+
+# 2. 设置生产密钥与密码
+export JWT_SECRET="换成你自己的强随机密钥"
+export ADMIN_PASSWORD="换成你的强密码"
+export DAEMON_REGISTRATION_TOKEN="换成节点注册Token"
+
+# 3. 一键拉取镜像并启动
+docker compose -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.ghcr.yml up -d
+```
+
+### 方式 B：源码本地 Docker Compose 构建
 
 ```bash
 export JWT_SECRET="换成你自己的强随机密钥"
