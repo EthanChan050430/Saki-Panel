@@ -25,6 +25,7 @@ import { SakiPhoneLauncher } from "../phone/SakiPhoneLauncher.js";
 import { SakiSweetMatchGame } from "../games/SakiSweetMatchGame.js";
 import { SakiPlantSlayerGame } from "../games/SakiPlantSlayerGame.js";
 import { MarkdownContent } from "../../common/MarkdownContent.js";
+import { LiquidGlassContainer } from "../../common/LiquidGlass.js";
 import { usePlugins } from "../../../plugins/PluginContext.js";
 import {
   getFavorabilityLevelInfo,
@@ -452,7 +453,18 @@ export const SakiVideoPane = memo(function SakiVideoPane({
         </div>
       ) : null}
 
-      <div className="saki-video-controls" role="toolbar" aria-label="视频通话控制">
+      <LiquidGlassContainer
+        className="saki-video-controls"
+        displacementScale={100}
+        zoom={1.20}
+        refractionIntensity={1.2}
+        blurAmount={0}
+        saturation={108}
+        cornerRadius={24}
+        mode="shader"
+        role="toolbar"
+        aria-label="视频通话控制"
+      >
         <button
           className={`saki-video-btn ${listening ? "active pulse" : ""}`}
           type="button"
@@ -518,7 +530,7 @@ export const SakiVideoPane = memo(function SakiVideoPane({
         >
           <PhoneOff size={17} />
         </button>
-      </div>
+      </LiquidGlassContainer>
     </div>
   );
 });

@@ -36,7 +36,7 @@ export const sakiArtAssets = {
   hang: "/assets/hang.webp",
   lie: "/assets/lie.webp",
   files: "/assets/saki_files.webp",
-  shuru: "/assets/shuru.webp",
+  shuru: "/assets/shuru_sit.webp",
   shuruBlack: "/assets/shuru_sit.webp",
   normal: "/assets/expression/normal.webp",
   thinking: "/assets/expression/think.webp",

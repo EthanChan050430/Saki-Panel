@@ -507,8 +507,9 @@ button:disabled {
 .login-theme-toggle {
   width: 36px;
   height: 36px;
-  display: grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.7);
@@ -516,16 +517,21 @@ button:disabled {
   -webkit-backdrop-filter: blur(12px);
   color: #475569;
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  overflow: visible;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
-.login-theme-toggle:hover {
+.login-theme-toggle:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.95);
   border-color: rgba(255, 117, 172, 0.35);
   color: #ff75ac;
   transform: scale(1.1);
   box-shadow: 0 4px 14px rgba(255, 117, 172, 0.2);
+}
+
+.login-theme-toggle:active:not(:disabled) {
+  transform: scale(0.88);
 }
 
 /* Position login-panel relatively so the toggle anchors to it */

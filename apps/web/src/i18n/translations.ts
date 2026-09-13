@@ -473,6 +473,7 @@ export const panelText = {
     // Card Actions & Badges
     "plugins.card.enabled": "扩展生效中",
     "plugins.card.disabled": "扩展已停用",
+    "plugins.card.disabledTag": "已停用",
     "plugins.card.moreActions": "更多操作",
     "plugins.card.play": "开始游玩",
     "plugins.card.playClickHint": "点击开始游玩",
@@ -963,6 +964,7 @@ export const panelText = {
     // Card Actions & Badges
     "plugins.card.enabled": "擴充生效中",
     "plugins.card.disabled": "擴充已停用",
+    "plugins.card.disabledTag": "已停用",
     "plugins.card.moreActions": "更多操作",
     "plugins.card.play": "開始遊玩",
     "plugins.card.playClickHint": "點擊開始遊玩",
@@ -1454,6 +1456,7 @@ export const panelText = {
     // Card Actions & Badges
     "plugins.card.enabled": "Enabled",
     "plugins.card.disabled": "Disabled",
+    "plugins.card.disabledTag": "Disabled",
     "plugins.card.moreActions": "More actions",
     "plugins.card.play": "Play",
     "plugins.card.playClickHint": "Click to play",

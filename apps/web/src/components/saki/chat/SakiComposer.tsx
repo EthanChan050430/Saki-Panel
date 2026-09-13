@@ -1,17 +1,15 @@
 import React from "react";
 import {
   ArrowRight,
-  Camera,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
   Eye,
-  ImageIcon,
   MessageSquare,
   Mic,
-  Paperclip,
   Plus,
   Shield,
+  Sparkles,
   Square,
   TextQuote,
   Wrench,
@@ -36,6 +34,7 @@ import {
   type LocalSakiMessage
 } from "../sakiChatHelpers.js";
 import { SakiMiniChat } from "./SakiMiniChat.js";
+import { LiquidGlassContainer } from "../../common/LiquidGlass.js";
 
 export interface SakiComposerProps {
   // Submission & form
@@ -199,6 +198,14 @@ export const SakiComposer = React.memo(function SakiComposer({
     ? "问 Saki 当前实例里的问题"
     : "问 Saki";
 
+  // Auto-expand textarea height smoothly
+  React.useEffect(() => {
+    const textarea = composerTextareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(180, Math.max(38, textarea.scrollHeight))}px`;
+  }, [draft, composerTextareaRef]);
+
   return (
     <form className="saki-composer" onSubmit={(event) => void onSubmit(event)}>
       <input
@@ -233,7 +240,7 @@ export const SakiComposer = React.memo(function SakiComposer({
           aria-expanded={messagesExpanded}
           onClick={onToggleMessagesExpanded}
         >
-          {messagesExpanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+          {messagesExpanded ? <ChevronDown size={20} /> : <ChevronUp size={20} />}
         </button>
       </div>
 
@@ -247,7 +254,7 @@ export const SakiComposer = React.memo(function SakiComposer({
         />
       )}
 
-      <div className="saki-input-container">
+      <div className="saki-input-stack">
         {mentionMenuOpen ? (
           <SakiMentionMenu
             candidates={mentionCandidates}
@@ -266,7 +273,7 @@ export const SakiComposer = React.memo(function SakiComposer({
             tabIndex={0}
           >
             <img
-              src={artShuru}
+              src={artShuruBlack || artShuru}
               alt="Saki"
               className="saki-input-peep-img saki-peep-light"
               draggable={false}
@@ -280,250 +287,249 @@ export const SakiComposer = React.memo(function SakiComposer({
           </div>
         )}
 
-        <div className="saki-input-main-row">
-          <div className="saki-input-leading">
-            <button
-              className={`saki-add-btn ${sakiAddMenuOpen ? "active" : ""}`}
-              type="button"
-              title="添加图片 / 文件"
-              onClick={onToggleAddMenu}
-              ref={sakiAddBtnRef}
-            >
-              <Plus size={16} />
-            </button>
-          </div>
-          <textarea
-            ref={composerTextareaRef}
-            value={draft}
-            onChange={(event) => {
-              onDraftChange(event.target.value);
-              onMentionDismissedStart(null);
-              onSyncMentionCaret(event.currentTarget);
-            }}
-            onClick={(event) => onSyncMentionCaret(event.currentTarget)}
-            onSelect={(event) => onSyncMentionCaret(event.currentTarget)}
-            onKeyUp={(event) => onSyncMentionCaret(event.currentTarget)}
-            onBlur={() => {
-              const active = activeSakiMentionQuery(draft, mentionCaret);
-              if (active) onMentionDismissedStart(active.start);
-            }}
-            onKeyDown={(event) => {
-              if (mentionMenuOpen && mentionCandidates.length > 0) {
-                if (event.key === "ArrowDown") {
-                  event.preventDefault();
-                  onMentionIndexChange((current) => (current + 1) % mentionCandidates.length);
-                  return;
-                }
-                if (event.key === "ArrowUp") {
-                  event.preventDefault();
-                  onMentionIndexChange((current) => (current - 1 + mentionCandidates.length) % mentionCandidates.length);
-                  return;
-                }
-                if (
-                  (event.key === "Enter" || event.key === "Tab") &&
-                  !event.ctrlKey &&
-                  !event.metaKey &&
-                  !event.nativeEvent.isComposing
-                ) {
-                  const selected = mentionCandidates[mentionIndex] ?? mentionCandidates[0];
-                  if (selected) {
+        <LiquidGlassContainer
+          className="saki-input-container saki-composer-glass"
+          displacementScale={100}
+          zoom={1.20}
+          refractionIntensity={1.2}
+          blurAmount={0}
+          saturation={108}
+          cornerRadius={26}
+          mode="shader"
+        >
+
+          {/* Attachment Dock Tray */}
+          {attachments.length > 0 ? (
+            <div className="saki-attachment-tray saki-composer-tray">
+              {attachments.map((attachment, index) => (
+                <SakiAttachmentChip
+                  attachment={attachment}
+                  key={attachment.id ?? `${attachment.name}-${index}`}
+                  removable
+                  onClick={() => onPreviewAttachment({ attachment, editable: true })}
+                  onRemove={() => onRemoveAttachment(attachment)}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {/* Follow-up Queue */}
+          {followUpQueue.length > 0 ? (
+            <div className="saki-followup-queue saki-composer-queue">
+              {followUpQueue.map((job, index) => (
+                <button
+                  key={job.id}
+                  type="button"
+                  className="saki-followup-chip"
+                  title="从队列移除"
+                  onClick={() => onRemoveFollowUp(job.id)}
+                >
+                  <span className="queue-num">#{index + 1}</span>
+                  <span className="queue-text">{compactContextText(job.message, 48)}</span>
+                  <X size={11} className="queue-remove-icon" />
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          {/* Main Input Row */}
+          <div className="saki-input-main-row saki-composer-main-row">
+            <div className="saki-input-leading saki-composer-leading">
+              <button
+                className={`saki-add-btn saki-composer-add-btn ${sakiAddMenuOpen ? "active" : ""}`}
+                type="button"
+                title="添加图片 / 文件 / 截图"
+                onClick={onToggleAddMenu}
+                ref={sakiAddBtnRef}
+              >
+                <Plus size={18} />
+              </button>
+            </div>
+            <textarea
+              ref={composerTextareaRef}
+              value={draft}
+              onChange={(event) => {
+                onDraftChange(event.target.value);
+                onMentionDismissedStart(null);
+                onSyncMentionCaret(event.currentTarget);
+              }}
+              onClick={(event) => onSyncMentionCaret(event.currentTarget)}
+              onSelect={(event) => onSyncMentionCaret(event.currentTarget)}
+              onKeyUp={(event) => onSyncMentionCaret(event.currentTarget)}
+              onBlur={() => {
+                const active = activeSakiMentionQuery(draft, mentionCaret);
+                if (active) onMentionDismissedStart(active.start);
+              }}
+              onKeyDown={(event) => {
+                if (mentionMenuOpen && mentionCandidates.length > 0) {
+                  if (event.key === "ArrowDown") {
                     event.preventDefault();
-                    onApplyMention(selected);
+                    onMentionIndexChange((current) => (current + 1) % mentionCandidates.length);
+                    return;
+                  }
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    onMentionIndexChange((current) => (current - 1 + mentionCandidates.length) % mentionCandidates.length);
+                    return;
+                  }
+                  if (
+                    (event.key === "Enter" || event.key === "Tab") &&
+                    !event.ctrlKey &&
+                    !event.metaKey &&
+                    !event.nativeEvent.isComposing
+                  ) {
+                    const selected = mentionCandidates[mentionIndex] ?? mentionCandidates[0];
+                    if (selected) {
+                      event.preventDefault();
+                      onApplyMention(selected);
+                      return;
+                    }
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    onMentionDismissedStart(activeSakiMentionQuery(draft, mentionCaret)?.start ?? null);
                     return;
                   }
                 }
-                if (event.key === "Escape") {
+                if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
                   event.preventDefault();
-                  onMentionDismissedStart(activeSakiMentionQuery(draft, mentionCaret)?.start ?? null);
-                  return;
+                  if (!loading && (draft.trim() || attachments.length > 0)) {
+                    void onSubmit();
+                  }
                 }
-              }
-              if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                if (!loading && (draft.trim() || attachments.length > 0)) {
-                  void onSubmit();
-                }
-              }
-            }}
-            onPaste={onComposerPaste}
-            placeholder={placeholder}
-            rows={1}
-          />
-        </div>
-
-        {attachments.length > 0 ? (
-          <div className="saki-attachment-tray">
-            {attachments.map((attachment, index) => (
-              <SakiAttachmentChip
-                attachment={attachment}
-                key={attachment.id ?? `${attachment.name}-${index}`}
-                removable
-                onClick={() => onPreviewAttachment({ attachment, editable: true })}
-                onRemove={() => onRemoveAttachment(attachment)}
-              />
-            ))}
+              }}
+              onPaste={onComposerPaste}
+              placeholder={placeholder}
+              rows={1}
+            />
           </div>
-        ) : null}
 
-        {followUpQueue.length > 0 ? (
-          <div className="saki-followup-queue">
-            {followUpQueue.map((job, index) => (
+          {/* Modern Bottom Toolbar Dock */}
+          <div className="saki-input-toolbar saki-composer-dock">
+            <div className="saki-input-actions saki-composer-actions-left">
               <button
-                key={job.id}
+                className={`icon-button mini saki-mic-btn ${listening ? "active is-listening" : ""}`}
                 type="button"
-                className="saki-followup-chip"
-                title="从队列移除"
-                onClick={() => onRemoveFollowUp(job.id)}
+                title={listening ? "停止语音输入" : "语音输入"}
+                onClick={onToggleSpeechInput}
               >
-                <span>#{index + 1}</span>
-                <span>{compactContextText(job.message, 48)}</span>
-                <X size={11} />
+                <Mic size={15} />
               </button>
-            ))}
-          </div>
-        ) : null}
-
-        {composerNotice ? <div className="saki-composer-notice">{composerNotice}</div> : null}
-
-        <div className="saki-input-toolbar">
-          <div className="saki-input-actions">
-            <button
-              className={`icon-button mini ${listening ? "active" : ""}`}
-              type="button"
-              title={listening ? "停止语音输入" : "语音输入"}
-              onClick={onToggleSpeechInput}
-            >
-              <Mic size={15} />
-            </button>
-            <button
-              className={`icon-button mini ${annotationMode ? "active" : ""}`}
-              type="button"
-              title={annotationMode ? "取消注释选择" : "注释选中文本"}
-              aria-pressed={annotationMode}
-              disabled={loading}
-              onClick={onToggleSelectionAnnotation}
-            >
-              <TextQuote size={15} />
-            </button>
-            <button
-              className={`icon-button mini ${composerBusy === "image" ? "active" : ""}`}
-              type="button"
-              title="粘贴图片 / 选择图片"
-              disabled={composerBusy !== null}
-              onClick={() => void onPasteImageFromClipboard()}
-            >
-              <ImageIcon size={15} />
-            </button>
-            <button
-              className={`icon-button mini ${composerBusy === "file" ? "active" : ""}`}
-              type="button"
-              title="上传文件"
-              disabled={composerBusy !== null}
-              onClick={() => onOpenComposerFilePicker(attachmentInputRef.current)}
-            >
-              <Paperclip size={15} />
-            </button>
-            <button
-              className={`icon-button mini ${composerBusy === "screenshot" ? "active" : ""}`}
-              type="button"
-              title="网页截图"
-              disabled={composerBusy !== null}
-              onClick={() => void onCaptureScreenAttachment()}
-            >
-              <Camera size={15} />
-            </button>
-          </div>
-
-          <div className="saki-toolbar-controls">
-            {/* Mode Selector: Icon-only Chat vs Agent */}
-            <div className="saki-mode-icon-group" role="group" aria-label="对话/智能体模式切换">
-              {canUseChat ? (
-                <button
-                  className={`saki-mode-icon-btn ${mode === "chat" ? "active" : ""}`}
-                  type="button"
-                  title="对话模式"
-                  onClick={() => onSelectMode("chat")}
-                >
-                  <MessageSquare size={14} />
-                </button>
-              ) : null}
-              {canUseAgent ? (
-                <button
-                  className={`saki-mode-icon-btn ${mode === "agent" ? "active" : ""}`}
-                  type="button"
-                  title="智能体模式"
-                  onClick={() => onSelectMode("agent")}
-                >
-                  <Wrench size={14} />
-                </button>
-              ) : null}
+              <button
+                className={`icon-button mini saki-annotation-btn ${annotationMode ? "active" : ""}`}
+                type="button"
+                title={annotationMode ? "取消注释选择" : "注释选中文本"}
+                aria-pressed={annotationMode}
+                disabled={loading}
+                onClick={onToggleSelectionAnnotation}
+              >
+                <TextQuote size={15} />
+              </button>
             </div>
 
-            {/* Permission Dropdown Selector (Active when in Agent mode, Icon Only) */}
-            {canUseAgent && mode === "agent" ? (
-              <div className="saki-permission-selector" ref={permissionSelectorRef}>
+            <div className="saki-toolbar-controls saki-composer-controls-right">
+              {/* Mode Selector: Clean Icon-Only Chat vs Agent */}
+              <div className="saki-mode-icon-group" role="group" aria-label="对话/智能体模式切换">
+                {canUseChat ? (
+                  <button
+                    className={`saki-mode-icon-btn ${mode === "chat" ? "active" : ""}`}
+                    type="button"
+                    title="对话模式"
+                    aria-label="对话模式"
+                    onClick={() => onSelectMode("chat")}
+                  >
+                    <MessageSquare size={14} />
+                  </button>
+                ) : null}
+                {canUseAgent ? (
+                  <button
+                    className={`saki-mode-icon-btn ${mode === "agent" ? "active" : ""}`}
+                    type="button"
+                    title="智能体模式"
+                    aria-label="智能体模式"
+                    onClick={() => onSelectMode("agent")}
+                  >
+                    <Wrench size={14} />
+                  </button>
+                ) : null}
+              </div>
+
+              {/* Autonomy Permission Dropdown Selector (Active when in Agent mode) */}
+              {canUseAgent && mode === "agent" ? (
+                <div className="saki-permission-selector" ref={permissionSelectorRef}>
+                  <button
+                    className="saki-permission-btn saki-chip-interactive"
+                    type="button"
+                    title={`权限模式: ${sakiPermissionModeLabel(permissionMode)} (${sakiPermissionModeTitle(permissionMode)})`}
+                    onClick={onTogglePermissionDropdown}
+                  >
+                    <span className={`perm-dot-indicator ${permissionMode}`}>
+                      {permissionMode === "acceptEdits" ? (
+                        <CheckCircle2 size={13} className="perm-icon accept" />
+                      ) : permissionMode === "ask" ? (
+                        <Shield size={13} className="perm-icon ask" />
+                      ) : permissionMode === "plan" ? (
+                        <Eye size={13} className="perm-icon plan" />
+                      ) : (
+                        <XOctagon size={13} className="perm-icon bypass" />
+                      )}
+                    </span>
+                    <span className="perm-label-text">{sakiPermissionModeLabel(permissionMode)}</span>
+                    <ChevronDown size={10} className="perm-arrow" />
+                  </button>
+                </div>
+              ) : null}
+
+              {/* Model Selector Badge */}
+              <div className="saki-model-selector" ref={modelSelectorRef}>
                 <button
-                  className="saki-permission-btn icon-only"
+                  className="saki-model-btn saki-chip-interactive"
                   type="button"
-                  title={`权限模式: ${sakiPermissionModeLabel(permissionMode)} (${sakiPermissionModeTitle(permissionMode)})`}
-                  onClick={onTogglePermissionDropdown}
+                  onClick={onToggleModelDropdown}
+                  title={currentModelName || availableModels.find((m) => m.id === currentModelId)?.label || currentModelId}
                 >
-                  {permissionMode === "acceptEdits" ? (
-                    <CheckCircle2 size={14} className="perm-icon accept" />
-                  ) : permissionMode === "ask" ? (
-                    <Shield size={14} className="perm-icon ask" />
-                  ) : permissionMode === "plan" ? (
-                    <Eye size={14} className="perm-icon plan" />
-                  ) : (
-                    <XOctagon size={14} className="perm-icon bypass" />
-                  )}
-                  <ChevronDown size={10} className="perm-arrow" />
+                  <Zap size={12} className="model-zap-spark" />
+                  <span className="saki-model-full-name">
+                    {currentModelName || availableModels.find((m) => m.id === currentModelId)?.label || currentModelId}
+                  </span>
+                  <span className="saki-model-short-name">
+                    {(() => {
+                      const raw =
+                        currentModelName || availableModels.find((m) => m.id === currentModelId)?.label || currentModelId;
+                      const seg = raw.split(/[/:]/).pop() || raw;
+                      return seg.split(/[-\s]/).slice(0, 2).join("-");
+                    })()}
+                  </span>
+                  <ChevronDown size={10} className="model-chevron" />
                 </button>
               </div>
-            ) : null}
 
-            {/* Model Selector */}
-            <div className="saki-model-selector" ref={modelSelectorRef}>
-              <button className="saki-model-btn" type="button" onClick={onToggleModelDropdown}>
-                <Zap size={12} />
-                <span className="saki-model-full-name">
-                  {currentModelName || availableModels.find((m) => m.id === currentModelId)?.label || currentModelId}
-                </span>
-                <span className="saki-model-short-name">
-                  {(() => {
-                    const raw =
-                      currentModelName || availableModels.find((m) => m.id === currentModelId)?.label || currentModelId;
-                    const seg = raw.split(/[/:]/).pop() || raw;
-                    return seg.split(/[-\s]/).slice(0, 2).join("-");
-                  })()}
-                </span>
-                <ChevronDown size={10} />
+              {/* Steer Button */}
+              {loading && draft.trim() ? (
+                <button
+                  className="saki-steer-btn saki-chip-interactive"
+                  type="button"
+                  title="插入当前任务，当前步骤后生效"
+                  onClick={() => void onSubmit(undefined, { message: draft, steer: true })}
+                >
+                  插入
+                </button>
+              ) : null}
+
+              {/* Liquid Gradient Action Button (Send / Stop) */}
+              <button
+                className={`primary-button send-btn saki-send-action-btn ${loading && !draft.trim() ? "stop" : ""}`}
+                type={loading && !draft.trim() ? "button" : "submit"}
+                title={loading && draft.trim() ? "加入队列，当前任务结束后开始" : loading ? "停止生成" : "Ctrl+Enter 发送"}
+                aria-label={loading && draft.trim() ? "加入队列" : loading ? "停止生成" : "Ctrl+Enter 发送"}
+                disabled={!loading && !draft.trim() && attachments.length === 0}
+                onClick={loading && !draft.trim() ? onStopSakiGeneration : undefined}
+              >
+                {loading && !draft.trim() ? <Square size={13} /> : <ArrowRight size={16} />}
               </button>
             </div>
-
-            {/* Steer & Send */}
-            {loading && draft.trim() ? (
-              <button
-                className="saki-steer-btn"
-                type="button"
-                title="插入当前任务，当前步骤后生效"
-                onClick={() => void onSubmit(undefined, { message: draft, steer: true })}
-              >
-                插入
-              </button>
-            ) : null}
-            <button
-              className={`primary-button send-btn ${loading && !draft.trim() ? "stop" : ""}`}
-              type={loading && !draft.trim() ? "button" : "submit"}
-              title={loading && draft.trim() ? "加入队列，当前任务结束后开始" : loading ? "停止生成" : "Ctrl+Enter 发送"}
-              aria-label={loading && draft.trim() ? "加入队列" : loading ? "停止生成" : "Ctrl+Enter 发送"}
-              disabled={!loading && !draft.trim() && attachments.length === 0}
-              onClick={loading && !draft.trim() ? onStopSakiGeneration : undefined}
-            >
-              {loading && !draft.trim() ? <Square size={13} /> : <ArrowRight size={15} />}
-            </button>
           </div>
-        </div>
+        </LiquidGlassContainer>
       </div>
     </form>
   );

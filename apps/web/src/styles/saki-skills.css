@@ -11,37 +11,128 @@
   box-sizing: border-box;
 }
 
-/* Header */
+/* Header - Unified with standard section-heading */
 .saki-skill-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(32px) saturate(180%);
-  -webkit-backdrop-filter: blur(32px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.9);
-  border-radius: 20px;
-  padding: 18px 24px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
+  min-height: 44px !important;
+  height: 44px !important;
+  padding: 0 16px !important;
+  box-sizing: border-box !important;
+  background: rgba(255, 255, 255, 0.72) !important;
+  backdrop-filter: blur(24px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.85) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.9) !important;
 }
 
-.saki-skill-title h2 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
-  color: #1e293b;
+[data-theme="dark"] .saki-skill-heading {
+  background: rgba(26, 27, 36, 0.72) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
 }
 
-.saki-skill-title span {
-  font-size: 12px;
-  color: #64748b;
-  font-weight: 600;
+.saki-skill-title,
+.saki-skill-title-line {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.saki-skill-title > div {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.saki-skill-heading h2,
+.saki-skill-title h2,
+.saki-skill-title-line h2 {
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  color: #1d1d1f !important;
+  letter-spacing: -0.01em !important;
+  margin: 0 !important;
+  line-height: 1.2 !important;
+  background: none !important;
+  -webkit-background-clip: initial !important;
+  -webkit-text-fill-color: initial !important;
+}
+
+[data-theme="dark"] .saki-skill-heading h2,
+[data-theme="dark"] .saki-skill-title h2,
+[data-theme="dark"] .saki-skill-title-line h2 {
+  color: #f5f5f7 !important;
+  background: none !important;
+  -webkit-background-clip: initial !important;
+  -webkit-text-fill-color: #f5f5f7 !important;
+}
+
+.saki-skill-count-tag,
+.saki-skill-title span,
+.saki-skill-title-line span {
+  display: inline-flex !important;
+  align-items: center !important;
+  padding: 2px 8px !important;
+  border-radius: 999px !important;
+  font-size: 11.5px !important;
+  font-weight: 600 !important;
+  background: rgba(0, 0, 0, 0.05) !important;
+  color: #64748b !important;
+  line-height: normal !important;
+}
+
+[data-theme="dark"] .saki-skill-count-tag,
+[data-theme="dark"] .saki-skill-title span,
+[data-theme="dark"] .saki-skill-title-line span {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #94a3b8 !important;
 }
 
 .saki-skill-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.saki-skill-header-actions button,
+.saki-skill-header-actions .ghost-button {
+  height: 30px !important;
+  min-height: 30px !important;
+  padding: 0 12px !important;
+  border-radius: 8px !important;
+  font-size: 12px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  box-sizing: border-box !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  background: rgba(255, 255, 255, 0.6) !important;
+  color: #1e293b !important;
+}
+
+.saki-skill-header-actions button:hover:not(:disabled),
+.saki-skill-header-actions .ghost-button:hover:not(:disabled) {
+  background: rgba(255, 117, 172, 0.12) !important;
+  border-color: rgba(255, 117, 172, 0.35) !important;
+  color: #ff5b9a !important;
+}
+
+[data-theme="dark"] .saki-skill-header-actions button,
+[data-theme="dark"] .saki-skill-header-actions .ghost-button {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  color: #f5f5f7 !important;
+}
+
+[data-theme="dark"] .saki-skill-header-actions button:hover:not(:disabled),
+[data-theme="dark"] .saki-skill-header-actions .ghost-button:hover:not(:disabled) {
+  background: rgba(255, 117, 172, 0.14) !important;
+  border-color: rgba(255, 117, 172, 0.4) !important;
+  color: #ff9bc8 !important;
 }
 
 /* Creator Slide-down Section */
@@ -947,11 +1038,15 @@
   }
 
   .saki-skill-heading {
-    flex-direction: column !important;
-    align-items: stretch !important;
-    gap: 12px !important;
-    padding: 14px 16px !important;
-    border-radius: 18px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    flex-direction: row !important;
+    gap: 8px !important;
+    padding: 0 12px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    border-radius: 12px !important;
   }
 
   .saki-skill-title {
@@ -1070,7 +1165,6 @@
 /* ==========================================================================
    Dark Theme (Obsidian Glass)
    ========================================================================== */
-[data-theme="dark"] .saki-skill-heading,
 [data-theme="dark"] .saki-skill-sidebar,
 [data-theme="dark"] .saki-skill-detail,
 [data-theme="dark"] .saki-skill-editor-panel {

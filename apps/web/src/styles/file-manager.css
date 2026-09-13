@@ -1678,7 +1678,7 @@
   gap: 14px;
   padding: 18px;
   border: 1px solid rgba(226, 232, 240, 0.88);
-  border-radius: 10px;
+  border-radius: var(--radius-modal, 24px);
   background: rgba(255, 255, 255, 0.96);
   box-shadow: 0 24px 80px rgba(15, 23, 42, 0.26);
 }
@@ -1748,7 +1748,7 @@
   gap: 14px;
   padding: 18px;
   border: 1px solid rgba(226, 232, 240, 0.88);
-  border-radius: 10px;
+  border-radius: var(--radius-modal, 24px);
   background: rgba(255, 255, 255, 0.96);
   box-shadow: 0 24px 80px rgba(15, 23, 42, 0.26);
 }
@@ -2237,12 +2237,14 @@
     transform var(--duration-slow) var(--ease-out-expo),
     opacity var(--duration-slow) var(--ease-out-expo),
     bottom var(--duration-slow) var(--ease-out-expo);
-  will-change: height, transform, opacity, width;
 }
 
 .saki-panel:not(.fullscreen) {
-  left: 50%;
-  transform: translateX(-50%) translateY(0);
+  left: 0;
+  right: 0;
+  margin-left: auto;
+  margin-right: auto;
+  transform: none;
   bottom: 24px;
   width: min(600px, calc(100vw - 32px));
   max-width: calc(100dvw - 32px);
@@ -2283,8 +2285,8 @@ body.saki-selection-capture-active .saki-launcher {
 }
 
 .saki-panel.hidden {
-  opacity: 0;
-  transform: translateX(-50%) translateY(32px) scale(0.95);
+  opacity: 1;
+  transform: none;
   pointer-events: none;
   transition:
     width var(--duration-slow) var(--ease-out-expo),
@@ -2292,6 +2294,69 @@ body.saki-selection-capture-active .saki-launcher {
     transform var(--duration-slow) var(--ease-out-expo),
     opacity var(--duration-slow) var(--ease-out-expo),
     bottom var(--duration-slow) var(--ease-out-expo);
+}
+
+/* Exit choreography: everything around the glass input box fades out first,
+   then the input box squashes into a home-indicator style line and vanishes. */
+.saki-panel.hidden .saki-messages-container,
+.saki-panel.hidden .saki-composer-expand-hint,
+.saki-panel.hidden .saki-composer-notice-toast,
+.saki-panel.hidden .saki-mini-chat-wrapper,
+.saki-panel.hidden .saki-drop-overlay,
+.saki-panel.hidden .saki-input-stack > *:not(.saki-input-container) {
+  animation: none;
+  opacity: 0;
+  transition: opacity 0.16s ease-out;
+}
+
+.saki-panel.hidden .saki-input-container.saki-composer-glass {
+  transform-origin: 50% 100%;
+  animation: saki-composer-to-homebar 0.66s cubic-bezier(0.5, 0, 0.15, 1) forwards;
+}
+
+/* Inner controls vanish first so the squash reads as a clean line */
+.saki-panel.hidden .saki-input-container.saki-composer-glass .liquid-glass-inner {
+  animation: saki-composer-content-fade 0.18s ease-out forwards;
+}
+
+@keyframes saki-composer-to-homebar {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+    border-radius: 26px;
+  }
+  34% {
+    transform: scaleX(0.6) scaleY(0.08);
+    opacity: 1;
+    border-radius: 999px;
+  }
+  48% {
+    transform: scaleX(0.24) scaleY(0.06);
+    opacity: 1;
+    border-radius: 999px;
+  }
+  64% {
+    transform: scaleX(0.24) scaleY(0.06);
+    opacity: 1;
+    border-radius: 999px;
+  }
+  100% {
+    transform: scaleX(0.2) scaleY(0.045) translateY(14px);
+    opacity: 0;
+    border-radius: 999px;
+  }
+}
+
+@keyframes saki-composer-content-fade {
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .saki-panel.hidden .saki-input-container.saki-composer-glass {
+    animation-duration: 0.01s;
+  }
 }
 
 .saki-panel.visible {
@@ -2341,6 +2406,7 @@ body.saki-selection-capture-active .saki-launcher {
 
 .saki-panel.collapsed {
   height: auto;
+  overflow: visible !important;
 }
 
 .saki-messages-container {
@@ -2391,7 +2457,8 @@ body.saki-selection-capture-active .saki-launcher {
 }
 
 .mobile-switch-to-video,
-.mobile-switch-to-chat {
+.mobile-switch-to-chat,
+.saki-video-btn.mobile-switch-to-chat {
   display: none !important;
 }
 
@@ -4084,21 +4151,21 @@ body.saki-selection-capture-active .saki-launcher {
   margin: 0 auto 12px;
   padding: 6px 12px;
   border-radius: 9999px;
-  background: rgba(15, 18, 28, 0.48);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(2px) saturate(100%);
+  -webkit-backdrop-filter: blur(2px) saturate(100%);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: rgba(0, 0, 0, 0.25) 0px 12px 40px;
 }
 
 .saki-video-btn {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(2px) saturate(100%);
+  -webkit-backdrop-filter: blur(2px) saturate(100%);
   color: #ffffff;
   display: flex;
   align-items: center;
@@ -4107,14 +4174,20 @@ body.saki-selection-capture-active .saki-launcher {
   padding: 0;
   margin: 0;
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    0 2px 10px rgba(0, 0, 0, 0.15);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
 }
 
 .saki-video-btn:hover {
   background: rgba(255, 255, 255, 0.24);
-  border-color: rgba(255, 255, 255, 0.5);
+  border-color: rgba(255, 255, 255, 0.45);
+  color: #ffffff;
   transform: scale(1.08) translateY(-1px);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 4px 14px rgba(0, 0, 0, 0.22);
 }
 
 .saki-video-btn:active {
@@ -4122,10 +4195,12 @@ body.saki-selection-capture-active .saki-launcher {
 }
 
 .saki-video-btn.active {
-  background: linear-gradient(135deg, #ff75ac, #f43f5e);
-  border-color: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 117, 172, 0.38);
+  border-color: rgba(255, 117, 172, 0.6);
   color: #ffffff;
-  box-shadow: 0 4px 16px rgba(244, 63, 94, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 2px 10px rgba(255, 117, 172, 0.4);
 }
 
 .saki-video-btn.active.pulse {
@@ -4134,10 +4209,10 @@ body.saki-selection-capture-active .saki-launcher {
 
 @keyframes sakiLiquidPulse {
   0%, 100% {
-    box-shadow: 0 4px 16px rgba(244, 63, 94, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 2px 10px rgba(255, 117, 172, 0.4);
   }
   50% {
-    box-shadow: 0 0 24px rgba(244, 63, 94, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 0 20px rgba(255, 117, 172, 0.85);
   }
 }
 
@@ -4151,10 +4226,12 @@ body.saki-selection-capture-active .saki-launcher {
 }
 
 .saki-video-btn.echo-speaking {
-  background: linear-gradient(135deg, #c084fc, #a78bfa);
-  border-color: rgba(255, 255, 255, 0.5);
+  background: rgba(192, 132, 252, 0.38);
+  border-color: rgba(192, 132, 252, 0.6);
   color: #ffffff;
-  box-shadow: 0 4px 16px rgba(168, 85, 247, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 4px 16px rgba(168, 85, 247, 0.45);
 }
 
 @keyframes sakiEchoPulse {
@@ -4167,17 +4244,20 @@ body.saki-selection-capture-active .saki-launcher {
 }
 
 .saki-video-btn.hangup {
-  background: linear-gradient(135deg, #ef4444, #dc2626);
-  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(239, 68, 68, 0.38);
+  border: 1px solid rgba(255, 255, 255, 0.32);
   color: #ffffff;
-  box-shadow: 0 4px 16px rgba(220, 38, 38, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 4px 14px rgba(239, 68, 68, 0.35);
 }
 
 .saki-video-btn.hangup:hover {
-  background: linear-gradient(135deg, #f87171, #ef4444);
-  border-color: rgba(255, 255, 255, 0.7);
-  box-shadow: 0 6px 20px rgba(220, 38, 38, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.8);
-  transform: scale(1.1) translateY(-1px);
+  background: rgba(239, 68, 68, 0.54);
+  border-color: rgba(255, 255, 255, 0.5);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 6px 18px rgba(239, 68, 68, 0.5);
 }
 
 .saki-messages-inner {
@@ -4189,27 +4269,27 @@ body.saki-selection-capture-active .saki-launcher {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(214, 222, 232, 0.95);
+  background: rgba(255, 255, 255, 0.52);
+  backdrop-filter: blur(40px) saturate(200%);
+  -webkit-backdrop-filter: blur(40px) saturate(200%);
+  border: 1px solid rgba(255, 255, 255, 0.82);
   border-radius: 20px;
-  box-shadow: 0 14px 44px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 16px 48px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.95);
 }
 
 .saki-panel.fullscreen .saki-messages-inner {
   flex: 1 1 auto !important;
   overflow: hidden !important;
   border-radius: 18px !important;
-  border: 1px solid rgba(255, 255, 255, 0.5) !important;
-  box-shadow: 0 8px 30px rgba(15, 23, 42, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.70) !important;
+  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.9) !important;
   margin: 0 !important;
   width: 100% !important;
   max-width: 100% !important;
   height: 100% !important;
-  background: rgba(255, 255, 255, 0.58) !important;
-  backdrop-filter: blur(16px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+  background: rgba(255, 255, 255, 0.48) !important;
+  backdrop-filter: blur(40px) saturate(200%) !important;
+  -webkit-backdrop-filter: blur(40px) saturate(200%) !important;
 }
 
 .saki-composer {
@@ -4239,9 +4319,22 @@ body.saki-selection-capture-active .saki-launcher {
   display: none;
 }
 
+@keyframes saki-expand-ambient {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+    filter: drop-shadow(0 0 2px rgba(255, 117, 172, 0.4));
+    opacity: 0.88;
+  }
+  50% {
+    transform: translateY(-4px) scale(1.12);
+    filter: drop-shadow(0 0 10px rgba(255, 117, 172, 0.85));
+    opacity: 1;
+  }
+}
+
 .saki-composer-expand-hint {
   position: absolute;
-  top: -10px;
+  top: -14px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 10;
@@ -4252,35 +4345,54 @@ body.saki-selection-capture-active .saki-launcher {
 
 .saki-composer-expand-hint button,
 .saki-composer-expand-btn {
-  height: 18px;
-  padding: 0 10px;
-  border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+  height: 28px;
+  width: 36px;
+  padding: 0;
+  border-radius: 8px;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: none !important;
+  box-shadow: none !important;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #64748b;
-  transition: all 0.15s ease;
+  color: #ff5b9a;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
   cursor: pointer;
   margin: 0;
 }
 
 .saki-composer-expand-hint button svg,
 .saki-composer-expand-btn svg {
-  stroke-width: 2.2;
+  stroke-width: 2.6;
+  width: 20px;
+  height: 20px;
+  animation: saki-expand-ambient 2.2s ease-in-out infinite;
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.2s ease, filter 0.25s ease;
 }
 
 .saki-composer-expand-hint button:hover,
 .saki-composer-expand-btn:hover {
-  background: #ffffff;
-  border-color: rgba(255, 117, 172, 0.4);
-  color: #ff75ac;
-  box-shadow: 0 2px 8px rgba(255, 117, 172, 0.2);
-  transform: translateY(-1px);
+  background: transparent !important;
+  border: none !important;
+  border-color: transparent !important;
+  color: #ff3385;
+  box-shadow: none !important;
+  transform: none;
+}
+
+.saki-composer-expand-hint button:hover svg,
+.saki-composer-expand-btn:hover svg {
+  animation: none;
+  transform: translateY(-5px) scale(1.25);
+  filter: drop-shadow(0 0 14px rgba(255, 117, 172, 0.95));
+}
+
+.saki-composer-expand-hint button:active svg,
+.saki-composer-expand-btn:active svg {
+  animation: none;
+  transform: translateY(-1px) scale(0.95);
 }
 
 .saki-mini-chat-wrapper {
@@ -4408,7 +4520,10 @@ body.saki-selection-capture-active .saki-launcher {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 10px 14px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0 12px;
+  box-sizing: border-box;
   border-bottom: 1px solid rgba(226, 232, 240, 0.8);
   background: rgba(255, 255, 255, 0.7);
   backdrop-filter: blur(12px);
@@ -4424,8 +4539,11 @@ body.saki-selection-capture-active .saki-launcher {
 }
 
 .saki-panel.fullscreen .saki-header {
-  padding: 12px 18px;
+  height: 42px;
+  min-height: 42px;
+  padding: 0 14px;
   border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+  box-sizing: border-box;
 }
 
 .saki-header-actions {
@@ -4436,19 +4554,47 @@ body.saki-selection-capture-active .saki-launcher {
 
 .saki-header-actions .icon-button,
 .saki-header > .icon-button {
-  background: rgba(255, 255, 255, 0.65);
-  color: #64748b;
-  border-radius: 999px;
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  transition: all 0.15s ease;
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  max-width: 28px !important;
+  min-height: 28px !important;
+  max-height: 28px !important;
+  padding: 0 !important;
+  display: grid !important;
+  place-items: center !important;
+  border-radius: 50% !important;
+  border: 1px solid rgba(255, 255, 255, 0.85) !important;
+  background: rgba(255, 255, 255, 0.65) !important;
+  backdrop-filter: blur(24px) saturate(190%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(190%) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05), inset 0 1px 1px rgba(255, 255, 255, 0.95) !important;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-sizing: border-box !important;
 }
 
 .saki-header-actions .icon-button:hover,
 .saki-header > .icon-button:hover {
-  background: #ffffff;
-  color: #1e293b;
-  border-color: rgba(255, 117, 172, 0.4);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+  background: rgba(255, 255, 255, 0.9) !important;
+  border-color: rgba(255, 117, 172, 0.5) !important;
+  color: #ff5b9a !important;
+  box-shadow: 0 6px 18px rgba(255, 117, 172, 0.28), inset 0 1px 0 rgba(255, 255, 255, 1) !important;
+  transform: translateY(-1px) scale(1.06);
+}
+
+.saki-header-actions .icon-button:active,
+.saki-header > .icon-button:active {
+  transform: scale(0.92);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06), inset 0 1px 1px rgba(255, 255, 255, 0.8) !important;
+}
+
+.saki-header-actions .icon-button.active {
+  background: rgba(255, 117, 172, 0.18) !important;
+  border-color: rgba(255, 117, 172, 0.5) !important;
+  color: #ff5b9a !important;
+  box-shadow: 0 4px 14px rgba(255, 117, 172, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.9) !important;
 }
 
 .saki-history-panel {
@@ -4460,10 +4606,11 @@ body.saki-selection-capture-active .saki-launcher {
   gap: 12px;
   padding: 16px;
   border-radius: inherit;
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.12);
+  background: rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(32px) saturate(190%);
+  -webkit-backdrop-filter: blur(32px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.80);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.9);
   animation: sakiSlideDown 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   overflow: hidden;
   box-sizing: border-box;
@@ -4668,8 +4815,11 @@ body.saki-selection-capture-active .saki-launcher {
 
 .saki-agent-status.fallback {
   color: #b45309;
-  background: rgba(254, 243, 199, 0.65);
-  border-color: rgba(253, 186, 116, 0.45);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .saki-agent-status.fallback .saki-agent-status-dot {
@@ -4718,7 +4868,7 @@ body.saki-selection-capture-active .saki-launcher {
   padding: 16px;
   overflow-y: auto;
   overflow-x: hidden;
-  background: rgba(248, 250, 252, 0.65);
+  background: transparent !important;
 }
 
 .saki-panel.fullscreen .saki-messages {

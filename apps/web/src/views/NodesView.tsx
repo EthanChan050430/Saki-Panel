@@ -368,7 +368,7 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
           <div className="section-heading">
             <div>
               <h2>{editingNodeId ? "编辑节点" : "连接节点"}</h2>
-              <span>{editingNodeId ? "修改节点网络与配置信息" : "仅连接运行了 Saki-Daemon 的机器"}</span>
+              {editingNodeId ? <span>修改节点网络与配置信息</span> : null}
             </div>
             {editingNodeId ? (
               <button className="icon-button mini" type="button" title="取消编辑" aria-label="取消编辑" onClick={resetForm}>

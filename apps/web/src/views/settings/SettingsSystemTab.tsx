@@ -46,7 +46,7 @@ export const SettingsSystemTab = memo(function SettingsSystemTab({
     >
       <div className="settings-group-title">
         <div className="settings-group-icon">
-          <Settings size={20} />
+          <Settings size={16} />
         </div>
         <div>
           <h3>{t("settings.system")}</h3>

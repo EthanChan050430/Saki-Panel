@@ -642,39 +642,75 @@
   }
 }
 
-.incident-popover {
+.incident-popover,
+.incident-popover.agent-monitor-popover {
   position: fixed;
   left: auto;
   right: 16px;
   top: 58px;
   width: 500px;
   max-width: min(500px, calc(100vw - 32px));
-  border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.85);
-  background: rgba(255, 255, 255, 0.82);
-  backdrop-filter: blur(36px) saturate(190%);
-  -webkit-backdrop-filter: blur(36px) saturate(190%);
+  border-radius: 22px;
+  isolation: isolate;
+  border: 1px solid rgba(255, 255, 255, 0.75) !important;
+  border-top-color: rgba(255, 255, 255, 0.95) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.45) !important;
+  background: rgba(255, 255, 255, 0.72) !important;
+  backdrop-filter: blur(24px) saturate(190%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(190%) contrast(1.05) !important;
   box-shadow:
-    0 22px 50px rgba(15, 23, 42, 0.14),
-    0 4px 14px rgba(15, 23, 42, 0.05),
-    inset 0 1px 1px rgba(255, 255, 255, 0.95),
-    0 0 0 1px rgba(0, 0, 0, 0.03);
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.95),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.35),
+    0 18px 48px rgba(15, 23, 42, 0.10),
+    0 6px 16px rgba(15, 23, 42, 0.06) !important;
   z-index: 1052 !important;
   overflow: hidden;
-  animation: incidentPopoverEnter 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: incidentPopoverEnter 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
   transform-origin: top left;
 }
 
-[data-theme="dark"] .incident-popover {
-  border-color: rgba(255, 255, 255, 0.12);
-  background: rgba(26, 28, 38, 0.86);
-  backdrop-filter: blur(40px) saturate(180%);
-  -webkit-backdrop-filter: blur(40px) saturate(180%);
+.incident-popover::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    115deg,
+    rgba(255, 255, 255, 0.25) 0%,
+    rgba(255, 255, 255, 0) 50%,
+    rgba(255, 255, 255, 0.08) 100%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+.incident-popover > * {
+  position: relative;
+  z-index: 1;
+}
+
+[data-theme="dark"] .incident-popover,
+[data-theme="dark"] .incident-popover.agent-monitor-popover {
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  border-top-color: rgba(255, 255, 255, 0.28) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+  background: rgba(18, 20, 32, 0.75) !important;
+  backdrop-filter: blur(24px) saturate(190%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(190%) contrast(1.05) !important;
   box-shadow:
-    0 24px 60px rgba(0, 0, 0, 0.65),
-    0 6px 18px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.18),
-    0 0 0 1px rgba(255, 255, 255, 0.05);
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 22px 56px rgba(0, 0, 0, 0.60),
+    0 6px 20px rgba(0, 0, 0, 0.35) !important;
+}
+
+[data-theme="dark"] .incident-popover::before {
+  background: linear-gradient(
+    115deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0) 50%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
 }
 
 @keyframes incidentPopoverEnter {
@@ -693,14 +729,16 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 12px 16px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(248, 250, 252, 0.35) 100%);
+  padding: 8px 14px;
+  min-height: 40px;
+  box-sizing: border-box;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.35);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.06) 100%);
 }
 
 [data-theme="dark"] .incident-popover-header {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.015) 100%);
 }
 
 .incident-popover-title-wrap {
@@ -710,7 +748,7 @@
 }
 
 .incident-popover-header strong {
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--text-dark, #1d1d1f);
   letter-spacing: 0.2px;
@@ -1078,11 +1116,17 @@
     margin: 0 auto !important;
     transform-origin: top center !important;
     z-index: 1052 !important;
-    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.75),
+      0 24px 60px rgba(15, 23, 42, 0.2),
+      0 0 0 1px rgba(0, 0, 0, 0.02) !important;
   }
 
   [data-theme="dark"] .incident-popover {
-    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.1) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.18),
+      0 24px 70px rgba(0, 0, 0, 0.7),
+      0 0 0 1px rgba(255, 255, 255, 0.05) !important;
   }
 
   .incident-list {
@@ -1580,8 +1624,8 @@
   align-items: center;
   gap: 8px;
   padding: 8px 14px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-  background: rgba(0, 0, 0, 0.015);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 [data-theme="dark"] .agent-monitor-toolbar {
@@ -1828,8 +1872,8 @@
   width: 122px;
   flex-shrink: 0;
   padding: 8px 6px;
-  border-right: 1px solid rgba(0, 0, 0, 0.06);
-  background: rgba(0, 0, 0, 0.02);
+  border-right: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.04);
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -2054,7 +2098,8 @@
   padding: 8px 16px;
   font-size: 11px;
   color: var(--text-tertiary, #86868b);
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  border-top: 1px solid rgba(255, 255, 255, 0.35);
+  background: linear-gradient(0deg, rgba(255, 255, 255, 0.08) 0%, transparent 100%);
 }
 
 .incident-popover-footer.is-error {
@@ -2064,6 +2109,7 @@
 [data-theme="dark"] .incident-popover-footer {
   border-top-color: rgba(255, 255, 255, 0.08);
   color: #98989d;
+  background: linear-gradient(0deg, rgba(255, 255, 255, 0.03) 0%, transparent 100%);
 }
 
 [data-theme="dark"] .incident-popover-footer.is-error {
@@ -2104,7 +2150,7 @@
     width: 100%;
     flex-direction: row;
     border-right: none;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.35);
     overflow-x: auto;
     overflow-y: hidden;
     padding: 6px 10px;

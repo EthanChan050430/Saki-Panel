@@ -462,7 +462,7 @@ export function TemplatesView({ token, onLogout, refreshTick }: { token: string;
           <div className="section-heading templates-panel-heading">
             <div className="templates-heading-left">
               <div className="templates-heading-icon">
-                <LayoutTemplate size={20} />
+                <LayoutTemplate size={16} />
               </div>
               <div className="templates-heading-text">
                 <h2>实例模板</h2>

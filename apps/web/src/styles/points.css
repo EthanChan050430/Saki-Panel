@@ -57,7 +57,7 @@
   width: 100%;
   max-width: 720px;
   background: #ffffff;
-  border-radius: 16px;
+  border-radius: var(--radius-modal, 24px);
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.15), 0 8px 24px rgba(0, 0, 0, 0.08);
   overflow: hidden;
   display: flex;
@@ -78,7 +78,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 24px;
+  padding: 8px 18px;
+  min-height: 42px;
+  box-sizing: border-box;
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
 
@@ -89,7 +91,7 @@
 .points-modal-title {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
 .points-title-icon {
@@ -99,7 +101,7 @@
 
 .points-modal-title h3 {
   margin: 0;
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 700;
   color: #1c1c1e;
 }
@@ -109,8 +111,8 @@
 }
 
 .points-modal-title p {
-  margin: 2px 0 0;
-  font-size: 12px;
+  margin: 1px 0 0;
+  font-size: 11.5px;
   color: #86868b;
 }
 
@@ -463,7 +465,7 @@
   max-height: calc(100dvh - 64px) !important;
   margin: auto !important;
   padding: 0 !important;
-  border-radius: 24px !important;
+  border-radius: var(--radius-modal, 24px) !important;
   border: 1.5px solid rgba(255, 255, 255, 0.85) !important;
   background: rgba(255, 255, 255, 0.82) !important;
   backdrop-filter: blur(16px) saturate(200%) brightness(104%) !important;
@@ -501,7 +503,9 @@
   display: flex !important;
   align-items: center !important;
   justify-content: space-between !important;
-  padding: 16px 24px !important;
+  padding: 8px 20px !important;
+  min-height: 44px !important;
+  box-sizing: border-box !important;
   background: rgba(255, 255, 255, 0.72) !important;
   backdrop-filter: blur(20px) saturate(180%) !important;
   -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
@@ -516,15 +520,15 @@
 .modal-fullscreen-title-wrap {
   display: flex !important;
   align-items: center !important;
-  gap: 14px !important;
+  gap: 10px !important;
   min-width: 0 !important;
 }
 
 .modal-fullscreen-icon-wrap {
-  width: 42px !important;
-  height: 42px !important;
-  min-width: 42px !important;
-  border-radius: 12px !important;
+  width: 30px !important;
+  height: 30px !important;
+  min-width: 30px !important;
+  border-radius: 8px !important;
   background: linear-gradient(135deg, rgba(255, 117, 172, 0.2) 0%, rgba(244, 63, 94, 0.1) 100%) !important;
   border: 1px solid rgba(255, 117, 172, 0.3) !important;
   display: flex !important;
@@ -547,7 +551,7 @@
 
 .modal-fullscreen-title-text h3 {
   margin: 0 !important;
-  font-size: 17.5px !important;
+  font-size: 15px !important;
   font-weight: 700 !important;
   color: #0f172a !important;
   line-height: 1.25 !important;
@@ -558,8 +562,8 @@
 }
 
 .modal-fullscreen-subtitle {
-  margin: 3px 0 0 !important;
-  font-size: 12.5px !important;
+  margin: 1px 0 0 !important;
+  font-size: 11.5px !important;
   color: #64748b !important;
   display: flex !important;
   align-items: center !important;
@@ -572,10 +576,10 @@
 }
 
 .modal-fullscreen-close-btn {
-  width: 36px !important;
-  height: 36px !important;
-  min-width: 36px !important;
-  border-radius: 10px !important;
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  border-radius: 8px !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
@@ -739,11 +743,12 @@
     width: 100% !important;
     max-width: 100% !important;
     max-height: calc(100dvh - 28px) !important;
-    border-radius: 20px !important;
+    border-radius: var(--radius-modal, 24px) !important;
   }
 
   .modal-fullscreen-header {
-    padding: 12px 16px !important;
+    padding: 6px 14px !important;
+    min-height: 40px !important;
   }
 
   .modal-fullscreen-title-text h3 {
@@ -1356,7 +1361,7 @@ html.perf-lite .elegant-cursor-canvas {
   display: none !important;
 }
 
-html.perf-lite * {
+html.perf-lite *:not(.liquid-glass-frost):not(.liquid-glass-warp):not(.glass__warp):not(.glass):not(.saki-input-container):not(.liquid-glass-container):not(.liquid-glass-face):not(.sidebar-inline-toggle):not(.sidebar-floating-toggle):not(.topbar-inner):not(.topbar-companion-panel):not(.terminal-command-row):not(.terminal-input-wrap) {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }

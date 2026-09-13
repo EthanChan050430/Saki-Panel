@@ -456,39 +456,70 @@ button.icon-button.mini,
   color: #1d1d1f;
 }
 
+@keyframes sidebar-expand-ambient {
+  0%, 100% {
+    transform: translateX(0) scale(1);
+    filter: drop-shadow(0 0 3px rgba(255, 117, 172, 0.45));
+    opacity: 0.92;
+  }
+  50% {
+    transform: translateX(4px) scale(1.08);
+    filter: drop-shadow(0 0 9px rgba(255, 117, 172, 0.85));
+    opacity: 1;
+  }
+}
+
 .sidebar-floating-toggle {
   display: none;
   width: 38px;
   height: 38px;
   min-width: 38px;
   flex-shrink: 0;
-  border-radius: 9999px;
-  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.85);
   padding: 0;
-  color: #ff75ac;
+  color: #ff5b9a;
   background: rgba(255, 255, 255, 0.65);
   backdrop-filter: blur(28px) saturate(190%);
   -webkit-backdrop-filter: blur(28px) saturate(190%);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05), inset 0 1px 1px rgba(255, 255, 255, 0.95);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06), inset 0 1px 1px rgba(255, 255, 255, 0.95);
   cursor: pointer;
   pointer-events: auto;
   align-items: center;
   justify-content: center;
   transition: all var(--duration-normal) var(--ease-spring);
-  transform: scale(0.9);
+  transform: scale(0.95);
   opacity: 0;
+}
+
+.sidebar-floating-toggle svg {
+  width: 20px !important;
+  height: 20px !important;
+  animation: sidebar-expand-ambient 2.4s ease-in-out infinite;
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.2s ease, filter 0.25s ease;
 }
 
 .sidebar-floating-toggle:hover {
   background: rgba(255, 255, 255, 0.9);
-  border-color: rgba(255, 255, 255, 0.95);
-  color: #ff5b9a;
-  box-shadow: 0 12px 28px rgba(255, 117, 172, 0.25), inset 0 1px 0 rgba(255, 255, 255, 1);
-  transform: scale(1.06);
+  border-color: rgba(255, 117, 172, 0.45);
+  color: #ff3385;
+  box-shadow: 0 10px 28px rgba(255, 117, 172, 0.25), inset 0 1px 0 rgba(255, 255, 255, 1);
+  transform: scale(1.04);
+}
+
+.sidebar-floating-toggle:hover svg {
+  animation: none;
+  transform: translateX(4px) scale(1.15);
+  filter: drop-shadow(0 0 12px rgba(255, 117, 172, 0.95));
 }
 
 .sidebar-floating-toggle:active {
-  transform: scale(0.94);
+  transform: scale(0.96);
+}
+
+.sidebar-floating-toggle:active svg {
+  animation: none;
+  transform: translateX(1px) scale(0.95);
 }
 
 .app-shell.sidebar-hidden .sidebar-floating-toggle {
@@ -555,33 +586,68 @@ button.icon-button.mini,
 
 .sidebar a::after,
 .sidebar button::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 50%;
-  width: 4px;
-  height: 0;
-  border-radius: 0 9999px 9999px 0;
-  background: #ff75ac;
-  transform: translateY(-50%);
-  transition:
-    height var(--duration-normal) var(--ease-out-expo),
-    opacity var(--duration-normal) var(--ease-smooth);
-  opacity: 0;
-}
-
-.sidebar a.active::after,
-.sidebar button.active::after {
-  height: 20px;
-  opacity: 1;
-  animation: nav-indicator var(--duration-normal) var(--ease-out-expo);
+  display: none !important;
+  content: none !important;
 }
 
 .sidebar a.active,
-.sidebar button.active {
-  color: #ff75ac;
-  background: rgba(255, 117, 172, 0.14);
-  font-weight: 600;
+.sidebar button.active,
+.sidebar [class*="nav-item-"].active {
+  position: relative;
+  isolation: isolate;
+  color: #d9146c !important;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.12) 0%,
+    rgba(255, 255, 255, 0.04) 40%,
+    rgba(255, 117, 172, 0.06) 70%,
+    rgba(255, 255, 255, 0.08) 100%
+  ) !important;
+  backdrop-filter: blur(12px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(180%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.45) !important;
+  border-top-color: rgba(255, 255, 255, 0.7) !important;
+  border-bottom-color: rgba(255, 117, 172, 0.28) !important;
+  border-right-color: rgba(255, 117, 172, 0.2) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.75),
+    inset 0 -1px 0 rgba(255, 117, 172, 0.15),
+    0 4px 16px rgba(255, 117, 172, 0.12),
+    0 1px 3px rgba(0, 0, 0, 0.03) !important;
+  font-weight: 700 !important;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.7);
+  overflow: hidden;
+}
+
+.sidebar a.active::before,
+.sidebar button.active::before,
+.sidebar [class*="nav-item-"].active::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    115deg,
+    rgba(255, 255, 255, 0.15) 0%,
+    rgba(255, 255, 255, 0) 45%,
+    rgba(255, 117, 172, 0.04) 100%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+.sidebar a.active > *,
+.sidebar button.active > *,
+.sidebar [class*="nav-item-"].active > * {
+  position: relative;
+  z-index: 1;
+}
+
+.sidebar a.active svg,
+.sidebar button.active svg,
+.sidebar [class*="nav-item-"].active svg {
+  color: #ff2d80 !important;
+  filter: drop-shadow(0 2px 8px rgba(255, 117, 172, 0.5));
 }
 
 .sidebar a:hover:not(.active),
@@ -638,17 +704,13 @@ button.icon-button.mini,
   -webkit-backdrop-filter: blur(20px);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.9);
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   transition:
     color var(--duration-fast) var(--ease-smooth),
     background var(--duration-theme) var(--ease-theme),
     border-color var(--duration-theme) var(--ease-theme),
     box-shadow var(--duration-theme) var(--ease-theme),
-    transform var(--duration-fast) cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.sidebar .theme-toggle-button svg {
-  transition: transform 0.55s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+    transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .sidebar .theme-toggle-button:hover:not(:disabled) {
@@ -659,5 +721,6 @@ button.icon-button.mini,
 }
 
 .sidebar .theme-toggle-button:active:not(:disabled) {
-  transform: scale(0.92);
+  transform: scale(0.88);
 }
+

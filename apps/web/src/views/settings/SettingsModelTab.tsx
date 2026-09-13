@@ -195,7 +195,7 @@ export const SettingsModelTab = memo(function SettingsModelTab({
     >
       <div className="settings-group-title">
         <div className="settings-group-icon">
-          <Cpu size={20} />
+          <Cpu size={16} />
         </div>
         <div>
           <h3>{t("settings.model.title")}</h3>
@@ -1054,7 +1054,11 @@ export const SettingsModelTab = memo(function SettingsModelTab({
             </div>
           </div>
 
-          <div className="settings-switch-card" style={{ margin: 0 }}>
+          <div
+            className="settings-switch-card"
+            style={{ margin: 0 }}
+            onClick={() => onImageGenChange({ enabled: !imageGen.enabled })}
+          >
             <div className="settings-switch-info">
               <div className="settings-switch-title">
                 <ImagePlus size={18} className="settings-switch-icon" />
@@ -1064,7 +1068,7 @@ export const SettingsModelTab = memo(function SettingsModelTab({
                 启用后，Agent 可调用独立生图 API，把 png/jpg/webp 写入当前实例工作目录，并在 HTML/CSS/Markdown 中引用。
               </span>
             </div>
-            <label className="settings-switch-toggle">
+            <label className="settings-switch-toggle" onClick={(e) => e.stopPropagation()}>
               <input
                 type="checkbox"
                 checked={imageGen.enabled}

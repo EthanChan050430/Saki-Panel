@@ -1,0 +1,1808 @@
+/* ==========================================================================
+   Liquid glass — rdev/liquid-glass-react structure
+   .glass + .glass__warp { filter: url("#id"); backdrop-filter: blur() saturate(); }
+   ========================================================================== */
+
+.liquid-glass-btn,
+.liquid-glass-container {
+  position: relative;
+  box-sizing: border-box;
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.55) !important;
+  border-top-color: rgba(255, 255, 255, 0.78) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.35) !important;
+  box-shadow:
+    0 12px 36px rgba(0, 0, 0, 0.14),
+    0 3px 10px rgba(0, 0, 0, 0.05),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.75),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.25),
+    inset 0 -6px 16px rgba(0, 0, 0, 0.05) !important;
+}
+
+[data-theme="dark"] .liquid-glass-btn,
+[data-theme="dark"] .liquid-glass-container {
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.24) !important;
+  border-top-color: rgba(255, 255, 255, 0.38) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.16) !important;
+  box-shadow:
+    0 16px 42px rgba(0, 0, 0, 0.55),
+    0 4px 14px rgba(0, 0, 0, 0.30),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 0 6px rgba(255, 255, 255, 0.08),
+    inset 0 -8px 20px rgba(0, 0, 0, 0.35) !important;
+}
+
+.liquid-glass-btn {
+  outline: none;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  padding: 0;
+}
+
+.liquid-glass-btn .glass,
+.liquid-glass-container .glass,
+.liquid-glass-face {
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.liquid-glass-frost {
+  display: none;
+}
+
+.liquid-glass-btn .glass__warp,
+.liquid-glass-container .glass__warp,
+.liquid-glass-warp {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: transparent;
+}
+
+.liquid-glass-inner {
+  position: relative;
+  z-index: 1;
+  background: transparent !important;
+}
+
+[data-theme="dark"] .liquid-glass-btn .liquid-glass-inner {
+  text-shadow: none;
+  background: transparent !important;
+}
+
+.liquid-glass-container .liquid-glass-inner {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: transparent !important;
+}
+
+/* Standalone .liquid-glass-inner outside LiquidGlassContainer — match input box liquid glass */
+:not(.liquid-glass-container) > .liquid-glass-inner,
+.liquid-glass-inner:not(.liquid-glass-container *):not(.liquid-glass-btn *) {
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.55) !important;
+  border-top-color: rgba(255, 255, 255, 0.78) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.35) !important;
+  box-shadow:
+    0 12px 36px rgba(0, 0, 0, 0.14),
+    0 3px 10px rgba(0, 0, 0, 0.05),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.75),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.25),
+    inset 0 -6px 16px rgba(0, 0, 0, 0.05) !important;
+}
+
+[data-theme="dark"] :not(.liquid-glass-container) > .liquid-glass-inner,
+[data-theme="dark"] .liquid-glass-inner:not(.liquid-glass-container *):not(.liquid-glass-btn *) {
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.24) !important;
+  border-top-color: rgba(255, 255, 255, 0.38) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.16) !important;
+  box-shadow:
+    0 16px 42px rgba(0, 0, 0, 0.55),
+    0 4px 14px rgba(0, 0, 0, 0.30),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 0 6px rgba(255, 255, 255, 0.08),
+    inset 0 -8px 20px rgba(0, 0, 0, 0.35) !important;
+}
+
+.liquid-glass-btn:focus-visible {
+  outline: 2px solid var(--sidebar-accent, #ff75ac);
+  outline-offset: 2px;
+}
+
+.saki-panel:not(.fullscreen),
+.saki-composer,
+.saki-input-stack {
+  overflow: visible !important;
+}
+
+/* --------------------------------------------------------------------------
+   Sidebar active nav items — Liquid Glass Frame
+   -------------------------------------------------------------------------- */
+
+.sidebar nav a.active,
+.sidebar nav button.active,
+.sidebar [class*="nav-item-"].active {
+  position: relative;
+  isolation: isolate;
+  background: rgba(255, 255, 255, 0.14) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.38) !important;
+  border-top-color: rgba(255, 255, 255, 0.65) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.20) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.50),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 4px 16px rgba(0, 0, 0, 0.06) !important;
+  color: var(--primary, #d9146c) !important;
+  font-weight: 700 !important;
+  text-shadow: none !important;
+  transform: none !important;
+  overflow: hidden;
+}
+
+.sidebar nav a.active::before,
+.sidebar nav button.active::before,
+.sidebar [class*="nav-item-"].active::before {
+  display: none !important;
+}
+
+.sidebar nav a.active > *,
+.sidebar nav button.active > *,
+.sidebar [class*="nav-item-"].active > * {
+  position: relative;
+  z-index: 1;
+}
+
+.sidebar nav a.active:hover,
+.sidebar nav button.active:hover,
+.sidebar [class*="nav-item-"].active:hover {
+  background: rgba(255, 255, 255, 0.22) !important;
+  border-color: rgba(255, 255, 255, 0.50) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.65),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 6px 20px rgba(0, 0, 0, 0.09) !important;
+}
+
+.sidebar nav a.active::after,
+.sidebar nav button.active::after,
+.sidebar [class*="nav-item-"].active::after {
+  display: none !important;
+  content: none !important;
+}
+
+[data-theme="dark"] .sidebar nav a.active,
+[data-theme="dark"] .sidebar nav button.active,
+[data-theme="dark"] .sidebar [class*="nav-item-"].active {
+  background: rgba(255, 255, 255, 0.06) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.20) !important;
+  border-top-color: rgba(255, 255, 255, 0.32) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.10) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 4px 16px rgba(0, 0, 0, 0.35) !important;
+  color: #ff9bc8 !important;
+  font-weight: 650 !important;
+  text-shadow: none !important;
+}
+
+[data-theme="dark"] .sidebar nav a.active::before,
+[data-theme="dark"] .sidebar nav button.active::before,
+[data-theme="dark"] .sidebar [class*="nav-item-"].active::before {
+  display: none !important;
+}
+
+/* --------------------------------------------------------------------------
+   Sidebar account button
+   -------------------------------------------------------------------------- */
+
+.sidebar-account {
+  overflow: visible;
+}
+
+.sidebar .sidebar-account-button.liquid-glass-btn,
+.sidebar button.sidebar-account-button.liquid-glass-btn {
+  width: 100%;
+  height: 56px !important;
+  padding: 0 !important;
+  margin: 0;
+  display: block;
+  border: 1px solid rgba(255, 255, 255, 0.55) !important;
+  outline: none !important;
+  text-align: left;
+  color: #1d1d1f;
+  transform: none !important;
+  overflow: hidden;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.38) 0%,
+    rgba(255, 255, 255, 0.14) 50%,
+    rgba(255, 255, 255, 0.22) 100%
+  ) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.2),
+    0 4px 16px rgba(0, 0, 0, 0.08) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(160%) !important;
+  backdrop-filter: blur(12px) saturate(160%) !important;
+}
+
+.sidebar .sidebar-account-button.liquid-glass-btn::after,
+.sidebar button.sidebar-account-button.liquid-glass-btn::after {
+  display: none !important;
+  content: none !important;
+}
+
+.sidebar .sidebar-account-button.liquid-glass-btn:hover,
+.sidebar .sidebar-account-button.liquid-glass-btn:hover:not(.active):not(:disabled),
+.sidebar button.sidebar-account-button.liquid-glass-btn:hover:not(.active):not(:disabled),
+.sidebar button.sidebar-account-button.liquid-glass-btn:hover:not(:disabled) {
+  border: 1px solid rgba(255, 255, 255, 0.7) !important;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.5) 0%,
+    rgba(255, 255, 255, 0.2) 50%,
+    rgba(255, 255, 255, 0.32) 100%
+  ) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 1),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.3),
+    0 6px 20px rgba(0, 0, 0, 0.1) !important;
+  color: inherit !important;
+  transform: none !important;
+}
+
+.sidebar .sidebar-account-button.liquid-glass-btn:active:not(:disabled),
+.sidebar button.sidebar-account-button.liquid-glass-btn:active:not(:disabled) {
+  transform: none !important;
+}
+
+[data-theme="dark"] .sidebar .sidebar-account-button.liquid-glass-btn,
+[data-theme="dark"] .sidebar button.sidebar-account-button.liquid-glass-btn {
+  color: #f5f5f7 !important;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0.04) 50%,
+    rgba(255, 255, 255, 0.07) 100%
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.06),
+    0 4px 16px rgba(0, 0, 0, 0.28) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(160%) !important;
+  backdrop-filter: blur(12px) saturate(160%) !important;
+}
+
+[data-theme="dark"] .sidebar .sidebar-account-button.liquid-glass-btn:hover,
+[data-theme="dark"] .sidebar .sidebar-account-button.liquid-glass-btn:hover:not(.active):not(:disabled),
+[data-theme="dark"] .sidebar button.sidebar-account-button.liquid-glass-btn:hover:not(.active):not(:disabled),
+[data-theme="dark"] .sidebar button.sidebar-account-button.liquid-glass-btn:hover:not(:disabled) {
+  color: #f5f5f7 !important;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.15) 0%,
+    rgba(255, 255, 255, 0.07) 50%,
+    rgba(255, 255, 255, 0.11) 100%
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.1),
+    0 6px 20px rgba(0, 0, 0, 0.36) !important;
+}
+
+.liquid-glass-border {
+  display: none !important;
+}
+
+.sidebar .sidebar-account-button.liquid-glass-btn .glass {
+  height: 100%;
+}
+
+.sidebar .sidebar-account-button.liquid-glass-btn .liquid-glass-inner {
+  display: grid !important;
+  grid-template-columns: 36px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.sidebar .sidebar-account-button.liquid-glass-btn .account-avatar,
+.sidebar .sidebar-account-button.liquid-glass-btn .sidebar-account-copy,
+.sidebar .sidebar-account-button.liquid-glass-btn svg {
+  position: relative;
+  z-index: 2;
+}
+
+/* --------------------------------------------------------------------------
+   Saki composer input
+   Pure physical liquid glass refraction (no artificial white border reflections,
+   matching official shuding/liquid-glass SDF shader & organic shadow styling)
+   -------------------------------------------------------------------------- */
+
+.saki-input-stack {
+  position: relative;
+  min-width: 0;
+  overflow: visible !important;
+}
+
+.saki-input-container.liquid-glass-container {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 70 !important;
+  overflow: hidden;
+  outline: none !important;
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.55) !important;
+  border-top-color: rgba(255, 255, 255, 0.78) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.35) !important;
+  box-shadow:
+    0 12px 36px rgba(0, 0, 0, 0.14),
+    0 3px 10px rgba(0, 0, 0, 0.05),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.75),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.25),
+    inset 0 -6px 16px rgba(0, 0, 0, 0.05) !important;
+  transition: box-shadow 0.24s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.24s ease;
+}
+
+.saki-input-container.liquid-glass-container:hover,
+.saki-input-container.liquid-glass-container:focus-within {
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.68) !important;
+  border-top-color: rgba(255, 255, 255, 0.90) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.45) !important;
+  box-shadow:
+    0 16px 42px rgba(0, 0, 0, 0.18),
+    0 4px 14px rgba(0, 0, 0, 0.06),
+    inset 0 1px 2px rgba(255, 255, 255, 0.88),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.35),
+    inset 0 -6px 18px rgba(0, 0, 0, 0.07) !important;
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container {
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.24) !important;
+  border-top-color: rgba(255, 255, 255, 0.38) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.16) !important;
+  box-shadow:
+    0 16px 42px rgba(0, 0, 0, 0.55),
+    0 4px 14px rgba(0, 0, 0, 0.30),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 0 6px rgba(255, 255, 255, 0.08),
+    inset 0 -8px 20px rgba(0, 0, 0, 0.35) !important;
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container:hover,
+[data-theme="dark"] .saki-input-container.liquid-glass-container:focus-within {
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.30) !important;
+  border-top-color: rgba(255, 255, 255, 0.46) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.20) !important;
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.65),
+    0 6px 18px rgba(0, 0, 0, 0.38),
+    inset 0 1px 2px rgba(255, 255, 255, 0.45),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    inset 0 0 8px rgba(255, 255, 255, 0.10),
+    inset 0 -10px 25px rgba(0, 0, 0, 0.40) !important;
+}
+
+.saki-input-container.liquid-glass-container::before {
+  display: none !important;
+}
+
+.saki-input-container.liquid-glass-container .saki-input-main-row textarea,
+.saki-input-container.liquid-glass-container .saki-composer .saki-input-main-row textarea {
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.60), 0 0 1px rgba(0, 0, 0, 0.40);
+}
+
+.saki-input-container.liquid-glass-container .saki-input-main-row textarea::placeholder,
+.saki-input-container.liquid-glass-container .saki-composer .saki-input-main-row textarea::placeholder {
+  color: rgba(255, 255, 255, 0.85) !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.60), 0 0 1px rgba(0, 0, 0, 0.40);
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-input-main-row textarea,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-composer .saki-input-main-row textarea {
+  color: #f8fafc !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-input-main-row textarea::placeholder,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-composer .saki-input-main-row textarea::placeholder {
+  color: rgba(248, 250, 252, 0.72) !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.saki-input-container.liquid-glass-container .saki-add-btn {
+  color: #ffffff !important;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55)) !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-add-btn {
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+
+.saki-input-stack > .saki-input-peep {
+  z-index: 90 !important;
+}
+
+.saki-input-stack:focus-within .saki-input-peep {
+  transform: translateY(-3px);
+}
+
+.saki-input-stack:focus-within .saki-input-peep:hover {
+  transform: translateY(-5px) scale(1.04);
+}
+
+.saki-panel.drop-ready .saki-input-container.liquid-glass-container {
+  outline: 2px solid rgba(255, 117, 172, 0.45);
+  outline-offset: 3px;
+}
+
+/* --------------------------------------------------------------------------
+   Saki notice toast — Saki input box liquid glass matching style
+   -------------------------------------------------------------------------- */
+
+.saki-composer-notice-toast.liquid-glass-container {
+  min-width: 0;
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 250;
+  max-width: min(520px, calc(100% - 32px));
+  width: max-content;
+  overflow: hidden;
+  outline: none !important;
+  border: 1px solid rgba(255, 255, 255, 0.55) !important;
+  border-top-color: rgba(255, 255, 255, 0.78) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.35) !important;
+  background: transparent !important;
+  box-shadow:
+    0 12px 36px rgba(0, 0, 0, 0.14),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.75),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.25) !important;
+}
+
+[data-theme="dark"] .saki-composer-notice-toast.liquid-glass-container {
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.24) !important;
+  border-top-color: rgba(255, 255, 255, 0.38) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.16) !important;
+  box-shadow:
+    0 16px 42px rgba(0, 0, 0, 0.55),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
+  color: #f8fafc !important;
+}
+
+[data-theme="dark"] .saki-composer-notice-toast.liquid-glass-container .saki-composer-notice-text {
+  color: #f8fafc !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+.saki-composer-notice-toast.liquid-glass-container:hover {
+  box-shadow: rgba(0, 0, 0, 0.32) 0px 16px 48px, 0 4px 14px rgba(255, 117, 172, 0.25) !important;
+}
+
+.saki-panel.collapsed .saki-composer-notice-toast.liquid-glass-container {
+  top: auto;
+  bottom: calc(100% + 14px);
+  animation: sakiToastSlideUp 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Toolbar chips: sleek liquid glass style with bright readable icons & text */
+.saki-input-container.liquid-glass-container .saki-input-toolbar .icon-button.mini,
+.saki-input-container.liquid-glass-container .saki-mode-icon-group,
+.saki-input-container.liquid-glass-container .saki-permission-btn,
+.saki-input-container.liquid-glass-container .saki-model-btn,
+.saki-input-container.liquid-glass-container .saki-steer-btn,
+.saki-input-container.liquid-glass-container .saki-chip-interactive {
+  background: rgba(255, 255, 255, 0.22) !important;
+  border: 1px solid rgba(255, 255, 255, 0.60) !important;
+  border-top-color: rgba(255, 255, 255, 0.90) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.35) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.75),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.15),
+    0 2px 8px rgba(0, 0, 0, 0.14) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(170%) contrast(1.04) !important;
+  backdrop-filter: blur(14px) saturate(170%) contrast(1.04) !important;
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 1px rgba(0, 0, 0, 0.4) !important;
+}
+
+.saki-input-container.liquid-glass-container .saki-model-btn .saki-model-full-name,
+.saki-input-container.liquid-glass-container .saki-model-btn .saki-model-short-name,
+.saki-input-container.liquid-glass-container .saki-steer-btn,
+.saki-input-container.liquid-glass-container .perm-label-text {
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 1px rgba(0, 0, 0, 0.4) !important;
+}
+
+.saki-input-container.liquid-glass-container .saki-input-toolbar .icon-button.mini:hover,
+.saki-input-container.liquid-glass-container .saki-permission-btn:hover,
+.saki-input-container.liquid-glass-container .saki-model-btn:hover,
+.saki-input-container.liquid-glass-container .saki-steer-btn:hover,
+.saki-input-container.liquid-glass-container .saki-chip-interactive:hover {
+  background: rgba(255, 255, 255, 0.35) !important;
+  border-color: rgba(255, 255, 255, 0.80) !important;
+  border-top-color: #ffffff !important;
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.90),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.22),
+    0 4px 14px rgba(0, 0, 0, 0.16) !important;
+  color: #ffffff !important;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.70) !important;
+  transform: translateY(-1px);
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-input-toolbar .icon-button.mini,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-mode-icon-group,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-permission-btn,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-model-btn,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-steer-btn,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-chip-interactive {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 2px 8px rgba(0, 0, 0, 0.18) !important;
+  color: #f8fafc !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-model-btn .saki-model-full-name,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-model-btn .saki-model-short-name,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-steer-btn,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .perm-label-text {
+  color: #f8fafc !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-input-toolbar .icon-button.mini:hover,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-permission-btn:hover,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-model-btn:hover,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-steer-btn:hover,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-chip-interactive:hover {
+  background: rgba(255, 255, 255, 0.22) !important;
+  border-color: rgba(255, 255, 255, 0.38) !important;
+  color: #ffffff !important;
+  transform: translateY(-1px);
+}
+
+/* Mode Selector: Clean Icon-Only Group */
+.saki-input-container.liquid-glass-container .saki-mode-icon-group {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 9999px;
+  height: 30px;
+  padding: 2px;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.16) !important;
+  border: 1px solid rgba(255, 255, 255, 0.45) !important;
+  border-top-color: rgba(255, 255, 255, 0.75) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.25) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.6), 0 2px 8px rgba(0, 0, 0, 0.05) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(170%) contrast(1.04) !important;
+  backdrop-filter: blur(12px) saturate(170%) contrast(1.04) !important;
+}
+
+.saki-input-container.liquid-glass-container .saki-mode-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none !important;
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.92) !important;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.50)) !important;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  padding: 0;
+  outline: none;
+}
+
+.saki-input-container.liquid-glass-container .saki-mode-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.35) !important;
+  color: #ffffff !important;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.70)) !important;
+}
+
+.saki-input-container.liquid-glass-container .saki-mode-icon-btn.active {
+  background: linear-gradient(135deg, rgba(255, 117, 172, 0.92) 0%, rgba(244, 63, 94, 0.92) 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(255, 60, 130, 0.45), inset 0 1px 1px rgba(255, 255, 255, 0.7) !important;
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-mode-icon-group {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.20) !important;
+  border-top-color: rgba(255, 255, 255, 0.32) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.12) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 2px 8px rgba(0, 0, 0, 0.25) !important;
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-mode-icon-btn {
+  color: rgba(255, 255, 255, 0.78) !important;
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-mode-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.16) !important;
+  color: #ffffff !important;
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-mode-icon-btn.active {
+  background: linear-gradient(135deg, rgba(255, 117, 172, 0.85) 0%, rgba(244, 63, 94, 0.85) 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(255, 60, 130, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.5) !important;
+}
+
+/* Tool buttons (Mic & Annotation) */
+.saki-input-container.liquid-glass-container .saki-input-toolbar .icon-button.mini.active {
+  background: rgba(255, 117, 172, 0.45) !important;
+  border-color: rgba(255, 117, 172, 0.7) !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 10px rgba(255, 117, 172, 0.4) !important;
+}
+
+.saki-input-container.liquid-glass-container .saki-mic-btn.is-listening {
+  background: linear-gradient(135deg, #ff75ac, #ff3377) !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 14px rgba(255, 60, 130, 0.7) !important;
+  animation: sakiPulse 1.2s infinite ease-in-out;
+}
+
+@keyframes sakiPulse {
+  0% { transform: scale(1); box-shadow: 0 0 8px rgba(255, 60, 130, 0.5); }
+  50% { transform: scale(1.1); box-shadow: 0 0 18px rgba(255, 60, 130, 0.85); }
+  100% { transform: scale(1); box-shadow: 0 0 8px rgba(255, 60, 130, 0.5); }
+}
+
+/* Autonomy status indicator dots */
+.saki-input-container.liquid-glass-container .perm-dot-indicator {
+  display: inline-flex;
+  align-items: center;
+}
+.saki-input-container.liquid-glass-container .perm-dot-indicator.accept .perm-icon {
+  color: #10b981 !important;
+  filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.75)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.50)) !important;
+}
+.saki-input-container.liquid-glass-container .perm-dot-indicator.ask .perm-icon {
+  color: #fbbf24 !important;
+  filter: drop-shadow(0 0 6px rgba(251, 191, 36, 0.75)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.50)) !important;
+}
+.saki-input-container.liquid-glass-container .perm-dot-indicator.plan .perm-icon {
+  color: #38bdf8 !important;
+  filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.75)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.50)) !important;
+}
+.saki-input-container.liquid-glass-container .perm-dot-indicator.bypass .perm-icon {
+  color: #f87171 !important;
+  filter: drop-shadow(0 0 6px rgba(248, 113, 113, 0.75)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.50)) !important;
+}
+
+.saki-input-container.liquid-glass-container .model-zap-spark {
+  color: #ff6097 !important;
+  filter: drop-shadow(0 0 6px rgba(255, 96, 151, 0.85)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.50)) !important;
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .model-zap-spark {
+  color: #ff9bc8 !important;
+  filter: drop-shadow(0 0 6px rgba(255, 155, 200, 0.8));
+}
+
+/* Send / Stop Liquid Action Button */
+.saki-input-container.liquid-glass-container .saki-send-action-btn,
+.saki-input-container.liquid-glass-container .saki-input-toolbar .primary-button.send-btn {
+  width: 36px !important;
+  height: 36px !important;
+  min-width: 36px !important;
+  max-width: 36px !important;
+  min-height: 36px !important;
+  max-height: 36px !important;
+  flex: 0 0 36px !important;
+  border-radius: 50% !important;
+  background: linear-gradient(135deg, #ff75ac 0%, #ff3377 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.75) !important;
+  border-top-color: #ffffff !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.9),
+    0 4px 18px rgba(255, 60, 130, 0.45) !important;
+  color: #ffffff !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.saki-input-container.liquid-glass-container .saki-send-action-btn:hover:not(:disabled),
+.saki-input-container.liquid-glass-container .saki-input-toolbar .primary-button.send-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #ff8dc0 0%, #ff246c 100%) !important;
+  transform: translateY(-2px) scale(1.08) !important;
+  box-shadow:
+    inset 0 1px 1.5px #ffffff,
+    0 6px 24px rgba(255, 60, 130, 0.65) !important;
+}
+
+.saki-input-container.liquid-glass-container .saki-send-action-btn:disabled,
+.saki-input-container.liquid-glass-container .saki-input-toolbar .primary-button.send-btn:disabled {
+  opacity: 0.70 !important;
+  background: rgba(255, 255, 255, 0.18) !important;
+  border: 1px solid rgba(255, 255, 255, 0.45) !important;
+  border-top-color: rgba(255, 255, 255, 0.70) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.25) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.5) !important;
+  color: rgba(255, 255, 255, 0.85) !important;
+  cursor: not-allowed !important;
+  transform: none !important;
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-send-action-btn:disabled,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-input-toolbar .primary-button.send-btn:disabled {
+  opacity: 0.45 !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  color: rgba(255, 255, 255, 0.40) !important;
+  box-shadow: none !important;
+  cursor: not-allowed !important;
+  transform: none !important;
+}
+
+.saki-input-container.liquid-glass-container .saki-send-action-btn.stop,
+.saki-input-container.liquid-glass-container .saki-input-toolbar .primary-button.send-btn.stop {
+  background: linear-gradient(135deg, #f87171 0%, #dc2626 100%) !important;
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.8),
+    0 4px 18px rgba(220, 38, 38, 0.55) !important;
+}
+
+.saki-input-container.liquid-glass-container .saki-input-toolbar button svg,
+.saki-input-toolbar.saki-composer-dock button svg {
+  opacity: 1 !important;
+  stroke: currentColor;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45)) !important;
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-input-toolbar button svg {
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45)) !important;
+}
+
+.saki-input-container.liquid-glass-container .saki-permission-btn .perm-arrow,
+.saki-input-container.liquid-glass-container .saki-model-btn .model-chevron,
+.saki-input-toolbar.saki-composer-dock .perm-arrow,
+.saki-input-toolbar.saki-composer-dock .model-chevron {
+  color: rgba(255, 255, 255, 0.95) !important;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45)) !important;
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-permission-btn .perm-arrow,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-model-btn .model-chevron {
+  color: #ffffff !important;
+}
+
+/* Explicit saki-composer-dock light mode bright text and icon rules */
+.saki-input-toolbar.saki-composer-dock .icon-button.mini,
+.saki-input-toolbar.saki-composer-dock .saki-mode-icon-btn,
+.saki-input-toolbar.saki-composer-dock .saki-chip-interactive,
+.saki-input-toolbar.saki-composer-dock .saki-permission-btn,
+.saki-input-toolbar.saki-composer-dock .saki-model-btn,
+.saki-input-toolbar.saki-composer-dock .saki-steer-btn {
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 1px rgba(0, 0, 0, 0.4) !important;
+}
+
+.saki-input-toolbar.saki-composer-dock .perm-label-text,
+.saki-input-toolbar.saki-composer-dock .saki-model-full-name,
+.saki-input-toolbar.saki-composer-dock .saki-model-short-name {
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 1px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* Notice Banner */
+.saki-composer-notice-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 2px;
+  color: #ff9bc8;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.saki-notice-sparkle {
+  flex-shrink: 0;
+  color: #ff75ac;
+  filter: drop-shadow(0 0 6px rgba(255, 117, 172, 0.8));
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-input-toolbar .icon-button.mini,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-mode-icon-group,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-permission-btn,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-model-btn,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-steer-btn,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-chip-interactive {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 2px 8px rgba(0, 0, 0, 0.25) !important;
+  color: #f5f5f7 !important;
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-input-toolbar .icon-button.mini:hover,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-permission-btn:hover,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-model-btn:hover,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-steer-btn:hover,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-chip-interactive:hover {
+  background: rgba(255, 255, 255, 0.14) !important;
+  border-color: rgba(255, 255, 255, 0.26) !important;
+  color: #ffffff !important;
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-mode-pill {
+  color: #e8e8ed !important;
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-mode-pill:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+  color: #ffffff !important;
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-mode-pill.active {
+  background: linear-gradient(135deg, rgba(255, 117, 172, 0.5), rgba(255, 60, 130, 0.65)) !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 10px rgba(255, 117, 172, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-input-toolbar .icon-button.mini.active {
+  background: rgba(255, 117, 172, 0.35) !important;
+  border-color: rgba(255, 117, 172, 0.55) !important;
+  color: #ffd0e3 !important;
+}
+
+/* Saki Add Button (Icon-Only: No Border, No Background, Bright Eye-Catching Liquid Glass Icon) */
+.saki-add-btn,
+.saki-input-container .saki-add-btn,
+.saki-input-container.liquid-glass-container .saki-add-btn {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  outline: none !important;
+  color: #ffffff !important;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 4px rgba(255, 255, 255, 0.40)) !important;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.15s ease, filter 0.15s ease !important;
+}
+
+.saki-add-btn:hover,
+.saki-input-container .saki-add-btn:hover,
+.saki-input-container.liquid-glass-container .saki-add-btn:hover {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: #ff75ac !important;
+  transform: scale(1.15);
+  filter: drop-shadow(0 0 8px rgba(255, 117, 172, 0.85)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.50)) !important;
+}
+
+.saki-add-btn.active,
+.saki-input-container .saki-add-btn.active,
+.saki-input-container.liquid-glass-container .saki-add-btn.active {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: #ff75ac !important;
+  transform: rotate(45deg) scale(1.15);
+  filter: drop-shadow(0 0 8px rgba(255, 117, 172, 0.85)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.50)) !important;
+}
+
+[data-theme="dark"] .saki-add-btn,
+[data-theme="dark"] .saki-input-container .saki-add-btn,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-add-btn {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  outline: none !important;
+  color: #f8fafc !important;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+}
+
+[data-theme="dark"] .saki-add-btn:hover,
+[data-theme="dark"] .saki-input-container .saki-add-btn:hover,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-add-btn:hover {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: #ff9bc8 !important;
+  transform: scale(1.15);
+  filter: drop-shadow(0 2px 6px rgba(255, 155, 200, 0.65));
+}
+
+[data-theme="dark"] .saki-add-btn.active,
+[data-theme="dark"] .saki-input-container .saki-add-btn.active,
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-add-btn.active {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: #ff9bc8 !important;
+  transform: rotate(45deg) scale(1.15);
+  filter: drop-shadow(0 2px 6px rgba(255, 155, 200, 0.65));
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-input-toolbar .primary-button.send-btn {
+  background: rgba(255, 117, 172, 0.36) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  color: #ffffff !important;
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-input-toolbar .primary-button.send-btn:hover:not(:disabled) {
+  background: rgba(255, 117, 172, 0.48) !important;
+  color: #ffffff !important;
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-input-toolbar .primary-button.send-btn.stop {
+  background: rgba(239, 68, 68, 0.45) !important;
+  color: #ffffff !important;
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-input-toolbar button svg {
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45));
+}
+
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-permission-btn .perm-icon.accept { color: #34d399 !important; }
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-permission-btn .perm-icon.ask { color: #fbbf24 !important; }
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-permission-btn .perm-icon.plan { color: #22d3ee !important; }
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-permission-btn .perm-icon.bypass { color: #f87171 !important; }
+
+/* --------------------------------------------------------------------------
+   Saki Video Controls & Buttons — Input Box Liquid Glass Match
+   Same liquid glass container and button treatment as .saki-input-container
+   -------------------------------------------------------------------------- */
+
+.saki-video-controls {
+  position: relative;
+  z-index: 10;
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  justify-content: center;
+  width: fit-content !important;
+  max-width: 100%;
+  margin: 0 auto 12px;
+  border-radius: 9999px !important;
+  outline: none !important;
+  border: 1px solid rgba(255, 255, 255, 0.55) !important;
+  border-top-color: rgba(255, 255, 255, 0.78) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.35) !important;
+  background: transparent !important;
+  box-shadow:
+    0 12px 36px rgba(0, 0, 0, 0.14),
+    0 3px 10px rgba(0, 0, 0, 0.05),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.75),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.25),
+    inset 0 -6px 16px rgba(0, 0, 0, 0.05) !important;
+  transform: translateZ(0);
+  box-sizing: border-box;
+  padding: 0 !important;
+}
+
+[data-theme="dark"] .saki-video-controls,
+[data-theme="dark"] .saki-video-controls:hover {
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.24) !important;
+  border-top-color: rgba(255, 255, 255, 0.38) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.16) !important;
+  box-shadow:
+    0 16px 42px rgba(0, 0, 0, 0.55),
+    0 4px 14px rgba(0, 0, 0, 0.30),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 0 6px rgba(255, 255, 255, 0.08),
+    inset 0 -8px 20px rgba(0, 0, 0, 0.35) !important;
+}
+
+.saki-video-controls::before {
+  display: none !important;
+}
+
+/* Inner wrapper for LiquidGlassContainer — strictly horizontal row */
+.saki-video-controls .liquid-glass-inner,
+.saki-video-controls.liquid-glass-container .liquid-glass-inner {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 10px !important;
+  padding: 6px 12px !important;
+  box-sizing: border-box !important;
+  width: auto !important;
+  min-width: 0 !important;
+}
+
+.saki-video-controls:not(.liquid-glass-container) {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  padding: 6px 12px !important;
+  gap: 10px !important;
+}
+
+/* Buttons inside saki-video-controls: same glass as input container toolbar buttons */
+.saki-video-btn,
+.saki-video-close-btn,
+.saki-video-settings-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50% !important;
+  flex-shrink: 0 !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  background: rgba(255, 255, 255, 0.18) !important;
+  border: 1px solid rgba(255, 255, 255, 0.55) !important;
+  border-top-color: rgba(255, 255, 255, 0.85) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.28) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.70),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 2px 8px rgba(0, 0, 0, 0.06) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(170%) contrast(1.04) !important;
+  backdrop-filter: blur(14px) saturate(170%) contrast(1.04) !important;
+  color: #1e293b !important;
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.6);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+[data-theme="dark"] .saki-video-btn,
+[data-theme="dark"] .saki-video-close-btn,
+[data-theme="dark"] .saki-video-settings-btn {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  border-top-color: rgba(255, 255, 255, 0.55) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.18) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 4px 14px rgba(0, 0, 0, 0.18) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+/* Hide mobile-switch-to-chat on desktop, show only on mobile */
+.saki-video-btn.mobile-switch-to-chat,
+.mobile-switch-to-chat {
+  display: none !important;
+}
+
+@media (max-width: 760px) {
+  .liquid-glass-inner .saki-video-btn.mobile-switch-to-chat,
+  .saki-video-btn.mobile-switch-to-chat {
+    display: inline-flex !important;
+  }
+}
+
+.saki-video-btn svg,
+.saki-video-close-btn svg,
+.saki-video-settings-btn svg {
+  opacity: 1 !important;
+  stroke: currentColor;
+  filter: none !important;
+}
+
+[data-theme="dark"] .saki-video-btn svg,
+[data-theme="dark"] .saki-video-close-btn svg,
+[data-theme="dark"] .saki-video-settings-btn svg {
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45)) !important;
+}
+
+.saki-video-btn:hover,
+.saki-video-close-btn:hover,
+.saki-video-settings-btn:hover {
+  background: rgba(255, 255, 255, 0.32) !important;
+  border-color: rgba(255, 255, 255, 0.75) !important;
+  border-top-color: rgba(255, 255, 255, 0.95) !important;
+  color: #020617 !important;
+  transform: scale(1.08) translateY(-1px);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.85),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 4px 14px rgba(0, 0, 0, 0.08) !important;
+}
+
+[data-theme="dark"] .saki-video-btn:hover,
+[data-theme="dark"] .saki-video-close-btn:hover,
+[data-theme="dark"] .saki-video-settings-btn:hover {
+  background: rgba(255, 255, 255, 0.24) !important;
+  border-color: rgba(255, 255, 255, 0.50) !important;
+  color: #ffffff !important;
+}
+
+.saki-video-btn:active,
+.saki-video-close-btn:active,
+.saki-video-settings-btn:active {
+  transform: scale(0.93);
+}
+
+/* Active buttons (Mic listening, mini-game open, feed menu open) */
+.saki-video-btn.active {
+  background: rgba(255, 117, 172, 0.38) !important;
+  border-color: rgba(255, 117, 172, 0.6) !important;
+  color: #ffffff !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 2px 10px rgba(255, 117, 172, 0.4) !important;
+  filter: drop-shadow(0 1px 2px rgba(255, 117, 172, 0.6));
+}
+
+.saki-video-btn.active:hover {
+  background: rgba(255, 117, 172, 0.5) !important;
+  border-color: rgba(255, 117, 172, 0.75) !important;
+}
+
+.saki-video-btn.active.pulse {
+  animation: sakiVideoLiquidPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes sakiVideoLiquidPulse {
+  0%, 100% {
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 2px 10px rgba(255, 117, 172, 0.4);
+  }
+  50% {
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 0 20px rgba(255, 117, 172, 0.85);
+  }
+}
+
+/* Hangup button */
+.saki-video-btn.hangup {
+  background: rgba(239, 68, 68, 0.38) !important;
+  border: 1px solid rgba(255, 255, 255, 0.32) !important;
+  color: #ffffff !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 4px 14px rgba(239, 68, 68, 0.35) !important;
+}
+
+.saki-video-btn.hangup:hover {
+  background: rgba(239, 68, 68, 0.54) !important;
+  border-color: rgba(255, 255, 255, 0.5) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 6px 18px rgba(239, 68, 68, 0.5) !important;
+}
+
+/* Voice AI Echo speaking state */
+.saki-video-btn.echo-speaking {
+  background: rgba(192, 132, 252, 0.38) !important;
+  border-color: rgba(192, 132, 252, 0.6) !important;
+  color: #ffffff !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 4px 16px rgba(168, 85, 247, 0.45) !important;
+}
+
+/* Dark mode overrides for saki-video buttons */
+[data-theme="dark"] .saki-video-btn,
+[data-theme="dark"] .saki-video-close-btn,
+[data-theme="dark"] .saki-video-settings-btn {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.20) !important;
+  border-top-color: rgba(255, 255, 255, 0.32) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.10) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 4px 14px rgba(0, 0, 0, 0.35) !important;
+  color: #f5f5f7 !important;
+}
+
+[data-theme="dark"] .saki-video-btn:hover,
+[data-theme="dark"] .saki-video-close-btn:hover,
+[data-theme="dark"] .saki-video-settings-btn:hover {
+  background: rgba(255, 255, 255, 0.14) !important;
+  border-color: rgba(255, 255, 255, 0.35) !important;
+  color: #ffffff !important;
+}
+
+[data-theme="dark"] .saki-video-btn.active {
+  background: rgba(255, 117, 172, 0.28) !important;
+  border-color: rgba(255, 117, 172, 0.5) !important;
+  color: #ffd0e3 !important;
+  box-shadow: 0 2px 8px rgba(255, 117, 172, 0.3) !important;
+}
+
+[data-theme="dark"] .saki-video-btn.active:hover {
+  background: rgba(255, 117, 172, 0.42) !important;
+}
+
+[data-theme="dark"] .saki-video-btn.hangup {
+  background: rgba(239, 68, 68, 0.32) !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 4px 14px rgba(239, 68, 68, 0.3) !important;
+}
+
+[data-theme="dark"] .saki-video-btn.hangup:hover {
+  background: rgba(239, 68, 68, 0.46) !important;
+}
+
+/* --------------------------------------------------------------------------
+   Sidebar inline toggle — transparent liquid glass
+   -------------------------------------------------------------------------- */
+
+.sidebar .sidebar-inline-toggle,
+.sidebar button.sidebar-inline-toggle {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  border-top-color: rgba(255, 255, 255, 0.55) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.20) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 4px 14px rgba(0, 0, 0, 0.08) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.sidebar .sidebar-inline-toggle:hover:not(:disabled),
+.sidebar button.sidebar-inline-toggle:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.22) !important;
+  border-color: rgba(255, 255, 255, 0.50) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.55),
+    0 6px 18px rgba(0, 0, 0, 0.12) !important;
+  transform: translateY(-1px);
+}
+
+[data-theme="dark"] .sidebar .sidebar-inline-toggle,
+[data-theme="dark"] .sidebar button.sidebar-inline-toggle {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-top-color: rgba(255, 255, 255, 0.30) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.10) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 4px 14px rgba(0, 0, 0, 0.32) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+}
+
+[data-theme="dark"] .sidebar .sidebar-inline-toggle:hover:not(:disabled),
+[data-theme="dark"] .sidebar button.sidebar-inline-toggle:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border-color: rgba(255, 255, 255, 0.32) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.35),
+    0 6px 18px rgba(0, 0, 0, 0.42) !important;
+  transform: translateY(-1px);
+}
+
+/* Saki Header Actions Buttons — Transparent Liquid Glass */
+.saki-header-actions .icon-button,
+.saki-header > .icon-button {
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  max-width: 28px !important;
+  min-height: 28px !important;
+  max-height: 28px !important;
+  padding: 0 !important;
+  display: grid !important;
+  place-items: center !important;
+  border-radius: 50% !important;
+  background: rgba(255, 255, 255, 0.12) !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  border-top-color: rgba(255, 255, 255, 0.55) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.18) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 4px 14px rgba(0, 0, 0, 0.08) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  color: #1e293b !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.saki-header-actions .icon-button:hover,
+.saki-header > .icon-button:hover {
+  background: rgba(255, 255, 255, 0.24) !important;
+  border-color: rgba(255, 255, 255, 0.55) !important;
+  color: #ff5b9a !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.5),
+    0 6px 18px rgba(255, 117, 172, 0.25) !important;
+  transform: translateY(-1px) scale(1.06);
+}
+
+.saki-header-actions .icon-button:active,
+.saki-header > .icon-button:active {
+  transform: scale(0.92);
+}
+
+.saki-header-actions .icon-button.active {
+  background: rgba(255, 117, 172, 0.25) !important;
+  border-color: rgba(255, 117, 172, 0.55) !important;
+  color: #ff5b9a !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 4px 14px rgba(255, 117, 172, 0.3) !important;
+}
+
+[data-theme="dark"] .saki-header-actions .icon-button,
+[data-theme="dark"] .saki-header > .icon-button {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-top-color: rgba(255, 255, 255, 0.30) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.10) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 4px 14px rgba(0, 0, 0, 0.32) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  color: #f1f5f9 !important;
+}
+
+[data-theme="dark"] .saki-header-actions .icon-button:hover,
+[data-theme="dark"] .saki-header > .icon-button:hover {
+  background: rgba(255, 255, 255, 0.14) !important;
+  border-color: rgba(255, 117, 172, 0.5) !important;
+  color: #ff9bc8 !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.35),
+    0 6px 18px rgba(255, 117, 172, 0.3) !important;
+  transform: translateY(-1px) scale(1.06);
+}
+
+[data-theme="dark"] .saki-header-actions .icon-button.active {
+  background: rgba(255, 117, 172, 0.28) !important;
+  border-color: rgba(255, 117, 172, 0.6) !important;
+  color: #ff9bc8 !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    0 4px 18px rgba(255, 117, 172, 0.35) !important;
+}
+
+.sidebar-floating-toggle {
+  background: rgba(255, 255, 255, 0.38) !important;
+  border: 1px solid rgba(255, 255, 255, 0.55) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 8px 24px rgba(0, 0, 0, 0.06) !important;
+  -webkit-backdrop-filter: blur(2px) saturate(100%) !important;
+  backdrop-filter: blur(2px) saturate(100%) !important;
+}
+
+.sidebar-floating-toggle:hover {
+  background: rgba(255, 255, 255, 0.5) !important;
+}
+
+@media (min-width: 769px) {
+  .topbar-inner {
+    background: rgba(255, 255, 255, 0.58) !important;
+    border: 1px solid rgba(255, 255, 255, 0.75) !important;
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, 0.85),
+      0 8px 24px rgba(0, 0, 0, 0.06) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+    backdrop-filter: blur(16px) saturate(180%) !important;
+  }
+
+  .topbar-inner:hover {
+    background: rgba(255, 255, 255, 0.70) !important;
+  }
+}
+
+@media (min-width: 769px) {
+  .topbar-inner.topbar-companion-panel:not(.is-drag-near),
+  .topbar-companion-panel:not(.is-drag-near) {
+    background: rgba(255, 255, 255, 0.50) !important;
+    border: 1px solid rgba(255, 255, 255, 0.68) !important;
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, 0.80),
+      0 8px 24px rgba(0, 0, 0, 0.06) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+    backdrop-filter: blur(16px) saturate(180%) !important;
+  }
+
+  .topbar-inner.topbar-companion-panel:not(.is-drag-near):hover,
+  .topbar-companion-panel:not(.is-drag-near):hover {
+    background: rgba(255, 255, 255, 0.65) !important;
+  }
+
+  .topbar-inner.topbar-companion-panel.has-lie:not(.is-drag-near),
+  .topbar-companion-panel.has-lie:not(.is-drag-near) {
+    background: rgba(255, 255, 255, 0.58) !important;
+    border: 1px solid rgba(255, 255, 255, 0.78) !important;
+    box-shadow:
+      inset 0 1px 1.5px rgba(255, 255, 255, 0.85),
+      0 8px 26px rgba(0, 0, 0, 0.08) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+    backdrop-filter: blur(16px) saturate(180%) !important;
+  }
+
+  .topbar-inner.topbar-companion-panel.has-lie:not(.is-drag-near):hover,
+  .topbar-companion-panel.has-lie:not(.is-drag-near):hover {
+    background: rgba(255, 255, 255, 0.70) !important;
+  }
+}
+
+@media (min-width: 769px) {
+  .topbar-inner.topbar-companion-panel.is-empty:not(.is-drag-near),
+  .topbar-inner.topbar-companion-panel.is-empty:not(.is-drag-near):hover,
+  .topbar-companion-panel.is-empty:not(.is-drag-near),
+  .topbar-companion-panel.is-empty:not(.is-drag-near):hover {
+    background: rgba(255, 255, 255, 0.48) !important;
+    border: 1px solid rgba(255, 255, 255, 0.65) !important;
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, 0.80),
+      0 8px 24px rgba(0, 0, 0, 0.06) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+    backdrop-filter: blur(16px) saturate(180%) !important;
+  }
+}
+
+[data-theme="dark"] .sidebar-floating-toggle {
+  background: rgba(22, 24, 32, 0.52) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    0 8px 24px rgba(0, 0, 0, 0.35) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(170%) !important;
+  backdrop-filter: blur(16px) saturate(170%) !important;
+}
+
+[data-theme="dark"] .sidebar-floating-toggle:hover {
+  background: rgba(28, 30, 40, 0.65) !important;
+}
+
+@media (min-width: 769px) {
+  .topbar,
+  [data-theme="dark"] .topbar {
+    background: transparent !important;
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  [data-theme="dark"] .topbar-inner {
+    background: rgba(22, 25, 38, 0.55) !important;
+    border: 1px solid rgba(255, 255, 255, 0.14) !important;
+    border-top-color: rgba(255, 255, 255, 0.26) !important;
+    border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+    box-shadow:
+      inset 0 1px 1.5px rgba(255, 255, 255, 0.18),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+      0 8px 24px rgba(0, 0, 0, 0.35) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+    backdrop-filter: blur(16px) saturate(180%) !important;
+    color: #f5f5f7 !important;
+  }
+
+  [data-theme="dark"] .topbar-inner:hover {
+    background: rgba(30, 34, 50, 0.68) !important;
+    border-color: rgba(255, 255, 255, 0.22) !important;
+    border-top-color: rgba(255, 255, 255, 0.36) !important;
+    box-shadow:
+      inset 0 1px 1.5px rgba(255, 255, 255, 0.24),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+      0 12px 28px rgba(0, 0, 0, 0.42) !important;
+  }
+
+  [data-theme="dark"] .topbar-inner.topbar-companion-panel:not(.is-drag-near),
+  [data-theme="dark"] .topbar-companion-panel:not(.is-drag-near) {
+    background: rgba(20, 23, 34, 0.50) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    border-top-color: rgba(255, 255, 255, 0.22) !important;
+    border-bottom-color: rgba(255, 255, 255, 0.06) !important;
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, 0.14),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+      0 8px 24px rgba(0, 0, 0, 0.32) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+    backdrop-filter: blur(16px) saturate(180%) !important;
+  }
+
+  [data-theme="dark"] .topbar-inner.topbar-companion-panel:not(.is-drag-near):hover,
+  [data-theme="dark"] .topbar-companion-panel:not(.is-drag-near):hover {
+    background: rgba(28, 33, 48, 0.62) !important;
+    border-color: rgba(255, 255, 255, 0.20) !important;
+    border-top-color: rgba(255, 255, 255, 0.32) !important;
+  }
+
+  [data-theme="dark"] .topbar-inner.topbar-companion-panel.has-lie:not(.is-drag-near),
+  [data-theme="dark"] .topbar-companion-panel.has-lie:not(.is-drag-near) {
+    background: rgba(24, 27, 40, 0.55) !important;
+    border: 1px solid rgba(255, 255, 255, 0.16) !important;
+    border-top-color: rgba(255, 255, 255, 0.30) !important;
+    border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+    box-shadow:
+      inset 0 1px 1.5px rgba(255, 255, 255, 0.20),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+      0 8px 26px rgba(0, 0, 0, 0.38) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+    backdrop-filter: blur(16px) saturate(180%) !important;
+  }
+
+  [data-theme="dark"] .topbar-inner.topbar-companion-panel.has-lie:not(.is-drag-near):hover,
+  [data-theme="dark"] .topbar-companion-panel.has-lie:not(.is-drag-near):hover {
+    background: rgba(32, 38, 56, 0.68) !important;
+    border-color: rgba(255, 255, 255, 0.24) !important;
+    border-top-color: rgba(255, 255, 255, 0.38) !important;
+  }
+}
+
+@media (min-width: 769px) {
+  [data-theme="dark"] .topbar-inner.topbar-companion-panel.is-empty:not(.is-drag-near),
+  [data-theme="dark"] .topbar-inner.topbar-companion-panel.is-empty:not(.is-drag-near):hover,
+  [data-theme="dark"] .topbar-companion-panel.is-empty:not(.is-drag-near),
+  [data-theme="dark"] .topbar-companion-panel.is-empty:not(.is-drag-near):hover {
+    background: rgba(18, 20, 28, 0.45) !important;
+    border: 1px solid rgba(255, 255, 255, 0.10) !important;
+    border-top-color: rgba(255, 255, 255, 0.18) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.10),
+      0 8px 24px rgba(0, 0, 0, 0.30) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+    backdrop-filter: blur(16px) saturate(180%) !important;
+  }
+}
+
+/* Terminal Command Row & Liquid Glass Input Box */
+.terminal-command-row,
+[data-theme="dark"] .terminal-command-row {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  padding: 4px 0 !important;
+}
+
+/* Terminal Input Wrap as LiquidGlassContainer (matching Saki input box refraction) */
+.terminal-input-wrap.liquid-glass-container,
+.terminal-command-row .terminal-input-wrap.liquid-glass-container {
+  flex: 1 !important;
+  min-width: 0 !important;
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  height: 48px !important;
+  border-radius: 24px !important;
+  overflow: hidden !important;
+  outline: none !important;
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.55) !important;
+  border-top-color: rgba(255, 255, 255, 0.78) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.35) !important;
+  box-shadow:
+    0 12px 36px rgba(0, 0, 0, 0.14),
+    0 3px 10px rgba(0, 0, 0, 0.05),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.75),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.25),
+    inset 0 -6px 16px rgba(0, 0, 0, 0.05) !important;
+  transition: box-shadow 0.24s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.24s ease !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.terminal-input-wrap.liquid-glass-container:hover,
+.terminal-input-wrap.liquid-glass-container:focus-within,
+.terminal-command-row .terminal-input-wrap.liquid-glass-container:hover,
+.terminal-command-row .terminal-input-wrap.liquid-glass-container:focus-within {
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.68) !important;
+  border-top-color: rgba(255, 255, 255, 0.90) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.45) !important;
+  box-shadow:
+    0 16px 42px rgba(0, 0, 0, 0.18),
+    0 4px 14px rgba(0, 0, 0, 0.06),
+    inset 0 1px 2px rgba(255, 255, 255, 0.88),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.35),
+    inset 0 -6px 18px rgba(0, 0, 0, 0.07) !important;
+}
+
+[data-theme="dark"] .terminal-input-wrap.liquid-glass-container,
+[data-theme="dark"] .terminal-command-row .terminal-input-wrap.liquid-glass-container {
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.24) !important;
+  border-top-color: rgba(255, 255, 255, 0.38) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.16) !important;
+  box-shadow:
+    0 16px 42px rgba(0, 0, 0, 0.55),
+    0 4px 14px rgba(0, 0, 0, 0.30),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 0 6px rgba(255, 255, 255, 0.08),
+    inset 0 -8px 20px rgba(0, 0, 0, 0.35) !important;
+}
+
+[data-theme="dark"] .terminal-input-wrap.liquid-glass-container:hover,
+[data-theme="dark"] .terminal-input-wrap.liquid-glass-container:focus-within,
+[data-theme="dark"] .terminal-command-row .terminal-input-wrap.liquid-glass-container:hover,
+[data-theme="dark"] .terminal-command-row .terminal-input-wrap.liquid-glass-container:focus-within {
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.30) !important;
+  border-top-color: rgba(255, 255, 255, 0.46) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.20) !important;
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.65),
+    0 6px 18px rgba(0, 0, 0, 0.38),
+    inset 0 1px 2px rgba(255, 255, 255, 0.45),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    inset 0 0 8px rgba(255, 255, 255, 0.10),
+    inset 0 -10px 25px rgba(0, 0, 0, 0.40) !important;
+}
+
+.terminal-input-wrap.liquid-glass-container .liquid-glass-inner {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  padding: 0 4px 0 14px !important;
+  box-sizing: border-box !important;
+  gap: 6px !important;
+}
+
+/* Fallback for static .terminal-input-wrap outside LiquidGlassContainer */
+.terminal-input-wrap:not(.liquid-glass-container),
+.terminal-command-row .terminal-input-wrap:not(.liquid-glass-container) {
+  flex: 1 !important;
+  min-width: 0 !important;
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  height: 48px !important;
+  border-radius: 999px !important;
+  background: rgba(255, 255, 255, 0.22) !important;
+  border: 1px solid rgba(255, 255, 255, 0.38) !important;
+  border-top-color: rgba(255, 255, 255, 0.60) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.20) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.40),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 8px 24px rgba(0, 0, 0, 0.08) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  padding: 0 4px 0 14px !important;
+  box-sizing: border-box !important;
+}
+
+.terminal-input-wrap:not(.liquid-glass-container):hover,
+.terminal-command-row .terminal-input-wrap:not(.liquid-glass-container):hover {
+  background: rgba(255, 255, 255, 0.32) !important;
+  border-color: rgba(255, 255, 255, 0.55) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.55),
+    0 10px 28px rgba(255, 117, 172, 0.15) !important;
+}
+
+.terminal-input-wrap:not(.liquid-glass-container):focus-within,
+.terminal-command-row .terminal-input-wrap:not(.liquid-glass-container):focus-within {
+  background: rgba(255, 255, 255, 0.38) !important;
+  border-color: rgba(255, 117, 172, 0.6) !important;
+  box-shadow:
+    0 0 0 3px rgba(255, 117, 172, 0.2),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.65),
+    0 12px 32px rgba(255, 117, 172, 0.25) !important;
+}
+
+[data-theme="dark"] .terminal-input-wrap:not(.liquid-glass-container),
+[data-theme="dark"] .terminal-command-row .terminal-input-wrap:not(.liquid-glass-container) {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-top-color: rgba(255, 255, 255, 0.30) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.10) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 10px 30px rgba(0, 0, 0, 0.45) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+}
+
+[data-theme="dark"] .terminal-input-wrap:not(.liquid-glass-container):hover,
+[data-theme="dark"] .terminal-command-row .terminal-input-wrap:not(.liquid-glass-container):hover {
+  background: rgba(255, 255, 255, 0.10) !important;
+  border-color: rgba(255, 255, 255, 0.28) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.3),
+    0 12px 34px rgba(0, 0, 0, 0.55),
+    0 0 16px rgba(255, 117, 172, 0.15) !important;
+}
+
+[data-theme="dark"] .terminal-input-wrap:not(.liquid-glass-container):focus-within,
+[data-theme="dark"] .terminal-command-row .terminal-input-wrap:not(.liquid-glass-container):focus-within {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border-color: rgba(255, 117, 172, 0.55) !important;
+  box-shadow:
+    0 0 0 3px rgba(255, 117, 172, 0.22),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.35),
+    0 14px 40px rgba(0, 0, 0, 0.6) !important;
+}
+
+html.perf-lite .sidebar-inline-toggle,
+html.perf-lite .sidebar-floating-toggle,
+html.perf-lite .topbar-inner,
+html.perf-lite .topbar-companion-panel,
+html.perf-lite .terminal-command-row,
+html.perf-lite .terminal-input-wrap {
+  -webkit-backdrop-filter: blur(2px) saturate(100%) !important;
+  backdrop-filter: blur(2px) saturate(100%) !important;
+}
+
+@media (max-width: 768px) {
+  .topbar-inner,
+  .topbar-inner:hover,
+  .topbar-inner.topbar-companion-panel,
+  .topbar-inner.topbar-companion-panel:hover,
+  .topbar-inner.topbar-companion-panel.is-empty,
+  .topbar-inner.topbar-companion-panel.is-empty:hover,
+  .topbar-inner.topbar-companion-panel:not(.is-drag-near),
+  .topbar-inner.topbar-companion-panel.is-empty:not(.is-drag-near),
+  .topbar-companion-panel,
+  .topbar-companion-panel:hover,
+  .topbar-companion-panel.is-empty,
+  .topbar-companion-panel.is-empty:hover,
+  [data-theme="dark"] .topbar-inner,
+  [data-theme="dark"] .topbar-inner:hover,
+  [data-theme="dark"] .topbar-inner.topbar-companion-panel,
+  [data-theme="dark"] .topbar-inner.topbar-companion-panel.is-empty,
+  [data-theme="dark"] .topbar-companion-panel,
+  [data-theme="dark"] .topbar-companion-panel.is-empty {
+    background: transparent !important;
+    background-color: transparent !important;
+    border: none !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}

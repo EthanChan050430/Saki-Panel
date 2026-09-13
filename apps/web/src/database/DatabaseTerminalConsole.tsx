@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertCircle,
   ArrowRight,
@@ -20,6 +21,7 @@ import type {
   DatabaseVisualizerInstance
 } from "@webops/shared";
 import { api, ApiError } from "../api.js";
+import { LiquidGlassContainer } from "../components/common/LiquidGlass.js";
 
 export function DatabaseTerminalConsole({
   token,
@@ -46,6 +48,42 @@ export function DatabaseTerminalConsole({
   const [result, setResult] = useState<DatabaseQueryResult | null>(null);
   const [history, setHistory] = useState<string[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [historyPos, setHistoryPos] = useState<{ left: number; bottom: number } | null>(null);
+  const historyBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  const toggleHistory = useCallback((e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    setShowHistory((prev) => {
+      const next = !prev;
+      if (next && historyBtnRef.current) {
+        const rect = historyBtnRef.current.getBoundingClientRect();
+        setHistoryPos({
+          left: Math.max(12, Math.min(window.innerWidth - 352, rect.left - 6)),
+          bottom: Math.max(12, window.innerHeight - rect.top + 10),
+        });
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!showHistory) return;
+    const handlePointerDown = (event: MouseEvent | PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (
+        target.closest(".terminal-history-btn") ||
+        target.closest(".terminal-history-wrap") ||
+        target.closest(".terminal-history-popover")
+      ) {
+        return;
+      }
+      setShowHistory(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [showHistory]);
 
   const execute = useCallback(async (queryToRun?: string) => {
     const q = (queryToRun || sql).trim();
@@ -167,19 +205,35 @@ export function DatabaseTerminalConsole({
           void execute();
         }}
       >
-        <div className="terminal-input-wrap">
+        <LiquidGlassContainer
+          className="terminal-input-wrap"
+          displacementScale={100}
+          zoom={1.20}
+          refractionIntensity={1.2}
+          blurAmount={0}
+          saturation={108}
+          cornerRadius={24}
+          mode="shader"
+        >
           <div className="terminal-history-wrap">
             <button
+              ref={historyBtnRef}
               type="button"
               className="terminal-history-btn"
               title="历史命令"
-              onClick={() => setShowHistory((v) => !v)}
+              onClick={toggleHistory}
             >
               <Clock size={16} />
             </button>
 
-            {showHistory && (
-              <div className="glass-panel terminal-history-popover">
+            {showHistory && historyPos && createPortal(
+              <div
+                className="glass-panel terminal-history-popover"
+                style={{
+                  left: historyPos.left,
+                  bottom: historyPos.bottom,
+                }}
+              >
                 <div className="terminal-history-header">
                   <span>历史记录</span>
                   <span className="terminal-history-count">{history.length} 条</span>
@@ -203,7 +257,8 @@ export function DatabaseTerminalConsole({
                     ))
                   )}
                 </div>
-              </div>
+              </div>,
+              document.body
             )}
           </div>
 
@@ -213,16 +268,16 @@ export function DatabaseTerminalConsole({
             onChange={(e) => setSql(e.target.value)}
             placeholder={isRedis ? "输入 Redis 命令 (如 GET / SET / HGETALL / KEYS)..." : "输入 SQL 语句按回车执行..."}
           />
-        </div>
 
-        <button
-          className="terminal-send-btn"
-          type="submit"
-          disabled={running || !sql.trim()}
-          title="执行命令"
-        >
-          {running ? <Loader2 size={16} className="status-spinner" /> : <ArrowRight size={18} />}
-        </button>
+          <button
+            className="terminal-send-btn"
+            type="submit"
+            disabled={running || !sql.trim()}
+            title="执行命令"
+          >
+            {running ? <Loader2 size={16} className="status-spinner" /> : <ArrowRight size={18} />}
+          </button>
+        </LiquidGlassContainer>
       </form>
     </div>
   );

@@ -658,7 +658,7 @@
   max-height: calc(100vh - 34px);
   overflow: auto;
   border: 1px solid rgba(255, 255, 255, 0.72);
-  border-radius: 12px;
+  border-radius: var(--radius-modal, 24px);
   background: rgba(255, 255, 255, 0.86);
   box-shadow: 0 28px 90px rgba(15, 23, 42, 0.28);
 }
@@ -1093,7 +1093,7 @@
 .audit-detail-modal {
   width: min(640px, 92%);
   max-height: min(88dvh, calc(100dvh - 48px));
-  border-radius: 24px;
+  border-radius: var(--radius-modal, 24px);
   border: 1px solid rgba(255, 255, 255, 0.6);
   background: rgba(255, 255, 255, 0.65);
   backdrop-filter: blur(28px) saturate(1.8);
@@ -1133,10 +1133,12 @@
 .audit-detail-glass-header {
   position: relative;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 20px 24px;
+  padding: 10px 18px;
+  min-height: 44px;
+  box-sizing: border-box;
   border-bottom: 1px solid rgba(255, 255, 255, 0.5);
   background: rgba(255, 255, 255, 0.35);
   backdrop-filter: blur(16px);
@@ -1147,14 +1149,14 @@
 .audit-detail-head {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   flex: 1;
   min-width: 0;
 }
 
 .audit-detail-head .audit-action-icon {
-  width: 40px;
-  height: 40px;
+  width: 30px;
+  height: 30px;
   flex-shrink: 0;
 }
 
@@ -1172,9 +1174,9 @@
 }
 
 .audit-detail-head h3 {
-  margin: 2px 0 0;
+  margin: 1px 0 0;
   color: #1e293b;
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 800;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1201,8 +1203,8 @@
 
 .audit-detail-close {
   flex-shrink: 0;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.5);
   backdrop-filter: blur(8px);
@@ -1463,11 +1465,13 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  min-height: 68px;
-  padding: 12px 18px;
+  gap: 12px;
+  min-height: 48px;
+  height: 48px;
+  padding: 0 14px;
+  box-sizing: border-box;
   border: 1px solid rgba(255, 255, 255, 0.75);
-  border-radius: 20px;
+  border-radius: 14px;
   background: rgba(255, 255, 255, 0.65);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(40px) saturate(180%);
@@ -1482,13 +1486,13 @@
 }
 
 .instance-command-icon {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   display: grid;
   place-items: center;
   flex: 0 0 auto;
   border: 1px solid rgba(255, 117, 172, 0.22);
-  border-radius: 11px;
+  border-radius: 10px;
   color: var(--primary, #ff75ac);
   background: rgba(255, 117, 172, 0.12);
 }
@@ -1501,13 +1505,13 @@
 
 .instance-command-count span {
   color: var(--text-dark);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
 }
 
 .instance-command-count strong {
   color: #ff75ac;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 800;
   line-height: 1;
 }
@@ -1559,26 +1563,26 @@
   display: inline-flex !important;
   align-items: center !important;
   gap: 2px !important;
-  height: 36px !important;
-  min-height: 36px !important;
-  max-height: 36px !important;
-  padding: 3px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  max-height: 32px !important;
+  padding: 2px !important;
   border: 1px solid rgba(0, 0, 0, 0.06) !important;
-  border-radius: 12px !important;
+  border-radius: 10px !important;
   background: rgba(0, 0, 0, 0.04) !important;
   box-sizing: border-box !important;
 }
 
 .instance-view-button.icon-only {
-  width: 30px !important;
-  height: 30px !important;
-  min-width: 30px !important;
-  min-height: 30px !important;
-  max-height: 30px !important;
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  min-height: 28px !important;
+  max-height: 28px !important;
   display: grid !important;
   place-items: center !important;
   border: none !important;
-  border-radius: 9px !important;
+  border-radius: 8px !important;
   padding: 0 !important;
   color: var(--text-secondary);
   background: transparent !important;
@@ -1598,23 +1602,24 @@
 
 .instance-view-button.icon-only.active {
   color: #ff75ac !important;
-  background: rgba(255, 255, 255, 0.85) !important;
+  background: rgba(255, 255, 255, 0.95) !important;
   backdrop-filter: blur(20px) saturate(180%) !important;
   -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
   border: 1px solid rgba(255, 255, 255, 0.95) !important;
-  box-shadow: 0 2px 10px rgba(255, 117, 172, 0.2), inset 0 1px 0 rgba(255, 255, 255, 1) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 1) !important;
 }
 
 .instance-action-btn {
-  width: 36px !important;
-  height: 36px !important;
-  min-width: 36px !important;
-  min-height: 36px !important;
-  max-height: 36px !important;
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  max-width: 32px !important;
+  min-height: 32px !important;
+  max-height: 32px !important;
   padding: 0 !important;
   display: grid !important;
   place-items: center !important;
-  border-radius: 12px !important;
+  border-radius: 10px !important;
   background: rgba(0, 0, 0, 0.04) !important;
   border: 1px solid rgba(0, 0, 0, 0.06) !important;
   color: var(--text-dark);
@@ -1624,32 +1629,35 @@
 }
 
 .instance-action-btn:hover {
-  background: rgba(0, 0, 0, 0.08) !important;
+  background: rgba(255, 117, 172, 0.12) !important;
+  border-color: rgba(255, 117, 172, 0.35) !important;
+  color: #ff5b9a !important;
   transform: translateY(-1px);
 }
 
 .create-instance-button.icon-only {
-  width: 36px !important;
-  height: 36px !important;
-  min-width: 36px !important;
-  min-height: 36px !important;
-  max-height: 36px !important;
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  max-width: 32px !important;
+  min-height: 32px !important;
+  max-height: 32px !important;
   padding: 0 !important;
   display: grid !important;
   place-items: center !important;
-  border-radius: 12px !important;
-  background: #ff75ac !important;
+  border-radius: 10px !important;
+  background: linear-gradient(135deg, #ff75ac 0%, #ff5b9a 100%) !important;
   color: #ffffff !important;
   border: none !important;
-  box-shadow: 0 4px 14px rgba(255, 117, 172, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
+  box-shadow: 0 3px 12px rgba(255, 117, 172, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
   box-sizing: border-box !important;
 }
 
 .create-instance-button.icon-only:hover {
-  background: #ff5b9a !important;
-  box-shadow: 0 6px 18px rgba(255, 117, 172, 0.45) !important;
+  background: linear-gradient(135deg, #ff5b9a 0%, #ff3b83 100%) !important;
+  box-shadow: 0 5px 16px rgba(255, 117, 172, 0.45) !important;
   transform: translateY(-1px) scale(1.04);
 }
 
@@ -1670,10 +1678,12 @@
 [data-theme="dark"] .instance-view-switcher {
   background: rgba(255, 255, 255, 0.06) !important;
   border-color: rgba(255, 255, 255, 0.1) !important;
+  border-radius: 10px !important;
 }
 
 [data-theme="dark"] .instance-view-button.icon-only {
   color: #aeaeb2 !important;
+  border-radius: 8px !important;
 }
 
 [data-theme="dark"] .instance-view-button.icon-only:hover {
@@ -1694,16 +1704,18 @@
   background: rgba(255, 255, 255, 0.08) !important;
   border-color: rgba(255, 255, 255, 0.12) !important;
   color: #f5f5f7 !important;
+  border-radius: 10px !important;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
 }
 
 [data-theme="dark"] .instance-action-btn:hover {
-  background: rgba(255, 255, 255, 0.14) !important;
-  border-color: rgba(255, 117, 172, 0.4) !important;
+  background: rgba(255, 117, 172, 0.18) !important;
+  border-color: rgba(255, 117, 172, 0.45) !important;
   color: #ff9bc8 !important;
 }
 
 [data-theme="dark"] .create-instance-button.icon-only {
+  border-radius: 10px !important;
   background: linear-gradient(135deg, #ff75ac 0%, #ff5b9a 100%) !important;
   box-shadow: 0 4px 16px rgba(255, 117, 172, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
 }
@@ -3219,10 +3231,12 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 14px;
-    min-height: 52px;
+    padding: 0 12px;
+    min-height: 48px;
+    height: 48px;
+    box-sizing: border-box;
     gap: 8px;
-    border-radius: 16px;
+    border-radius: 14px;
   }
 
   .instance-command-main {
@@ -3537,13 +3551,13 @@
   }
 
   .terminal-command-row {
-    gap: 8px !important;
+    gap: 0 !important;
   }
 
   .terminal-input-wrap {
-    height: 42px !important;
-    border-radius: 13px !important;
-    padding: 0 4px 0 10px !important;
+    height: 44px !important;
+    border-radius: 999px !important;
+    padding: 0 3px 0 10px !important;
   }
 
   .terminal-cmd-input {
@@ -3551,10 +3565,10 @@
   }
 
   .terminal-send-btn {
-    width: 42px !important;
-    height: 42px !important;
-    min-width: 42px !important;
-    border-radius: 13px !important;
+    width: 36px !important;
+    height: 36px !important;
+    min-width: 36px !important;
+    border-radius: 50% !important;
   }
 
   .terminal-history-popover {
@@ -3575,7 +3589,7 @@
     max-width: 100dvw !important;
     height: 100dvh !important;
     max-height: 100dvh !important;
-    border-radius: 0 !important;
+    border-radius: var(--radius-modal, 24px) !important;
     border: none !important;
     margin: 0 !important;
     box-shadow: none !important;
@@ -3855,7 +3869,7 @@
     height: 100dvh !important;
     max-height: 100dvh !important;
     min-height: 100dvh !important;
-    border-radius: 0 !important;
+    border-radius: var(--radius-modal, 24px) !important;
     border: none !important;
     margin: 0 !important;
     box-shadow: none !important;
@@ -3878,7 +3892,8 @@
     position: sticky !important;
     top: 0 !important;
     z-index: 15 !important;
-    padding: max(14px, env(safe-area-inset-top)) 16px 12px !important;
+    padding: max(8px, env(safe-area-inset-top)) 14px 8px !important;
+    min-height: 40px !important;
     background: rgba(255, 255, 255, 0.85) !important;
     backdrop-filter: blur(24px) saturate(190%) !important;
     -webkit-backdrop-filter: blur(24px) saturate(190%) !important;
@@ -4097,8 +4112,11 @@ button,
   }
 
   .instance-terminal-topbar {
-    padding: 8px 12px;
+    height: 40px;
+    min-height: 40px;
+    padding: 0 12px;
     gap: 8px;
+    box-sizing: border-box;
   }
 
   .instance-terminal-topbar .glass-back-button .back-btn-label {
@@ -4192,7 +4210,7 @@ button,
     max-width: 100dvw !important;
     height: 100dvh !important;
     max-height: 100dvh !important;
-    border-radius: 0 !important;
+    border-radius: var(--radius-modal, 24px) !important;
     border: none !important;
     margin: 0 !important;
     box-shadow: none !important;
@@ -4211,7 +4229,7 @@ button,
     min-width: 0;
     overflow-x: hidden;
     overscroll-behavior: contain;
-    border-radius: 8px;
+    border-radius: var(--radius-modal, 24px);
   }
 
   /* --- Scheduled Task Modal Mobile Adaptation --- */
@@ -4227,7 +4245,8 @@ button,
     position: sticky !important;
     top: 0 !important;
     z-index: 15 !important;
-    padding: max(14px, env(safe-area-inset-top)) 16px 12px !important;
+    padding: max(8px, env(safe-area-inset-top)) 14px 8px !important;
+    min-height: 40px !important;
     background: rgba(255, 255, 255, 0.8) !important;
     backdrop-filter: blur(24px) saturate(190%) !important;
     -webkit-backdrop-filter: blur(24px) saturate(190%) !important;
@@ -4261,9 +4280,9 @@ button,
   }
 
   .task-modal-panel .modal-title-icon-badge {
-    width: 36px !important;
-    height: 36px !important;
-    border-radius: 10px !important;
+    width: 28px !important;
+    height: 28px !important;
+    border-radius: 8px !important;
     flex-shrink: 0 !important;
   }
 
@@ -4273,7 +4292,7 @@ button,
   }
 
   .task-modal-panel .modal-title {
-    font-size: 16px !important;
+    font-size: 14px !important;
     font-weight: 750 !important;
     margin: 0 !important;
     line-height: 1.25 !important;
@@ -4482,7 +4501,7 @@ button,
     max-width: 100dvw !important;
     height: 100dvh !important;
     max-height: 100dvh !important;
-    border-radius: 0 !important;
+    border-radius: var(--radius-modal, 24px) !important;
     border: none !important;
     margin: 0 !important;
     background: rgba(255, 255, 255, 0.96) !important;
@@ -4507,7 +4526,8 @@ button,
     position: sticky !important;
     top: 0 !important;
     z-index: 15 !important;
-    padding: max(14px, env(safe-area-inset-top)) 16px 12px !important;
+    padding: max(8px, env(safe-area-inset-top)) 14px 8px !important;
+    min-height: 40px !important;
     background: rgba(255, 255, 255, 0.85) !important;
     backdrop-filter: blur(24px) saturate(190%) !important;
     -webkit-backdrop-filter: blur(24px) saturate(190%) !important;
@@ -4540,9 +4560,9 @@ button,
   }
 
   .instance-settings-modal .modal-title-icon-badge {
-    width: 36px !important;
-    height: 36px !important;
-    border-radius: 10px !important;
+    width: 28px !important;
+    height: 28px !important;
+    border-radius: 8px !important;
     flex-shrink: 0 !important;
   }
 
@@ -4552,14 +4572,14 @@ button,
   }
 
   .instance-settings-modal .modal-title {
-    font-size: 16px !important;
+    font-size: 14px !important;
     font-weight: 750 !important;
     margin: 0 !important;
     line-height: 1.25 !important;
   }
 
   .instance-settings-modal .modal-subtitle {
-    font-size: 11.5px !important;
+    font-size: 11px !important;
     max-width: 100% !important;
     overflow: hidden !important;
     text-overflow: ellipsis !important;
@@ -4569,10 +4589,10 @@ button,
   }
 
   .instance-settings-modal .modal-close-btn {
-    width: 32px !important;
-    height: 32px !important;
-    min-width: 32px !important;
-    flex: 0 0 32px !important;
+    width: 28px !important;
+    height: 28px !important;
+    min-width: 28px !important;
+    flex: 0 0 28px !important;
     margin-left: auto !important;
     display: flex !important;
     align-items: center !important;
@@ -4760,7 +4780,8 @@ button,
   }
 
   .modal-backdrop > .modal-panel .modal-header {
-    padding: max(14px, env(safe-area-inset-top)) 16px 12px !important;
+    padding: max(8px, env(safe-area-inset-top)) 14px 8px !important;
+    min-height: 40px !important;
     flex-shrink: 0 !important;
     position: sticky !important;
     top: 0 !important;
@@ -5035,7 +5056,7 @@ button,
 
 .file-preview-modal {
   background: var(--bg-surface, #ffffff);
-  border-radius: 12px;
+  border-radius: var(--radius-modal, 24px);
   width: 90%;
   max-width: 900px;
   height: 80%;
@@ -5632,9 +5653,10 @@ button,
     align-items: center !important;
     justify-content: space-between !important;
     gap: 8px !important;
-    min-height: 50px !important;
-    padding: 8px 12px !important;
-    border-radius: 16px !important;
+    min-height: 48px !important;
+    height: 48px !important;
+    padding: 0 12px !important;
+    border-radius: 14px !important;
     background: rgba(255, 255, 255, 0.75) !important;
     backdrop-filter: blur(28px) saturate(190%) !important;
     -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
@@ -6114,7 +6136,7 @@ button,
   }
 
   .saki-panel.hidden {
-    transform: translateY(28px) scale(0.96) !important;
+    transform: none !important;
   }
 
   .saki-panel:not(.fullscreen).expanded {
@@ -6260,9 +6282,10 @@ button,
     display: inline-flex !important;
     align-items: center;
     gap: 3px;
-    padding: 4px 10px 4px 6px;
-    border-radius: 9999px;
-    font-size: 12px;
+    height: 26px;
+    padding: 0 8px 0 5px;
+    border-radius: 8px;
+    font-size: 11.5px;
     font-weight: 700;
     color: #ffffff;
     background: linear-gradient(135deg, #ff75ac 0%, #f43f5e 100%);
@@ -6274,6 +6297,7 @@ button,
     transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     flex-shrink: 0;
     outline: none;
+    box-sizing: border-box;
   }
 
   .saki-mobile-back-video-btn:active {
@@ -6343,11 +6367,12 @@ button,
     display: none !important;
   }
 
-  .mobile-switch-to-video {
+  .liquid-glass-inner .saki-video-btn.mobile-switch-to-video {
     display: none !important;
   }
 
-  .mobile-switch-to-chat {
+  .liquid-glass-inner .saki-video-btn.mobile-switch-to-chat,
+  .saki-video-btn.mobile-switch-to-chat {
     display: inline-flex !important;
   }
 
@@ -6505,7 +6530,10 @@ button,
   }
 
   .saki-header {
-    padding: 8px 12px;
+    height: 40px;
+    min-height: 40px;
+    padding: 0 10px;
+    box-sizing: border-box;
   }
 
   .saki-fullscreen-toggle {
@@ -6513,9 +6541,11 @@ button,
   }
 
   .saki-panel.fullscreen .saki-header {
-    min-height: auto;
+    min-height: 40px;
+    height: 40px;
     align-items: center;
-    padding: 8px 12px;
+    padding: 0 10px;
+    box-sizing: border-box;
   }
 
   .saki-messages {

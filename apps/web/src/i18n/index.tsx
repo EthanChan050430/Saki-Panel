@@ -3757,7 +3757,6 @@ const domExactTranslationsEn: Record<string, string> = {
   "获取节点连接命令失败": "获取Node连接命令Failed",
   "密钥轮换失败": "密钥轮换Failed",
   "修改节点网络与配置信息": "修改Node网络与配置信息",
-  "仅连接运行了 Saki-Daemon 的机器": "仅连接运行了 Saki-Daemon 的机器",
   "取消编辑": "CancelEdit",
   "粘贴目标机器生成的以 saki_node_ 开头的整串密钥...": "粘贴目标机器生成的以 saki_node_ 开头的整串密钥...",
   "若不同网段，在此填写公网 IP 或域名": "若不同网段，在此填写公网 IP 或域名",

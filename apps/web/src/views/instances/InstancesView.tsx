@@ -168,6 +168,7 @@ import {
   restartPolicyLabel,
   userDisplayLabel
 } from "../../components/common/CommonUI.js";
+import { LiquidGlassContainer } from "../../components/common/LiquidGlass.js";
 import { SakiEmptyState } from "../../components/saki/SakiEmptyState.js";
 import {
   TerminalAutocompleteState,
@@ -269,15 +270,41 @@ export function InstancesView({
   const [terminalHistoryDraft, setTerminalHistoryDraft] = useState("");
   const [terminalAutocompleteState, setTerminalAutocompleteState] = useState<TerminalAutocompleteState | null>(null);
   const [showHistoryMenu, setShowHistoryMenu] = useState(false);
+  const [historyMenuPos, setHistoryMenuPos] = useState<{ left: number; bottom: number } | null>(null);
+  const historyBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  const toggleHistoryMenu = useCallback((e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    setShowHistoryMenu((prev) => {
+      const next = !prev;
+      if (next && historyBtnRef.current) {
+        const rect = historyBtnRef.current.getBoundingClientRect();
+        setHistoryMenuPos({
+          left: Math.max(12, Math.min(window.innerWidth - 352, rect.left - 6)),
+          bottom: Math.max(12, window.innerHeight - rect.top + 10),
+        });
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!showHistoryMenu) return;
-    const handlePointerDown = (event: PointerEvent) => {
-      if (event.target instanceof Element && event.target.closest(".terminal-history-wrap")) return;
+    const handlePointerDown = (event: MouseEvent | PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (
+        target.closest(".terminal-history-btn") ||
+        target.closest(".terminal-history-wrap") ||
+        target.closest(".terminal-history-popover")
+      ) {
+        return;
+      }
       setShowHistoryMenu(false);
     };
-    window.addEventListener("pointerdown", handlePointerDown, true);
-    return () => window.removeEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [showHistoryMenu]);
 
   const [error, setError] = useState("");
@@ -1974,7 +2001,7 @@ export function InstancesView({
                       <Copy size={15} />
                     </button>
                     <button
-                      className="icon-button mini"
+                      className="icon-button mini terminal-expand-btn"
                       title={terminalActions?.isImmersive ? "退出沉浸终端" : "沉浸终端"}
                       type="button"
                       onClick={() => terminalActions?.toggleImmersive()}
@@ -2106,20 +2133,35 @@ export function InstancesView({
                 setShowHistoryMenu(false);
               }}
             >
-              <div className="terminal-input-wrap">
+              <LiquidGlassContainer
+                className="terminal-input-wrap"
+                displacementScale={100}
+                zoom={1.20}
+                refractionIntensity={1.2}
+                blurAmount={0}
+                saturation={108}
+                cornerRadius={24}
+                mode="shader"
+              >
                 <div className="terminal-history-wrap">
                   <button
+                    ref={historyBtnRef}
                     className="terminal-history-btn"
                     type="button"
                     title="历史命令"
-                    style={{ background: "transparent", border: "none", boxShadow: "none", outline: "none" }}
-                    onClick={() => setShowHistoryMenu((v) => !v)}
+                    onClick={toggleHistoryMenu}
                   >
                     <History size={17} />
                   </button>
 
-                  {showHistoryMenu && (
-                    <div className="glass-panel terminal-history-popover">
+                  {showHistoryMenu && historyMenuPos && createPortal(
+                    <div
+                      className="glass-panel terminal-history-popover"
+                      style={{
+                        left: historyMenuPos.left,
+                        bottom: historyMenuPos.bottom,
+                      }}
+                    >
                       <div className="terminal-history-header">
                         <span>历史命令</span>
                         <span className="terminal-history-count">
@@ -2157,7 +2199,8 @@ export function InstancesView({
                           ))
                         )}
                       </div>
-                    </div>
+                    </div>,
+                    document.body
                   )}
                 </div>
 
@@ -2231,16 +2274,16 @@ export function InstancesView({
                       : "实例未运行"
                   }
                 />
-              </div>
 
-              <button
-                className="terminal-send-btn"
-                type="submit"
-                title="发送命令 (Enter)"
-                disabled={!canCommandInput || !terminalCmd.trim()}
-              >
-                <ArrowRight size={18} strokeWidth={2.4} />
-              </button>
+                <button
+                  className="terminal-send-btn"
+                  type="submit"
+                  title="发送命令 (Enter)"
+                  disabled={!canCommandInput || !terminalCmd.trim()}
+                >
+                  <ArrowRight size={18} strokeWidth={2.4} />
+                </button>
+              </LiquidGlassContainer>
             </form>
           </section>
 
@@ -2461,7 +2504,7 @@ export function InstancesView({
         <div className="instance-command-center">
           <div className="instance-command-main">
             <div className="instance-command-icon">
-              <TerminalIcon size={22} />
+              <TerminalIcon size={17} />
             </div>
             <div className="instance-command-count">
               <span>实例与数据库</span>

@@ -864,6 +864,12 @@ export function SettingsView({
                 </button>
               ))}
             </div>
+            {activeSettingsSection !== "watch" && activeSettingsSection !== "skills" ? (
+              <button className="settings-toc-save-btn primary-button settings-save" disabled={saving || loading} form="settings-config-form" type="submit">
+                <Save size={16} />
+                <span>{saving ? t("common.saving") : t("settings.save")}</span>
+              </button>
+            ) : null}
           </nav>
           <div className="settings-wiki-content">
             {activeSettingsSection === "watch" ? (
@@ -878,7 +884,7 @@ export function SettingsView({
                 onNotice={setNotice}
               />
             ) : (
-              <form className="settings-config-form" onSubmit={(event) => void saveSettings(event)}>
+              <form id="settings-config-form" className="settings-config-form" onSubmit={(event) => void saveSettings(event)}>
                 <SettingsSystemTab
                   isActive={activeSettingsSection === "system"}
                   language={language}
@@ -992,16 +998,6 @@ export function SettingsView({
                   }
                   t={t}
                 />
-
-                {/* Floating Footer Action Bar */}
-                <div className="settings-sticky-footer">
-                  <div className="settings-footer-actions">
-                    <button className="primary-button settings-save" disabled={saving || loading} type="submit">
-                      <Save size={16} />
-                      <span>{saving ? t("common.saving") : t("settings.save")}</span>
-                    </button>
-                  </div>
-                </div>
               </form>
             )}
           </div>

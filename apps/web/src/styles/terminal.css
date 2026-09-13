@@ -57,7 +57,9 @@
   display: flex !important;
   align-items: center !important;
   justify-content: space-between !important;
-  padding: 16px 22px !important;
+  padding: 8px 18px !important;
+  min-height: 42px !important;
+  box-sizing: border-box !important;
   border-bottom: 1px solid rgba(0, 0, 0, 0.06) !important;
   background: rgba(255, 255, 255, 0.4) !important;
   flex-shrink: 0 !important;
@@ -71,13 +73,14 @@
 .modal-title-wrap {
   display: flex !important;
   align-items: center !important;
-  gap: 12px !important;
+  gap: 10px !important;
 }
 
 .modal-title-icon-badge {
-  width: 40px !important;
-  height: 40px !important;
-  border-radius: 12px !important;
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  border-radius: 8px !important;
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
@@ -89,16 +92,16 @@
 
 .modal-title {
   margin: 0 !important;
-  font-size: 17px !important;
+  font-size: 14.5px !important;
   font-weight: 700 !important;
   letter-spacing: -0.3px !important;
   color: inherit !important;
 }
 
 .modal-subtitle {
-  font-size: 12px !important;
+  font-size: 11.5px !important;
   color: #86868b !important;
-  margin-top: 2px !important;
+  margin-top: 1px !important;
   display: block !important;
 }
 
@@ -107,8 +110,9 @@
 }
 
 .modal-close-btn {
-  width: 34px !important;
-  height: 34px !important;
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
   border-radius: 50% !important;
   display: flex !important;
   align-items: center !important;
@@ -618,7 +622,7 @@
   max-width: 1180px !important;
   max-height: min(88dvh, 880px) !important;
   height: auto !important;
-  border-radius: 24px !important;
+  border-radius: var(--radius-modal, 24px) !important;
   background: rgba(255, 255, 255, 0.86) !important;
   backdrop-filter: blur(40px) saturate(210%) brightness(105%) !important;
   -webkit-backdrop-filter: blur(40px) saturate(210%) brightness(105%) !important;
@@ -653,7 +657,9 @@
   justify-content: space-between !important;
   gap: 14px !important;
   flex-wrap: nowrap !important;
-  padding: 16px 22px !important;
+  padding: 8px 18px !important;
+  min-height: 42px !important;
+  box-sizing: border-box !important;
   border-bottom: 1px solid rgba(0, 0, 0, 0.06) !important;
   background: rgba(255, 255, 255, 0.45) !important;
   backdrop-filter: blur(20px) saturate(180%) !important;
@@ -852,7 +858,7 @@
   min-height: 0;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: var(--radius-modal, 20px);
+  border-radius: var(--radius-modal, 24px);
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -891,21 +897,23 @@
 
 .modal-header {
   flex-shrink: 0;
-  padding: 20px 24px;
+  padding: 10px 20px;
+  min-height: 44px;
+  box-sizing: border-box;
   border-bottom: 1px solid rgba(203, 213, 225, 0.4);
   background: linear-gradient(135deg, rgba(255, 117, 172, 0.04) 0%, rgba(14, 165, 233, 0.03) 100%);
 }
 
 .modal-header h2 {
   margin: 0;
-  font-size: 20px;
-  font-weight: 800;
+  font-size: 16px;
+  font-weight: 750;
   color: #1e293b;
 }
 
 .modal-header p {
-  margin: 6px 0 0;
-  font-size: 13px;
+  margin: 2px 0 0;
+  font-size: 12px;
   color: #64748b;
 }
 
@@ -950,32 +958,47 @@
   top: 0;
   z-index: 1;
   background: linear-gradient(135deg, rgba(248,250,252,0.95) 0%, rgba(241,245,249,0.95) 100%);
-  padding: 24px 28px;
+  padding: 10px 20px;
+  min-height: 44px;
+  box-sizing: border-box;
   border-bottom: 1px solid rgba(226,232,240,0.8);
 }
 
 .role-heading-info h2 {
-  font-size: 22px;
-  font-weight: 800;
+  font-size: 16px;
+  font-weight: 750;
   color: #111827;
-  margin-bottom: 6px;
+  margin-bottom: 2px;
 }
 
 .role-heading-info p {
-  font-size: 14px;
+  font-size: 12px;
   color: #6b7280;
   margin: 0;
 }
 
 .section-heading .icon-button {
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  max-width: 28px !important;
+  min-height: 28px !important;
+  max-height: 28px !important;
+  padding: 0 !important;
+  display: grid !important;
+  place-items: center !important;
+  border-radius: 8px !important;
   background: rgba(15, 23, 42, 0.05);
   border: 1px solid rgba(15, 23, 42, 0.1);
-  transition: all 0.2s ease;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-sizing: border-box !important;
 }
 
 .section-heading .icon-button:hover {
-  background: rgba(15, 23, 42, 0.1);
-  transform: scale(1.05);
+  background: rgba(255, 117, 172, 0.12);
+  border-color: rgba(255, 117, 172, 0.35);
+  color: #ff5b9a;
+  transform: translateY(-1px);
 }
 
 .modal-form {
@@ -1456,7 +1479,7 @@
 .terminal-command-row {
   display: flex !important;
   align-items: center !important;
-  gap: 10px !important;
+  gap: 0 !important;
   width: 100% !important;
   flex: 0 0 auto !important;
   padding: 0 !important;
@@ -1467,60 +1490,60 @@
   box-sizing: border-box !important;
 }
 
-.terminal-input-wrap {
+.terminal-input-wrap:not(.liquid-glass-container) {
   flex: 1 !important;
   min-width: 0 !important;
   position: relative !important;
   display: flex !important;
   align-items: center !important;
-  height: 44px !important;
-  border-radius: 14px !important;
-  background: rgba(255, 255, 255, 0.38) !important;
+  height: 48px !important;
+  border-radius: 999px !important;
+  background: rgba(255, 255, 255, 0.75) !important;
   backdrop-filter: blur(32px) saturate(210%) brightness(108%) !important;
   -webkit-backdrop-filter: blur(32px) saturate(210%) brightness(108%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.75) !important;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05), inset 0 1.5px 1px rgba(255, 255, 255, 0.95), inset 0 -1px 1.5px rgba(0, 0, 0, 0.03) !important;
+  border: 1px solid rgba(255, 255, 255, 0.85) !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08), inset 0 1.5px 1px rgba(255, 255, 255, 0.95), inset 0 -1px 1.5px rgba(0, 0, 0, 0.03) !important;
   transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
-  padding: 0 6px 0 12px !important;
+  padding: 0 4px 0 14px !important;
   box-sizing: border-box !important;
 }
 
-.terminal-input-wrap:hover {
-  background: rgba(255, 255, 255, 0.48) !important;
+.terminal-input-wrap:not(.liquid-glass-container):hover {
+  background: rgba(255, 255, 255, 0.85) !important;
   border-color: rgba(255, 255, 255, 0.95) !important;
   box-shadow: 0 12px 34px rgba(255, 117, 172, 0.15), inset 0 1.5px 1px rgba(255, 255, 255, 1) !important;
 }
 
-.terminal-input-wrap:focus-within {
-  background: rgba(255, 255, 255, 0.55) !important;
+.terminal-input-wrap:not(.liquid-glass-container):focus-within {
+  background: rgba(255, 255, 255, 0.92) !important;
   border-color: rgba(255, 117, 172, 0.75) !important;
-  border-radius: 14px !important;
+  border-radius: 999px !important;
   backdrop-filter: blur(32px) saturate(210%) brightness(108%) !important;
   -webkit-backdrop-filter: blur(32px) saturate(210%) brightness(108%) !important;
   box-shadow: 0 12px 36px rgba(255, 117, 172, 0.2), 0 0 0 3.5px rgba(255, 117, 172, 0.18), inset 0 1.5px 1px rgba(255, 255, 255, 1) !important;
 }
 
-[data-theme="dark"] .terminal-input-wrap {
-  background: rgba(20, 22, 34, 0.45) !important;
+[data-theme="dark"] .terminal-input-wrap:not(.liquid-glass-container) {
+  background: rgba(20, 22, 34, 0.78) !important;
   backdrop-filter: blur(36px) saturate(220%) brightness(110%) !important;
   -webkit-backdrop-filter: blur(36px) saturate(220%) brightness(110%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.16) !important;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4), inset 0 1.5px 0.5px rgba(255, 255, 255, 0.25), inset 0 -1px 1px rgba(0, 0, 0, 0.3) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5), inset 0 1.5px 0.5px rgba(255, 255, 255, 0.25), inset 0 -1px 1px rgba(0, 0, 0, 0.3) !important;
 }
 
-[data-theme="dark"] .terminal-input-wrap:hover {
-  background: rgba(26, 29, 44, 0.58) !important;
-  border-color: rgba(255, 255, 255, 0.26) !important;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5), 0 0 18px rgba(255, 117, 172, 0.12), inset 0 1.5px 0.5px rgba(255, 255, 255, 0.35) !important;
+[data-theme="dark"] .terminal-input-wrap:not(.liquid-glass-container):hover {
+  background: rgba(26, 29, 44, 0.85) !important;
+  border-color: rgba(255, 255, 255, 0.3) !important;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6), 0 0 18px rgba(255, 117, 172, 0.12), inset 0 1.5px 0.5px rgba(255, 255, 255, 0.35) !important;
 }
 
-[data-theme="dark"] .terminal-input-wrap:focus-within {
-  background: rgba(28, 31, 48, 0.68) !important;
+[data-theme="dark"] .terminal-input-wrap:not(.liquid-glass-container):focus-within {
+  background: rgba(28, 31, 48, 0.92) !important;
   border-color: rgba(255, 117, 172, 0.65) !important;
-  border-radius: 14px !important;
+  border-radius: 999px !important;
   backdrop-filter: blur(36px) saturate(220%) brightness(110%) !important;
   -webkit-backdrop-filter: blur(36px) saturate(220%) brightness(110%) !important;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55), 0 0 0 3.5px rgba(255, 117, 172, 0.22), inset 0 1.5px 0.5px rgba(255, 255, 255, 0.4) !important;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.65), 0 0 0 3.5px rgba(255, 117, 172, 0.22), inset 0 1.5px 0.5px rgba(255, 255, 255, 0.4) !important;
 }
 
 .terminal-history-wrap {
@@ -1534,6 +1557,9 @@
   box-shadow: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+  z-index: 20 !important;
+  pointer-events: auto !important;
+  flex-shrink: 0 !important;
 }
 
 .terminal-history-btn {
@@ -1548,74 +1574,79 @@
   -webkit-appearance: none !important;
   padding: 0 !important;
   margin: 0 !important;
-  width: 26px !important;
-  height: 26px !important;
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 50% !important;
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
-  color: rgba(255, 117, 172, 0.8) !important;
+  color: #ff2d7a !important;
+  filter: drop-shadow(0 1px 3px rgba(255, 45, 122, 0.45)) !important;
   cursor: pointer !important;
-  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  pointer-events: auto !important;
+  transition: all 0.18s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
   flex-shrink: 0 !important;
+  z-index: 21 !important;
 }
 
 .terminal-history-btn:hover {
-  background: transparent !important;
-  background-color: transparent !important;
-  border: none !important;
-  outline: none !important;
-  box-shadow: none !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  color: #ff5b9a !important;
+  background: rgba(255, 45, 122, 0.12) !important;
+  color: #ff005d !important;
   transform: scale(1.15) !important;
-  filter: drop-shadow(0 0 8px rgba(255, 117, 172, 0.6));
+  filter: drop-shadow(0 0 10px rgba(255, 45, 122, 0.75)) !important;
+}
+
+.terminal-history-btn:active {
+  background: rgba(255, 45, 122, 0.22) !important;
+  transform: scale(0.92) !important;
 }
 
 .terminal-history-btn:focus,
-.terminal-history-btn:active {
-  background: transparent !important;
-  background-color: transparent !important;
-  border: none !important;
+.terminal-history-btn:focus-visible {
   outline: none !important;
-  box-shadow: none !important;
+  box-shadow: 0 0 0 2px rgba(255, 45, 122, 0.35) !important;
 }
 
 [data-theme="dark"] .terminal-history-btn {
   background: transparent !important;
   background-color: transparent !important;
-  color: rgba(255, 117, 172, 0.75) !important;
+  color: #ffa3cc !important;
+  filter: drop-shadow(0 0 8px rgba(255, 138, 190, 0.75)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6)) !important;
 }
 
 [data-theme="dark"] .terminal-history-btn:hover {
-  background: transparent !important;
-  background-color: transparent !important;
-  color: #ff9bc8 !important;
+  background: rgba(255, 163, 204, 0.16) !important;
+  color: #ffffff !important;
+  transform: scale(1.15) !important;
+  filter: drop-shadow(0 0 12px rgba(255, 138, 190, 0.95)) drop-shadow(0 0 4px #ffa3cc) !important;
+}
+
+[data-theme="dark"] .terminal-history-btn:active {
+  background: rgba(255, 163, 204, 0.28) !important;
+  transform: scale(0.92) !important;
 }
 
 .terminal-history-popover {
-  position: absolute !important;
-  bottom: calc(100% + 12px) !important;
-  left: -8px !important;
+  position: fixed !important;
   width: 340px !important;
   max-height: 280px !important;
   border-radius: 16px !important;
-  z-index: 60 !important;
+  z-index: 99999 !important;
   display: flex !important;
   flex-direction: column !important;
   overflow: hidden !important;
-  background: rgba(255, 255, 255, 0.75) !important;
+  background: rgba(255, 255, 255, 0.82) !important;
   backdrop-filter: blur(40px) saturate(200%) brightness(105%) !important;
   -webkit-backdrop-filter: blur(40px) saturate(200%) brightness(105%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.9) !important;
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.12), inset 0 1.5px 1px rgba(255, 255, 255, 1) !important;
-  animation: slideInUp 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  border: 1px solid rgba(255, 255, 255, 0.95) !important;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.16), inset 0 1.5px 1px rgba(255, 255, 255, 1) !important;
+  animation: slideInUp 0.18s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
 }
 
 [data-theme="dark"] .terminal-history-popover {
-  background: rgba(24, 26, 38, 0.82) !important;
-  border-color: rgba(255, 255, 255, 0.16) !important;
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+  background: rgba(24, 26, 38, 0.88) !important;
+  border-color: rgba(255, 255, 255, 0.22) !important;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
 }
 
 .terminal-history-header {
@@ -1823,9 +1854,9 @@ input.terminal-cmd-input::placeholder {
 }
 
 .terminal-send-btn {
-  width: 44px !important;
-  height: 44px !important;
-  min-width: 44px !important;
+  width: 40px !important;
+  height: 40px !important;
+  min-width: 40px !important;
   border-radius: 50% !important;
   display: grid !important;
   place-items: center !important;
@@ -1834,10 +1865,11 @@ input.terminal-cmd-input::placeholder {
   -webkit-backdrop-filter: blur(20px) !important;
   border: 1px solid rgba(255, 255, 255, 0.5) !important;
   color: #ffffff !important;
-  box-shadow: 0 8px 26px rgba(255, 117, 172, 0.42), inset 0 1.5px 1px rgba(255, 255, 255, 0.75) !important;
+  box-shadow: 0 6px 20px rgba(255, 117, 172, 0.38), inset 0 1.5px 1px rgba(255, 255, 255, 0.75) !important;
   cursor: pointer !important;
   transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
   flex-shrink: 0 !important;
+  margin-left: 2px !important;
 }
 
 .terminal-send-btn:hover:not(:disabled) {
@@ -2020,7 +2052,10 @@ input.terminal-cmd-input::placeholder {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  min-height: 44px;
+  height: 44px;
+  padding: 0 16px;
+  box-sizing: border-box;
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
 
@@ -2031,9 +2066,9 @@ input.terminal-cmd-input::placeholder {
 }
 
 .templates-heading-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
   background: rgba(255, 117, 172, 0.12);
   color: #ff75ac;
   display: flex;
@@ -2043,16 +2078,16 @@ input.terminal-cmd-input::placeholder {
 
 .templates-heading-text h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
   color: #1e293b;
   line-height: 1.2;
 }
 
 .templates-count-badge {
-  font-size: 12px;
+  font-size: 11px;
   color: #64748b;
-  margin-top: 2px;
+  margin-top: 1px;
   display: block;
 }
 
@@ -2457,7 +2492,10 @@ input.terminal-cmd-input::placeholder {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  min-height: 44px;
+  height: 44px;
+  padding: 0 16px;
+  box-sizing: border-box;
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
 
@@ -2470,7 +2508,7 @@ input.terminal-cmd-input::placeholder {
 
 .template-heading-main h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
   color: #1e293b;
   overflow: hidden;
@@ -2732,7 +2770,7 @@ input.terminal-cmd-input::placeholder {
 .template-modal-panel {
   width: min(520px, 94%);
   max-height: min(90dvh, 760px);
-  border-radius: 20px;
+  border-radius: var(--radius-modal, 24px);
   background: rgba(255, 255, 255, 0.96);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
@@ -2754,7 +2792,7 @@ input.terminal-cmd-input::placeholder {
   height: 100dvh !important;
   max-height: 100vh !important;
   max-height: 100dvh !important;
-  border-radius: 0 !important;
+  border-radius: var(--radius-modal, 24px) !important;
   border: none !important;
   box-shadow: none !important;
   inset: 0 !important;
@@ -2766,7 +2804,9 @@ input.terminal-cmd-input::placeholder {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 22px 14px;
+  padding: 8px 18px;
+  min-height: 42px;
+  box-sizing: border-box;
   border-bottom: 1px solid rgba(0, 0, 0, 0.07);
 }
 
@@ -2780,15 +2820,15 @@ input.terminal-cmd-input::placeholder {
 .template-modal-title-wrap {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
 }
 
 .template-modal-title-icon {
-  width: 38px;
-  height: 38px;
-  min-width: 38px;
-  border-radius: 10px;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  border-radius: 8px;
   background: rgba(255, 117, 172, 0.12);
   color: #ff75ac;
   display: flex;
@@ -2798,15 +2838,15 @@ input.terminal-cmd-input::placeholder {
 
 .template-modal-title {
   margin: 0;
-  font-size: 16px;
+  font-size: 14.5px;
   font-weight: 700;
   color: #1e293b;
   line-height: 1.2;
 }
 
 .template-modal-subtitle {
-  margin: 3px 0 0;
-  font-size: 12px;
+  margin: 1px 0 0;
+  font-size: 11.5px;
   color: #64748b;
   line-height: 1.4;
 }

@@ -18,8 +18,11 @@
   }
 
   .instance-terminal-topbar {
-    padding: 8px 10px;
+    height: 40px;
+    min-height: 40px;
+    padding: 0 10px;
     gap: 8px;
+    box-sizing: border-box;
   }
 
   .instance-card {
@@ -241,15 +244,17 @@
   .task-modal-panel {
     height: 100dvh !important;
     max-height: 100dvh !important;
-    border-radius: 0 !important;
+    border-radius: var(--radius-modal, 24px) !important;
   }
 
   .task-modal-panel .modal-heading {
-    padding: max(12px, env(safe-area-inset-top)) 12px 10px !important;
+    padding: max(8px, env(safe-area-inset-top)) 12px 8px !important;
+    min-height: 40px !important;
+    box-sizing: border-box !important;
   }
 
   .task-modal-panel .modal-title {
-    font-size: 15px !important;
+    font-size: 14px !important;
   }
 
   .task-modal-panel .modal-subtitle {
@@ -272,15 +277,17 @@
   .instance-settings-modal {
     height: 100dvh !important;
     max-height: 100dvh !important;
-    border-radius: 0 !important;
+    border-radius: var(--radius-modal, 24px) !important;
   }
 
   .instance-settings-modal .glass-modal-header {
-    padding: max(12px, env(safe-area-inset-top)) 12px 10px !important;
+    padding: max(8px, env(safe-area-inset-top)) 12px 8px !important;
+    min-height: 40px !important;
+    box-sizing: border-box !important;
   }
 
   .instance-settings-modal .modal-title {
-    font-size: 15px !important;
+    font-size: 14px !important;
   }
 
   .instance-settings-modal .modal-subtitle {
@@ -481,7 +488,7 @@
     padding: 6px 6px 10px;
   }
 
-  .saki-input-container {
+  .saki-input-container:not(.liquid-glass-container) {
     border-radius: 20px;
     background: rgba(255, 255, 255, 0.82) !important;
     border: 1px solid rgba(255, 255, 255, 0.92) !important;
@@ -495,7 +502,7 @@
     transition: box-shadow 0.3s ease;
   }
 
-  [data-theme="dark"] .saki-input-container {
+  [data-theme="dark"] .saki-input-container:not(.liquid-glass-container) {
     background: rgba(26, 32, 44, 0.78) !important;
     border: 1px solid rgba(255, 255, 255, 0.2) !important;
     box-shadow:
@@ -518,13 +525,15 @@
     line-height: 1.5;
     font-weight: 500;
     letter-spacing: 0.01em;
-    color: #0f172a !important;
+    color: #ffffff !important;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.60), 0 0 1px rgba(0, 0, 0, 0.40);
     background: transparent !important;
     box-shadow: none !important;
   }
 
   .saki-input-main-row textarea::placeholder {
-    color: #64748b !important;
+    color: rgba(255, 255, 255, 0.85) !important;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.60), 0 0 1px rgba(0, 0, 0, 0.40);
   }
 
   [data-theme="dark"] .saki-input-main-row textarea {
@@ -729,7 +738,8 @@
     flex-shrink: 0;
     background: transparent !important;
     border: none !important;
-    color: #64748b !important;
+    color: #ffffff !important;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
     transition: all 0.15s ease;
     cursor: pointer;
     padding: 0 !important;
@@ -744,38 +754,30 @@
   }
 
   .saki-add-btn:hover {
-    background: rgba(148, 163, 184, 0.15) !important;
-    color: #334155 !important;
+    background: transparent !important;
+    color: #ff75ac !important;
+    filter: drop-shadow(0 0 8px rgba(255, 117, 172, 0.85)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.50));
   }
 
   [data-theme="dark"] .saki-add-btn:hover {
-    background: rgba(255, 255, 255, 0.1) !important;
-    color: #e2e8f0 !important;
+    background: transparent !important;
+    color: #ff9bc8 !important;
   }
 
   .saki-add-btn.active {
-    background: rgba(255, 117, 172, 0.2) !important;
-    color: #ff4c92 !important;
+    background: transparent !important;
+    color: #ff75ac !important;
     transform: rotate(45deg);
+    filter: drop-shadow(0 0 8px rgba(255, 117, 172, 0.85)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.50));
+  }
+
+  .saki-add-menu-wrapper {
+    animation: saki-add-menu-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .saki-add-menu {
     min-width: 150px;
-    background: rgba(255, 255, 255, 0.96);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    border-radius: 14px;
-    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.15);
     padding: 6px;
-    z-index: 9999;
-    animation: saki-add-menu-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  [data-theme="dark"] .saki-add-menu {
-    background: rgba(30, 41, 59, 0.98);
-    border-color: rgba(255, 255, 255, 0.1);
-    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
   }
 
   @keyframes saki-add-menu-in {
@@ -954,6 +956,19 @@
   .saki-permission-btn .perm-arrow {
     width: 9px;
     height: 9px;
+  }
+
+  /* Mobile: permission button is icon-only — hide the text label and chevron */
+  .saki-permission-btn {
+    width: 28px;
+    padding: 0;
+    justify-content: center;
+    gap: 0;
+  }
+
+  .saki-permission-btn .perm-label-text,
+  .saki-permission-btn .perm-arrow {
+    display: none;
   }
 
   .saki-permission-dropdown {
@@ -2350,7 +2365,7 @@
     height: 100dvh !important;
     max-height: 100dvh !important;
     min-height: 100dvh !important;
-    border-radius: 0 !important;
+    border-radius: var(--radius-modal, 24px) !important;
     border: none !important;
     margin: 0 !important;
     box-shadow: none !important;
@@ -2373,7 +2388,8 @@
     position: sticky !important;
     top: 0 !important;
     z-index: 15 !important;
-    padding: max(14px, env(safe-area-inset-top)) 16px 12px !important;
+    padding: max(8px, env(safe-area-inset-top)) 14px 8px !important;
+    min-height: 40px !important;
     background: rgba(255, 255, 255, 0.85) !important;
     backdrop-filter: blur(24px) saturate(190%) !important;
     -webkit-backdrop-filter: blur(24px) saturate(190%) !important;
@@ -2732,7 +2748,7 @@
     max-width: 100dvw !important;
     height: 100dvh !important;
     max-height: 100dvh !important;
-    border-radius: 0 !important;
+    border-radius: var(--radius-modal, 24px) !important;
     border: none !important;
     margin: 0 !important;
     box-shadow: none !important;

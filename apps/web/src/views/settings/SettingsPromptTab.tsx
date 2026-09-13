@@ -22,7 +22,7 @@ export const SettingsPromptTab = memo(function SettingsPromptTab({
     >
       <div className="settings-group-title">
         <div className="settings-group-icon">
-          <TextQuote size={20} />
+          <TextQuote size={16} />
         </div>
         <div>
           <h3>{t("settings.prompt")}</h3>

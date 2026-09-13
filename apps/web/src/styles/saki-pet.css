@@ -33,6 +33,22 @@
   pointer-events: none;
 }
 
+/* Reappear only after the composer has collapsed into its line and vanished */
+.saki-pet-stage:not(.hiding) {
+  animation: saki-launcher-pop-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.6s backwards;
+}
+
+@keyframes saki-launcher-pop-in {
+  from {
+    opacity: 0;
+    transform: translate(var(--saki-x, 0px), calc(var(--saki-y, 0px) + 18px));
+  }
+  to {
+    opacity: 1;
+    transform: translate(var(--saki-x, 0px), var(--saki-y, 0px));
+  }
+}
+
 .saki-pet-stage.edge-attached {
   width: 58px;
   height: 92px;
@@ -171,11 +187,16 @@
   width: 100%;
   padding: 5px 7px 6px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.82);
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  box-shadow: 0 8px 20px rgba(49, 46, 129, 0.12);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  background: rgba(255, 255, 255, 0.14) !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  border-top-color: rgba(255, 255, 255, 0.55) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.18) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 8px 20px rgba(49, 46, 129, 0.10) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
 }
 
 .saki-pet-nameplate-top {
@@ -258,18 +279,33 @@
 .saki-pet-petal {
   width: 40px;
   height: 40px;
-  border: 1px solid rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  border-top-color: rgba(255, 255, 255, 0.55) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.18) !important;
   border-radius: 13px;
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 6px 16px rgba(49, 46, 129, 0.1);
+  background: rgba(255, 255, 255, 0.14) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 6px 16px rgba(49, 46, 129, 0.09) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 0;
-  color: #64748b;
+  color: #334155;
   cursor: pointer;
-  transition: transform 160ms ease, box-shadow 160ms ease, color 160ms ease;
+  transition: transform 160ms ease, box-shadow 160ms ease, color 160ms ease, background 160ms ease;
+}
+
+.saki-pet-petal:hover {
+  background: rgba(255, 255, 255, 0.25) !important;
+  border-color: rgba(255, 255, 255, 0.55) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.5),
+    0 8px 20px rgba(255, 117, 172, 0.25) !important;
 }
 
 .saki-pet-petal span {
@@ -310,25 +346,46 @@
 .saki-pet-chip,
 .saki-pet-play-row button {
   height: 22px;
-  padding: 0 6px;
+  padding: 0 8px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  background: rgba(255, 255, 255, 0.9);
-  color: #475569;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  border-top-color: rgba(255, 255, 255, 0.55) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.18) !important;
+  background: rgba(255, 255, 255, 0.14) !important;
+  color: #1e293b !important;
   font-size: 10px;
   font-weight: 700;
   display: inline-flex;
   align-items: center;
   gap: 3px;
   cursor: pointer;
-  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.07);
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 4px 10px rgba(15, 23, 42, 0.07) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  transition: all 0.16s ease;
+}
+
+.saki-pet-chip:hover,
+.saki-pet-play-row button:hover {
+  background: rgba(255, 255, 255, 0.25) !important;
+  border-color: rgba(255, 255, 255, 0.55) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.5),
+    0 6px 14px rgba(255, 117, 172, 0.2) !important;
+  color: #ff5b9a !important;
 }
 
 .saki-pet-chip.active,
 .saki-pet-play-row button.active {
-  color: #db2777;
-  background: #fff1f6;
-  border-color: rgba(255, 117, 172, 0.35);
+  color: #ff4088 !important;
+  background: rgba(255, 117, 172, 0.25) !important;
+  border-color: rgba(255, 117, 172, 0.55) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 2px 8px rgba(255, 117, 172, 0.3) !important;
 }
 
 .saki-pet-bubble {
@@ -340,12 +397,20 @@
   max-width: min(220px, 70vw);
   padding: 7px 10px;
   border-radius: 12px 12px 12px 4px;
-  background: #fff;
-  color: #334155;
+  background: rgba(255, 255, 255, 0.18) !important;
+  border: 1px solid rgba(255, 255, 255, 0.40) !important;
+  border-top-color: rgba(255, 255, 255, 0.60) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.20) !important;
+  color: #0f172a !important;
   font-size: 12px;
   font-weight: 650;
   line-height: 1.4;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.45),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 10px 24px rgba(15, 23, 42, 0.12) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
   z-index: 6;
   pointer-events: none;
   white-space: normal;
@@ -437,11 +502,16 @@
   top: 8px;
   width: 248px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.94);
-  border: 1px solid rgba(255, 255, 255, 0.75);
-  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  background: rgba(255, 255, 255, 0.16) !important;
+  border: 1px solid rgba(255, 255, 255, 0.38) !important;
+  border-top-color: rgba(255, 255, 255, 0.60) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.18) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.40),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 18px 40px rgba(15, 23, 42, 0.14) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
   z-index: 7;
   overflow: hidden;
 }
@@ -619,6 +689,122 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* ====== 换装面板 ====== */
+.saki-pet-skin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.saki-pet-skin-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.saki-pet-skin-item:hover:not(:disabled) {
+  border-color: #ffb3d1;
+  box-shadow: 0 0 0 2px rgba(255, 117, 172, 0.12);
+}
+
+.saki-pet-skin-item.is-active {
+  border-color: #ff75ac;
+  background: linear-gradient(135deg, #fff5f9, #fff);
+  box-shadow: 0 0 0 2px rgba(255, 117, 172, 0.18);
+}
+
+.saki-pet-skin-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.saki-pet-skin-thumb {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+}
+
+.saki-pet-skin-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.saki-pet-skin-default {
+  background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
+  color: #38bdf8;
+}
+
+.saki-pet-skin-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.saki-pet-skin-info b {
+  font-size: 12px;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saki-pet-skin-info small {
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.saki-pet-skin-badge {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #f1f5f9;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.saki-pet-skin-badge.is-active {
+  background: #ff75ac;
+  color: #fff;
+}
+
+.saki-pet-skin-empty {
+  padding: 16px 8px;
+  text-align: center;
+}
+
+.saki-pet-skin-empty p {
+  margin: 0;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+
 
 .saki-pet-pomo {
   align-items: center;
@@ -810,9 +996,11 @@
   height: 32px;
   padding: 0 12px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(255, 117, 172, 0.28);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+  background: rgba(255, 255, 255, 0.60);
+  border: 1px solid rgba(255, 117, 172, 0.32);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(22px) saturate(185%);
+  -webkit-backdrop-filter: blur(22px) saturate(185%);
   font-size: 12px;
   font-weight: 700;
   color: #db2777;
@@ -1031,22 +1219,152 @@
   background: rgba(244, 63, 94, 0.16);
 }
 
-[data-theme="dark"] .saki-pet-nameplate,
-[data-theme="dark"] .saki-pet-petal,
+/* 深色模式透明液态玻璃 — 统一玻璃底色/边框/内高光 */
+[data-theme="dark"] .saki-pet-nameplate {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-top-color: rgba(255, 255, 255, 0.30) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.10) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 8px 20px rgba(0, 0, 0, 0.35) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  color: #f1f5f9 !important;
+}
+
+[data-theme="dark"] .saki-pet-petal {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-top-color: rgba(255, 255, 255, 0.30) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.10) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 6px 16px rgba(0, 0, 0, 0.30) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  color: #cbd5e1 !important;
+}
+
+[data-theme="dark"] .saki-pet-petal:hover {
+  background: rgba(255, 255, 255, 0.14) !important;
+  border-color: rgba(255, 255, 255, 0.35) !important;
+  color: #ff9bc8 !important;
+}
+
 [data-theme="dark"] .saki-pet-chip,
-[data-theme="dark"] .saki-pet-play-row button,
-[data-theme="dark"] .saki-pet-widget-card,
-[data-theme="dark"] .saki-pet-bubble,
+[data-theme="dark"] .saki-pet-play-row button {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-top-color: rgba(255, 255, 255, 0.30) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.10) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 4px 10px rgba(0, 0, 0, 0.30) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  color: #cbd5e1 !important;
+}
+
+[data-theme="dark"] .saki-pet-chip:hover,
+[data-theme="dark"] .saki-pet-play-row button:hover {
+  background: rgba(255, 255, 255, 0.14) !important;
+  border-color: rgba(255, 255, 255, 0.35) !important;
+  color: #ff9bc8 !important;
+}
+
+[data-theme="dark"] .saki-pet-chip.active,
+[data-theme="dark"] .saki-pet-play-row button.active {
+  background: rgba(255, 117, 172, 0.28) !important;
+  border-color: rgba(255, 117, 172, 0.55) !important;
+  color: #ff9bc8 !important;
+}
+
+[data-theme="dark"] .saki-pet-bubble {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.20) !important;
+  border-top-color: rgba(255, 255, 255, 0.32) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.10) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 10px 24px rgba(0, 0, 0, 0.40) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  color: #f1f5f9 !important;
+}
+
+[data-theme="dark"] .saki-pet-widget-card {
+  background: rgba(255, 255, 255, 0.07) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-top-color: rgba(255, 255, 255, 0.30) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.10) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 18px 40px rgba(0, 0, 0, 0.50) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  color: #f1f5f9 !important;
+}
+
 [data-theme="dark"] .saki-pet-pomo-chip {
-  background: rgba(15, 23, 42, 0.88);
-  border-color: rgba(255, 255, 255, 0.08);
-  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid rgba(255, 117, 172, 0.35) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.25),
+    0 10px 24px rgba(0, 0, 0, 0.40) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
+  color: #ffb3d1 !important;
 }
 
 [data-theme="dark"] .saki-pet-widget-card header strong,
 [data-theme="dark"] .saki-pet-feed-item b,
 [data-theme="dark"] .saki-pet-clock-row {
   color: #f8fafc;
+}
+
+[data-theme="dark"] .saki-pet-skin-item {
+  border-color: rgba(51, 65, 85, 0.8);
+  background: #1e293b;
+}
+
+[data-theme="dark"] .saki-pet-skin-item:hover:not(:disabled) {
+  border-color: #ff75ac;
+  box-shadow: 0 0 0 2px rgba(255, 117, 172, 0.2);
+}
+
+[data-theme="dark"] .saki-pet-skin-item.is-active {
+  background: linear-gradient(135deg, rgba(255, 117, 172, 0.12), #1e293b);
+  border-color: #ff75ac;
+}
+
+[data-theme="dark"] .saki-pet-skin-thumb {
+  background: #334155;
+  color: #64748b;
+}
+
+[data-theme="dark"] .saki-pet-skin-default {
+  background: linear-gradient(135deg, #1e3a5f, #0f172a);
+  color: #60a5fa;
+}
+
+[data-theme="dark"] .saki-pet-skin-info b {
+  color: #f1f5f9;
+}
+
+[data-theme="dark"] .saki-pet-skin-info small,
+[data-theme="dark"] .saki-pet-skin-badge,
+[data-theme="dark"] .saki-pet-skin-empty p {
+  color: #64748b;
+}
+
+[data-theme="dark"] .saki-pet-skin-badge {
+  background: #334155;
 }
 
 [data-theme="dark"] .saki-pet-petal.chat {

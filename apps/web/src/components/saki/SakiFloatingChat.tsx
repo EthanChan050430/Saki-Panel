@@ -172,6 +172,7 @@ import {
 } from "../../utils/path.js";
 import { newClientId } from "../../utils/id.js";
 import { MarkdownContent, SakiPathOpenContext } from "../common/MarkdownContent.js";
+import { LiquidGlassContainer } from "../common/LiquidGlass.js";
 import { isSakiPetTouchUi, useSakiPet } from "./pet/sakiPetState.js";
 import {
   SakiAttachmentChip,
@@ -191,7 +192,6 @@ import {
   isSakiFileRollbackAction,
   isSakiRollbackableFileEdit,
   isSakiWorkMood,
-  latestSakiConversationForContext,
   mergeSakiActionList,
   mergeSakiFinalText,
   mergeSakiFinalTimeline,
@@ -787,7 +787,6 @@ export function SakiFloatingChat({
   const conversationsRef = useRef<Record<string, LocalSakiMessage[]>>({});
   const previousContextKeyRef = useRef(contextKey);
   const restoringContextRef = useRef(false);
-  const initialConversationLoadedRef = useRef(false);
   const annotationModeRef = useRef(false);
   const launcherAttachedEdge = launcherPosition ? sakiLauncherAttachedEdgeForPosition(launcherPosition, pet.scale) : null;
   const launcherEdgeAttached = Boolean(launcherAttachedEdge) && !open && !launcherDragging && !sakiFileHoverActive && !fileDragActive;
@@ -1413,16 +1412,8 @@ export function SakiFloatingChat({
     };
   }, [annotationMode]);
 
-  useEffect(() => {
-    if (initialConversationLoadedRef.current) return;
-    initialConversationLoadedRef.current = true;
-    const allStored = readSakiConversations();
-    const storedConversation = latestSakiConversationForContext(allStored, contextKey) ?? allStored[0];
-    if (!storedConversation) return;
-    restoringContextRef.current = true;
-    setActiveConversationId(storedConversation.id);
-    setMessages(storedConversation.messages);
-  }, [contextKey]);
+  // NOTE: Saki always starts a fresh conversation when the panel mounts —
+  // past conversations stay available in the history panel but are never auto-restored.
 
   const syncConversationToCloud = useCallback((conv: StoredSakiConversation) => {
     if (!token || !hasPersistableSakiSpeech(conv.messages)) return;
@@ -1504,23 +1495,15 @@ export function SakiFloatingChat({
       return;
     }
 
+    // Always start a fresh conversation when switching views/instances —
+    // stored conversations remain in history but are not auto-restored.
     restoringContextRef.current = true;
-    const allStored = readSakiConversations();
-    const storedConversation = latestSakiConversationForContext(allStored, contextKey) ?? allStored[0];
-    if (storedConversation) {
-      activeConversationIdRef.current = storedConversation.id;
-      setActiveConversationId(storedConversation.id);
-      setMessages(storedConversation.messages);
-    } else {
-      const newId = newClientId();
-      activeConversationIdRef.current = newId;
-      setActiveConversationId(newId);
-      setMessages(
-        conversationsRef.current[contextKey] ?? [
-          createSakiWelcomeMessage(getSakiWelcomeMessageText(instance, panelContext.label))
-        ]
-      );
-    }
+    const newId = newClientId();
+    activeConversationIdRef.current = newId;
+    setActiveConversationId(newId);
+    setMessages([
+      createSakiWelcomeMessage(getSakiWelcomeMessageText(instance, panelContext.label))
+    ]);
     setDraft("");
     setPanelError(null);
     setContextTitle(null);
@@ -1570,16 +1553,8 @@ export function SakiFloatingChat({
           }
           const merged = sortSakiConversationsByTime([...map.values()]).slice(0, 80);
           writeSakiConversations(merged);
-
-          if (!hasPersistableSakiSpeech(messages)) {
-            const latestForCtx = latestSakiConversationForContext(merged, contextKey) ?? merged[0];
-            if (latestForCtx && hasPersistableSakiSpeech(latestForCtx.messages)) {
-              restoringContextRef.current = true;
-              activeConversationIdRef.current = latestForCtx.id;
-              setActiveConversationId(latestForCtx.id);
-              setMessages(latestForCtx.messages);
-            }
-          }
+          // Do not auto-restore the latest cloud conversation — the current
+          // (fresh) conversation stays active; history remains listed.
           return merged;
         });
       } catch {
@@ -2252,7 +2227,24 @@ export function SakiFloatingChat({
     composerNoticeTimerRef.current = window.setTimeout(() => {
       setComposerNotice(null);
       composerNoticeTimerRef.current = null;
-    }, 3600);
+    }, 4000);
+  }
+
+  function handleNoticeMouseEnter() {
+    if (composerNoticeTimerRef.current !== null) {
+      window.clearTimeout(composerNoticeTimerRef.current);
+      composerNoticeTimerRef.current = null;
+    }
+  }
+
+  function handleNoticeMouseLeave() {
+    if (composerNoticeTimerRef.current !== null) {
+      window.clearTimeout(composerNoticeTimerRef.current);
+    }
+    composerNoticeTimerRef.current = window.setTimeout(() => {
+      setComposerNotice(null);
+      composerNoticeTimerRef.current = null;
+    }, 2400);
   }
 
   function stopSelectionAnnotation(notice?: string) {
@@ -3836,6 +3828,42 @@ export function SakiFloatingChat({
             <FileText size={18} />
             <span>松开交给 Saki</span>
           </div>
+        ) : null}
+
+        {composerNotice ? (
+          <LiquidGlassContainer
+            className="saki-composer-notice-toast"
+            displacementScale={100}
+            zoom={1.20}
+            refractionIntensity={1.2}
+            blurAmount={0}
+            saturation={108}
+            cornerRadius={999}
+            mode="shader"
+            role="status"
+            onMouseEnter={handleNoticeMouseEnter}
+            onMouseLeave={handleNoticeMouseLeave}
+          >
+            <div className="saki-composer-notice-icon" aria-hidden="true">
+              <Sparkles size={14} />
+            </div>
+            <span className="saki-composer-notice-text">{composerNotice}</span>
+            <button
+              type="button"
+              className="saki-composer-notice-close"
+              onClick={() => {
+                setComposerNotice(null);
+                if (composerNoticeTimerRef.current !== null) {
+                  window.clearTimeout(composerNoticeTimerRef.current);
+                  composerNoticeTimerRef.current = null;
+                }
+              }}
+              title="关闭提示"
+              aria-label="关闭提示"
+            >
+              <X size={13} />
+            </button>
+          </LiquidGlassContainer>
         ) : null}
 
         <div className="saki-messages-container">

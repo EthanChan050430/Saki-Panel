@@ -5,39 +5,48 @@
 /* ---- Reliability view ---- */
 
 .reliability-header-block .section-heading {
-  padding: 16px 20px;
+  min-height: 44px;
+  height: 44px;
+  padding: 0 16px;
+  box-sizing: border-box;
 }
 
 .reliability-header-tools {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
 .reliability-days {
   display: inline-flex;
-  gap: 4px;
-  padding: 3px;
-  border-radius: 12px;
+  align-items: center;
+  gap: 2px;
+  height: 32px;
+  padding: 2px;
+  border-radius: 10px;
   background: var(--surface-bg-faint, rgba(255, 255, 255, 0.32));
   border: 1px solid var(--surface-border-subtle, rgba(226, 232, 240, 0.8));
+  box-sizing: border-box;
 }
 
 .reliability-days button {
+  height: 28px;
   border: none;
   background: transparent;
   color: var(--text-secondary, #86868b);
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
-  padding: 5px 12px;
-  border-radius: 9px;
+  padding: 0 10px;
+  border-radius: 8px;
   cursor: pointer;
+  box-sizing: border-box;
   transition: background var(--duration-fast) var(--ease-smooth), color var(--duration-fast) var(--ease-smooth);
 }
 
 .reliability-days button:hover {
   color: var(--text-dark, #1d1d1f);
+  background: rgba(0, 0, 0, 0.04);
 }
 
 .reliability-days button.active {

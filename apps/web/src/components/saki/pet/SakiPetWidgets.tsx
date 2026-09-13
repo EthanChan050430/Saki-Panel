@@ -1,9 +1,10 @@
 import React, { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, ListMusic, Pause, Play, Plus, Repeat, Repeat1, SkipBack, SkipForward, Trash2, Upload, Volume2, X } from "lucide-react";
+import { Check, ListMusic, Pause, Play, Plus, Repeat, Repeat1, SkipBack, SkipForward, Trash2, Upload, Volume2, X, Shirt, Sparkles } from "lucide-react";
 import type { SakiPetController, SakiPetNote, SakiPetSticker } from "./sakiPetState.js";
 import { weatherGlyph, weatherLabel } from "./sakiPetState.js";
 import { formatTrackTime, sakiMusicAccept } from "./sakiPetMusic.js";
+import { usePlugins } from "../../../plugins/PluginContext.js";
 
 function formatClock(ms: number) {
   const d = new Date(ms);
@@ -387,13 +388,109 @@ function CalendarPanel({ pet, language }: { pet: SakiPetController; language?: s
 }
 
 function SkinsPanel({ isEn }: { pet: SakiPetController; isEn: boolean }) {
+  const { installedPlugins, activeSkin, setActiveSkin, loading } = usePlugins();
+  const [switchingId, setSwitchingId] = useState<string | null>(null);
+
+  const skinPlugins = useMemo(
+    () => installedPlugins.filter((p) => p.manifest.type === "skin"),
+    [installedPlugins]
+  );
+
+  const handleSwitch = async (id: string | null) => {
+    const tag = id ?? "__default__";
+    setSwitchingId(tag);
+    try {
+      await setActiveSkin(id);
+    } finally {
+      setSwitchingId(null);
+    }
+  };
+
+  const isDefaultActive = !activeSkin;
+
   return (
     <div className="saki-pet-widget-body">
       <p className="saki-pet-widget-hint">
         {isEn
-          ? "Outfit packs will be added through plugins. This is just the entry for now."
-          : "皮肤包将通过插件添加，这里先留一个入口。"}
+          ? "Pick an outfit for Saki. Install more from the plugin store."
+          : "为 Saki 选一套皮肤，更多款式可在拓展市场安装。"}
       </p>
+      <div className="saki-pet-skin-list">
+        {/* 默认皮肤 */}
+        <button
+          type="button"
+          className={`saki-pet-skin-item ${isDefaultActive ? "is-active" : ""}`}
+          disabled={loading || switchingId !== null}
+          onClick={() => void handleSwitch(null)}
+        >
+          <div className="saki-pet-skin-thumb saki-pet-skin-default">
+            <Shirt size={20} />
+          </div>
+          <span className="saki-pet-skin-info">
+            <b>{isEn ? "Default" : "默认形象"}</b>
+            <small>
+              {isDefaultActive
+                ? isEn ? "Currently using" : "当前形象"
+                : isEn ? "Switch to default" : "切换到默认"}
+            </small>
+          </span>
+          {isDefaultActive ? (
+            <span className="saki-pet-skin-badge is-active">
+              <Check size={12} />
+            </span>
+          ) : switchingId === "__default__" ? (
+            <span className="saki-pet-skin-badge">…</span>
+          ) : null}
+        </button>
+
+        {skinPlugins.map((p) => {
+          const isCurrent = activeSkin?.id === p.id;
+          const thumbUrl = p.manifest.icon
+            ? `/api/plugins/${encodeURIComponent(p.id)}/assets/${p.manifest.icon.replace(/^[/\\]+/, "")}?v=${encodeURIComponent(p.manifest.version)}`
+            : null;
+          return (
+            <button
+              key={p.id}
+              type="button"
+              className={`saki-pet-skin-item ${isCurrent ? "is-active" : ""} ${!p.enabled ? "is-disabled" : ""}`}
+              disabled={!p.enabled || loading || switchingId !== null}
+              onClick={() => void handleSwitch(p.id)}
+              title={!p.enabled ? (isEn ? "This skin is disabled. Enable it from the plugin store." : "此皮肤已禁用，请到拓展市场启用。") : undefined}
+            >
+              <div className="saki-pet-skin-thumb">
+                {thumbUrl ? (
+                  <img src={thumbUrl} alt="" draggable={false} />
+                ) : (
+                  <Sparkles size={18} />
+                )}
+              </div>
+              <span className="saki-pet-skin-info">
+                <b>{p.manifest.displayName}</b>
+                <small>
+                  {isCurrent
+                    ? isEn ? "Currently using" : "当前形象"
+                    : p.enabled
+                    ? isEn ? "Tap to switch" : "点击切换"
+                    : isEn ? "Disabled" : "已禁用"}
+                </small>
+              </span>
+              {isCurrent ? (
+                <span className="saki-pet-skin-badge is-active">
+                  <Check size={12} />
+                </span>
+              ) : switchingId === p.id ? (
+                <span className="saki-pet-skin-badge">…</span>
+              ) : null}
+            </button>
+          );
+        })}
+
+        {skinPlugins.length === 0 && !loading ? (
+          <div className="saki-pet-skin-empty">
+            <p>{isEn ? "No skin plugins installed yet." : "还没有安装任何皮肤插件。"}</p>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

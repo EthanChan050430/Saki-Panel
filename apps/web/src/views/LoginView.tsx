@@ -6,9 +6,7 @@ import {
   Globe,
   KeyRound,
   LogIn,
-  Moon,
   Sparkles,
-  Sun,
   UserCheck,
   UserPlus
 } from "lucide-react";
@@ -23,6 +21,7 @@ import {
   saveRememberedLogin,
   setManualLogoutSuppressed
 } from "../utils/auth.js";
+import { ThemeMorphIcon } from "../components/common/ThemeMorphIcon.js";
 
 export type AuthMode = "login" | "register";
 
@@ -30,11 +29,13 @@ export function LoginView({
   appearance,
   onLogin,
   darkMode,
+  themeSwitching = false,
   onToggleDarkMode
 }: {
   appearance: PanelAppearanceSettings;
   onLogin: (token: string, user: CurrentUser) => void;
   darkMode: boolean;
+  themeSwitching?: boolean;
   onToggleDarkMode: (e?: React.MouseEvent<HTMLElement>) => void;
 }) {
   useSkinRevision();
@@ -238,12 +239,12 @@ export function LoginView({
             </div>
             <button
               type="button"
-              className="login-theme-toggle theme-toggle-button"
+              className={`login-theme-toggle theme-toggle-button${themeSwitching ? " theme-switching" : ""}`}
               onClick={onToggleDarkMode}
-              title={darkMode ? "切换到浅色模式" : "切换到深色模式"}
-              aria-label={darkMode ? "切换到浅色模式" : "切换到深色模式"}
+              title={darkMode ? (language === "zh-CN" ? "切换到浅色模式" : "Switch to light mode") : (language === "zh-CN" ? "切换到深色模式" : "Switch to dark mode")}
+              aria-label={darkMode ? "Switch to light mode" : "Switch to dark mode"}
             >
-              {darkMode ? <Sun size={16} /> : <Moon size={16} />}
+              <ThemeMorphIcon darkMode={darkMode} size={16} />
             </button>
           </div>
 

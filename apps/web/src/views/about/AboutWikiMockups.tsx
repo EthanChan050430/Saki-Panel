@@ -47,6 +47,7 @@ import {
 } from "lucide-react";
 import { sakiArtAssets } from "../../constants.js";
 import { MetricTile } from "../../components/common/CommonUI.js";
+import { LiquidGlassContainer } from "../../components/common/LiquidGlass.js";
 import { SakiCharacterArt, getLocalizedFoodMenu } from "../../components/saki/SakiComponents.js";
 import { usePanelLanguage } from "../../i18n/index.js";
 import { wikiUi } from "./wikiLocalize.js";
@@ -373,7 +374,7 @@ export function TerminalConsoleMockup() {
               <button className="icon-button mini" title="复制终端文本 / 查看日志" type="button" tabIndex={-1}>
                 <Copy size={15} />
               </button>
-              <button className="icon-button mini" title="沉浸终端" type="button" tabIndex={-1}>
+              <button className="icon-button mini terminal-expand-btn" title="沉浸终端" type="button" tabIndex={-1}>
                 <Maximize2 size={15} />
               </button>
               <button className="icon-button mini new-shell-btn" title="新建终端 (Shell)" type="button" tabIndex={-1}>
@@ -475,14 +476,23 @@ export function TerminalConsoleMockup() {
 
         {/* Command Input Row */}
         <form className="terminal-command-row" style={{ marginTop: 10 }}>
-          <div className="terminal-input-wrap">
+          <LiquidGlassContainer
+            className="terminal-input-wrap"
+            displacementScale={100}
+            zoom={1.20}
+            refractionIntensity={1.2}
+            blurAmount={0}
+            saturation={108}
+            cornerRadius={24}
+            mode="shader"
+          >
             <div className="terminal-history-wrap">
               <button
                 className="terminal-history-btn"
                 type="button"
                 tabIndex={-1}
                 title="历史命令"
-                style={{ background: "transparent", border: "none", color: "var(--text-muted, #94a3b8)", display: "flex", alignItems: "center" }}
+                style={{ background: "transparent", border: "none", display: "flex", alignItems: "center" }}
               >
                 <History size={16} />
               </button>
@@ -521,7 +531,7 @@ export function TerminalConsoleMockup() {
             >
               <CornerDownLeft size={14} />
             </button>
-          </div>
+          </LiquidGlassContainer>
         </form>
       </div>
     </WikiLegendWrapper>
@@ -1044,7 +1054,17 @@ export function SakiCompanionMockup() {
             </div>
           </div>
 
-          <div className="saki-video-controls" role="toolbar">
+          <LiquidGlassContainer
+            className="saki-video-controls"
+            displacementScale={100}
+            zoom={1.20}
+            refractionIntensity={1.2}
+            blurAmount={0}
+            saturation={108}
+            cornerRadius={24}
+            mode="shader"
+            role="toolbar"
+          >
             <button className="saki-video-btn" type="button" tabIndex={-1} title="开启麦克风 (语音输入)">
               <MicOff size={17} />
             </button>
@@ -1057,7 +1077,7 @@ export function SakiCompanionMockup() {
             <button className="saki-video-btn hangup" type="button" tabIndex={-1} title="挂断视频通话">
               <PhoneOff size={17} />
             </button>
-          </div>
+          </LiquidGlassContainer>
         </div>
       </div>
     </WikiLegendWrapper>

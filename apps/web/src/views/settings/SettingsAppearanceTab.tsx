@@ -114,7 +114,7 @@ export const SettingsAppearanceTab = memo(function SettingsAppearanceTab({
 
       <div className="settings-group-title">
         <div className="settings-group-icon">
-          <ImageIcon size={20} />
+          <ImageIcon size={16} />
         </div>
         <div>
           <h3>{t("settings.appearance")}</h3>
@@ -711,7 +711,10 @@ export const SettingsAppearanceTab = memo(function SettingsAppearanceTab({
         </div>
 
         {/* Show Server Time Toggle */}
-        <div className="settings-switch-card">
+        <div
+          className="settings-switch-card"
+          onClick={() => onUpdateAppearance({ showServerTime: !(appearance?.showServerTime !== false) })}
+        >
           <div className="settings-switch-info">
             <div className="settings-switch-title">
               <Clock size={18} className="settings-switch-icon" />
@@ -719,7 +722,7 @@ export const SettingsAppearanceTab = memo(function SettingsAppearanceTab({
             </div>
             <span>{t("settings.appearance.showServerTimeDetail")}</span>
           </div>
-          <label className="settings-switch-toggle">
+          <label className="settings-switch-toggle" onClick={(e) => e.stopPropagation()}>
             <input
               type="checkbox"
               checked={appearance?.showServerTime !== false}

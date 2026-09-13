@@ -332,13 +332,13 @@ export function DashboardView({
       </section>
 
       {canViewNodes ? (
-        <section className="panel-block nodes-block">
+        <section className="panel-block nodes-block dashboard-nodes-block">
           <div className="section-heading">
             <h2>节点</h2>
             <span>{nodes.length} 台</span>
           </div>
           <div className="table-wrap">
-            <table>
+            <table className="dashboard-nodes-table">
               <thead>
                 <tr>
                   <th>名称</th>

@@ -43,7 +43,6 @@ import {
   LogOut,
   MemoryStick,
   MessageSquare,
-  Moon,
   MoreHorizontal,
   Move,
   Paintbrush,
@@ -63,7 +62,6 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
-  Sun,
   Terminal as TerminalIcon,
   Trash2,
   Upload,
@@ -105,8 +103,10 @@ import {
 import { defaultPanelAppearance, sakiArtAssets } from "./constants.js";
 import { useSkinRevision } from "./plugins/SkinLoader.js";
 import { AccountAvatar } from "./components/common/AccountAvatar.js";
+import { LiquidGlassButton } from "./components/common/LiquidGlass.js";
 import { UserAccountModal } from "./components/common/UserAccountModal.js";
 import { AccessEmptyView } from "./components/common/CommonUI.js";
+import { ThemeMorphIcon } from "./components/common/ThemeMorphIcon.js";
 import { PointsUsageModal } from "./PointsUsageModal.js";
 import { TopbarServerTimeBadge, ServerTimeModal } from "./components/common/ServerTimeModal.js";
 import { SakiFloatingChat } from "./components/saki/SakiFloatingChat.js";
@@ -650,7 +650,7 @@ export function Workspace({
                 title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
                 onClick={onToggleDarkMode}
               >
-                {darkMode ? <Sun size={18} aria-hidden="true" /> : <Moon size={18} aria-hidden="true" />}
+                <ThemeMorphIcon darkMode={darkMode} size={18} />
               </button>
               <button
                 className="sidebar-inline-toggle"
@@ -670,61 +670,61 @@ export function Workspace({
           {hasAnyAccessibleView ? (
             <nav>
               {canOpenDashboard ? (
-                <button className={`nav-item-dashboard ${effectiveView === "dashboard" ? "active" : ""}`} onClick={() => selectView("dashboard")}>
+                <button className={`nav-item nav-item-dashboard ${effectiveView === "dashboard" ? "active" : ""}`} onClick={() => selectView("dashboard")}>
                   <Activity size={18} />
                   {t("nav.dashboard")}
                 </button>
               ) : null}
               {canOpenInstances ? (
-                <button className={`nav-item-instances ${effectiveView === "instances" ? "active" : ""}`} onClick={() => selectView("instances")}>
+                <button className={`nav-item nav-item-instances ${effectiveView === "instances" ? "active" : ""}`} onClick={() => selectView("instances")}>
                   <TerminalIcon size={18} />
                   {t("nav.instances")}
                 </button>
               ) : null}
               {canOpenNodes ? (
-                <button className={`nav-item-nodes ${effectiveView === "nodes" ? "active" : ""}`} onClick={() => selectView("nodes")}>
+                <button className={`nav-item nav-item-nodes ${effectiveView === "nodes" ? "active" : ""}`} onClick={() => selectView("nodes")}>
                   <Server size={18} />
                   {t("nav.nodes")}
                 </button>
               ) : null}
               {canOpenTemplates ? (
-                <button className={`nav-item-templates ${effectiveView === "templates" ? "active" : ""}`} onClick={() => selectView("templates")}>
+                <button className={`nav-item nav-item-templates ${effectiveView === "templates" ? "active" : ""}`} onClick={() => selectView("templates")}>
                   <LayoutTemplate size={18} />
                   {t("nav.templates")}
                 </button>
               ) : null}
               {canOpenUsers ? (
-                <button className={`nav-item-users ${effectiveView === "users" ? "active" : ""}`} onClick={() => selectView("users")}>
+                <button className={`nav-item nav-item-users ${effectiveView === "users" ? "active" : ""}`} onClick={() => selectView("users")}>
                   <UserCog size={18} />
                   {t("nav.users")}
                 </button>
               ) : null}
               {canOpenAudit ? (
-                <button className={`nav-item-audit ${effectiveView === "audit" ? "active" : ""}`} onClick={() => selectView("audit")}>
+                <button className={`nav-item nav-item-audit ${effectiveView === "audit" ? "active" : ""}`} onClick={() => selectView("audit")}>
                   <ClipboardList size={18} />
                   {t("nav.audit")}
                 </button>
               ) : null}
               {canOpenReliability ? (
-                <button className={`nav-item-reliability ${effectiveView === "reliability" ? "active" : ""}`} onClick={() => selectView("reliability")}>
+                <button className={`nav-item nav-item-reliability ${effectiveView === "reliability" ? "active" : ""}`} onClick={() => selectView("reliability")}>
                   <HeartPulse size={18} />
                   {t("nav.reliability")}
                 </button>
               ) : null}
               {canConfigureSaki ? (
-                <button className={`nav-item-settings ${effectiveView === "settings" ? "active" : ""}`} onClick={() => selectView("settings")}>
+                <button className={`nav-item nav-item-settings ${effectiveView === "settings" ? "active" : ""}`} onClick={() => selectView("settings")}>
                   <Settings size={18} />
                   {t("nav.settings")}
                 </button>
               ) : null}
               {canOpenPlugins ? (
-                <button className={`nav-item-plugins ${effectiveView === "plugins" ? "active" : ""}`} onClick={() => selectView("plugins")}>
+                <button className={`nav-item nav-item-plugins ${effectiveView === "plugins" ? "active" : ""}`} onClick={() => selectView("plugins")}>
                   <Layers size={18} />
                   {t("nav.plugins")}
                 </button>
               ) : null}
               {canOpenAbout ? (
-                <button className={`nav-item-about ${effectiveView === "about" ? "active" : ""}`} onClick={() => selectView("about")}>
+                <button className={`nav-item nav-item-about ${effectiveView === "about" ? "active" : ""}`} onClick={() => selectView("about")}>
                   <Info size={18} />
                   {t("nav.about")}
                 </button>
@@ -738,14 +738,25 @@ export function Workspace({
           )}
 
           <div className="sidebar-account">
-            <button className="sidebar-account-button" type="button" onClick={() => setAccountOpen(true)}>
+            <LiquidGlassButton
+              className="sidebar-account-button"
+              displacementScale={64}
+              blurAmount={0}
+              saturation={100}
+              aberrationIntensity={2}
+              cornerRadius={18}
+              mode="standard"
+              onClick={() => setAccountOpen(true)}
+              aria-label={user.displayName}
+              title={user.displayName}
+            >
               <AccountAvatar avatarDataUrl={user.avatarDataUrl} displayName={user.displayName} username={user.username} />
               <span className="sidebar-account-copy">
                 <strong>{user.displayName}</strong>
                 <small>@{user.username}</small>
               </span>
               <ChevronRight size={16} />
-            </button>
+            </LiquidGlassButton>
           </div>
         </aside>
 
@@ -766,7 +777,7 @@ export function Workspace({
                 setSidebarHidden(false);
               }}
             >
-              <PanelLeftOpen size={18} aria-hidden="true" />
+              <PanelLeftOpen size={22} aria-hidden="true" />
             </button>
             <div className="topbar-inner">
               <div className="topbar-title">

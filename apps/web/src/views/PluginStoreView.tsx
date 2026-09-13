@@ -633,7 +633,7 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
       <div className="plugin-store-header">
         <div className="plugin-header-title-wrap">
           <div className="plugin-header-badge-icon">
-            <Layers size={18} />
+            <Layers size={16} />
           </div>
           <div className="plugin-header-texts">
             <h2 className="plugin-header-title">{t("plugins.header.title")}</h2>
@@ -895,6 +895,11 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                       </span>
 
                       <div className="plugin-art-top-actions">
+                        {!p.enabled ? (
+                          <span className="plugin-art-disabled-tag">
+                            {t("plugins.card.disabledTag")}
+                          </span>
+                        ) : null}
                         <span
                           className={`plugin-art-status-dot ${p.enabled ? "is-active" : "is-off"}`}
                           title={p.enabled ? t("plugins.card.enabled") : t("plugins.card.disabled")}

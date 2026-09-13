@@ -1933,7 +1933,7 @@
 
 .file-preview-modal {
   background: var(--bg-surface, #ffffff);
-  border-radius: 12px;
+  border-radius: var(--radius-modal, 24px);
   width: 90%;
   max-width: 900px;
   height: 80%;

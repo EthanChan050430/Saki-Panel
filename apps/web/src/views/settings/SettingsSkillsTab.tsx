@@ -376,13 +376,11 @@ export const SettingsSkillsTab = memo(function SettingsSkillsTab({
   return (
     <div className="settings-skills-page saki-skill-settings-panel">
       <div className="section-heading saki-skill-heading">
-        <div className="saki-skill-title">
-          <div>
-            <h2>Saki Skills</h2>
-            <span>{skillList.length} installed</span>
-          </div>
+        <div className="saki-skill-title-line">
+          <h2>Saki Skills</h2>
+          <span className="saki-skill-count-tag">{skillList.length}</span>
         </div>
-        <div className="saki-skill-header-actions">
+        <div className="section-heading-actions saki-skill-header-actions">
           <button
             className="ghost-button saki-skill-header-import"
             type="button"
@@ -390,16 +388,16 @@ export const SettingsSkillsTab = memo(function SettingsSkillsTab({
             onClick={() => skillImportInputRef.current?.click()}
             title="从 .md / .txt 文件导入 Skill"
           >
-            <FileUp size={16} />
+            <FileUp size={14} />
             <span>{skillBusy === "import" ? "导入中" : "导入文件"}</span>
           </button>
           <button
-            className="ghost-button"
+            className="ghost-button saki-skill-add-btn"
             type="button"
             onClick={() => setSkillCreatorOpen((current) => !current)}
           >
-            {skillCreatorOpen ? <X size={17} /> : <Plus size={17} />}
-            {skillCreatorOpen ? "收起添加" : "添加 Skill"}
+            {skillCreatorOpen ? <X size={15} /> : <Plus size={15} />}
+            <span>{skillCreatorOpen ? "收起添加" : "添加 Skill"}</span>
           </button>
         </div>
       </div>

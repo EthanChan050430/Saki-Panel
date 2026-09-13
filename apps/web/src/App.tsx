@@ -50,8 +50,8 @@ export function App() {
 
   const toggleDarkMode = useCallback((event?: React.MouseEvent<HTMLElement>) => {
     const now = Date.now();
-    // Synchronously throttle clicks: if already in transition or clicked within 450ms, ignore completely
-    if (isSwitchingRef.current || now - lastSwitchTimeRef.current < 450) {
+    // Synchronously throttle clicks: if already in transition or clicked within 480ms, ignore completely
+    if (isSwitchingRef.current || now - lastSwitchTimeRef.current < 480) {
       return;
     }
     isSwitchingRef.current = true;
@@ -66,8 +66,7 @@ export function App() {
     const isAppearanceTransition =
       typeof document !== "undefined" &&
       typeof (document as any).startViewTransition === "function" &&
-      !window.matchMedia("(prefers-reduced-motion: reduce)").matches &&
-      !document.documentElement.classList.contains("perf-lite");
+      !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     if (!isAppearanceTransition) {
       document.documentElement.classList.add("theme-transitioning");
@@ -84,16 +83,14 @@ export function App() {
 
     let x = Math.round(window.innerWidth / 2);
     let y = Math.round(window.innerHeight / 2);
-    if (event && typeof event.clientX === "number" && typeof event.clientY === "number" && (event.clientX !== 0 || event.clientY !== 0)) {
+    const targetBtn = (event?.currentTarget as HTMLElement | null) || document.querySelector(".theme-toggle-button");
+    if (targetBtn && typeof targetBtn.getBoundingClientRect === "function") {
+      const rect = targetBtn.getBoundingClientRect();
+      x = Math.round(rect.left + rect.width / 2);
+      y = Math.round(rect.top + rect.height / 2);
+    } else if (event && typeof event.clientX === "number" && typeof event.clientY === "number" && (event.clientX !== 0 || event.clientY !== 0)) {
       x = Math.round(event.clientX);
       y = Math.round(event.clientY);
-    } else {
-      const btn = document.querySelector(".theme-toggle-button");
-      if (btn) {
-        const rect = btn.getBoundingClientRect();
-        x = Math.round(rect.left + rect.width / 2);
-        y = Math.round(rect.top + rect.height / 2);
-      }
     }
 
     const endRadius = Math.ceil(Math.hypot(
@@ -133,10 +130,23 @@ export function App() {
       transition.ready
         .then(() => {
           try {
-            const clipPath = [
-              `circle(0px at ${x}px ${y}px)`,
-              `circle(${endRadius}px at ${x}px ${y}px)`
-            ];
+            // Asymmetric celestial transition (VitePress/Antfu style):
+            // Light -> Dark: night expands from 0 to endRadius on new(root)
+            // Dark -> Light: night collapses from endRadius down to 0 into the button on old(root)!
+            const clipPath = nextIsDark
+              ? [
+                  `circle(0px at ${x}px ${y}px)`,
+                  `circle(${endRadius}px at ${x}px ${y}px)`
+                ]
+              : [
+                  `circle(${endRadius}px at ${x}px ${y}px)`,
+                  `circle(0px at ${x}px ${y}px)`
+                ];
+
+            const pseudoElement = nextIsDark
+              ? "::view-transition-new(root)"
+              : "::view-transition-old(root)";
+
             if (activeAnimRef.current) {
               try { activeAnimRef.current.cancel(); } catch {}
             }
@@ -145,9 +155,9 @@ export function App() {
                 clipPath
               },
               {
-                duration: 380,
-                easing: "cubic-bezier(0.16, 1, 0.3, 1)",
-                pseudoElement: "::view-transition-new(root)",
+                duration: 480,
+                easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+                pseudoElement,
                 fill: "forwards"
               }
             );
@@ -164,7 +174,7 @@ export function App() {
     if (transition?.finished && typeof transition.finished.then === "function") {
       transition.finished.then(cleanup, cleanup);
     } else {
-      window.setTimeout(cleanup, 400);
+      window.setTimeout(cleanup, 500);
     }
   }, [appearance, darkMode]);
 
@@ -406,6 +416,7 @@ export function App() {
           <LoginView
             appearance={appearance}
             darkMode={darkMode}
+            themeSwitching={themeSwitching}
             onToggleDarkMode={toggleDarkMode}
             onLogin={(nextToken, nextUser) => {
               setToken(nextToken);

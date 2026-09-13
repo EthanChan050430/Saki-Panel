@@ -718,18 +718,61 @@
 .saki-model-btn .saki-model-short-name {
   display: none;
 }
+/* Liquid glass dropdown wrappers — pure physical liquid glass refraction
+   matching official shuding/liquid-glass organic styling with restrained translucent white reflection. */
+.saki-add-menu-wrapper,
+.saki-model-dropdown-wrapper {
+  z-index: 9999;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.92) 0%,
+    rgba(248, 250, 252, 0.88) 100%
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.58) !important;
+  border-top-color: rgba(255, 255, 255, 0.78) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.38) !important;
+  box-shadow:
+    0 14px 40px -4px rgba(0, 0, 0, 0.18),
+    0 4px 12px rgba(0, 0, 0, 0.06),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.75),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.25),
+    inset 0 -6px 16px rgba(0, 0, 0, 0.05) !important;
+}
+
+[data-theme="dark"] .saki-add-menu-wrapper,
+[data-theme="dark"] .saki-model-dropdown-wrapper {
+  background: linear-gradient(
+    135deg,
+    rgba(20, 23, 34, 0.90) 0%,
+    rgba(14, 16, 24, 0.86) 100%
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.24) !important;
+  border-top-color: rgba(255, 255, 255, 0.38) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.18) !important;
+  box-shadow:
+    0 18px 48px -4px rgba(0, 0, 0, 0.72),
+    0 6px 18px rgba(0, 0, 0, 0.42),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 0 6px rgba(255, 255, 255, 0.08),
+    inset 0 -10px 25px rgba(0, 0, 0, 0.35) !important;
+}
+
+/* Inner containers — layout only, transparent so glass wrapper shines through. */
+.saki-add-menu {
+  min-width: 150px;
+  padding: 6px;
+  background: transparent !important;
+  border: none !important;
+}
+
 .saki-model-dropdown {
-  background: rgba(255, 255, 255, 0.96);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 12px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.04);
   padding: 6px;
   min-width: 200px;
   max-height: 320px;
   overflow-y: auto;
-  z-index: 9999;
+  background: transparent !important;
+  border: none !important;
 }
 .saki-model-option {
   display: flex;
@@ -737,23 +780,26 @@
   justify-content: space-between;
   gap: 8px;
   padding: 6px 10px;
-  border-radius: 6px;
+  border-radius: 7px;
   cursor: pointer;
   font-size: 13px;
-  color: #374151;
-  transition: background 0.1s;
+  color: #0f172a;
+  font-weight: 550;
+  transition: background 0.12s ease, color 0.12s ease;
   border: none;
   background: none;
   width: 100%;
   text-align: left;
 }
 .saki-model-option:hover {
-  background: rgba(124, 58, 237, 0.06);
+  background: rgba(0, 0, 0, 0.06);
+  color: #000000;
 }
 .saki-model-option.active {
-  background: rgba(124, 58, 237, 0.1);
-  color: #7c3aed;
-  font-weight: 500;
+  background: linear-gradient(135deg, rgba(255, 117, 172, 0.2) 0%, rgba(255, 60, 130, 0.24) 100%);
+  color: #be123c;
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1px rgba(255, 117, 172, 0.35);
 }
 .saki-model-option-name {
   min-width: 0;
@@ -781,26 +827,26 @@
   font-size: 10px;
   font-weight: 600;
   line-height: 1;
-  padding: 2px 6px;
+  padding: 2.5px 6.5px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.05);
-  color: #8a8a93;
+  background: rgba(0, 0, 0, 0.06);
+  color: #475569;
   white-space: nowrap;
 }
 .saki-model-multiplier.custom {
-  background: rgba(124, 58, 237, 0.1);
-  color: #7c3aed;
+  background: rgba(255, 117, 172, 0.16);
+  color: #e11d48;
 }
 .saki-model-multiplier.free {
-  background: rgba(16, 185, 129, 0.12);
+  background: rgba(16, 185, 129, 0.16);
   color: #059669;
 }
 .saki-model-option.active .saki-model-multiplier {
-  background: rgba(124, 58, 237, 0.16);
-  color: #6d28d9;
+  background: rgba(255, 117, 172, 0.25);
+  color: #9f1239;
 }
 .saki-model-option.active .saki-model-multiplier.free {
-  background: rgba(16, 185, 129, 0.18);
+  background: rgba(16, 185, 129, 0.22);
   color: #047857;
 }
 .saki-model-vision-badge {
@@ -809,6 +855,47 @@
   border-radius: 3px;
   background: rgba(124, 58, 237, 0.1);
   color: #7c3aed;
+}
+
+/* Dark mode overrides — obsidian liquid glass backdrop with crisp white text */
+[data-theme="dark"] .saki-model-option {
+  color: #f8fafc;
+  font-weight: 550;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+[data-theme="dark"] .saki-model-option:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+}
+[data-theme="dark"] .saki-model-option.active {
+  background: linear-gradient(135deg, rgba(255, 117, 172, 0.32) 0%, rgba(255, 60, 130, 0.36) 100%);
+  color: #ffffff;
+  font-weight: 650;
+  box-shadow: inset 0 0 0 1px rgba(255, 117, 172, 0.4);
+}
+[data-theme="dark"] .saki-model-multiplier {
+  background: rgba(255, 255, 255, 0.14);
+  color: #f1f5f9;
+  font-weight: 600;
+}
+[data-theme="dark"] .saki-model-multiplier.custom {
+  background: rgba(255, 117, 172, 0.25);
+  color: #ffb3d6;
+}
+[data-theme="dark"] .saki-model-multiplier.free {
+  background: rgba(16, 185, 129, 0.25);
+  color: #6ee7b7;
+}
+[data-theme="dark"] .saki-model-option.active .saki-model-multiplier {
+  background: rgba(255, 255, 255, 0.24);
+  color: #ffffff;
+}
+[data-theme="dark"] .saki-model-option.active .saki-model-multiplier.free {
+  background: rgba(16, 185, 129, 0.32);
+  color: #a7f3d0;
+}
+[data-theme="dark"] .saki-dropdown-title {
+  color: #94a3b8;
 }
 
 .saki-action-controls {
@@ -1015,9 +1102,10 @@
   background: transparent;
   position: relative;
   z-index: 60 !important;
+  overflow: visible !important;
 }
 
-.saki-input-container {
+.saki-input-container:not(.liquid-glass-container) {
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -1037,7 +1125,7 @@
 }
 
 /* Delicate top-edge grazing light on curved glass bevel */
-.saki-input-container::before {
+.saki-input-container:not(.liquid-glass-container)::before {
   content: "";
   position: absolute;
   top: 0;
@@ -1052,14 +1140,14 @@
   z-index: 2;
 }
 
-.saki-input-container > .saki-attachment-tray,
-.saki-input-container > .saki-input-main-row,
-.saki-input-container > .saki-input-toolbar {
+.saki-input-container .saki-attachment-tray,
+.saki-input-container .saki-input-main-row,
+.saki-input-container .saki-input-toolbar {
   border-radius: inherit;
 }
 
 /* Subtle light reflection on glass when hovered */
-.saki-input-container:hover {
+.saki-input-container:not(.liquid-glass-container):hover {
   background: rgba(255, 255, 255, 0.64);
   border-color: rgba(255, 255, 255, 0.95);
   box-shadow:
@@ -1069,12 +1157,12 @@
     0 2px 8px 0 rgba(0, 0, 0, 0.03);
 }
 
-.saki-input-container:hover::before {
+.saki-input-container:not(.liquid-glass-container):hover::before {
   opacity: 0.9;
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.95) 50%, transparent);
 }
 
-.saki-input-container:focus-within {
+.saki-input-container:not(.liquid-glass-container):focus-within {
   background: rgba(255, 255, 255, 0.72);
   border-color: rgba(255, 255, 255, 0.98);
   box-shadow:
@@ -1084,7 +1172,7 @@
     0 0 0 1px rgba(255, 117, 172, 0.16);
 }
 
-[data-theme="dark"] .saki-input-container {
+[data-theme="dark"] .saki-input-container:not(.liquid-glass-container) {
   background: rgba(26, 32, 44, 0.5) !important;
   backdrop-filter: blur(48px) saturate(200%) brightness(106%) !important;
   -webkit-backdrop-filter: blur(48px) saturate(200%) brightness(106%) !important;
@@ -1095,12 +1183,12 @@
     0 16px 48px 0 rgba(0, 0, 0, 0.4) !important;
 }
 
-[data-theme="dark"] .saki-input-container::before {
+[data-theme="dark"] .saki-input-container:not(.liquid-glass-container)::before {
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3) 50%, transparent);
   opacity: 0.35;
 }
 
-[data-theme="dark"] .saki-input-container:hover {
+[data-theme="dark"] .saki-input-container:not(.liquid-glass-container):hover {
   background: rgba(28, 35, 49, 0.58) !important;
   border-color: rgba(255, 255, 255, 0.24) !important;
   box-shadow:
@@ -1110,12 +1198,12 @@
     0 18px 50px 0 rgba(0, 0, 0, 0.45) !important;
 }
 
-[data-theme="dark"] .saki-input-container:hover::before {
+[data-theme="dark"] .saki-input-container:not(.liquid-glass-container):hover::before {
   opacity: 0.75;
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55) 50%, transparent);
 }
 
-[data-theme="dark"] .saki-input-container:focus-within {
+[data-theme="dark"] .saki-input-container:not(.liquid-glass-container):focus-within {
   background: rgba(28, 35, 49, 0.68) !important;
   border-color: rgba(255, 255, 255, 0.32) !important;
   box-shadow:
@@ -1126,13 +1214,13 @@
     0 0 0 1px rgba(255, 117, 172, 0.20) !important;
 }
 
-/* Peeping Saki on collapsed agent chat box (shuru.webp in light mode / shuru_sit.webp in dark mode) */
+/* Peeping Saki on collapsed agent chat box (shuru_sit.webp in both light and dark mode) */
 .saki-input-peep {
   position: absolute;
-  top: -46px;
+  top: -73px;
   right: 28px;
-  z-index: 12;
-  width: 70px;
+  z-index: 90;
+  width: 72px;
   height: auto;
   pointer-events: auto;
   cursor: pointer;
@@ -1241,9 +1329,9 @@
 }
 @media (max-width: 600px) {
   .saki-input-peep {
-    width: 58px;
+    width: 60px;
     height: auto;
-    top: -38px;
+    top: -61px;
     right: 16px;
   }
 
@@ -1512,27 +1600,21 @@
 .saki-permission-dropdown {
   min-width: 210px;
   padding: 6px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.96);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.04);
-  z-index: 9999;
-}
-
-[data-theme="dark"] .saki-permission-dropdown {
-  background: rgba(30, 41, 59, 0.96);
-  border-color: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+  background: transparent !important;
+  border: none !important;
 }
 
 .saki-dropdown-title {
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 700;
-  color: #94a3b8;
+  color: #475569;
   padding: 4px 8px 6px;
   letter-spacing: 0.3px;
+}
+
+[data-theme="dark"] .saki-dropdown-title {
+  color: #cbd5e1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .saki-perm-dropdown-option {
@@ -1550,19 +1632,21 @@
 }
 
 .saki-perm-dropdown-option:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: rgba(0, 0, 0, 0.06);
 }
 
 [data-theme="dark"] .saki-perm-dropdown-option:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .saki-perm-dropdown-option.active {
-  background: rgba(255, 117, 172, 0.12);
+  background: linear-gradient(135deg, rgba(255, 117, 172, 0.18) 0%, rgba(255, 60, 130, 0.22) 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 117, 172, 0.35);
 }
 
 [data-theme="dark"] .saki-perm-dropdown-option.active {
-  background: rgba(255, 117, 172, 0.2);
+  background: linear-gradient(135deg, rgba(255, 117, 172, 0.3) 0%, rgba(255, 60, 130, 0.34) 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 117, 172, 0.4);
 }
 
 .perm-opt-icon {
@@ -1577,7 +1661,7 @@
 }
 
 [data-theme="dark"] .perm-opt-icon {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .perm-opt-icon.accept { color: #10b981; }
@@ -1592,22 +1676,23 @@
 
 .perm-opt-label {
   font-size: 12.5px;
-  font-weight: 600;
-  color: #1e293b;
+  font-weight: 650;
+  color: #0f172a;
 }
 
 [data-theme="dark"] .perm-opt-label {
-  color: #f1f5f9;
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
 }
 
 .perm-opt-desc {
   font-size: 11px;
-  color: #64748b;
+  color: #475569;
   margin-top: 1px;
 }
 
 [data-theme="dark"] .perm-opt-desc {
-  color: #94a3b8;
+  color: #cbd5e1;
 }
 
 .perm-opt-check {
@@ -1663,7 +1748,8 @@
 }
 
 .saki-input-main-row textarea::placeholder {
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.60);
 }
 
 .saki-input-main-row textarea::-webkit-scrollbar {
@@ -1705,7 +1791,8 @@
   box-sizing: border-box;
   background: transparent !important;
   border: none !important;
-  color: #64748b;
+  color: #ffffff;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
   cursor: pointer;
   transition: all 0.15s ease;
   padding: 0;
@@ -1715,14 +1802,16 @@
 }
 
 .saki-add-btn:hover {
-  background: rgba(148, 163, 184, 0.15) !important;
-  color: #334155;
+  background: transparent !important;
+  color: #ff75ac !important;
+  filter: drop-shadow(0 0 8px rgba(255, 117, 172, 0.85)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.50));
 }
 
 .saki-add-btn.active {
-  background: rgba(255, 117, 172, 0.2) !important;
-  color: #ff4c92;
+  background: transparent !important;
+  color: #ff75ac !important;
   transform: rotate(45deg);
+  filter: drop-shadow(0 0 8px rgba(255, 117, 172, 0.85)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.50));
 }
 
 [data-theme="dark"] .saki-add-btn {
@@ -1730,25 +1819,13 @@
 }
 
 [data-theme="dark"] .saki-add-btn:hover {
-  background: rgba(255, 255, 255, 0.1) !important;
-  color: #e2e8f0;
+  background: transparent !important;
+  color: #ff9bc8 !important;
 }
 
 [data-theme="dark"] .saki-add-btn.active {
-  background: rgba(255, 117, 172, 0.25) !important;
-  color: #ff75ac;
-}
-
-.saki-add-menu {
-  min-width: 150px;
-  background: rgba(255, 255, 255, 0.96);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 14px;
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.15);
-  padding: 6px;
-  z-index: 9999;
+  background: transparent !important;
+  color: #ff9bc8 !important;
 }
 
 .saki-add-menu-item {
@@ -1758,23 +1835,39 @@
   width: 100%;
   padding: 9px 12px;
   border: none;
-  border-radius: 10px;
+  border-radius: 8px;
   background: transparent;
-  color: #334155;
+  color: #0f172a;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 550;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease;
   text-align: left;
 }
 
 .saki-add-menu-item:hover:not(:disabled) {
-  background: rgba(148, 163, 184, 0.15);
+  background: rgba(0, 0, 0, 0.06);
+  color: #000000;
+}
+
+[data-theme="dark"] .saki-add-menu-item {
+  color: #f8fafc;
+  font-weight: 550;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+[data-theme="dark"] .saki-add-menu-item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
 }
 
 .saki-add-menu-item svg {
-  color: #64748b;
+  color: #475569;
   flex-shrink: 0;
+}
+
+[data-theme="dark"] .saki-add-menu-item svg {
+  color: #cbd5e1;
 }
 
 .saki-add-menu-item:disabled {
@@ -1913,13 +2006,6 @@
   gap: 4px;
 }
 
-/* Desktop: hide image/file/screenshot (moved into + menu), keep mic + annotation */
-.saki-input-actions .icon-button:nth-child(3),
-.saki-input-actions .icon-button:nth-child(4),
-.saki-input-actions .icon-button:nth-child(5) {
-  display: none !important;
-}
-
 .saki-input-actions .icon-button.mini {
   width: 32px !important;
   height: 32px !important;
@@ -1932,18 +2018,19 @@
   border-radius: 50% !important;
   box-sizing: border-box !important;
   padding: 0 !important;
-  background: rgba(255, 255, 255, 0.4) !important;
+  background: rgba(255, 255, 255, 0.22) !important;
   backdrop-filter: blur(16px) !important;
   -webkit-backdrop-filter: blur(16px) !important;
   border: 1px solid rgba(255, 255, 255, 0.65) !important;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.8), 0 2px 6px rgba(0, 0, 0, 0.04) !important;
-  color: #475569 !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.8), 0 2px 6px rgba(0, 0, 0, 0.12) !important;
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
   transition: all 0.15s ease !important;
 }
 
 .saki-input-actions .icon-button.mini:hover {
-  background: rgba(255, 255, 255, 0.75) !important;
-  color: #0f172a !important;
+  background: rgba(255, 255, 255, 0.35) !important;
+  color: #ffffff !important;
   transform: translateY(-1px) scale(1.06) !important;
 }
 
@@ -2274,7 +2361,7 @@
   flex-direction: column;
   background: rgba(255, 255, 255, 0.9);
   border: 1px solid rgba(255, 255, 255, 0.85);
-  border-radius: 20px;
+  border-radius: var(--radius-modal, 24px);
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.22);
   overflow: hidden;
   animation: sakiModalZoomIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -2442,15 +2529,120 @@
   gap: 8px;
 }
 
-.saki-composer-notice {
-  margin: 0 12px 8px;
-  padding: 7px 9px;
-  border: 1px solid rgba(124, 58, 237, 0.18);
-  border-radius: 8px;
-  color: #4c1d95;
-  background: rgba(245, 243, 255, 0.78);
-  font-size: 12px;
-  font-weight: 700;
+/* Saki Liquid Glass Notice Toast (Top Popup) */
+.saki-composer-notice-toast {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 250;
+  max-width: min(520px, calc(100% - 32px));
+  width: max-content;
+  box-sizing: border-box;
+  border-radius: 999px !important;
+  color: #1e293b;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  pointer-events: auto;
+  user-select: none;
+  animation: sakiToastSlideDown 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, opacity 0.2s ease;
+}
+
+.saki-composer-notice-toast .liquid-glass-inner {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding: 7px 10px 7px 14px !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+}
+
+.saki-panel.collapsed .saki-composer-notice-toast {
+  top: auto;
+  bottom: calc(100% + 14px);
+  animation: sakiToastSlideUp 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.saki-composer-notice-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(255, 117, 172, 0.22), rgba(244, 63, 94, 0.16));
+  color: #ff5292;
+  flex-shrink: 0;
+}
+
+.saki-composer-notice-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 400px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+[data-theme="dark"] .saki-composer-notice-toast {
+  color: #f8fafc;
+}
+
+[data-theme="dark"] .saki-composer-notice-text {
+  color: #f8fafc;
+}
+
+.saki-composer-notice-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.06);
+  color: #64748b;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.saki-composer-notice-close:hover {
+  background: rgba(255, 117, 172, 0.22);
+  color: #ff5292;
+  transform: scale(1.14);
+}
+
+.saki-composer-notice-close:active {
+  transform: scale(0.9);
+}
+
+@keyframes sakiToastSlideDown {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -14px) scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+@keyframes sakiToastSlideUp {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 12px) scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
 }
 
 .saki-input-actions .icon-button {
@@ -2621,13 +2813,17 @@
   }
 
   .saki-skill-heading {
-    align-items: stretch;
-    flex-direction: column;
-    padding: 12px 16px;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    flex-direction: row !important;
+    padding: 0 12px !important;
+    height: 44px !important;
+    min-height: 44px !important;
   }
 
   .saki-skill-heading .ghost-button {
-    width: 100%;
+    width: auto !important;
   }
 
   .saki-skill-main,

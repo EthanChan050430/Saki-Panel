@@ -37,7 +37,7 @@ export const SettingsFeaturesTab = memo(function SettingsFeaturesTab({
     >
       <div className="settings-group-title">
         <div className="settings-group-icon">
-          <Wrench size={20} />
+          <Wrench size={16} />
         </div>
         <div>
           <h3>{t("settings.features")}</h3>
@@ -45,7 +45,10 @@ export const SettingsFeaturesTab = memo(function SettingsFeaturesTab({
         </div>
       </div>
       <div className="settings-group-content">
-        <div className="settings-switch-card">
+        <div
+          className="settings-switch-card"
+          onClick={() => onSearchEnabledChange(!searchEnabled)}
+        >
           <div className="settings-switch-info">
             <div className="settings-switch-title">
               <Globe size={18} className="settings-switch-icon" />
@@ -53,7 +56,7 @@ export const SettingsFeaturesTab = memo(function SettingsFeaturesTab({
             </div>
             <span>允许 Saki 在回答技术问题或排查故障时自主检索最新互联网资料与官方文档。</span>
           </div>
-          <label className="settings-switch-toggle">
+          <label className="settings-switch-toggle" onClick={(e) => e.stopPropagation()}>
             <input
               type="checkbox"
               checked={searchEnabled}
@@ -63,7 +66,10 @@ export const SettingsFeaturesTab = memo(function SettingsFeaturesTab({
           </label>
         </div>
 
-        <div className="settings-switch-card">
+        <div
+          className="settings-switch-card"
+          onClick={() => onMcpEnabledChange(!mcpEnabled)}
+        >
           <div className="settings-switch-info">
             <div className="settings-switch-title">
               <Zap size={18} className="settings-switch-icon" />
@@ -71,7 +77,7 @@ export const SettingsFeaturesTab = memo(function SettingsFeaturesTab({
             </div>
             <span>启用标准化 MCP 扩展工具与外部上下文集成协议，为 Saki 提供深度工具交互。</span>
           </div>
-          <label className="settings-switch-toggle">
+          <label className="settings-switch-toggle" onClick={(e) => e.stopPropagation()}>
             <input
               type="checkbox"
               checked={mcpEnabled}
@@ -81,7 +87,10 @@ export const SettingsFeaturesTab = memo(function SettingsFeaturesTab({
           </label>
         </div>
 
-        <div className="settings-switch-card">
+        <div
+          className="settings-switch-card"
+          onClick={() => onAllowCrossInstanceEnforcementChange(!allowCrossInstanceEnforcement)}
+        >
           <div className="settings-switch-info">
             <div className="settings-switch-title">
               <ShieldCheck size={18} className="settings-switch-icon" />
@@ -92,7 +101,7 @@ export const SettingsFeaturesTab = memo(function SettingsFeaturesTab({
               Agent 漏洞攻击服务器。
             </span>
           </div>
-          <label className="settings-switch-toggle">
+          <label className="settings-switch-toggle" onClick={(e) => e.stopPropagation()}>
             <input
               type="checkbox"
               checked={allowCrossInstanceEnforcement}
