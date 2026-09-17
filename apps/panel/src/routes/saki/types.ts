@@ -89,7 +89,7 @@ export const maxAgentRecentScratchpadEntries = 10;
 export const maxAgentCompactedScratchpadTokens = 1200;
 export const maxParallelReadOnlyTools = 8;
 export const defaultAgentReadFileLineCount = 40;
-export const maxAgentReadFileLineCount = 80;
+export const maxAgentReadFileLineCount = 120;
 export const largeFileLineThreshold = 120;
 export const minAgentModelRequestTimeoutMs = 120000;
 export const maxAgentObservationChars = 20000;
@@ -359,15 +359,17 @@ export function userFacingError(error: unknown): string {
     return `文件不存在：${path.basename(enoentMatch[1] ?? "")}。请先用 listFiles 确认当前实例目录里的实际文件名；如果用户要求创建这个文件，请改用 writeFile。`;
   }
   if (/Instance is not accepting terminal input/i.test(message)) {
-    return "当前实例进程不接受交互式 stdin。Agent 执行的终端命令会自动在新建的独立 shell 中运行（和点击 + 按钮完全一样），返回 shellId。不要直接用 sendInput/sendCommand 跑普通命令。";
+    return "当前实例进程不接受交互式 stdin。普通命令请用 createShell / runCommand 在独立终端里执行。sendInput/sendCommand 只用于主终端上正在运行的进程确实需要输入的时候。";
   }
   return message;
 }
 
-export function formatRunCommandObservation(result: { workingDirectory: string; exitCode: number | null; signal: string | null; durationMs: number; stdout: string; stderr: string }, inputProvided: boolean): string {
+export function formatRunCommandObservation(result: { workingDirectory: string; exitCode: number | null; signal?: string | null; durationMs: number; stdout: string; stderr: string; shellId?: string; label?: string }, inputProvided: boolean): string {
   const timedOut = result.signal === "TIMEOUT";
   return [
     "terminal=independent-shell",
+    result.shellId ? `shellId=${result.shellId}` : null,
+    result.label ? `label=${result.label}` : null,
     `cwd=${result.workingDirectory}`,
     `exitCode=${result.exitCode ?? "null"}`,
     result.signal ? `signal=${result.signal}` : null,

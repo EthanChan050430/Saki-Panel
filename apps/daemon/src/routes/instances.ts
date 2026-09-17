@@ -63,10 +63,11 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     if (!command) {
       throw new Error("command is required");
     }
-    const options: { workingDirectory?: string; timeoutMs?: number; input?: string; signal?: AbortSignal } = {};
+    const options: { workingDirectory?: string; timeoutMs?: number; input?: string; signal?: AbortSignal; logToInstance?: boolean } = {};
     if (typeof body.workingDirectory === "string") options.workingDirectory = body.workingDirectory;
     if (typeof body.timeoutMs === "number") options.timeoutMs = body.timeoutMs;
     if (typeof body.input === "string") options.input = body.input;
+    if (typeof body.logToInstance === "boolean") options.logToInstance = body.logToInstance;
     const abort = new AbortController();
     let finished = false;
     const onClose = () => {
@@ -144,6 +145,31 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     }
     instanceManager.writeShellInput(id, sid, body.data);
     return { ok: true };
+  });
+
+  app.post("/api/instances/:id/shells/:sid/command", { preHandler: authenticatePanelRequest }, async (request) => {
+    const { id, sid } = request.params as { id: string; sid: string };
+    const body = request.body as { command?: string; timeoutMs?: number; input?: string };
+    const command = typeof body.command === "string" ? body.command.trim() : "";
+    if (!command) {
+      throw new Error("command is required");
+    }
+    const abort = new AbortController();
+    let finished = false;
+    const onClose = () => {
+      if (!finished) abort.abort();
+    };
+    request.raw.on("close", onClose);
+    try {
+      return await instanceManager.runShellCommand(id, sid, command, {
+        ...(typeof body.timeoutMs === "number" ? { timeoutMs: body.timeoutMs } : {}),
+        ...(typeof body.input === "string" ? { input: body.input } : {}),
+        signal: abort.signal
+      });
+    } finally {
+      finished = true;
+      request.raw.off("close", onClose);
+    }
   });
 
   app.post("/api/instances/:id/proxy/subscription", { preHandler: authenticatePanelRequest }, async (request) => {

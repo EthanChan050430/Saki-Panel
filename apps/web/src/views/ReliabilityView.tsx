@@ -70,7 +70,7 @@ function ReliabilityTile({
   tone: "teal" | "amber" | "blue" | "gray";
 }) {
   return (
-    <div className={`metric-tile metric-${tone}`}>
+    <div className={`metric-tile metric-${tone}`} title={sub ? `${label} (${sub})` : label}>
       <div className="metric-icon">{icon}</div>
       <div>
         <span>{label}</span>

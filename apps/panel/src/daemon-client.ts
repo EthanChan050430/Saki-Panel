@@ -25,6 +25,8 @@ import type {
   GrepInstanceFilesRequest,
   GrepInstanceFilesResponse,
   GrepMatchLine,
+  DaemonInstanceSnapshot,
+  DaemonRestartLease,
   InstanceCommandRequest,
   InstanceCommandResponse,
   InstanceFileContentResponse,
@@ -48,7 +50,7 @@ export interface DaemonNodeCredentials {
   host: string;
   port: number;
   tokenHash: string;
-  os?: string | null;
+  os?: string | null | undefined;
 }
 
 export interface DaemonInstanceSpec {
@@ -428,6 +430,124 @@ export function readDaemonInstanceStatus(node: DaemonNodeCredentials, instanceId
   return requestDaemon<DaemonInstanceState>(node, `/api/instances/${instanceId}/status`, {}, timeoutMs);
 }
 
+export function applyDaemonRestartLeases(
+  node: DaemonNodeCredentials,
+  leases: DaemonRestartLease[],
+  timeoutMs = 4000
+) {
+  return requestDaemon<{ ok: boolean }>(node, "/api/restart-leases", {
+    method: "POST",
+    body: JSON.stringify({ leases })
+  }, timeoutMs);
+}
+
+const daemonInstanceStatuses = new Set<InstanceStatus>([
+  "CREATED",
+  "STARTING",
+  "RUNNING",
+  "STOPPING",
+  "STOPPED",
+  "CRASHED",
+  "UNKNOWN"
+]);
+
+function asFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+export interface DaemonStatusMetrics {
+  cpuUsage: number;
+  memoryUsage: number;
+  diskUsage: number;
+  totalMemoryMb?: number;
+  usedMemoryMb?: number;
+  totalDiskGb?: number;
+  usedDiskGb?: number;
+  uptimeSeconds?: number;
+  loadAverage1m?: number;
+}
+
+export interface FetchDaemonStatusResult {
+  ok: boolean;
+  effectiveProtocol: "http" | "https";
+  effectiveHost?: string;
+  statusData?: { os?: string; arch?: string; version?: string };
+  metrics?: DaemonStatusMetrics;
+  instances?: DaemonInstanceSnapshot[];
+  error?: string;
+}
+
+function parseDaemonStatusBody(body: string): {
+  statusData?: { os?: string; arch?: string; version?: string };
+  metrics?: DaemonStatusMetrics;
+  instances?: DaemonInstanceSnapshot[];
+} {
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(body) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+
+  const statusData: { os?: string; arch?: string; version?: string } = {};
+  if (typeof data.os === "string" && data.os.trim()) statusData.os = data.os;
+  if (typeof data.arch === "string" && data.arch.trim()) statusData.arch = data.arch;
+  if (typeof data.version === "string" && data.version.trim()) statusData.version = data.version;
+  const nestedSystem = data.metrics && typeof data.metrics === "object"
+    ? (data.metrics as { system?: { platform?: unknown; arch?: unknown; version?: unknown } }).system
+    : undefined;
+  if (nestedSystem) {
+    if (!statusData.os && typeof nestedSystem.platform === "string") statusData.os = nestedSystem.platform;
+    if (!statusData.arch && typeof nestedSystem.arch === "string") statusData.arch = nestedSystem.arch;
+    if (!statusData.version && typeof nestedSystem.version === "string") statusData.version = nestedSystem.version;
+  }
+
+  let metrics: DaemonStatusMetrics | undefined;
+  if (data.metrics && typeof data.metrics === "object") {
+    const row = data.metrics as Record<string, unknown>;
+    const cpuUsage = asFiniteNumber(row.cpuUsage);
+    const memoryUsage = asFiniteNumber(row.memoryUsage);
+    const diskUsage = asFiniteNumber(row.diskUsage);
+    if (cpuUsage !== undefined && memoryUsage !== undefined && diskUsage !== undefined) {
+      metrics = { cpuUsage, memoryUsage, diskUsage };
+      const totalMemoryMb = asFiniteNumber(row.totalMemoryMb);
+      const usedMemoryMb = asFiniteNumber(row.usedMemoryMb);
+      const totalDiskGb = asFiniteNumber(row.totalDiskGb);
+      const usedDiskGb = asFiniteNumber(row.usedDiskGb);
+      const uptimeSeconds = asFiniteNumber(row.uptimeSeconds);
+      const loadAverage1m = asFiniteNumber(row.loadAverage1m);
+      if (totalMemoryMb !== undefined) metrics.totalMemoryMb = totalMemoryMb;
+      if (usedMemoryMb !== undefined) metrics.usedMemoryMb = usedMemoryMb;
+      if (totalDiskGb !== undefined) metrics.totalDiskGb = totalDiskGb;
+      if (usedDiskGb !== undefined) metrics.usedDiskGb = usedDiskGb;
+      if (uptimeSeconds !== undefined) metrics.uptimeSeconds = uptimeSeconds;
+      if (loadAverage1m !== undefined) metrics.loadAverage1m = loadAverage1m;
+    }
+  }
+
+  let instances: DaemonInstanceSnapshot[] | undefined;
+  if (Array.isArray(data.instances)) {
+    instances = [];
+    for (const item of data.instances) {
+      if (!item || typeof item !== "object") continue;
+      const row = item as { instanceId?: unknown; status?: unknown; exitCode?: unknown };
+      if (typeof row.instanceId !== "string" || !row.instanceId) continue;
+      if (typeof row.status !== "string" || !daemonInstanceStatuses.has(row.status as InstanceStatus)) continue;
+      instances.push({
+        instanceId: row.instanceId,
+        status: row.status as InstanceStatus,
+        exitCode: typeof row.exitCode === "number" || row.exitCode === null ? row.exitCode : null
+      });
+    }
+  }
+
+  return {
+    ...(Object.keys(statusData).length ? { statusData } : {}),
+    ...(metrics ? { metrics } : {}),
+    ...(instances ? { instances } : {})
+  };
+}
+
 export async function testDaemonHealth(node: DaemonNodeCredentials, timeoutMs = 5000): Promise<{ ok: boolean; statusCode?: number; error?: string }> {
   try {
     const response = await requestDaemonRawWithFallback(node, "/health", {}, timeoutMs);
@@ -447,13 +567,7 @@ export async function testDaemonHealth(node: DaemonNodeCredentials, timeoutMs = 
 export async function fetchDaemonStatus(
   node: DaemonNodeCredentials,
   timeoutMs = 6000
-): Promise<{
-  ok: boolean;
-  effectiveProtocol: "http" | "https";
-  effectiveHost?: string;
-  statusData?: { os?: string; arch?: string; version?: string };
-  error?: string;
-}> {
+): Promise<FetchDaemonStatusResult> {
   let effectiveProtocol: "http" | "https" = node.protocol === "https" ? "https" : "http";
   let effectiveHost = node.host;
   try {
@@ -504,30 +618,15 @@ export async function fetchDaemonStatus(
       };
     }
 
-    let statusData: { os?: string; arch?: string; version?: string } | undefined;
-    try {
-      const data = JSON.parse(response.body) as { metrics?: { system?: { platform?: string; arch?: string; version?: string } } };
-      const system = data?.metrics?.system;
-      if (system) {
-        statusData = {};
-        if (typeof system.platform === "string") statusData.os = system.platform;
-        if (typeof system.arch === "string") statusData.arch = system.arch;
-        if (typeof system.version === "string") statusData.version = system.version;
-      }
-    } catch {}
-
-    const successResult: {
-      ok: boolean;
-      effectiveProtocol: "http" | "https";
-      effectiveHost?: string;
-      statusData?: { os?: string; arch?: string; version?: string };
-      error?: string;
-    } = {
+    const parsed = parseDaemonStatusBody(response.body);
+    const successResult: FetchDaemonStatusResult = {
       ok: true,
       effectiveProtocol,
       effectiveHost
     };
-    if (statusData) successResult.statusData = statusData;
+    if (parsed.statusData) successResult.statusData = parsed.statusData;
+    if (parsed.metrics) successResult.metrics = parsed.metrics;
+    if (parsed.instances) successResult.instances = parsed.instances;
     return successResult;
   } catch (error) {
     if (!isLoopbackHostname(node.host) && effectiveHost !== "127.0.0.1") {
@@ -940,6 +1039,20 @@ export function sendDaemonShellInput(node: DaemonNodeCredentials, instanceId: st
     method: "POST",
     body: JSON.stringify({ data, echo: options.echo })
   });
+}
+
+export function runDaemonShellCommand(
+  node: DaemonNodeCredentials,
+  instanceId: string,
+  shellId: string,
+  input: { command: string; timeoutMs?: number; input?: string },
+  signal?: AbortSignal
+) {
+  return requestDaemon<InstanceCommandResponse>(node, `/api/instances/${instanceId}/shells/${shellId}/command`, {
+    method: "POST",
+    body: JSON.stringify(input),
+    ...(signal ? { signal } : {})
+  }, Math.max(10000, (input.timeoutMs ?? 30000) + 5000));
 }
 
 export function discoverDaemonDatabases(node: DaemonNodeCredentials) {

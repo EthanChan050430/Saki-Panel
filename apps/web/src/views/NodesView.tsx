@@ -39,6 +39,8 @@ import { usePanelT } from "../i18n/index.js";
 import { MetricTile, NodeStatusPill, PageErrorToast } from "../components/common/CommonUI.js";
 import { SakiEmptyState } from "../components/saki/SakiEmptyState.js";
 import { formatBytes, formatDate, formatNumber } from "../utils/path.js";
+import { useGlobalEvent } from "../GlobalEventContext.js";
+
 
 function isPrivateOrLocalIp(host: string | undefined): boolean {
   if (!host) return false;
@@ -57,7 +59,9 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
   const [testingNodeId, setTestingNodeId] = useState<string | null>(null);
   const [busyNodeId, setBusyNodeId] = useState<string | null>(null);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
-  const [createdSecret, setCreatedSecret] = useState<{ nodeId: string; nodeName: string; nodeToken: string } | null>(null);  const [addMode, setAddMode] = useState<"connect_key" | "daemon_install" | "manual">("connect_key");
+  const [createdSecret, setCreatedSecret] = useState<{ nodeId: string; nodeName: string; nodeToken: string } | null>(null);
+  const [addMode, setAddMode] = useState<"connect_key" | "daemon_install" | "manual">("connect_key");
+
   const [keyInput, setKeyInput] = useState("");
   const [keyNodeName, setKeyNodeName] = useState("");
   const [keyGroupName, setKeyGroupName] = useState("");
@@ -80,19 +84,23 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
       return null;
     }
     return null;
-  }, [keyInput]);
+  }, [keyInput]);
+
   const [installOs, setInstallOs] = useState<"linux" | "windows" | "docker">("linux");
   const [installCopied, setInstallCopied] = useState(false);
-  const [joinTokenResult, setJoinTokenResult] = useState<CreateEnrollmentTokenResponse | null>(null);  const [userKeys, setUserKeys] = useState<UserAccessKeyInfo[]>([]);
+  const [joinTokenResult, setJoinTokenResult] = useState<CreateEnrollmentTokenResponse | null>(null);
+  const [userKeys, setUserKeys] = useState<UserAccessKeyInfo[]>([]);
   const [creatingUserKey, setCreatingUserKey] = useState(false);
   const [createdRawUserKey, setCreatedRawUserKey] = useState<string | null>(null);
-  const [showUserKeyModal, setShowUserKeyModal] = useState(false);  const [keyModalNode, setKeyModalNode] = useState<ManagedNode | null>(null);
+  const [showUserKeyModal, setShowUserKeyModal] = useState(false);
+  const [keyModalNode, setKeyModalNode] = useState<ManagedNode | null>(null);
   const [rotatingSecret, setRotatingSecret] = useState(false);
   const [rotatedSecret, setRotatedSecret] = useState<RotateNodeTokenResponse | null>(null);
   const [joinCommands, setJoinCommands] = useState<NodeJoinCommandResponse | null>(null);
   const [loadingJoinCommands, setLoadingJoinCommands] = useState(false);
   const [activeCommandTab, setActiveCommandTab] = useState<"linux" | "windows" | "docker">("linux");
-  const [commandCopied, setCommandCopied] = useState(false);  const [form, setForm] = useState({
+  const [commandCopied, setCommandCopied] = useState(false);
+  const [form, setForm] = useState({
     name: "Local Daemon",
     host: "127.0.0.1",
     port: "5480",
@@ -126,7 +134,25 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
   useEffect(() => {
     void refresh();
     void refreshUserKeys();
-  }, [refresh, refreshUserKeys, refreshTick]);
+  }, [refresh, refreshUserKeys, refreshTick]);
+
+  useGlobalEvent("node.status_changed", (event) => {
+    const data = event.data as { nodeId?: string; status?: ManagedNode["status"]; lastSeenAt?: string | null } | undefined;
+    if (!data?.nodeId) return;
+    setNodes((prev) =>
+      prev.map((n) =>
+        n.id === data.nodeId
+          ? {
+              ...n,
+              status: data.status ?? n.status,
+              lastSeenAt: (data.lastSeenAt !== undefined ? data.lastSeenAt : n.lastSeenAt) ?? null
+            }
+          : n
+      )
+    );
+  });
+
+
   useEffect(() => {
     if (!joinTokenResult && token) {
       void api.createEnrollmentToken(token, {
@@ -169,7 +195,8 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
       groupName: node.groupName ?? "",
       tags: node.tags ?? ""
     });
-  }
+  }
+
   async function handleConnectByKey(event: React.FormEvent) {
     event.preventDefault();
     if (!keyInput.trim()) {
@@ -201,7 +228,8 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
     } finally {
       setConnectingByKey(false);
     }
-  }
+  }
+
   async function handleCreateUserKey() {
     setCreatingUserKey(true);
     setError("");
@@ -215,7 +243,8 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
     } finally {
       setCreatingUserKey(false);
     }
-  }
+  }
+
   async function handleDeleteUserKey(id: string) {
     if (!window.confirm("确定撤销此专属密钥吗？撤销后相关自动化调用将立即失效。")) return;
     try {
@@ -306,7 +335,8 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
     } finally {
       setBusyNodeId(null);
     }
-  }
+  }
+
   async function openKeyModal(node: ManagedNode) {
     setKeyModalNode(node);
     setRotatedSecret(null);
@@ -320,7 +350,8 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
     } finally {
       setLoadingJoinCommands(false);
     }
-  }
+  }
+
   async function handleRotateSecret(node: ManagedNode) {
     if (!window.confirm(`确定要为节点 "${node.name}" 重新生成密钥吗？\n\n重新生成后旧密钥将立即作废。`)) {
       return;
@@ -679,7 +710,12 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
                       </td>
                       <td>{`${node.protocol}://${node.host}:${node.port}`}</td>
                       <td>
-                        <NodeStatusPill status={node.status} />
+                        <NodeStatusPill
+                          status={node.status}
+                          onClick={() => void testNode(node.id)}
+                          loading={testingNodeId === node.id}
+                          disabled={busy}
+                        />
                       </td>
                       <td>{[node.os, node.arch].filter(Boolean).join(" / ") || "-"}</td>
                       <td>

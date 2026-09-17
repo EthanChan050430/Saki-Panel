@@ -546,40 +546,60 @@ export function InstancesView({
     [selectedId]
   );
 
+  const knownShellIdsRef = useRef<Set<string>>(new Set());
+
   const syncInstanceShells = useCallback(
     async (targetId: string) => {
       if (!token) return;
       try {
         const res = await api.listInstanceShells(token, targetId);
         const serverShells = res.shells ?? res.sessions.map((sid) => ({ id: sid, label: undefined, createdAt: 0 }));
+        const incomingIds = new Set(serverShells.map((shell) => shell.id));
+        const hadKnown = knownShellIdsRef.current.size > 0;
+        const added = serverShells.filter((shell) => !knownShellIdsRef.current.has(shell.id));
+        knownShellIdsRef.current = incomingIds;
 
-        if (serverShells.length > 0) {
-          const tabs: Array<{ key: string; label: string; shellSessionId?: string }> = [
-            { key: "main", label: "shell1" }
+        setTerminalTabs((prev) => {
+          if (serverShells.length === 0) {
+            return [{ key: "main", label: "终端" }];
+          }
+          const prevById = new Map(prev.filter((tab) => tab.shellSessionId).map((tab) => [tab.shellSessionId!, tab]));
+          const main = prev.find((tab) => tab.key === "main") ?? { key: "main", label: "shell1" };
+          const next: Array<{ key: string; label: string; shellSessionId?: string }> = [
+            { ...main, label: main.label === "终端" ? "shell1" : main.label }
           ];
           serverShells.forEach((shell, idx) => {
-            tabs.push({
-              key: `shell-${shell.id}`,
-              label: shell.label || `shell${idx + 2}`,
-              shellSessionId: shell.id
-            });
+            const existing = prevById.get(shell.id);
+            next.push(
+              existing ?? {
+                key: `shell-${shell.id}`,
+                label: shell.label || `shell${idx + 2}`,
+                shellSessionId: shell.id
+              }
+            );
           });
-          setTerminalTabs(tabs);
+          return next;
+        });
+
+        setActiveTerminalKey((prev) => {
+          const stillOpen =
+            prev === "main" || serverShells.some((shell) => prev === `shell-${shell.id}`);
+          if (hadKnown) {
+            const sakiNew = added.filter((shell) => (shell.label ?? "").toLowerCase().startsWith("saki"));
+            if (sakiNew.length) {
+              return `shell-${sakiNew[sakiNew.length - 1]!.id}`;
+            }
+            return stillOpen ? prev : "main";
+          }
           const savedKey =
             typeof window !== "undefined" ? window.localStorage.getItem(`webops.instanceActiveTab.${targetId}`) : null;
-          if (savedKey && tabs.some((t) => t.key === savedKey)) {
-            setActiveTerminalKey(savedKey);
-          } else {
-            setActiveTerminalKey(tabs[tabs.length - 1]!.key);
+          if (savedKey && (savedKey === "main" || serverShells.some((shell) => savedKey === `shell-${shell.id}`))) {
+            return savedKey;
           }
-        } else {
-          setTerminalTabs([{ key: "main", label: "终端" }]);
-          setActiveTerminalKey("main");
-        }
+          return stillOpen ? prev : "main";
+        });
       } catch (e) {
         console.warn("Failed to sync instance shells", e);
-        setTerminalTabs([{ key: "main", label: "终端" }]);
-        setActiveTerminalKey("main");
       }
     },
     [token]
@@ -587,12 +607,17 @@ export function InstancesView({
 
   // Sync terminal tabs with backend shells when switching instances or loading
   useEffect(() => {
+    knownShellIdsRef.current = new Set();
     if (selectedId) {
       void syncInstanceShells(selectedId);
-    } else {
-      setTerminalTabs([{ key: "main", label: "终端" }]);
-      setActiveTerminalKey("main");
+      const timer = window.setInterval(() => {
+        void syncInstanceShells(selectedId);
+      }, 2500);
+      return () => window.clearInterval(timer);
     }
+    setTerminalTabs([{ key: "main", label: "终端" }]);
+    setActiveTerminalKey("main");
+    return undefined;
   }, [selectedId, syncInstanceShells]);
 
   function getNextShellLabel(currentTabs: typeof terminalTabs): string {

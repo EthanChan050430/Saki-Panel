@@ -159,6 +159,8 @@ export function toManagedNode(node: {
   };
 }
 
+import { ensureNodesFresh } from "../node-health.js";
+
 export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/nodes", { preHandler: requirePermission("node.view") }, async (request) => {
     const user = await loadCurrentUser(request.user.sub);
@@ -181,8 +183,28 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
         }
       }
     });
+
+    if (nodes.length > 0) {
+      await ensureNodesFresh(nodes);
+      const refreshedNodes = await prisma.node.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        include: {
+          createdBy: {
+            select: { id: true, username: true, displayName: true }
+          },
+          metrics: {
+            orderBy: { createdAt: "desc" },
+            take: 1
+          }
+        }
+      });
+      return refreshedNodes.map(toManagedNode);
+    }
+
     return nodes.map(toManagedNode);
   });
+
 
   // Check local daemon running status
   app.get("/api/nodes/local-status", { preHandler: requirePermission("node.view") }, async (request): Promise<LocalDaemonStatusResponse> => {

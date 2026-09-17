@@ -55,6 +55,7 @@ import {
   readDaemonInstanceStatus,
   restartDaemonInstance,
   runDaemonInstanceCommand,
+  runDaemonShellCommand,
   sendDaemonShellInput,
   startDaemonInstance,
   stopDaemonClashSubscription,
@@ -237,7 +238,7 @@ interface DirectoryProbe {
   workingDirectory: string;
 }
 
-function isWindowsNode(node: { os?: string | null }): boolean {
+function isWindowsNode(node: { os?: string | null | undefined }): boolean {
   return /\bwin(?:dows|32)?\b/i.test(node.os ?? "");
 }
 
@@ -641,7 +642,7 @@ async function updateStatus(id: string, status: InstanceStatus, exitCode?: numbe
   });
 }
 
-const volatileStatuses = new Set<InstanceStatus>(["STARTING", "RUNNING", "STOPPING", "UNKNOWN"]);
+const volatileStatuses = new Set<InstanceStatus>(["STARTING", "RUNNING", "STOPPING", "UNKNOWN", "CRASHED"]);
 
 function normalizeListedStatus(instance: InstanceWithAccess, status: InstanceStatus): InstanceStatus {
   if (status === "CREATED" && instance.status !== "CREATED") {
@@ -664,7 +665,7 @@ async function refreshVolatileStatus(instance: InstanceWithAccess): Promise<Inst
     }
     return updateStatus(instance.id, nextStatus, nextExitCode);
   } catch {
-    if (instance.status === "UNKNOWN") {
+    if (instance.status === "UNKNOWN" || instance.status === "CRASHED") {
       return instance;
     }
     return updateStatus(instance.id, "UNKNOWN", instance.lastExitCode);
@@ -1871,6 +1872,35 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       }
       const shellInputOpts = body.echo !== undefined ? { echo: body.echo } : {};
       return await sendDaemonShellInput(instance.node, id, sid, body.data, shellInputOpts);
+    } catch (error) {
+      reply.code(502).send({ message: error instanceof Error ? error.message : "Daemon request failed" });
+    }
+  });
+
+  app.post("/api/instances/:id/shells/:sid/command", { preHandler: requirePermission("terminal.input") }, async (request, reply) => {
+    const { id, sid } = request.params as { id: string; sid: string };
+    const instance = await loadInstance(request, id);
+    if (!instance) {
+      await sendNotFound(reply);
+      return;
+    }
+    const body = request.body as { command?: string; timeoutMs?: number; input?: string };
+    const command = body.command?.trim();
+    if (!command) {
+      reply.code(400).send({ message: "command is required" });
+      return;
+    }
+    const blocked = findDangerousCommandReason(command);
+    if (blocked) {
+      reply.code(400).send({ message: blocked });
+      return;
+    }
+    try {
+      return await runDaemonShellCommand(instance.node, id, sid, {
+        command,
+        ...(typeof body.timeoutMs === "number" ? { timeoutMs: body.timeoutMs } : {}),
+        ...(typeof body.input === "string" ? { input: body.input } : {})
+      });
     } catch (error) {
       reply.code(502).send({ message: error instanceof Error ? error.message : "Daemon request failed" });
     }

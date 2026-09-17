@@ -5,6 +5,7 @@ import { collectMetrics } from "./metrics.js";
 import { daemonConfig } from "./config.js";
 import { authenticatePanelRequest } from "./daemon-auth.js";
 import { DaemonError, isDaemonError } from "./errors.js";
+import { applyRestartLeases, instanceManager } from "./instance-manager.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerInstanceRoutes } from "./routes/instances.js";
 import { registerTerminalRoutes } from "./routes/terminal.js";
@@ -43,11 +44,28 @@ export async function createDaemonServer() {
   // /health is intentionally open for load-balancer probing. It returns no sensitive details.
   app.get("/health", async () => ({ ok: true }));
 
-  // /api/status returns runtime metrics; only the paired panel may read it.
+  // /api/status returns runtime metrics and instance snapshots so a panel that
+  // connected this daemon by node key (pull, no daemon-pushed heartbeat) can
+  // still open Saki watch incidents.
   app.get("/api/status", { preHandler: authenticatePanelRequest }, async () => ({
     ok: true,
-    metrics: await collectMetrics()
+    os: daemonConfig.osName,
+    arch: daemonConfig.arch,
+    version: daemonConfig.version,
+    metrics: await collectMetrics(),
+    instances: instanceManager.listSnapshots()
   }));
+
+  app.post("/api/restart-leases", { preHandler: authenticatePanelRequest }, async (request) => {
+    const body = request.body as { leases?: Array<{ instanceId?: unknown; suppressUntil?: unknown }> } | null;
+    const rawLeases = body && Array.isArray(body.leases) ? body.leases : [];
+    const leases = rawLeases.flatMap((item) => {
+      if (!item || typeof item.instanceId !== "string" || typeof item.suppressUntil !== "string") return [];
+      return [{ instanceId: item.instanceId, suppressUntil: item.suppressUntil }];
+    });
+    applyRestartLeases(leases);
+    return { ok: true };
+  });
 
   await registerInstanceRoutes(app);
   await registerFileRoutes(app);

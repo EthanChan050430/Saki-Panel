@@ -34,7 +34,7 @@ import { usePlugins } from "../plugins/PluginContext.js";
 import { PluginGameModal } from "../plugins/PluginGameModal.js";
 import { SakiEmptyState } from "../components/saki/SakiEmptyState.js";
 import { PageErrorToast, PageNoticeToast } from "../components/common/CommonUI.js";
-import { usePanelT, usePanelLanguage } from "../i18n/index.js";
+import { usePanelT, usePanelFormatT, usePanelLanguage } from "../i18n/index.js";
 
 interface PluginStoreViewProps {
   token: string;
@@ -43,6 +43,7 @@ interface PluginStoreViewProps {
 
 export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
   const t = usePanelT();
+  const tFormat = usePanelFormatT();
   const { language } = usePanelLanguage();
   const {
     installedPlugins,
@@ -123,36 +124,12 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
       const updatables = Object.values(results).filter((s) => s.updatesAvailable);
       if (updatables.length > 0) {
         setSelectedForUpdate(new Set(updatables.map((s) => s.pluginId)));
-        setToastNotice(
-          language === "en-US"
-            ? `Check complete: found ${updatables.length} update(s)!`
-            : language === "ja-JP"
-            ? `確認完了：${updatables.length} 件の更新が見つかりました！`
-            : language === "zh-TW"
-            ? `檢查完成：發現 ${updatables.length} 個可升級擴充！`
-            : `检测完成：发现 ${updatables.length} 个可升级扩展！`
-        );
+        setToastNotice(tFormat("plugins.check.complete", updatables.length));
       } else {
-        setToastNotice(
-          language === "en-US"
-            ? "Check complete: all plugins are up to date"
-            : language === "ja-JP"
-            ? "確認完了：すべてのプラグインが最新です"
-            : language === "zh-TW"
-            ? "檢查完成：所有已安裝擴充均已是最新版本"
-            : "检测完成：所有已安装扩展均已是最新版本"
-        );
+        setToastNotice(t("plugins.check.upToDate"));
       }
     } catch (err) {
-      setToastError(
-        language === "en-US"
-          ? `Update check failed: ${err instanceof Error ? err.message : String(err)}`
-          : language === "ja-JP"
-          ? `更新確認失敗: ${err instanceof Error ? err.message : String(err)}`
-          : language === "zh-TW"
-          ? `檢查更新失敗: ${err instanceof Error ? err.message : String(err)}`
-          : `检测更新失败: ${err instanceof Error ? err.message : String(err)}`
-      );
+      setToastError(tFormat("plugins.check.failed", err instanceof Error ? err.message : String(err)));
     } finally {
       setCheckingUpdates(false);
     }
@@ -166,46 +143,14 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
       const status = res[pluginId];
       if (status?.updatesAvailable) {
         setSelectedForUpdate((prev) => new Set(prev).add(pluginId));
-        setToastNotice(
-          language === "en-US"
-            ? "New version available for this plugin!"
-            : language === "ja-JP"
-            ? "このプラグインの新バージョンが利用可能です！"
-            : language === "zh-TW"
-            ? "檢查到該擴充有新版本可用！"
-            : "检测到该插件有新版本可用！"
-        );
+        setToastNotice(t("plugins.single.hasUpdate"));
       } else if (status?.error) {
-        setToastError(
-          language === "en-US"
-            ? `Check failed: ${status.error}`
-            : language === "ja-JP"
-            ? `確認失敗: ${status.error}`
-            : language === "zh-TW"
-            ? `檢查失敗: ${status.error}`
-            : `检测失败: ${status.error}`
-        );
+        setToastError(tFormat("plugins.single.failed", status.error));
       } else {
-        setToastNotice(
-          language === "en-US"
-            ? "This plugin is already up to date"
-            : language === "ja-JP"
-            ? "このプラグインは最新バージョンです"
-            : language === "zh-TW"
-            ? "該擴充已是最新版本"
-            : "该插件已是最新版本"
-        );
+        setToastNotice(t("plugins.single.upToDate"));
       }
     } catch (err) {
-      setToastError(
-        language === "en-US"
-          ? `Check failed: ${err instanceof Error ? err.message : String(err)}`
-          : language === "ja-JP"
-          ? `確認失敗: ${err instanceof Error ? err.message : String(err)}`
-          : language === "zh-TW"
-          ? `檢查失敗: ${err instanceof Error ? err.message : String(err)}`
-          : `检测失败: ${err instanceof Error ? err.message : String(err)}`
-      );
+      setToastError(tFormat("plugins.single.failed", err instanceof Error ? err.message : String(err)));
     } finally {
       setCheckingSingleId(null);
     }
@@ -217,41 +162,17 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
     try {
       const updated = await updatePlugin(id);
       if (updated) {
-        setToastNotice(
-          language === "en-US"
-            ? `Plugin "${displayName}" updated to v${updated.manifest.version}`
-            : language === "ja-JP"
-            ? `プラグイン「${displayName}」が v${updated.manifest.version} に更新されました`
-            : language === "zh-TW"
-            ? `擴充「${displayName}」已更新至最新版本 v${updated.manifest.version}`
-            : `扩展「${displayName}」已更新至最新版本 v${updated.manifest.version}`
-        );
+        setToastNotice(tFormat("plugins.update.success", displayName, updated.manifest.version));
         setSelectedForUpdate((prev) => {
           const next = new Set(prev);
           next.delete(id);
           return next;
         });
       } else {
-        setToastError(
-          language === "en-US"
-            ? "Update failed, please try again"
-            : language === "ja-JP"
-            ? "更新に失敗しました。後でもう一度お試しください"
-            : language === "zh-TW"
-            ? "更新失敗，請稍後重試"
-            : "更新失败，请稍后重试"
-        );
+        setToastError(t("plugins.update.failed"));
       }
     } catch (err) {
-      setToastError(
-        language === "en-US"
-          ? `Update failed: ${err instanceof Error ? err.message : String(err)}`
-          : language === "ja-JP"
-          ? `更新失敗: ${err instanceof Error ? err.message : String(err)}`
-          : language === "zh-TW"
-          ? `更新失敗: ${err instanceof Error ? err.message : String(err)}`
-          : `更新失败: ${err instanceof Error ? err.message : String(err)}`
-      );
+      setToastError(tFormat("plugins.update.error", err instanceof Error ? err.message : String(err)));
     } finally {
       setUpdatingIds((prev) => {
         const next = new Set(prev);
@@ -299,35 +220,11 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
     }
 
     if (successCount > 0 && failCount === 0) {
-      setToastNotice(
-        language === "en-US"
-          ? `Successfully updated ${successCount} plugin(s) to latest version!`
-          : language === "ja-JP"
-          ? `${successCount} 件のプラグインを最新バージョンに更新しました！`
-          : language === "zh-TW"
-          ? `已成功將 ${successCount} 個擴充更新至最新版本！`
-          : `已成功将 ${successCount} 个扩展更新至最新版本！`
-      );
+      setToastNotice(tFormat("plugins.update.batchSuccess", successCount));
     } else if (successCount > 0 && failCount > 0) {
-      setToastNotice(
-        language === "en-US"
-          ? `Successfully updated ${successCount} plugin(s), ${failCount} failed`
-          : language === "ja-JP"
-          ? `${successCount} 件の更新に成功し、${failCount} 件失敗しました`
-          : language === "zh-TW"
-          ? `已成功更新 ${successCount} 個擴充，${failCount} 個失敗`
-          : `已成功更新 ${successCount} 个扩展，${failCount} 个失败`
-      );
+      setToastNotice(tFormat("plugins.update.batchPartial", successCount, failCount));
     } else if (failCount > 0) {
-      setToastError(
-        language === "en-US"
-          ? "Failed to update plugins, please try again"
-          : language === "ja-JP"
-          ? "プラグインの更新に失敗しました。後でお試しください"
-          : language === "zh-TW"
-          ? "擴充更新失敗，請稍後重試"
-          : "扩展更新失败，请稍后重试"
-      );
+      setToastError(t("plugins.update.batchFailed"));
     }
   };
 
@@ -376,16 +273,10 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
     if (diffSec < 60) return t("plugins.updates.timeJustNow");
     if (diffSec < 3600) {
       const mins = Math.floor(diffSec / 60);
-      return language === "en-US"
-        ? `${mins}m ago`
-        : language === "ja-JP"
-        ? `${mins}分前`
-        : language === "zh-TW"
-        ? `${mins} 分鐘前`
-        : `${mins} 分钟前`;
+      return tFormat("plugins.updates.minsAgo", mins);
     }
     return lastCheckedAt.toLocaleTimeString();
-  }, [lastCheckedAt, t, language]);
+  }, [lastCheckedAt, t, tFormat]);
 
   // Auto-check on first visiting updates tab
   useEffect(() => {
@@ -475,15 +366,7 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
       const installed = await installFromGithub(payload);
       setInstallModalOpen(false);
       setInstallRepoInput("");
-      setToastNotice(
-        language === "en-US"
-          ? `Successfully installed plugin "${installed.map((p) => p.manifest.displayName).join("、")}"`
-          : language === "ja-JP"
-          ? `プラグイン「${installed.map((p) => p.manifest.displayName).join("、")}」をインストールしました`
-          : language === "zh-TW"
-          ? `已成功安裝擴充「${installed.map((p) => p.manifest.displayName).join("、")}」`
-          : `已成功安装扩展「${installed.map((p) => p.manifest.displayName).join("、")}」`
-      );
+      setToastNotice(tFormat("plugins.install.success", installed.map((p) => p.manifest.displayName).join("、")));
       setActiveTab("installed");
     } catch (err) {
       setInstallError(err instanceof Error ? err.message : String(err));
@@ -502,26 +385,10 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
         pluginName: item.name,
         mirrorId: selectedMirrorId
       });
-      setToastNotice(
-        language === "en-US"
-          ? `Successfully installed plugin "${installed.map((p) => p.manifest.displayName).join("、")}"`
-          : language === "ja-JP"
-          ? `プラグイン「${installed.map((p) => p.manifest.displayName).join("、")}」をインストールしました`
-          : language === "zh-TW"
-          ? `已成功安裝擴充「${installed.map((p) => p.manifest.displayName).join("、")}」`
-          : `已成功安装扩展「${installed.map((p) => p.manifest.displayName).join("、")}」`
-      );
+      setToastNotice(tFormat("plugins.install.success", installed.map((p) => p.manifest.displayName).join("、")));
       setActiveTab("installed");
     } catch (err) {
-      setToastError(
-        language === "en-US"
-          ? `Installation failed: ${err instanceof Error ? err.message : String(err)}`
-          : language === "ja-JP"
-          ? `インストール失敗: ${err instanceof Error ? err.message : String(err)}`
-          : language === "zh-TW"
-          ? `安裝失敗: ${err instanceof Error ? err.message : String(err)}`
-          : `安装失败: ${err instanceof Error ? err.message : String(err)}`
-      );
+      setToastError(tFormat("plugins.install.failed", err instanceof Error ? err.message : String(err)));
     } finally {
       setInstalling(false);
       setInstallingItemName(null);
@@ -982,14 +849,7 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                                   className="plugin-art-menu-item is-danger"
                                   onClick={() => {
                                     setActiveCardMenuId(null);
-                                    const confirmMsg =
-                                      language === "en-US"
-                                        ? `Are you sure you want to completely uninstall "${p.manifest.displayName}"? Local plugin assets will be removed.`
-                                        : language === "ja-JP"
-                                        ? `プラグイン「${p.manifest.displayName}」をアンインストールしますか？関連ファイルが削除されます。`
-                                        : language === "zh-TW"
-                                        ? `確定要徹底解除安裝擴充「${p.manifest.displayName}」？此操作將刪除相關本地資源。`
-                                        : `确定要彻底卸载扩展「${p.manifest.displayName}」？此操作将删除相关本地资源。`;
+                                    const confirmMsg = tFormat("plugins.card.uninstallConfirm", p.manifest.displayName);
                                     if (confirm(confirmMsg)) {
                                       void uninstallPlugin(p.id);
                                     }
@@ -1247,13 +1107,7 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                 <div className="serene-texts">
                   <h3 className="serene-title">{t("plugins.updates.sereneTitle")}</h3>
                   <p className="serene-subtitle">
-                    {language === "en-US"
-                      ? `Verified all ${pluginsWithSource.length} plugins · Last check: ${lastCheckedText || t("plugins.updates.timeJustNow")}`
-                      : language === "ja-JP"
-                      ? `全 ${pluginsWithSource.length} 件のプラグインを検証済み · 最終確認: ${lastCheckedText || t("plugins.updates.timeJustNow")}`
-                      : language === "zh-TW"
-                      ? `已對全部 ${pluginsWithSource.length} 款擴充完成校驗 · 上次同步: ${lastCheckedText || "剛剛"}`
-                      : `已对全部 ${pluginsWithSource.length} 款扩展完成校验 · 上次同步: ${lastCheckedText || "刚刚"}`}
+                    {tFormat("plugins.updates.sereneSubtitle", pluginsWithSource.length, lastCheckedText || t("plugins.updates.timeJustNow"))}
                   </p>
                 </div>
                 <div className="serene-actions">
@@ -1272,15 +1126,7 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
               </div>
 
               <div className="plugin-updates-list-header">
-                <span>
-                  {language === "en-US"
-                    ? `Managed Plugins (${pluginsWithSource.length})`
-                    : language === "ja-JP"
-                    ? `管理対象プラグイン (${pluginsWithSource.length})`
-                    : language === "zh-TW"
-                    ? `線上管理擴充 (${pluginsWithSource.length})`
-                    : `在线管理扩展 (${pluginsWithSource.length})`}
-                </span>
+                <span>{tFormat("plugins.updates.managedPluginsCount", pluginsWithSource.length)}</span>
               </div>
 
               <div className="plugin-updates-deck">
@@ -1355,23 +1201,10 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                 <div className="action-hub-left">
                   <span className="action-hub-badge">
                     <Sparkles size={13} />{" "}
-                    {availableUpdatesCount}{" "}
-                    {language === "en-US"
-                      ? "updates available"
-                      : language === "ja-JP"
-                      ? "件の新バージョンあり"
-                      : language === "zh-TW"
-                      ? "項新版本可用"
-                      : "项新版本可用"}
+                    {tFormat("plugins.updates.availableCount", availableUpdatesCount)}
                   </span>
                   <span className="action-hub-time">
-                    {language === "en-US"
-                      ? "Last checked: "
-                      : language === "ja-JP"
-                      ? "最終確認: "
-                      : language === "zh-TW"
-                      ? "上次檢查: "
-                      : "上次检测: "}
+                    {t("plugins.updates.lastCheckedLabel")}
                     {lastCheckedText || t("plugins.updates.timeJustNow")}
                   </span>
                 </div>
@@ -1384,15 +1217,7 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                       onChange={handleToggleSelectAll}
                       disabled={updatingIds.size > 0}
                     />
-                    <span>
-                      {language === "en-US"
-                        ? `Select all (${availableUpdatesCount})`
-                        : language === "ja-JP"
-                        ? `更新を一括選択 (${availableUpdatesCount})`
-                        : language === "zh-TW"
-                        ? `全選可更新 (${availableUpdatesCount})`
-                        : `全选可更新 (${availableUpdatesCount})`}
-                    </span>
+                    <span>{tFormat("plugins.updates.selectAllCount", availableUpdatesCount)}</span>
                   </label>
 
                   {canManage ? (
@@ -1416,20 +1241,8 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                         <DownloadCloud size={13} />
                         <span>
                           {updatingIds.size > 0
-                            ? language === "en-US"
-                              ? `Updating (${updatingIds.size})...`
-                              : language === "ja-JP"
-                              ? `更新中 (${updatingIds.size})...`
-                              : language === "zh-TW"
-                              ? `正在更新 (${updatingIds.size})...`
-                              : `正在更新 (${updatingIds.size})...`
-                            : language === "en-US"
-                            ? `Update Selected (${selectedForUpdate.size})`
-                            : language === "ja-JP"
-                            ? `選択した項目を更新 (${selectedForUpdate.size})`
-                            : language === "zh-TW"
-                            ? `一鍵更新所選 (${selectedForUpdate.size})`
-                            : `一键更新所选 (${selectedForUpdate.size})`}
+                            ? tFormat("plugins.updates.updatingWithCount", updatingIds.size)
+                            : tFormat("plugins.updates.updateSelectedCount", selectedForUpdate.size)}
                         </span>
                       </button>
                     </>
@@ -1459,15 +1272,7 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                             checked={selectedForUpdate.has(p.id)}
                             onChange={() => handleToggleSelect(p.id)}
                             disabled={isUpdating}
-                            aria-label={
-                              language === "en-US"
-                                ? `Select ${p.manifest.displayName} for update`
-                                : language === "ja-JP"
-                                ? `更新対象に選択: ${p.manifest.displayName}`
-                                : language === "zh-TW"
-                                ? `選擇更新 ${p.manifest.displayName}`
-                                : `选择更新 ${p.manifest.displayName}`
-                            }
+                            aria-label={tFormat("plugins.updates.selectRowAria", p.manifest.displayName)}
                           />
                         ) : (
                           <Check size={13} className="update-row-checked-icon" />
@@ -1535,23 +1340,7 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                               disabled={isUpdating}
                             >
                               <DownloadCloud size={12} />
-                              <span>
-                                {isUpdating
-                                  ? language === "en-US"
-                                    ? "Updating..."
-                                    : language === "ja-JP"
-                                    ? "更新中..."
-                                    : language === "zh-TW"
-                                    ? "更新中..."
-                                    : "更新中..."
-                                  : language === "en-US"
-                                  ? "Update"
-                                  : language === "ja-JP"
-                                  ? "更新"
-                                  : language === "zh-TW"
-                                  ? "立即更新"
-                                  : "立即更新"}
-                              </span>
+                              <span>{isUpdating ? t("plugins.updates.updating") : t("plugins.updates.updateNow")}</span>
                             </button>
                           ) : (
                             <button

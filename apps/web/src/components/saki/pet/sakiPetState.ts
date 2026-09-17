@@ -7,6 +7,7 @@ import {
 } from "../SakiComponents.js";
 import { newClientId } from "../../../utils/id.js";
 import { useSakiPetMusic } from "./sakiPetMusic.js";
+import { panelT } from "../../../i18n/translations.js";
 
 export function isSakiPetTouchUi(): boolean {
   if (typeof window === "undefined") return false;
@@ -148,15 +149,14 @@ function writePersist(partial: PersistShape) {
 }
 
 export function weatherLabel(code: number, language?: string): string {
-  const isEn = language === "en-US";
-  const isJa = language === "ja-JP";
-  if (code === 0) return isEn ? "Clear" : isJa ? "晴れ" : "晴";
-  if (code <= 3) return isEn ? "Cloudy" : isJa ? "曇り" : "多云";
-  if (code <= 48) return isEn ? "Fog" : isJa ? "霧" : "雾";
-  if (code <= 67) return isEn ? "Rain" : isJa ? "雨" : "雨";
-  if (code <= 77) return isEn ? "Snow" : isJa ? "雪" : "雪";
-  if (code <= 82) return isEn ? "Showers" : isJa ? "にわか雨" : "阵雨";
-  return isEn ? "Storm" : isJa ? "雷雨" : "雷雨";
+  const lang = language || "zh-CN";
+  if (code === 0) return panelT(lang, "weather.clear");
+  if (code <= 3) return panelT(lang, "weather.cloudy");
+  if (code <= 48) return panelT(lang, "weather.fog");
+  if (code <= 67) return panelT(lang, "weather.rain");
+  if (code <= 77) return panelT(lang, "weather.snow");
+  if (code <= 82) return panelT(lang, "weather.showers");
+  return panelT(lang, "weather.storm");
 }
 
 export function weatherGlyph(code: number): string {

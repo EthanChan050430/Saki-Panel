@@ -627,6 +627,8 @@ async function restoreAutoStartInstances(logger: FastifyBaseLogger): Promise<voi
   }
 }
 
+import { startNodeHealthMonitor } from "./node-health.js";
+
 export function startTaskScheduler(logger: FastifyBaseLogger): () => void {
   const timers: NodeJS.Timeout[] = [];
   const runDueTasks = async () => {
@@ -642,6 +644,8 @@ export function startTaskScheduler(logger: FastifyBaseLogger): () => void {
     }
   };
 
+  const stopNodeHealth = startNodeHealthMonitor(logger);
+
   timers.push(
     setTimeout(() => void restoreAutoStartInstances(logger), 2500),
     setTimeout(() => void restoreAutoStartInstances(logger), 12000),
@@ -650,9 +654,11 @@ export function startTaskScheduler(logger: FastifyBaseLogger): () => void {
   void runDueTasks();
 
   return () => {
+    stopNodeHealth();
     for (const timer of timers) {
       clearTimeout(timer);
       clearInterval(timer);
     }
   };
 }
+

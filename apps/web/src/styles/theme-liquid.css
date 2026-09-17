@@ -5129,30 +5129,52 @@
   color: #94a3b8 !important;
 }
 
-/* Agent Status Badge */
+/* Agent Status Badge & Workspace Dropdown */
 [data-theme="dark"] .saki-agent-status {
-  border-color: rgba(255, 255, 255, 0.1) !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+
+[data-theme="dark"] .saki-agent-status:hover {
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+[data-theme="dark"] .saki-agent-status.dropdown-open {
+  background: rgba(255, 255, 255, 0.1) !important;
 }
 
 [data-theme="dark"] .saki-agent-status.online {
   color: #5eead4 !important;
-  background: rgba(20, 184, 166, 0.2) !important;
-  border-color: rgba(45, 212, 191, 0.32) !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+[data-theme="dark"] .saki-agent-status.online:hover {
+  background: rgba(45, 212, 191, 0.12) !important;
+}
+
+[data-theme="dark"] .saki-agent-status.online.dropdown-open {
+  background: rgba(45, 212, 191, 0.18) !important;
 }
 
 [data-theme="dark"] .saki-agent-status.online .saki-agent-status-dot {
   background: #2dd4bf;
-  box-shadow: 0 0 8px rgba(45, 212, 191, 0.7);
+  box-shadow: 0 0 8px rgba(45, 212, 191, 0.8);
 }
 
 [data-theme="dark"] .saki-agent-status.fallback {
   color: #fbbf24 !important;
   background: transparent !important;
-  border-color: transparent !important;
+  border: none !important;
   box-shadow: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+}
+
+[data-theme="dark"] .saki-agent-status.fallback:hover {
+  background: rgba(251, 191, 36, 0.1) !important;
 }
 
 [data-theme="dark"] .saki-agent-status.fallback .saki-agent-status-dot {
@@ -5162,12 +5184,89 @@
 
 [data-theme="dark"] .saki-agent-status.pending {
   color: #94a3b8 !important;
-  background: rgba(30, 41, 59, 0.6) !important;
-  border-color: rgba(71, 85, 105, 0.4) !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+[data-theme="dark"] .saki-agent-status.pending:hover {
+  background: rgba(148, 163, 184, 0.1) !important;
 }
 
 [data-theme="dark"] .saki-agent-status.pending .saki-agent-status-dot {
   background: #64748b;
+}
+
+[data-theme="dark"] .saki-workspace-dropdown {
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 18px 40px -4px rgba(0, 0, 0, 0.45), 0 4px 14px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .saki-workspace-dropdown-header {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .saki-workspace-dropdown-title {
+  color: #f1f5f9;
+}
+
+[data-theme="dark"] .saki-workspace-dropdown-hint,
+[data-theme="dark"] .saki-workspace-section-title {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .saki-workspace-search-wrap {
+  background: rgba(255, 255, 255, 0.06);
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .saki-workspace-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="dark"] .saki-workspace-item.active {
+  background: rgba(20, 184, 166, 0.2);
+}
+
+[data-theme="dark"] .saki-workspace-item-title {
+  color: #f1f5f9;
+}
+
+[data-theme="dark"] .saki-workspace-item.active .saki-workspace-item-title {
+  color: #5eead4;
+}
+
+[data-theme="dark"] .saki-workspace-item-subtitle {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .saki-workspace-item-check {
+  color: #2dd4bf;
+}
+
+[data-theme="dark"] .saki-workspace-item-icon.current {
+  background: rgba(129, 140, 248, 0.18);
+  color: #a5b4fc;
+}
+
+[data-theme="dark"] .saki-workspace-item-icon.page {
+  background: rgba(56, 189, 248, 0.18);
+  color: #7dd3fc;
+}
+
+[data-theme="dark"] .saki-workspace-item-icon.instance {
+  background: rgba(52, 211, 153, 0.18);
+  color: #6ee7b7;
+}
+
+[data-theme="dark"] .saki-workspace-item-jump-btn {
+  color: #64748b;
+}
+
+[data-theme="dark"] .saki-workspace-item-jump-btn:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: #5eead4;
 }
 
 /* Error Context */
@@ -5297,6 +5396,14 @@
 
 [data-theme="dark"] .saki-stream-status {
   color: #94a3b8 !important;
+}
+
+[data-theme="dark"] .saki-stream-status-icon {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .saki-stream-status-icon.is-thinking {
+  color: #c4b5fd;
 }
 
 [data-theme="dark"] .saki-stream-status-text {
@@ -5502,6 +5609,10 @@
 
 [data-theme="dark"] .saki-action-icon {
   color: #94a3b8 !important;
+}
+
+[data-theme="dark"] .saki-thinking-action-row .saki-action-icon {
+  color: #c4b5fd !important;
 }
 
 [data-theme="dark"] .saki-action-label code {

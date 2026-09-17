@@ -43,10 +43,7 @@ export function AdminUserPointsModal({
   onClose: () => void;
   onUpdated?: (updatedUser: { id: string; points: number; unlimitedPoints: boolean }) => void;
 }) {
-  const { language } = usePanelLanguage();
-  const isEn = language === "en-US";
-  const isTw = language === "zh-TW";
-  const isJa = language === "ja-JP";
+  const { t, tFormat } = usePanelLanguage();
 
   const [tab, setTab] = useState<"manage" | "records">("manage");
   const [actionType, setActionType] = useState<"adjust" | "set" | "set_unlimited">("adjust");
@@ -62,15 +59,29 @@ export function AdminUserPointsModal({
 
   useEffect(() => {
     if (!open || !user) return;
-    setTab("manage");
-    setActionType("adjust");
-    setAmount("100");
     setUnlimitedChecked(Boolean(user.unlimitedPoints));
+    setAmount("100");
     setNote("");
     setError("");
     setNotice("");
+    setActionType("adjust");
+    setTab("manage");
     void loadRecords();
-  }, [open, user]);
+  }, [open, user?.id]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open, onClose]);
 
   const loadRecords = useCallback(async () => {
     if (!user || !token) return;
@@ -78,17 +89,19 @@ export function AdminUserPointsModal({
     try {
       const res = await api.userPointRecords(token, user.id, 50);
       setRecords(res);
-    } catch {} finally {
+    } catch {
+      // ignore
+    } finally {
       setRecordsLoading(false);
     }
-  }, [token, user]);
+  }, [token, user?.id]);
 
   if (!open || !user || typeof document === "undefined") return null;
 
   const currentPoints = user.points ?? 0;
   const numericAmount = Number(amount) || 0;
   const estimatedPoints = Math.max(0, currentPoints + numericAmount);
-  const ptsUnit = isEn ? " pts" : isTw ? " 積分" : isJa ? " ポイント" : " 积分";
+  const ptsUnit = ` ${t("points.unit")}`;
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -107,16 +120,16 @@ export function AdminUserPointsModal({
         payload.unlimited = unlimitedChecked;
       } else if (actionType === "set") {
         const val = Number(amount);
-        if (Number.isNaN(val) || val < 0) throw new Error(isEn ? "Please enter a valid points value" : isTw ? "請輸入合法的設定積分數值" : isJa ? "有効なポイント数値を入力してください" : "请输入合法的设定积分数值");
+        if (Number.isNaN(val) || val < 0) throw new Error(t("points.admin.invalidValue"));
         payload.amount = val;
       } else if (actionType === "adjust") {
         const val = Number(amount);
-        if (Number.isNaN(val) || val === 0) throw new Error(isEn ? "Please enter a valid adjustment amount (positive to add, negative to deduct)" : isTw ? "請輸入合法的變動數值（支援正數增加或負數扣除）" : isJa ? "有効な変動量を入力してください（正は加算、負は減算）" : "请输入合法的变动数值（支持正数增加或负数扣除）");
+        if (Number.isNaN(val) || val === 0) throw new Error(t("points.admin.invalidDelta"));
         payload.amount = val;
       }
 
       const res = await api.updateUserPoints(token, user.id, payload);
-      setNotice(isEn ? "Points updated successfully!" : isTw ? "積分更新成功！" : isJa ? "ポイントを更新しました！" : "积分更新成功！");
+      setNotice(t("points.admin.saveSuccess"));
       onUpdated?.({
         id: user.id,
         points: res.points,
@@ -124,7 +137,7 @@ export function AdminUserPointsModal({
       });
       void loadRecords();
     } catch (err) {
-      setError(err instanceof Error ? err.message : (isEn ? "Update failed" : isTw ? "更新失敗" : isJa ? "更新に失敗しました" : "更新失败"));
+      setError(err instanceof Error ? err.message : t("points.admin.saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -145,20 +158,16 @@ export function AdminUserPointsModal({
               <Coins size={22} className="points-title-icon" />
             </div>
             <div className="modal-fullscreen-title-text">
-              <h3>{isEn ? "Manage User Points" : isTw ? "管理使用者積分" : isJa ? "ユーザーポイント管理" : "管理用户积分"}</h3>
+              <h3>{t("points.admin.title")}</h3>
               <p className="modal-fullscreen-subtitle points-modal-subtitle">
-                <span>{isEn ? "Target User: " : isTw ? "目標使用者：" : isJa ? "対象ユーザー：" : "目标用户："}<strong>{user.displayName || user.username}</strong></span>
+                <span>{tFormat("points.admin.userSubtitle", user.displayName || user.username)}</span>
                 <span className="user-curr-points-tag">
-                  {isEn
-                    ? `Current: ${user.unlimitedPoints ? "∞ Unlimited" : `${currentPoints} pts`}`
-                    : isTw
-                    ? `目前：${user.unlimitedPoints ? "∞ 無限積分" : `${currentPoints} 積分`}`
-                    : `当前：${user.unlimitedPoints ? "∞ 无限积分" : `${currentPoints} 积分`}`}
+                  {user.unlimitedPoints ? `∞ ${t("points.admin.unlimitedText")}` : `${currentPoints} ${ptsUnit.trim()}`}
                 </span>
               </p>
             </div>
           </div>
-          <button className="icon-button mini modal-fullscreen-close-btn" type="button" title={isEn ? "Close" : isTw ? "關閉" : isJa ? "閉じる" : "关闭"} onClick={onClose}>
+          <button className="icon-button mini modal-fullscreen-close-btn" type="button" title={t("common.close")} onClick={onClose}>
             <X size={18} />
           </button>
         </header>
@@ -171,7 +180,7 @@ export function AdminUserPointsModal({
               onClick={() => setTab("manage")}
             >
               <Sliders size={14} />
-              <span>{isEn ? "Point Actions" : isTw ? "積分操作" : isJa ? "ポイント操作" : "积分操作"}</span>
+              <span>{t("points.admin.tabManage")}</span>
             </button>
             <button
               type="button"
@@ -179,7 +188,7 @@ export function AdminUserPointsModal({
               onClick={() => setTab("records")}
             >
               <History size={14} />
-              <span>{isEn ? "Usage & Change History" : isTw ? "消耗與變動明細" : isJa ? "使用量と変動履歴" : "消耗与变动明细"}</span>
+              <span>{t("points.admin.tabRecords")}</span>
               {records.length > 0 ? <span className="tab-record-count">{records.length}</span> : null}
             </button>
           </div>
@@ -194,7 +203,7 @@ export function AdminUserPointsModal({
 
                 <div className="admin-points-form">
                   <div className="admin-form-group">
-                <label className="admin-form-label">{isEn ? "Action Type" : isTw ? "操作類型" : isJa ? "操作タイプ" : "操作类型"}</label>
+                <label className="admin-form-label">{t("points.admin.adjustType")}</label>
                 <div className="admin-action-cards">
                   <button
                     type="button"
@@ -203,8 +212,8 @@ export function AdminUserPointsModal({
                   >
                     <ArrowUpDown size={16} className="card-icon" />
                     <div className="card-info">
-                      <strong>{isEn ? "Increase / Decrease" : isTw ? "增加 / 減少" : isJa ? "増加 / 減少" : "增加 / 减少"}</strong>
-                      <small>{isEn ? "Adjust existing balance" : isTw ? "在現有積分上增減" : isJa ? "既存残高を増減" : "在现有积分上增减"}</small>
+                      <strong>{t("points.admin.typeAdjust")}</strong>
+                      <small>{t("points.admin.typeAdjustDesc")}</small>
                     </div>
                   </button>
                   <button
@@ -214,8 +223,8 @@ export function AdminUserPointsModal({
                   >
                     <Target size={16} className="card-icon" />
                     <div className="card-info">
-                      <strong>{isEn ? "Set Exact Value" : isTw ? "直接設值" : isJa ? "値を直接設定" : "直接设值"}</strong>
-                      <small>{isEn ? "Override with specific amount" : isTw ? "覆蓋為指定分值" : isJa ? "指定値で上書き" : "覆盖为指定分值"}</small>
+                      <strong>{t("points.admin.typeSet")}</strong>
+                      <small>{t("points.admin.typeSetDesc")}</small>
                     </div>
                   </button>
                   <button
@@ -225,8 +234,8 @@ export function AdminUserPointsModal({
                   >
                     <InfinityIcon size={16} className="card-icon" />
                     <div className="card-info">
-                      <strong>{isEn ? "Unlimited Points" : isTw ? "無限積分" : isJa ? "無制限ポイント" : "无限积分"}</strong>
-                      <small>{isEn ? "No limits or deductions" : isTw ? "免扣費無限制" : isJa ? "無制限・引き落としなし" : "免扣费无限制"}</small>
+                      <strong>{t("points.admin.typeUnlimited")}</strong>
+                      <small>{t("points.admin.typeUnlimitedDesc")}</small>
                     </div>
                   </button>
                 </div>
@@ -235,9 +244,9 @@ export function AdminUserPointsModal({
               {actionType === "adjust" ? (
                 <div className="admin-form-group">
                   <label className="admin-form-label">
-                    {isEn ? "Adjustment Amount" : isTw ? "變動數值" : isJa ? "変動量" : "变动数值"}{" "}
+                    {t("points.admin.amountLabel")}{" "}
                     <span className="label-sub">
-                      {isEn ? "(Positive to add, negative to deduct)" : isTw ? "(正數代表儲值/增加，負數代表扣除)" : isJa ? "(正は加算、負は減算)" : "(正数代表充值/增加，负数代表扣除)"}
+                      {t("points.admin.amountHint")}
                     </span>
                   </label>
                   <div className="admin-input-wrapper">
@@ -245,7 +254,7 @@ export function AdminUserPointsModal({
                       className="admin-points-input"
                       type="number"
                       value={amount}
-                      placeholder={isEn ? "e.g. 100 or -50" : "例如 100 或 -50"}
+                      placeholder="100"
                       onChange={(e) => setAmount(e.target.value)}
                       required
                     />
@@ -254,19 +263,19 @@ export function AdminUserPointsModal({
 
                   <div className="points-calc-preview">
                     <div className="calc-item">
-                      <span className="calc-label">{isEn ? "Current" : isTw ? "目前積分" : isJa ? "現在のポイント" : "当前积分"}</span>
+                      <span className="calc-label">{t("points.admin.currentPoints")}</span>
                       <span className="calc-val">{currentPoints}</span>
                     </div>
                     <ArrowRight size={14} className="calc-arrow" />
                     <div className="calc-item">
-                      <span className="calc-label">{isEn ? "Change" : isTw ? "變動量" : isJa ? "変動量" : "变动量"}</span>
+                      <span className="calc-label">{t("points.admin.deltaPoints")}</span>
                       <span className={`calc-val delta ${numericAmount >= 0 ? "plus" : "minus"}`}>
                         {numericAmount >= 0 ? `+${numericAmount}` : numericAmount}
                       </span>
                     </div>
                     <ArrowRight size={14} className="calc-arrow" />
                     <div className="calc-item">
-                      <span className="calc-label">{isEn ? "Estimated" : isTw ? "調整後預估" : isJa ? "調整後予測" : "调整后预估"}</span>
+                      <span className="calc-label">{t("points.admin.estimatedPoints")}</span>
                       <span className="calc-val highlight">{estimatedPoints} {ptsUnit.trim()}</span>
                     </div>
                   </div>
@@ -275,14 +284,14 @@ export function AdminUserPointsModal({
 
               {actionType === "set" ? (
                 <div className="admin-form-group">
-                  <label className="admin-form-label">{isEn ? "Target Points Value" : isTw ? "目標積分數值" : isJa ? "目標ポイント値" : "目标积分数值"}</label>
+                  <label className="admin-form-label">{t("points.admin.targetPoints")}</label>
                   <div className="admin-input-wrapper">
                     <input
                       className="admin-points-input"
                       type="number"
                       min="0"
                       value={amount}
-                      placeholder={isEn ? "e.g. 500" : "例如 500"}
+                      placeholder="500"
                       onChange={(e) => setAmount(e.target.value)}
                       required
                     />
@@ -293,7 +302,7 @@ export function AdminUserPointsModal({
 
               {actionType === "set_unlimited" ? (
                 <div className="admin-form-group">
-                  <label className="admin-form-label">{isEn ? "Unlimited Points Switch" : isTw ? "無限積分權限開關" : isJa ? "無制限ポイント切替" : "无限积分权限开关"}</label>
+                  <label className="admin-form-label">{t("points.admin.unlimitedSwitch")}</label>
                   <div
                     className={`admin-switch-card ${unlimitedChecked ? "active" : ""}`}
                     onClick={() => setUnlimitedChecked((v) => !v)}
@@ -303,8 +312,8 @@ export function AdminUserPointsModal({
                         <InfinityIcon size={20} />
                       </div>
                       <div>
-                        <strong>{isEn ? "Enable Unlimited Points for this User" : isTw ? "開啟該使用者的無限積分權限" : isJa ? "このユーザーの無制限ポイントを有効にする" : "开启该用户的无限积分权限"}</strong>
-                        <p>{isEn ? "When enabled, Agent usage is unrestricted and points are not deducted from records." : isTw ? "開啟後該使用者調用 Agent 不受積分限制，且消費流水中不會扣減積分。" : isJa ? "有効化後は Agent 利用に制限なし、流水からもポイントは引かれません。" : "开启后该用户调用 Agent 不受积分限制，且消费流水中不会扣减积分。"}</p>
+                        <strong>{t("points.admin.enableUnlimited")}</strong>
+                        <p>{t("points.admin.unlimitedDesc")}</p>
                       </div>
                     </div>
                     <div className={`custom-switch ${unlimitedChecked ? "checked" : ""}`}>
@@ -316,14 +325,13 @@ export function AdminUserPointsModal({
 
               <div className="admin-form-group">
                 <label className="admin-form-label">
-                  {isEn ? "Note / Reason" : isTw ? "操作備註說明" : isJa ? "備考 / 理由" : "操作备注说明"}{" "}
-                  <span className="label-sub">{isEn ? "(Optional, logged in audit)" : isTw ? "(可選，記於日誌與流水)" : isJa ? "(任意、監査ログに記録)" : "(可选，记入日志与流水)"}</span>
+                  {t("points.admin.noteLabel")}{" "}
+                  <span className="label-sub">{t("points.admin.noteOptional")}</span>
                 </label>
                 <input
                   className="admin-points-input"
                   type="text"
                   value={note}
-                  placeholder={isEn ? "e.g. Admin recharge bonus / Event giveaway / Violation deduction" : "例如：管理员充值发放奖励 / 活动赠送 / 违规扣除"}
                   onChange={(e) => setNote(e.target.value)}
                 />
               </div>
@@ -334,11 +342,11 @@ export function AdminUserPointsModal({
         <footer className="modal-fullscreen-footer admin-points-footer">
             <div className="modal-fullscreen-footer-inner">
               <button className="secondary-button" type="button" onClick={onClose} disabled={saving}>
-                {isEn ? "Cancel" : isTw ? "取消" : isJa ? "キャンセル" : "取消"}
+                {t("common.cancel")}
               </button>
               <button className="primary-button" type="submit" disabled={saving}>
                 {saving ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
-                {isEn ? "Save Changes" : isTw ? "確認儲存" : isJa ? "変更を保存" : "确认保存"}
+                {t("points.admin.saveBtn")}
               </button>
             </div>
           </footer>
@@ -354,8 +362,8 @@ export function AdminUserPointsModal({
                 <div className="records-toolbar">
                   <span className="records-count-text">
                     {records.length > 0
-                      ? (isEn ? `Total ${records.length} record(s)` : isTw ? `共 ${records.length} 筆記錄` : isJa ? `合計 ${records.length} 件` : `共 ${records.length} 条变动明细`)
-                      : (isEn ? "No records" : isTw ? "無記錄" : isJa ? "記録なし" : "暂无明细")}
+                      ? tFormat("points.admin.totalRecords", records.length)
+                      : t("points.admin.noRecords")}
                   </span>
                   <button
                     className="secondary-button mini"
@@ -364,32 +372,32 @@ export function AdminUserPointsModal({
                     disabled={recordsLoading}
                   >
                     <RefreshCw size={13} className={recordsLoading ? "spin" : ""} />
-                    {isEn ? "Refresh Records" : isTw ? "重新整理記錄" : isJa ? "記録を更新" : "刷新记录"}
+                    {t("points.admin.refreshRecords")}
                   </button>
                 </div>
                 <div className="points-records-table-wrap">
                   <table className="points-records-table">
                     <thead>
                       <tr>
-                        <th>{isEn ? "Time" : isTw ? "時間" : isJa ? "日時" : "时间"}</th>
-                        <th>{isEn ? "Description" : isTw ? "說明" : isJa ? "説明" : "说明"}</th>
-                        <th>{isEn ? "Tokens" : isTw ? "Token 消耗" : isJa ? "Token 使用量" : "Token 消耗"}</th>
-                        <th>{isEn ? "Points Delta" : isTw ? "積分變動" : isJa ? "ポイント変動" : "积分变动"}</th>
-                        <th>{isEn ? "Balance" : isTw ? "餘額" : isJa ? "残高" : "余额"}</th>
+                        <th>{t("points.admin.colTime")}</th>
+                        <th>{t("points.admin.colDesc")}</th>
+                        <th>{t("points.admin.colTokens")}</th>
+                        <th>{t("points.admin.colDelta")}</th>
+                        <th>{t("points.admin.colBalance")}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {records.length === 0 ? (
                         <tr>
                           <td colSpan={5} className="empty-cell">
-                            {recordsLoading ? (isEn ? "Loading records..." : isTw ? "正在載入明細..." : isJa ? "記録を読み込み中..." : "正在加载明细...") : (isEn ? "No point records" : isTw ? "暫無積分變動記錄" : isJa ? "ポイント変動記録なし" : "暂无积分变动记录")}
+                            {recordsLoading ? t("points.admin.loadingRecords") : t("points.admin.emptyRecords")}
                           </td>
                         </tr>
                       ) : (
                         records.map((r) => (
                           <tr key={r.id}>
                             <td className="time-cell">{formatDate(r.createdAt)}</td>
-                            <td>{r.description || (isEn ? "No description" : isTw ? "無說明" : isJa ? "説明なし" : "无说明")}</td>
+                            <td>{r.description || t("points.admin.noDesc")}</td>
                             <td>{r.tokensUsed ? r.tokensUsed.toLocaleString() : "-"}</td>
                             <td>
                               {r.delta < 0 ? (
@@ -397,10 +405,10 @@ export function AdminUserPointsModal({
                               ) : r.delta > 0 ? (
                                 <span className="point-delta positive">+{r.delta} {ptsUnit.trim()}</span>
                               ) : (
-                                <span className="point-delta zero">0 ({isEn ? "Unlimited" : isTw ? "無限" : isJa ? "無制限" : "无限"})</span>
+                                <span className="point-delta zero">0 ({t("points.admin.unlimitedText")})</span>
                               )}
                             </td>
-                            <td>{r.balanceAfter !== null && r.balanceAfter !== undefined ? `${r.balanceAfter} ${ptsUnit.trim()}` : (isEn ? "Unlimited" : isTw ? "無限" : isJa ? "無制限" : "无限")}</td>
+                            <td>{r.balanceAfter !== null && r.balanceAfter !== undefined ? `${r.balanceAfter} ${ptsUnit.trim()}` : t("points.admin.unlimitedText")}</td>
                           </tr>
                         ))
                       )}
@@ -414,7 +422,7 @@ export function AdminUserPointsModal({
           <footer className="modal-fullscreen-footer admin-points-footer">
             <div className="modal-fullscreen-footer-inner">
               <button className="secondary-button" type="button" onClick={onClose}>
-                {isEn ? "Close" : isTw ? "關閉" : isJa ? "閉じる" : "关闭"}
+                {t("common.close")}
               </button>
             </div>
           </footer>

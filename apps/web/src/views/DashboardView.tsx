@@ -34,6 +34,8 @@ import { SakiEmptyState } from "../components/saki/SakiEmptyState.js";
 import { MetricDetailModal, type MetricDetailKind } from "../components/dashboard/MetricDetailModal.js";
 import { formatDate, formatNumber, resourcesFromNodes } from "../utils/path.js";
 import { readRecentInstances } from "../utils/recentInstances.js";
+import { useGlobalEvent } from "../GlobalEventContext.js";
+
 
 const RECENT_INSTANCE_LIMIT = 8;
 
@@ -42,8 +44,7 @@ function formatRelativeTime(value: string | null | undefined, language: PanelLan
   const diff = new Date(value).getTime() - Date.now();
   if (!Number.isFinite(diff)) return "-";
   const abs = Math.abs(diff);
-  const locale = language === "en-US" ? "en" : language === "zh-TW" ? "zh-Hant" : language === "ja-JP" ? "ja" : "zh-Hans";
-  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+  const rtf = new Intl.RelativeTimeFormat(language || "zh-CN", { numeric: "auto" });
   if (abs < 60_000) return rtf.format(0, "second");
   if (abs < 3_600_000) return rtf.format(Math.round(diff / 60_000), "minute");
   if (abs < 86_400_000) return rtf.format(Math.round(diff / 3_600_000), "hour");
@@ -131,6 +132,23 @@ export function DashboardView({
     }, 10000);
     return () => window.clearInterval(timer);
   }, [refresh, refreshTick]);
+
+  useGlobalEvent("node.status_changed", (event) => {
+    const data = event.data as { nodeId?: string; status?: ManagedNode["status"]; lastSeenAt?: string | null } | undefined;
+    if (!data?.nodeId) return;
+    setNodes((prev) =>
+      prev.map((n) =>
+        n.id === data.nodeId
+          ? {
+              ...n,
+              status: data.status ?? n.status,
+              lastSeenAt: (data.lastSeenAt !== undefined ? data.lastSeenAt : n.lastSeenAt) ?? null
+            }
+          : n
+      )
+    );
+  });
+
 
   const chartData = useMemo(
     () =>
@@ -358,7 +376,12 @@ export function DashboardView({
                     </td>
                     <td>{`${node.protocol}://${node.host}:${node.port}`}</td>
                     <td>
-                      <NodeStatusPill status={node.status} />
+                      <NodeStatusPill
+                        status={node.status}
+                        onClick={canTestNodes ? () => void testNode(node.id) : undefined}
+                        loading={testingNodeId === node.id}
+                        disabled={testingNodeId === node.id}
+                      />
                     </td>
                     <td>{[node.os, node.arch].filter(Boolean).join(" / ") || "-"}</td>
                     <td>
@@ -408,9 +431,12 @@ export function DashboardView({
           nodes={nodes}
           clusterResources={resources}
           onClose={() => setMetricDetail(null)}
+          onTestNode={canTestNodes ? (id: string) => { void testNode(id); } : undefined}
+          testingNodeId={testingNodeId}
         />
       ) : null}
+
+
     </>
   );
 }
-

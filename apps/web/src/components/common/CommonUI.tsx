@@ -64,15 +64,39 @@ function MetricTile({
   return <div className={className}>{body}</div>;
 }
 
-function NodeStatusPill({ status }: { status: ManagedNode["status"] }) {
+function NodeStatusPill({
+  status,
+  onClick,
+  disabled = false,
+  loading = false,
+  title
+}: {
+  status: ManagedNode["status"];
+  onClick?: (() => void) | undefined;
+  disabled?: boolean | undefined;
+  loading?: boolean | undefined;
+  title?: string | undefined;
+}) {
   const online = status === "ONLINE";
+  const defaultTitle = onClick
+    ? (online ? "点击重新测试连接" : "点击测试并连接节点")
+    : undefined;
+
   return (
-    <span className={`status-pill ${online ? "online" : "offline"}`}>
-      {online ? <Wifi size={14} /> : <WifiOff size={14} />}
-      {online ? "在线" : "离线"}
+    <span
+      className={`status-pill ${online ? "online" : "offline"} ${onClick ? "clickable" : ""} ${loading ? "loading" : ""}`}
+      onClick={!disabled && !loading ? onClick : undefined}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      title={title ?? defaultTitle}
+      style={onClick ? { cursor: disabled || loading ? "wait" : "pointer" } : undefined}
+    >
+      {loading ? <RefreshCw size={14} className="spin" /> : online ? <Wifi size={14} /> : <WifiOff size={14} />}
+      {loading ? "检测中..." : online ? "在线" : "离线"}
     </span>
   );
 }
+
 
 function instanceStatusMeta(status: InstanceStatus) {
   const meta: Record<

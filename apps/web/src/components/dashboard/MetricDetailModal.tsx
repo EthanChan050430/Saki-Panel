@@ -109,19 +109,21 @@ export function MetricDetailModal({
   overview,
   nodes,
   clusterResources,
-  onClose
+  onClose,
+  onTestNode,
+  testingNodeId
 }: {
   kind: MetricDetailKind;
   overview: DashboardOverview | null;
   nodes: ManagedNode[];
   clusterResources: { cpuUsage: number; memoryUsage: number; diskUsage: number };
   onClose: () => void;
+  onTestNode?: ((id: string) => void) | undefined;
+  testingNodeId?: string | null | undefined;
 }) {
-  const { language } = usePanelLanguage();
+
+  const { t } = usePanelLanguage();
   const meta = metricMeta[kind];
-  const isEn = language === "en-US";
-  const isTw = language === "zh-TW";
-  const isJa = language === "ja-JP";
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -174,37 +176,9 @@ export function MetricDetailModal({
   const currentValue =
     kind === "cpu" ? clusterResources.cpuUsage : kind === "memory" ? clusterResources.memoryUsage : kind === "disk" ? clusterResources.diskUsage : onlineCount;
 
-  const title = isEn
-    ? kind === "nodes"
-      ? "Node Details"
-      : kind === "cpu"
-        ? "CPU Details"
-        : kind === "memory"
-          ? "Memory Details"
-          : "Disk Details"
-    : isTw
-      ? kind === "nodes"
-        ? "節點詳情"
-        : kind === "cpu"
-          ? "CPU 詳情"
-          : kind === "memory"
-            ? "記憶體詳情"
-            : "磁碟詳情"
-      : meta.title;
-
-  const hint = isEn
-    ? kind === "nodes"
-      ? "Live status and resource usage for every node"
-      : kind === "cpu"
-        ? "Cluster average load and per-node CPU"
-        : kind === "memory"
-          ? "Memory trend and usage by node"
-          : "Disk trend and capacity by node"
-    : isTw
-      ? meta.hint.replace("集群", "叢集").replace("节点", "節點").replace("内存", "記憶體").replace("磁盘", "磁碟")
-      : meta.hint;
-
-  const chartName = kind === "cpu" ? "CPU" : kind === "memory" ? (isEn ? "Memory" : isTw ? "記憶體" : isJa ? "メモリ" : "内存") : isEn ? "Disk" : isTw ? "磁碟" : isJa ? "ディスク" : "磁盘";
+  const title = t(`metric.detail.title.${kind}` as any);
+  const hint = t(`metric.detail.hint.${kind}` as any);
+  const chartName = kind === "cpu" ? "CPU" : kind === "memory" ? t("metric.detail.memory") : t("metric.detail.disk");
 
   const modal = (
     <div
@@ -227,9 +201,9 @@ export function MetricDetailModal({
           </div>
           <div className="metric-detail-header-value">
             <strong>{kind === "nodes" ? `${onlineCount}/${nodes.length}` : formatNumber(typeof currentValue === "number" ? currentValue : 0)}</strong>
-            <span>{kind === "nodes" ? (isEn ? "online / total" : isTw ? "在線 / 全部" : isJa ? "オンライン / 合計" : "在线 / 全部") : isEn ? "cluster avg" : isTw ? "叢集平均" : isJa ? "クラスタ平均" : "集群平均"}</span>
+            <span>{kind === "nodes" ? t("metric.detail.onlineTotal") : t("metric.detail.clusterAvg")}</span>
           </div>
-          <button className="icon-button mini metric-detail-close" type="button" title={isEn ? "Close" : isTw ? "關閉" : isJa ? "閉じる" : "关闭"} onClick={onClose}>
+          <button className="icon-button mini metric-detail-close" type="button" title={t("common.close")} onClick={onClose}>
             <X size={16} />
           </button>
         </header>
@@ -237,12 +211,12 @@ export function MetricDetailModal({
         <div className="metric-detail-hero">
           {kind === "nodes" ? (
             <>
-              <HeroStat icon={<Wifi size={16} />} label={isEn ? "Online" : isTw ? "在線" : isJa ? "オンライン" : "在线"} value={String(onlineCount)} tone="ok" />
-              <HeroStat icon={<WifiOff size={16} />} label={isEn ? "Offline" : isTw ? "離線" : isJa ? "オフライン" : "离线"} value={String(Math.max(nodes.length - onlineCount, 0))} tone="warn" />
-              <HeroStat icon={<Server size={16} />} label={isEn ? "Total nodes" : isTw ? "節點總數" : isJa ? "ノード合計" : "节点总数"} value={String(nodes.length)} />
+              <HeroStat icon={<Wifi size={16} />} label={t("metric.detail.online")} value={String(onlineCount)} tone="ok" />
+              <HeroStat icon={<WifiOff size={16} />} label={t("metric.detail.offline")} value={String(Math.max(nodes.length - onlineCount, 0))} tone="warn" />
+              <HeroStat icon={<Server size={16} />} label={t("metric.detail.totalNodes")} value={String(nodes.length)} />
               <HeroStat
                 icon={<Activity size={16} />}
-                label={isEn ? "Last heartbeat" : isTw ? "最近心跳" : isJa ? "最終ハートビート" : "最近心跳"}
+                label={t("metric.detail.lastHeartbeat")}
                 value={formatDate(nodes.map((node) => node.lastSeenAt).filter(Boolean).sort().at(-1) as string | undefined)}
               />
             </>
@@ -250,15 +224,15 @@ export function MetricDetailModal({
             <>
               <HeroStat
                 icon={<Activity size={16} />}
-                label={isEn ? "Current" : isTw ? "目前" : isJa ? "現在" : "当前"}
+                label={t("metric.detail.current")}
                 value={formatNumber(typeof currentValue === "number" ? currentValue : 0)}
                 tone={usageTone(typeof currentValue === "number" ? currentValue : 0)}
               />
-              <HeroStat icon={<Activity size={16} />} label={isEn ? "Peak" : isTw ? "峰值" : isJa ? "ピーク" : "峰值"} value={formatNumber(historyStats.peak)} tone={usageTone(historyStats.peak)} />
-              <HeroStat icon={<Activity size={16} />} label={isEn ? "Average" : isTw ? "平均" : isJa ? "平均" : "平均"} value={formatNumber(historyStats.avg)} />
+              <HeroStat icon={<Activity size={16} />} label={t("metric.detail.peak")} value={formatNumber(historyStats.peak)} tone={usageTone(historyStats.peak)} />
+              <HeroStat icon={<Activity size={16} />} label={t("metric.detail.average")} value={formatNumber(historyStats.avg)} />
               <HeroStat
                 icon={<Server size={16} />}
-                label={isEn ? "Hottest node" : isTw ? "最高負載節點" : isJa ? "最も負荷の高いノード" : "最高负载节点"}
+                label={t("metric.detail.hottestNode")}
                 value={hottestNode ? `${hottestNode.name} ${formatNumber(meta.nodeKey ? nodeMetricValue(hottestNode, meta.nodeKey) : 0)}` : "-"}
               />
             </>
@@ -269,15 +243,15 @@ export function MetricDetailModal({
           {kind !== "nodes" ? (
             <section className="metric-detail-chart-card">
               <div className="metric-detail-section-heading">
-                <h3>{isEn ? "Trend" : isTw ? "趨勢" : isJa ? "推移" : "趋势"}</h3>
+                <h3>{t("metric.detail.trend")}</h3>
                 <span>{overview ? formatDate(overview.generatedAt) : "-"}</span>
               </div>
               <div className="metric-detail-chart">
                 {history.length === 0 ? (
                   <SakiEmptyState
                     illustration="logs"
-                    title={isEn ? "No history yet" : isTw ? "暫無歷史曲線" : isJa ? "履歴はまだありません" : "暂无历史曲线"}
-                    description={isEn ? "Metrics will appear after nodes start reporting." : isTw ? "節點開始上報後就會出現曲線。" : isJa ? "ノードが報告を開始すると表示されます。" : "节点开始上报后就会出现曲线。"}
+                    title={t("metric.detail.noHistory")}
+                    description={t("metric.detail.noHistoryDesc")}
                     compact
                   />
                 ) : (
@@ -313,20 +287,26 @@ export function MetricDetailModal({
 
           <section className="metric-detail-nodes-card">
             <div className="metric-detail-section-heading">
-              <h3>{kind === "nodes" ? (isEn ? "All nodes" : isTw ? "全部節點" : isJa ? "すべてのノード" : "全部节点") : isEn ? "By node" : isTw ? "各節點" : isJa ? "ノード別" : "各节点"}</h3>
+              <h3>{kind === "nodes" ? t("metric.detail.allNodes") : t("metric.detail.byNode")}</h3>
               <span>{nodes.length}</span>
             </div>
             {rankedNodes.length === 0 ? (
               <SakiEmptyState
                 illustration="offline"
-                title={isEn ? "No nodes" : isTw ? "暫無節點" : isJa ? "ノードなし" : "暂无节点"}
-                description={isEn ? "Connect a daemon to see live metrics here." : isTw ? "接入 Daemon 後即可在此查看即時指標。" : isJa ? "Daemon を接続するとライブ指標が表示されます。" : "接入 Daemon 后即可在此查看实时指标。"}
+                title={t("metric.detail.noNodes")}
+                description={t("metric.detail.noNodesDesc")}
                 compact
               />
             ) : (
               <div className="metric-detail-node-list">
                 {rankedNodes.map((node) => (
-                  <NodeMetricCard key={node.id} node={node} emphasis={kind} />
+                  <NodeMetricCard
+                    key={node.id}
+                    node={node}
+                    emphasis={kind}
+                    onTestNode={onTestNode}
+                    testingNodeId={testingNodeId}
+                  />
                 ))}
               </div>
             )}
@@ -361,7 +341,18 @@ function HeroStat({
   );
 }
 
-function NodeMetricCard({ node, emphasis }: { node: ManagedNode; emphasis: MetricDetailKind }) {
+function NodeMetricCard({
+  node,
+  emphasis,
+  onTestNode,
+  testingNodeId
+}: {
+  node: ManagedNode;
+  emphasis: MetricDetailKind;
+  onTestNode?: ((id: string) => void) | undefined;
+  testingNodeId?: string | null | undefined;
+}) {
+  const { t } = usePanelLanguage();
   const metric = node.latestMetric;
   const cpu = metric?.cpuUsage ?? 0;
   const memory = metric?.memoryUsage ?? 0;
@@ -372,6 +363,7 @@ function NodeMetricCard({ node, emphasis }: { node: ManagedNode; emphasis: Metri
   const diskTotal = formatDisk(metric?.totalDiskGb);
   const uptime = formatUptime(metric?.uptimeSeconds);
   const load = typeof metric?.loadAverage1m === "number" ? metric.loadAverage1m.toFixed(2) : null;
+  const isTesting = testingNodeId === node.id;
 
   return (
     <article className={`metric-node-card ${node.status === "ONLINE" ? "online" : "offline"} ${emphasis}`}>
@@ -382,18 +374,24 @@ function NodeMetricCard({ node, emphasis }: { node: ManagedNode; emphasis: Metri
             {node.protocol}://{node.host}:{node.port}
           </small>
         </div>
-        <NodeStatusPill status={node.status} />
+        <NodeStatusPill
+          status={node.status}
+          onClick={onTestNode ? () => onTestNode(node.id) : undefined}
+          loading={isTesting}
+          disabled={isTesting}
+        />
       </div>
+
       <div className="metric-node-bars">
         <MetricBar label="CPU" value={cpu} highlight={emphasis === "cpu"} />
         <MetricBar
-          label="内存"
+          label={t("metric.detail.memory")}
           value={memory}
           highlight={emphasis === "memory"}
           extra={memoryLabel && memoryTotal ? `${memoryLabel} / ${memoryTotal}` : memoryLabel}
         />
         <MetricBar
-          label="磁盘"
+          label={t("metric.detail.disk")}
           value={disk}
           highlight={emphasis === "disk"}
           extra={diskLabel && diskTotal ? `${diskLabel} / ${diskTotal}` : diskLabel}

@@ -117,6 +117,52 @@
     margin-bottom: 12px !important;
   }
 
+  .metrics-grid.reliability-metrics,
+  .reliability-metrics {
+    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+    gap: 4px !important;
+  }
+
+  .metrics-grid.reliability-metrics .metric-tile,
+  .reliability-metrics .metric-tile {
+    padding: 6px 1.5px 5px !important;
+    gap: 2px !important;
+    border-radius: 9px !important;
+  }
+
+  .metrics-grid.reliability-metrics .metric-icon,
+  .reliability-metrics .metric-icon {
+    width: 22px !important;
+    height: 22px !important;
+    min-width: 22px !important;
+    min-height: 22px !important;
+    border-radius: 6px !important;
+  }
+
+  .metrics-grid.reliability-metrics .metric-icon svg,
+  .reliability-metrics .metric-icon svg {
+    width: 12px !important;
+    height: 12px !important;
+  }
+
+  .metrics-grid.reliability-metrics .metric-tile span,
+  .reliability-metrics .metric-tile span {
+    font-size: 8.5px !important;
+    letter-spacing: -0.2px !important;
+    line-height: 1.15 !important;
+  }
+
+  .metrics-grid.reliability-metrics .metric-tile strong,
+  .reliability-metrics .metric-tile strong {
+    font-size: 12.5px !important;
+    line-height: 1.15 !important;
+  }
+
+  .metrics-grid.reliability-metrics .metric-sub,
+  .reliability-metrics .metric-sub {
+    display: none !important;
+  }
+
   .metric-tile {
     min-height: 0 !important;
     height: auto !important;
@@ -372,6 +418,27 @@
     grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
     gap: 6px !important;
     margin-bottom: 14px !important;
+  }
+
+  .metrics-grid.reliability-metrics,
+  .reliability-metrics {
+    display: grid !important;
+    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .metrics-grid.reliability-metrics .metric-tile,
+  .reliability-metrics .metric-tile {
+    min-width: 0 !important;
+    padding: 8px 2px 6px !important;
+    gap: 3px !important;
+  }
+
+  .metrics-grid.reliability-metrics .metric-sub,
+  .reliability-metrics .metric-sub {
+    display: none !important;
   }
 
   .metric-tile {

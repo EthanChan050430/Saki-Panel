@@ -2265,7 +2265,26 @@ td strong {
   transform: scale(1.05);
 }
 
+.status-pill.clickable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.status-pill.clickable:active {
+  transform: scale(0.96);
+}
+
+.status-pill.loading {
+  cursor: wait;
+  opacity: 0.85;
+}
+
+.status-pill .spin {
+  animation: spin 1s linear infinite;
+}
+
 .status-pill.online {
+
   color: #059669;
   background: rgba(16, 185, 129, 0.12);
   border: 1px solid rgba(16, 185, 129, 0.25);

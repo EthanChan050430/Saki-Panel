@@ -11,6 +11,7 @@ import {
   domTextOriginals,
   nodesBeingTranslated,
   panelT,
+  panelFormatT,
   readPanelLanguage,
   translateDomAttributeValue,
   translateDomText,
@@ -194,7 +195,8 @@ export function App() {
     () => ({
       language,
       setLanguage: changeLanguage,
-      t: (key) => panelT(language, key)
+      t: (key) => panelT(language, key),
+      tFormat: (key, ...args) => panelFormatT(language, key, ...args)
     }),
     [changeLanguage, language]
   );

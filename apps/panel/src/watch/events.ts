@@ -41,6 +41,23 @@ function logTailText(logTail: Array<{ stream: string; text: string }> | string |
   return truncateLogTail(text);
 }
 
+const lastPushedHeartbeatAt = new Map<string, number>();
+
+export function markDaemonHeartbeatPushed(nodeId: string): void {
+  lastPushedHeartbeatAt.set(nodeId, Date.now());
+  if (lastPushedHeartbeatAt.size > 2000) {
+    const cutoff = Date.now() - 60 * 60 * 1000;
+    for (const [id, at] of lastPushedHeartbeatAt) {
+      if (at < cutoff) lastPushedHeartbeatAt.delete(id);
+    }
+  }
+}
+
+export function hasRecentDaemonHeartbeat(nodeId: string, withinMs: number): boolean {
+  const at = lastPushedHeartbeatAt.get(nodeId);
+  return Boolean(at && Date.now() - at < withinMs);
+}
+
 export async function handleDaemonInstanceEvent(event: DaemonInstanceStatusEvent): Promise<DaemonEventResponse> {
   if (event.status !== "CRASHED" && event.status !== "STOPPED") {
     await syncInstanceStatus(event.instanceId, event.status, event.exitCode ?? null);
@@ -108,6 +125,7 @@ async function evaluateHeartbeatCrash(snapshot: DaemonInstanceSnapshot, nodeId: 
     include: instanceAccessInclude
   });
   if (!instance) return;
+  if (instance.nodeId !== nodeId) return;
   const policy = await readWatchPolicy(instance.id);
   if (!policy.enabled || policy.mode === "off") return;
   if (recentCrashSampleCount(instance.id, heartbeatCrashDedupMs) > 0) return;
@@ -182,7 +200,12 @@ export async function ingestHeartbeatSnapshots(
   snapshots: DaemonInstanceSnapshot[] | undefined,
   metrics?: { diskUsage: number; memoryUsage: number }
 ): Promise<Array<{ instanceId: string; suppressUntil: string }>> {
+  const ownedIds = new Set(
+    (await prisma.instance.findMany({ where: { nodeId }, select: { id: true } })).map((row) => row.id)
+  );
+
   for (const snapshot of snapshots ?? []) {
+    if (!ownedIds.has(snapshot.instanceId)) continue;
     await syncInstanceStatus(snapshot.instanceId, snapshot.status, snapshot.exitCode ?? null);
     await evaluateHeartbeatCrash(snapshot, nodeId).catch((error) => {
       console.warn("heartbeat crash evaluation failed:", error instanceof Error ? error.message : error);
@@ -209,8 +232,5 @@ export async function ingestHeartbeatSnapshots(
     }
   }
 
-  const nodeInstanceIds = new Set(
-    (await prisma.instance.findMany({ where: { nodeId }, select: { id: true } })).map((row) => row.id)
-  );
-  return listActiveRestartLeases().filter((lease) => nodeInstanceIds.has(lease.instanceId));
+  return listActiveRestartLeases().filter((lease) => ownedIds.has(lease.instanceId));
 }

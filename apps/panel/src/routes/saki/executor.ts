@@ -11,6 +11,7 @@ import {
   archiveDaemonInstancePaths,
   createDaemonInstanceShell,
   deleteDaemonInstancePath,
+  deleteDaemonInstanceShell,
   extractDaemonInstanceArchive,
   globDaemonInstanceFiles,
   grepDaemonInstanceFiles,
@@ -24,6 +25,7 @@ import {
   renameDaemonInstancePath,
   restartDaemonInstance,
   runDaemonInstanceCommand,
+  runDaemonShellCommand,
   sendDaemonInstanceInput,
   sendDaemonShellInput,
   startDaemonInstance,
@@ -65,8 +67,8 @@ import {
   formatRunCommandObservation,
   formatSanitizedWriteNote,
   booleanArg,
-  consoleInputPreview,
   formatToolArgs,
+  consoleInputPreview,
   joinRemoteWorkingDirectory,
   maxAgentConsoleInputChars,
   normalizeCommandRelativeCwd,
@@ -177,7 +179,7 @@ function formatConsoleInputObservation(
   state: { status: string; exitCode?: number | null | undefined }
 ): string {
   const preview = input.echo ? JSON.stringify(input.preview) : "[hidden]";
-  return `${label} sent to the running instance process stdin (${input.data.length} chars, preview=${preview}). Status=${state.status}, exitCode=${state.exitCode ?? "none"}.`;
+  return `${label} sent to the running instance process on the main console (${input.data.length} chars, preview=${preview}). Status=${state.status}, exitCode=${state.exitCode ?? "none"}. Prefer runCommand/createShell for ordinary shell work.`;
 }
 
 function commandCwdArg(args: Record<string, unknown>): string {
@@ -200,14 +202,85 @@ function daemonSpecFromInstance(instance: InstanceWithNode): DaemonInstanceSpec 
   return spec;
 }
 
-function commandWorkingDirectoryForAgent(
-  instance: InstanceWithNode,
-  args: Record<string, unknown>
-): { daemonWorkingDirectory: string } {
+const agentShellLabelPrefix = "saki";
+
+function isAgentShellLabel(label?: string | null): boolean {
+  return (label ?? "").trim().toLowerCase().startsWith(agentShellLabelPrefix);
+}
+
+function nextAgentShellLabel(existing: Array<{ label?: string | undefined }>): string {
+  const used = new Set<number>();
+  for (const item of existing) {
+    const match = /^saki(?:-(\d+))?$/i.exec((item.label ?? "").trim());
+    if (!match) continue;
+    used.add(match[1] ? Number(match[1]) : 1);
+  }
+  if (!used.has(1)) return agentShellLabelPrefix;
+  let n = 2;
+  while (used.has(n)) n += 1;
+  return `${agentShellLabelPrefix}-${n}`;
+}
+
+function shellCommandWithCwd(instance: InstanceWithNode, command: string, args: Record<string, unknown>): string {
   const relativeCwd = normalizeCommandRelativeCwd(commandCwdArg(args));
-  return {
-    daemonWorkingDirectory: joinRemoteWorkingDirectory(instance.workingDirectory, relativeCwd)
-  };
+  if (!relativeCwd) return command;
+  const dir = joinRemoteWorkingDirectory(instance.workingDirectory, relativeCwd);
+  if (nodeLooksWindows(instance)) {
+    return `Set-Location -LiteralPath '${dir.replace(/'/g, "''")}'; ${command}`;
+  }
+  return `cd "${dir.replace(/"/g, '\\"')}" && ${command}`;
+}
+
+async function runAgentIndependentCommand(
+  instance: InstanceWithNode,
+  args: Record<string, unknown>,
+  options: { requireShellId?: boolean } = {}
+) {
+  const command = stringArg(args, "command");
+  if (!command) throw new RouteError("runCommand requires a command.", 400);
+  const requestedShellId = stringArg(args, "shellId") || stringArg(args, "sessionId");
+  if (options.requireShellId && !requestedShellId) {
+    throw new RouteError("runInShell requires shellId. Call listShells or createShell first.", 400);
+  }
+  const timeoutMs = numericArg(args.timeoutMs, 30000, 1000, 120000);
+  const input = optionalCommandInputArg(args);
+  const listed = await listDaemonInstanceShells(instance.node, instance.id);
+  const shells = listed.shells ?? listed.sessions.map((id) => ({ id, label: undefined as string | undefined, createdAt: 0 }));
+  let shellId = requestedShellId;
+  let label: string | undefined;
+  if (shellId) {
+    const match = shells.find((item) => item.id === shellId);
+    if (!match) throw new RouteError("That independent terminal is not open. Call listShells or createShell.", 400);
+    label = match.label;
+  } else {
+    const agentShells = shells.filter((item) => isAgentShellLabel(item.label));
+    const reused = agentShells.at(-1);
+    if (reused) {
+      shellId = reused.id;
+      label = reused.label;
+    } else {
+      const created = await createDaemonInstanceShell(
+        instance.node,
+        instance.id,
+        instance.workingDirectory,
+        nextAgentShellLabel(shells)
+      );
+      shellId = created.sessionId;
+      label = created.label;
+    }
+  }
+  const runResult = await runDaemonShellCommand(
+    instance.node,
+    instance.id,
+    shellId,
+    {
+      command: shellCommandWithCwd(instance, command, args),
+      timeoutMs,
+      ...(input ? { input } : {})
+    },
+    currentAgentAbortSignal()
+  );
+  return { runResult, shellId, label: label ?? runResult.label, inputProvided: Boolean(input) };
 }
 
 function activeInstance(runtime: SakiAgentRuntime): InstanceWithNode {
@@ -694,18 +767,44 @@ async function buildApproval(runtime: SakiAgentRuntime, call: ParsedToolCall): P
     risk = "critical";
     preview = `${instance.name}:${relativePath}`;
     rollbackAvailable = true;
-  } else if (toolName === "runcommand") {
+  } else if (toolName === "runcommand" || toolName === "runinshell") {
     requireUserPermission(runtime.permissions, "terminal.input");
     const commandRisk = classifyCommandRisk(stringArg(args, "command"));
     if (commandRisk.risk === "critical") throw new RouteError(commandRisk.reason, 400);
     const cwd = commandCwdArg(args);
     normalizeCommandRelativeCwd(cwd);
+    if (toolName === "runinshell" && !(stringArg(args, "shellId") || stringArg(args, "sessionId"))) {
+      throw new RouteError("runInShell requires shellId. Call listShells or createShell first.", 400);
+    }
     reason = commandRisk.reason;
     risk = commandRisk.risk;
-    preview = [cwd ? `cwd: ${cwd}` : null, `command: ${stringArg(args, "command")}`].filter(Boolean).join("\n");
+    preview = [
+      cwd ? `cwd: ${cwd}` : null,
+      stringArg(args, "shellId") ? `shellId: ${stringArg(args, "shellId")}` : "shell: reuse-or-create independent tab",
+      `command: ${stringArg(args, "command")}`
+    ].filter(Boolean).join("\n");
+  } else if (toolName === "createshell") {
+    requireUserPermission(runtime.permissions, "terminal.view");
+    reason = "Opening an independent terminal tab.";
+    risk = "low";
+    preview = stringArg(args, "label") || "create independent terminal";
+  } else if (toolName === "closeshell" || toolName === "deleteshell" || toolName === "killshell") {
+    requireUserPermission(runtime.permissions, "terminal.view");
+    const shellId = stringArg(args, "shellId");
+    if (!shellId) throw new RouteError("closeShell requires shellId.", 400);
+    reason = "Closing an independent terminal tab.";
+    risk = "low";
+    preview = `shellId: ${shellId}`;
+  } else if (toolName === "sendshellinput") {
+    requireUserPermission(runtime.permissions, "terminal.input");
+    const shellId = stringArg(args, "shellId");
+    if (!shellId) throw new RouteError("sendShellInput requires shellId.", 400);
+    reason = "Sending keystrokes to an independent terminal tab requires approval in the current permission mode.";
+    risk = "medium";
+    preview = `shellId: ${shellId}\nchars=${rawStringArg(args, "text").length}`;
   } else if (toolName === "sendinput" || toolName === "sendcommand") {
     requireUserPermission(runtime.permissions, "terminal.input");
-    reason = "Sending input to the running console requires approval in the current permission mode.";
+    reason = "Sending input to the running instance on the main console. Use this only when the live process needs stdin; ordinary shell commands should use runCommand or createShell.";
     risk = "medium";
     if (toolName === "sendinput") {
       preview = `chars=${rawStringArg(args, "text").length}\npressEnter=${booleanArg(args, "pressEnter", true)}\necho=${booleanArg(args, "echo", true)}`;
@@ -821,13 +920,17 @@ function normalizeToolArgs(toolName: string, call: ParsedToolCall): Record<strin
     case "imagegen":
     case "imagine":
       return { lookup: callArgs[0], path: callArgs[1], prompt: callArgs[2] };
-    case "runcommand": return { lookup: callArgs[0], command: callArgs[1], cwd: callArgs[2], timeout: callArgs[3] };
+    case "runcommand": return { lookup: callArgs[0], command: callArgs[1], cwd: callArgs[2], timeout: callArgs[3], shellId: callArgs[4] };
     case "sendinput": return { lookup: callArgs[0], input: callArgs[1] };
     case "sendcommand": return { lookup: callArgs[0], command: callArgs[1] };
     case "listshells": return { lookup: callArgs[0] };
-    case "createshell": return { lookup: callArgs[0], workingDirectory: callArgs[1] };
-    case "sendshellinput": return { lookup: callArgs[0], shellId: callArgs[1], data: callArgs[2] };
-    case "runinshell": return { lookup: callArgs[0], command: callArgs[1] };
+    case "createshell": return { lookup: callArgs[0], workingDirectory: callArgs[1], label: callArgs[2] };
+    case "closeshell":
+    case "deleteshell":
+    case "killshell":
+      return { lookup: callArgs[0], shellId: callArgs[1] };
+    case "sendshellinput": return { lookup: callArgs[0], shellId: callArgs[1], text: callArgs[2] };
+    case "runinshell": return { lookup: callArgs[0], shellId: callArgs[1], command: callArgs[2] };
     case "instanceaction": return { lookup: callArgs[0], action: callArgs[1] };
     case "searchaudit": return { query: callArgs[0] };
     case "listtasks": return { instanceLookup: callArgs[0] };
@@ -919,6 +1022,9 @@ export async function executeSakiAgentTool(
         const relativePath = safeRelativePath(args.path);
         if (!relativePath) throw new RouteError("readFile requires a file path.", 400);
         const startLine = numericArg(args.startLine, 0, 0, 1_000_000);
+        const requestedLineCount = Number(args.lineCount);
+        const lineCountCapped =
+          Number.isFinite(requestedLineCount) && requestedLineCount > maxAgentReadFileLineCount;
         const lineCount = numericArg(args.lineCount, defaultAgentReadFileLineCount, 1, maxAgentReadFileLineCount);
         const isBlindRead = startLine < 1;
         recordWorkingFileAccess(runtime.userId, instance.id, relativePath);
@@ -936,7 +1042,7 @@ export async function executeSakiAgentTool(
               "Do NOT page through this file. Locate first, then read a window:",
               `- searchFiles({ pattern: "symbolOrError", path: "${relativePath}" })`,
               `- readSymbol({ path: "${relativePath}", symbol: "Name" })`,
-              `- readFile({ path: "${relativePath}", startLine: N, lineCount: 40 })`,
+              `- readFile({ path: "${relativePath}", startLine: N, lineCount: ${defaultAgentReadFileLineCount} }) — max ${maxAgentReadFileLineCount} lines per call`,
               "",
               "Outline:",
               outline.content
@@ -978,12 +1084,15 @@ export async function executeSakiAgentTool(
           observation = [
             `File: ${relativePath}${cacheHit ? " [cache]" : ""}`,
             `Size: ${fileSize} bytes | Total lines: ${totalLines}`,
-            `Showing lines: ${windowStart}-${endLine}`,
+            `Showing lines: ${windowStart}-${endLine} (readFile max ${maxAgentReadFileLineCount} lines per call${args.lineCount === undefined ? `, default ${defaultAgentReadFileLineCount}` : ""})`,
+            lineCountCapped
+              ? `Requested lineCount=${requestedLineCount} was capped to ${maxAgentReadFileLineCount}.`
+              : null,
             "",
             truncateText(windowText, 4000),
             "",
             endLine < totalLines
-              ? `Stopped at line ${endLine}/${totalLines}. Do not sequentially page the rest. Use searchFiles or readSymbol to jump.`
+              ? `Stopped at line ${endLine}/${totalLines}. readFile cannot return more than ${maxAgentReadFileLineCount} lines. Do not sequentially page the rest. Use searchFiles or readSymbol to jump.`
               : null
           ].filter(Boolean).join("\n");
         }
@@ -998,7 +1107,7 @@ export async function executeSakiAgentTool(
             throw new RouteError(`writeFile cannot overwrite directory '${relativePath}'.`, 400);
           }
           throw new RouteError(
-            `writeFile is for NEW files only. '${relativePath}' already exists. Use editLines, replaceInFile, or batchEdit.`,
+            `writeFile is for NEW files only. '${relativePath}' already exists. Use editLines if you have line numbers, applyPatch for a diff, or replaceInFile for a unique string.`,
             400
           );
         } catch (error) {
@@ -1233,7 +1342,7 @@ export async function executeSakiAgentTool(
           ...(conflictPolicy ? { conflictPolicy } : {})
         });
         observation = `Success: extracted ${result.archivePath} to ${result.outputPath} (${result.extractedCount} files, skipped ${result.skippedCount}, overwrote ${result.overwrittenCount}, ${result.totalBytes} bytes).`;
-      } else if (toolName === "runcommand") {
+      } else if (toolName === "runcommand" || toolName === "runinshell") {
         requireUserPermission(runtime.permissions, "terminal.input");
         const instance = await resolveAgentInstance(runtime, args);
         const command = stringArg(args, "command");
@@ -1246,23 +1355,15 @@ export async function executeSakiAgentTool(
             throw new RouteError(`已关闭跨实例执法，命令中包含可能越界访问其他目录的路径（${escapeToken}），已被拦截。`, 400);
           }
         }
-        const timeoutMs = numericArg(args.timeoutMs, 30000, 1000, 120000);
-        const { daemonWorkingDirectory } = commandWorkingDirectoryForAgent(instance, args);
         try {
-          const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
-            command,
-            workingDirectory: daemonWorkingDirectory,
-            timeoutMs
-          }, currentAgentAbortSignal());
+          const { runResult, inputProvided } = await runAgentIndependentCommand(instance, args, {
+            requireShellId: toolName === "runinshell"
+          });
           if (runResult.signal === "ABORTED" || currentAgentAbortSignal()?.aborted) {
             ok = false;
             observation = "Command aborted because the task was cancelled.";
           } else {
-            const outputParts: string[] = [];
-            if (runResult.stdout) outputParts.push(`stdout:\n${truncateText(runResult.stdout.trim(), 6000)}`);
-            if (runResult.stderr) outputParts.push(`stderr:\n${truncateText(runResult.stderr.trim(), 4000)}`);
-            outputParts.push(`exit code: ${runResult.exitCode ?? 0} (${runResult.durationMs ?? 0}ms)`);
-            observation = outputParts.join("\n\n") || "(Command completed with no output)";
+            observation = formatRunCommandObservation(runResult, inputProvided);
             if ((runResult.exitCode ?? 0) !== 0) {
               ok = false;
             }
@@ -1275,6 +1376,52 @@ export async function executeSakiAgentTool(
             throw error;
           }
         }
+      } else if (toolName === "listshells") {
+        requireUserPermission(runtime.permissions, "terminal.view");
+        const instance = await resolveAgentInstance(runtime, args);
+        const listed = await listDaemonInstanceShells(instance.node, instance.id);
+        const shells = listed.shells ?? listed.sessions.map((id) => ({ id, label: undefined as string | undefined, createdAt: 0 }));
+        observation = shells.length
+          ? [
+              "Independent terminals (not the main instance console):",
+              ...shells.map((shell, index) => `${index + 1}. shellId=${shell.id}${shell.label ? ` label=${shell.label}` : ""}`)
+            ].join("\n")
+          : "No independent terminals are open. Call createShell, or runCommand without shellId to open one.";
+      } else if (toolName === "createshell") {
+        requireUserPermission(runtime.permissions, "terminal.view");
+        const instance = await resolveAgentInstance(runtime, args);
+        const listed = await listDaemonInstanceShells(instance.node, instance.id);
+        const shells = listed.shells ?? [];
+        const label = stringArg(args, "label") || nextAgentShellLabel(shells);
+        const cwd = commandCwdArg(args);
+        const workingDirectory = cwd
+          ? joinRemoteWorkingDirectory(instance.workingDirectory, normalizeCommandRelativeCwd(cwd))
+          : instance.workingDirectory;
+        const created = await createDaemonInstanceShell(instance.node, instance.id, workingDirectory, label);
+        observation = [
+          "Opened independent terminal (not the main instance console).",
+          `shellId=${created.sessionId}`,
+          created.label ? `label=${created.label}` : `label=${label}`,
+          "Use runCommand({ shellId, command }) or runInShell to execute in this tab. Use closeShell to close it."
+        ].join("\n");
+      } else if (toolName === "closeshell" || toolName === "deleteshell" || toolName === "killshell") {
+        requireUserPermission(runtime.permissions, "terminal.view");
+        const instance = await resolveAgentInstance(runtime, args);
+        const shellId = stringArg(args, "shellId");
+        if (!shellId) throw new RouteError("closeShell requires shellId.", 400);
+        await deleteDaemonInstanceShell(instance.node, instance.id, shellId);
+        observation = `Closed independent terminal shellId=${shellId}. The main instance console was not affected.`;
+      } else if (toolName === "sendshellinput") {
+        requireUserPermission(runtime.permissions, "terminal.input");
+        const instance = await resolveAgentInstance(runtime, args);
+        const shellId = stringArg(args, "shellId");
+        const text = rawStringArg(args, "text");
+        if (!shellId) throw new RouteError("sendShellInput requires shellId.", 400);
+        if (!text) throw new RouteError("sendShellInput requires text.", 400);
+        const pressEnter = booleanArg(args, "pressEnter", true);
+        const data = pressEnter && !text.endsWith("\n") && !text.endsWith("\r") ? `${text}\r` : text;
+        await sendDaemonShellInput(instance.node, instance.id, shellId, data);
+        observation = `Sent ${text.length} character(s) to independent terminal shellId=${shellId}.`;
       } else if (toolName === "sendinput") {
         requireUserPermission(runtime.permissions, "terminal.input");
         const instance = await resolveAgentInstance(runtime, args);
@@ -1572,7 +1719,8 @@ export async function executeSakiAgentTool(
             const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
               command: checkCommand,
               workingDirectory: instance.workingDirectory,
-              timeoutMs: 20000
+              timeoutMs: 20000,
+              logToInstance: false
             }, currentAgentAbortSignal());
 
             const outputText = [runResult.stdout, runResult.stderr].filter(Boolean).join("\n").trim();
@@ -1812,7 +1960,8 @@ export async function executeSakiAgentTool(
         const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
           command: "git status -s -b",
           workingDirectory: instance.workingDirectory,
-          timeoutMs: 15000
+          timeoutMs: 15000,
+          logToInstance: false
         });
         if (runResult.exitCode === 0) {
           observation = `Git Status:\n${runResult.stdout?.trim() || "Working tree clean"}`;
@@ -1828,7 +1977,8 @@ export async function executeSakiAgentTool(
         const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
           command,
           workingDirectory: instance.workingDirectory,
-          timeoutMs: 20000
+          timeoutMs: 20000,
+          logToInstance: false
         });
         if (runResult.exitCode === 0) {
           const diffText = runResult.stdout?.trim();
@@ -1848,7 +1998,8 @@ export async function executeSakiAgentTool(
           const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
             command: probeCmd,
             workingDirectory: instance.workingDirectory,
-            timeoutMs: 8000
+            timeoutMs: 8000,
+            logToInstance: false
           });
           observation = [
             "Environment & Runtime Detection:",
@@ -1993,7 +2144,8 @@ export async function loadWorkspaceGitSummary(runtime: SakiAgentRuntime): Promis
     const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
       command: "git status -sb",
       workingDirectory: instance.workingDirectory,
-      timeoutMs: 8000
+      timeoutMs: 8000,
+      logToInstance: false
     });
     const text = [runResult.stdout, runResult.stderr].filter(Boolean).join("\n").trim();
     if (!text || /not a git repository/i.test(text)) return "";

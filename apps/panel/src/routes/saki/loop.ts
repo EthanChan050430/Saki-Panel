@@ -39,7 +39,7 @@ import {
 import { advertisedSakiToolSchemas, isSakiReadOnlyAgentTool, normalizedAgentToolName, shouldRequestSakiApproval, assertSakiPermissionModeAllowsTool, sakiToolSchemas, toolArgs } from "./tools.js";
 import { callConfiguredAgentTurn } from "./providers.js";
 import { isContextOverflowError } from "./providers/common.js";
-import { buildAgentGitNote, buildAgentPrompt, buildAgentUserTurn, buildAgentWorkspacePrefix, buildStaticAgentSystemPrompt } from "./prompt.js";
+import { buildAgentGitNote, buildAgentPrompt, buildAgentUserTurn, buildAgentWorkspacePrefix, buildStaticAgentSystemPrompt, sakiFileToolGuidance } from "./prompt.js";
 import {
   compactAgentTurnMessages,
   ensureToolCallId,
@@ -120,10 +120,19 @@ function toolDisplayArgs(call: ParsedToolCall): string {
   } else if (toolName === "renamepath") {
     add("fromPath", args.fromPath);
     add("toPath", args.toPath);
-  } else if (toolName === "runcommand") {
+  } else if (toolName === "runcommand" || toolName === "runinshell") {
     add("command", args.command);
+    add("shellId", args.shellId);
     add("cwd", args.cwd || args.workingDirectory);
     add("timeoutMs", args.timeoutMs);
+  } else if (toolName === "createshell" || toolName === "listshells") {
+    add("label", args.label);
+    add("workingDirectory", args.workingDirectory || args.cwd);
+  } else if (toolName === "closeshell" || toolName === "deleteshell" || toolName === "killshell") {
+    add("shellId", args.shellId);
+  } else if (toolName === "sendshellinput") {
+    add("shellId", args.shellId);
+    add("text", args.text, compactToolTextLength);
   } else if (toolName === "sendinput") {
     add("instanceId", args.instanceId);
     add("text", args.text, compactToolTextLength);
@@ -184,7 +193,11 @@ function toolIntentMessage(call: ParsedToolCall): string {
   if (toolName === "mkdir") return pathArg ? `\u6211\u8981\u521B\u5EFA\u76EE\u5F55 ${pathArg}\u3002` : "\u6211\u8981\u521B\u5EFA\u4E00\u4E2A\u76EE\u5F55\u3002";
   if (toolName === "deletepath") return pathArg ? `\u6211\u8981\u5220\u9664 ${pathArg}\uFF0C\u8FD9\u4E00\u6B65\u9700\u8981\u5148\u786E\u8BA4\u3002` : "\u6211\u8981\u5220\u9664\u4E00\u4E2A\u8DEF\u5F84\uFF0C\u8FD9\u4E00\u6B65\u9700\u8981\u5148\u786E\u8BA4\u3002";
   if (toolName === "renamepath") return "\u6211\u8981\u79FB\u52A8\u6216\u91CD\u547D\u540D\u6587\u4EF6\u3002";
-  if (toolName === "runcommand") return command ? `\u6211\u9700\u8981\u8FD0\u884C\u9A8C\u8BC1\u547D\u4EE4\uFF1A${command.slice(0, 120)}` : "\u6211\u9700\u8981\u8FD0\u884C\u547D\u4EE4\u6765\u9A8C\u8BC1\u5224\u65AD\u3002";
+  if (toolName === "runcommand" || toolName === "runinshell") return command ? `\u6211\u9700\u8981\u5728\u72EC\u7ACB\u7EC8\u7AEF\u8FD0\u884C\uFF1A${command.slice(0, 120)}` : "\u6211\u9700\u8981\u5728\u72EC\u7ACB\u7EC8\u7AEF\u8FD0\u884C\u547D\u4EE4\u3002";
+  if (toolName === "createshell") return "\u6211\u8981\u518D\u5F00\u4E00\u4E2A\u72EC\u7ACB\u7EC8\u7AEF\u3002";
+  if (toolName === "closeshell" || toolName === "deleteshell" || toolName === "killshell") return "\u6211\u8981\u5173\u95ED\u8FD9\u4E2A\u72EC\u7ACB\u7EC8\u7AEF\u3002";
+  if (toolName === "listshells") return "\u6211\u8981\u5148\u770B\u6709\u54EA\u4E9B\u72EC\u7ACB\u7EC8\u7AEF\u3002";
+  if (toolName === "sendshellinput") return inputText ? `\u6211\u51C6\u5907\u5411\u72EC\u7ACB\u7EC8\u7AEF\u8F93\u5165 ${inputText.length} \u4E2A\u5B57\u7B26\u3002` : "\u6211\u51C6\u5907\u5411\u72EC\u7ACB\u7EC8\u7AEF\u53D1\u9001\u8F93\u5165\u3002";
   if (toolName === "sendinput") return inputText ? `\u6211\u51C6\u5907\u5411\u6B63\u5728\u8FD0\u884C\u7684\u63A7\u5236\u53F0\u8F93\u5165 ${inputText.length} \u4E2A\u5B57\u7B26\u3002` : "\u6211\u51C6\u5907\u5411\u6B63\u5728\u8FD0\u884C\u7684\u63A7\u5236\u53F0\u53D1\u9001\u8F93\u5165\u3002";
   if (toolName === "sendcommand") return command ? `\u6211\u51C6\u5907\u628A\u8F93\u5165\u53D1\u9001\u7ED9\u6B63\u5728\u8FD0\u884C\u7684\u8FDB\u7A0B\uFF1A${command.slice(0, 120)}` : "\u6211\u51C6\u5907\u628A\u8F93\u5165\u53D1\u9001\u7ED9\u6B63\u5728\u8FD0\u884C\u7684\u8FDB\u7A0B\u3002";
   if (toolName === "instanceaction") return "\u6211\u8981\u8C03\u6574\u5B9E\u4F8B\u8FD0\u884C\u72B6\u6001\uFF0C\u8FD9\u4E00\u6B65\u9700\u8981\u8C28\u614E\u786E\u8BA4\u3002";
@@ -222,7 +235,11 @@ function toolOutcomeMessage(call: ParsedToolCall, action: SakiAgentAction): stri
   if (toolName === "mkdir") return pathArg ? `\u76EE\u5F55 ${pathArg} \u5DF2\u7ECF\u5EFA\u597D\u3002` : "\u76EE\u5F55\u5DF2\u7ECF\u5EFA\u597D\u3002";
   if (toolName === "renamepath") return "\u79FB\u52A8\u6216\u91CD\u547D\u540D\u5DF2\u7ECF\u5B8C\u6210\u3002";
   if (toolName === "deletepath") return pathArg ? `${pathArg} \u5DF2\u7ECF\u5904\u7406\u597D\u3002` : "\u8DEF\u5F84\u5DF2\u7ECF\u5904\u7406\u597D\u3002";
-  if (toolName === "runcommand") return "\u547D\u4EE4\u6267\u884C\u5B8C\u4E86\u3002";
+  if (toolName === "runcommand" || toolName === "runinshell") return "\u72EC\u7ACB\u7EC8\u7AEF\u91CC\u7684\u547D\u4EE4\u6267\u884C\u5B8C\u4E86\u3002";
+  if (toolName === "createshell") return "\u72EC\u7ACB\u7EC8\u7AEF\u5DF2\u6253\u5F00\u3002";
+  if (toolName === "closeshell" || toolName === "deleteshell" || toolName === "killshell") return "\u72EC\u7ACB\u7EC8\u7AEF\u5DF2\u5173\u95ED\u3002";
+  if (toolName === "listshells") return "\u7EC8\u7AEF\u5217\u8868\u770B\u5230\u4E86\u3002";
+  if (toolName === "sendshellinput") return "\u5DF2\u7ECF\u53D1\u9001\u5230\u72EC\u7ACB\u7EC8\u7AEF\u3002";
   if (toolName === "sendinput" || toolName === "sendcommand") return "\u63A7\u5236\u53F0\u8F93\u5165\u5DF2\u7ECF\u53D1\u9001\u3002";
   if (toolName === "searchweb" || toolName === "browse" || toolName === "crawl" || toolName === "researchweb") return "\u7F51\u9875\u4FE1\u606F\u62FF\u5230\u4E86\u3002";
   if (
@@ -333,7 +350,7 @@ function promptObservationLimit(action: SakiAgentAction, modelId?: string): numb
   const toolName = normalizedAgentToolName(action.tool);
   if (modelId) {
     if (toolName === "readfile") return 1200;
-    if (toolName === "runcommand") return 1200;
+    if (toolName === "runcommand" || toolName === "runinshell") return 1200;
     if (toolName === "listfiles" || toolName === "instancelogs") return 800;
     if (toolName === "browse" || toolName === "crawl" || toolName === "researchweb" || toolName === "searchweb") return 900;
     if (toolName === "searchfiles") return 1200;
@@ -341,7 +358,7 @@ function promptObservationLimit(action: SakiAgentAction, modelId?: string): numb
     return maxAgentPromptObservationTokens;
   }
   if (toolName === "readfile") return 3600;
-  if (toolName === "runcommand") return 3600;
+  if (toolName === "runcommand" || toolName === "runinshell") return 3600;
   if (toolName === "listfiles" || toolName === "instancelogs") return 2400;
   if (toolName === "browse" || toolName === "crawl" || toolName === "researchweb" || toolName === "searchweb") return 2600;
   if (toolName === "searchfiles") return 3600;
@@ -1223,7 +1240,7 @@ ${buildAgentWorkspacePrefix(runtime)}`;
 <note>short visible note</note>
 </tool_call>
 If the task is complete, reply in plain text with no tool calls.
-Do NOT use JSON inside XML. Put raw text/code directly inside parameter tags. Never use Markdown fences.\nIMPORTANT: For editing files, use applyPatch. writeFile is for new files only.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
+Do NOT use JSON inside XML. Put raw text/code directly inside parameter tags. Never use Markdown fences.\nIMPORTANT: ${sakiFileToolGuidance}\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
         continue;
       }
       const shouldRetry = !cleaned || looksLikeToolCallPayload(cleaned);
@@ -1237,7 +1254,7 @@ Do NOT use JSON inside XML. Put raw text/code directly inside parameter tags. Ne
         });
         appendAgentScratchpad(`\n\nSystem correction: Your previous output did not produce valid tool calls. ${xmlToolFormatReminder()}
 Do NOT wrap parameters in JSON. Write raw code directly inside parameter tags. If no tool is needed, answer naturally in the user's language.
-IMPORTANT: applyPatch for existing files; writeFile only for NEW files.\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
+IMPORTANT: ${sakiFileToolGuidance}\nPrevious output:\n${turn.content.slice(0, 1200)}\n`);
         continue;
       }
 

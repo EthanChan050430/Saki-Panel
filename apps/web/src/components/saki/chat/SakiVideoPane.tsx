@@ -12,7 +12,7 @@ import {
   UtensilsCrossed,
   X
 } from "lucide-react";
-import type { PanelLanguage } from "../../../i18n/index.js";
+import { usePanelLanguage, type PanelLanguage } from "../../../i18n/index.js";
 import {
   SakiCharacterArt,
   getLocalizedFoodMenu,
@@ -120,11 +120,9 @@ export const SakiVideoPane = memo(function SakiVideoPane({
   listening,
   toggleSpeechInput
 }: SakiVideoPaneProps) {
+  const { t, tFormat } = usePanelLanguage();
   const favInfo = getFavorabilityLevelInfo(sakiFavorabilityExp, language);
   const { pluginGames } = usePlugins();
-  const isEn = language === "en-US";
-  const isTw = language === "zh-TW";
-  const isJa = language === "ja-JP";
 
   const [activeGame, setActiveGame] = useState<string | null>(null);
 
@@ -134,11 +132,14 @@ export const SakiVideoPane = memo(function SakiVideoPane({
     }
   }, [miniGameActive]);
 
-  const favBadgeTitle = isEn
-    ? `[Saki Affection Details]\nLevel: Lv.${favInfo.level} · ${favInfo.title}\nCurrent EXP: ${favInfo.currentExp} / ${favInfo.maxExpForLevel} EXP (${favInfo.levelProgress}%)\n${favInfo.isMaxLevel ? "Max affection level reached!" : `EXP needed for next level: ${favInfo.maxExpForLevel - favInfo.currentExp}`}`
-    : isTw
-    ? `【Saki 好感度詳情】\n等級: Lv.${favInfo.level} · ${favInfo.title}\n目前經驗: ${favInfo.currentExp} / ${favInfo.maxExpForLevel} EXP (${favInfo.levelProgress}%)\n${favInfo.isMaxLevel ? "已達最高好感度！" : `距離下一級還需 ${favInfo.maxExpForLevel - favInfo.currentExp} EXP`}`
-    : `【Saki 好感度详情】\n等级: Lv.${favInfo.level} · ${favInfo.title}\n当前经验: ${favInfo.currentExp} / ${favInfo.maxExpForLevel} EXP (${favInfo.levelProgress}%)\n${favInfo.isMaxLevel ? "已达最高好感度！" : `距离下一级还需 ${favInfo.maxExpForLevel - favInfo.currentExp} EXP`}`;
+  const favBadgeTitle = [
+    t("saki.video.favDetails.header"),
+    tFormat("saki.video.favDetails.level", favInfo.level, favInfo.title),
+    tFormat("saki.video.favDetails.exp", favInfo.currentExp, favInfo.maxExpForLevel, favInfo.levelProgress),
+    favInfo.isMaxLevel
+      ? t("saki.video.favDetails.maxLevel")
+      : tFormat("saki.video.favDetails.nextLevel", favInfo.maxExpForLevel - favInfo.currentExp)
+  ].join("\n");
 
   return (
     <div
@@ -324,7 +325,7 @@ export const SakiVideoPane = memo(function SakiVideoPane({
 
             <div className="saki-favorability-tooltip" role="tooltip">
               <div className="tooltip-title">
-                {isEn ? "Affection " : isTw ? "好感度 " : isJa ? "好感度 " : "好感度 "}Lv.{favInfo.level} · {favInfo.title}
+                {t("saki.video.affection")} Lv.{favInfo.level} · {favInfo.title}
               </div>
               <div className="tooltip-exp-bar">
                 <div className="tooltip-exp-fill" style={{ width: `${favInfo.levelProgress}%` }} />
@@ -345,8 +346,8 @@ export const SakiVideoPane = memo(function SakiVideoPane({
           <button
             className="saki-video-close-btn"
             type="button"
-            title={isEn ? "Close Saki" : isTw ? "關閉 Saki" : isJa ? "咲を閉じる" : "关闭 Saki"}
-            aria-label={isEn ? "Close Saki" : isTw ? "關閉 Saki" : isJa ? "咲を閉じる" : "关闭 Saki"}
+            title={t("saki.video.closeSaki")}
+            aria-label={t("saki.video.closeSaki")}
             onClick={closeSakiPanel}
           >
             <X size={15} />
@@ -369,7 +370,7 @@ export const SakiVideoPane = memo(function SakiVideoPane({
               handleSakiPoke();
             }
           }}
-          title={isEn ? "Tap to poke, hold to speak" : isTw ? "點按戳戳，長按說話" : isJa ? "タップでつつく、長押しで話す" : "点按戳戳，长按说话"}
+          title={t("saki.video.pokeHoldTitle")}
           role="button"
           tabIndex={0}
         >
@@ -411,10 +412,10 @@ export const SakiVideoPane = memo(function SakiVideoPane({
             {getLocalizedFoodMenu(language).map((food) => {
               const canAfford = isUnlimitedPoints || numericSakiPoints >= food.cost;
               const isCurrentDragging = Boolean(draggingFood && draggingFood.food.id === food.id && draggingFood.isDragging);
-              const costUnit = isEn ? " pt" : isTw ? " 點" : isJa ? " pt" : "分";
+              const costUnit = ` ${t("points.unit")}`;
               const costTooltip = canAfford
-                ? `${food.name} (${food.cost} ${isEn ? "pts" : isTw ? "積分" : isJa ? "ポイント" : "积分"})`
-                : `${isEn ? "Insufficient points" : isTw ? "積分不足" : isJa ? "ポイント不足" : "积分不足"} (${food.cost})`;
+                ? `${food.name} (${food.cost} ${t("points.unit")})`
+                : `${t("saki.video.insufficientPoints")} (${food.cost})`;
               return (
                 <button
                   key={food.id}
@@ -477,8 +478,8 @@ export const SakiVideoPane = memo(function SakiVideoPane({
         <button
           className={`saki-video-btn ${miniGameActive ? "active" : ""}`}
           type="button"
-          title={isEn ? "Saki Phone (Mini-games)" : isTw ? "星夢手機 (選擇小遊戲玩耍)" : isJa ? "咲フォン（ミニゲーム）" : "星梦手机 (选择小游戏玩耍)"}
-          aria-label={isEn ? "Mini-games" : "小游戏中心"}
+          title={t("saki.video.sakiPhoneTitle")}
+          aria-label={t("saki.video.sakiPhoneTitle")}
           onClick={() => {
             setFeedMenuOpen(false);
             setMiniGameActive((prev) => {

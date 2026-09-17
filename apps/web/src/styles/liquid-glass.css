@@ -413,38 +413,52 @@
 }
 
 .saki-input-container.liquid-glass-container .saki-input-main-row textarea,
-.saki-input-container.liquid-glass-container .saki-composer .saki-input-main-row textarea {
-  color: #ffffff !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.60), 0 0 1px rgba(0, 0, 0, 0.40);
+.saki-input-container.liquid-glass-container .saki-composer .saki-input-main-row textarea,
+.saki-input-container.liquid-glass-container[data-backdrop="light"] .saki-input-main-row textarea,
+.saki-composer[data-backdrop="light"] .saki-input-main-row textarea {
+  color: #0f172a !important;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.85);
+  transition: color 180ms ease;
 }
 
 .saki-input-container.liquid-glass-container .saki-input-main-row textarea::placeholder,
-.saki-input-container.liquid-glass-container .saki-composer .saki-input-main-row textarea::placeholder {
-  color: rgba(255, 255, 255, 0.85) !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.60), 0 0 1px rgba(0, 0, 0, 0.40);
+.saki-input-container.liquid-glass-container .saki-composer .saki-input-main-row textarea::placeholder,
+.saki-input-container.liquid-glass-container[data-backdrop="light"] .saki-input-main-row textarea::placeholder,
+.saki-composer[data-backdrop="light"] .saki-input-main-row textarea::placeholder {
+  color: rgba(15, 23, 42, 0.60) !important;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.70);
+  transition: color 180ms ease;
 }
 
-[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-input-main-row textarea,
-[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-composer .saki-input-main-row textarea {
+.saki-input-container.liquid-glass-container[data-backdrop="dark"] .saki-input-main-row textarea,
+.saki-composer[data-backdrop="dark"] .saki-input-main-row textarea,
+[data-theme="dark"] .saki-input-container.liquid-glass-container:not([data-backdrop="light"]) .saki-input-main-row textarea {
   color: #f8fafc !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.60);
 }
 
-[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-input-main-row textarea::placeholder,
-[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-composer .saki-input-main-row textarea::placeholder {
+.saki-input-container.liquid-glass-container[data-backdrop="dark"] .saki-input-main-row textarea::placeholder,
+.saki-composer[data-backdrop="dark"] .saki-input-main-row textarea::placeholder,
+[data-theme="dark"] .saki-input-container.liquid-glass-container:not([data-backdrop="light"]) .saki-input-main-row textarea::placeholder {
   color: rgba(248, 250, 252, 0.72) !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.50);
 }
 
-.saki-input-container.liquid-glass-container .saki-add-btn {
+.saki-input-container.liquid-glass-container .saki-add-btn,
+.saki-input-container.liquid-glass-container[data-backdrop="light"] .saki-add-btn,
+.saki-composer[data-backdrop="light"] .saki-add-btn {
+  color: #0f172a !important;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.85)) !important;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.85);
+  transition: color 180ms ease, filter 180ms ease;
+}
+
+.saki-input-container.liquid-glass-container[data-backdrop="dark"] .saki-add-btn,
+.saki-composer[data-backdrop="dark"] .saki-add-btn,
+[data-theme="dark"] .saki-input-container.liquid-glass-container:not([data-backdrop="light"]) .saki-add-btn {
   color: #ffffff !important;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55)) !important;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
-}
-
-[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-add-btn {
-  color: #ffffff !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
 
@@ -534,16 +548,18 @@
     0 2px 8px rgba(0, 0, 0, 0.14) !important;
   -webkit-backdrop-filter: blur(14px) saturate(170%) contrast(1.04) !important;
   backdrop-filter: blur(14px) saturate(170%) contrast(1.04) !important;
-  color: #ffffff !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 1px rgba(0, 0, 0, 0.4) !important;
+  color: #0f172a !important;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.85) !important;
+  transition: color 180ms ease;
 }
 
 .saki-input-container.liquid-glass-container .saki-model-btn .saki-model-full-name,
 .saki-input-container.liquid-glass-container .saki-model-btn .saki-model-short-name,
 .saki-input-container.liquid-glass-container .saki-steer-btn,
 .saki-input-container.liquid-glass-container .perm-label-text {
-  color: #ffffff !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 1px rgba(0, 0, 0, 0.4) !important;
+  color: #0f172a !important;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.85) !important;
+  transition: color 180ms ease;
 }
 
 .saki-input-container.liquid-glass-container .saki-input-toolbar .icon-button.mini:hover,
@@ -558,8 +574,7 @@
     inset 0 1px 2px rgba(255, 255, 255, 0.90),
     inset 0 0 0 1px rgba(255, 255, 255, 0.22),
     0 4px 14px rgba(0, 0, 0, 0.16) !important;
-  color: #ffffff !important;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.70) !important;
+  color: #020617 !important;
   transform: translateY(-1px);
 }
 
@@ -595,6 +610,63 @@
   border-color: rgba(255, 255, 255, 0.38) !important;
   color: #ffffff !important;
   transform: translateY(-1px);
+}
+
+/* Dynamic Backdrop text & icon color overrides (preserving button glass) */
+.saki-input-container.liquid-glass-container[data-backdrop="light"] .saki-input-toolbar .icon-button.mini,
+.saki-input-container.liquid-glass-container[data-backdrop="light"] .saki-mode-icon-group,
+.saki-input-container.liquid-glass-container[data-backdrop="light"] .saki-permission-btn,
+.saki-input-container.liquid-glass-container[data-backdrop="light"] .saki-model-btn,
+.saki-input-container.liquid-glass-container[data-backdrop="light"] .saki-steer-btn,
+.saki-input-container.liquid-glass-container[data-backdrop="light"] .saki-chip-interactive,
+.saki-composer[data-backdrop="light"] .saki-input-toolbar .icon-button.mini,
+.saki-composer[data-backdrop="light"] .saki-mode-icon-group,
+.saki-composer[data-backdrop="light"] .saki-permission-btn,
+.saki-composer[data-backdrop="light"] .saki-model-btn,
+.saki-composer[data-backdrop="light"] .saki-steer-btn,
+.saki-composer[data-backdrop="light"] .saki-chip-interactive {
+  color: #0f172a !important;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.85) !important;
+}
+
+.saki-input-container.liquid-glass-container[data-backdrop="light"] .saki-model-btn .saki-model-full-name,
+.saki-input-container.liquid-glass-container[data-backdrop="light"] .saki-model-btn .saki-model-short-name,
+.saki-input-container.liquid-glass-container[data-backdrop="light"] .saki-steer-btn,
+.saki-input-container.liquid-glass-container[data-backdrop="light"] .perm-label-text,
+.saki-composer[data-backdrop="light"] .saki-model-btn .saki-model-full-name,
+.saki-composer[data-backdrop="light"] .saki-model-btn .saki-model-short-name,
+.saki-composer[data-backdrop="light"] .saki-steer-btn,
+.saki-composer[data-backdrop="light"] .perm-label-text {
+  color: #0f172a !important;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.85) !important;
+}
+
+.saki-input-container.liquid-glass-container[data-backdrop="dark"] .saki-input-toolbar .icon-button.mini,
+.saki-input-container.liquid-glass-container[data-backdrop="dark"] .saki-mode-icon-group,
+.saki-input-container.liquid-glass-container[data-backdrop="dark"] .saki-permission-btn,
+.saki-input-container.liquid-glass-container[data-backdrop="dark"] .saki-model-btn,
+.saki-input-container.liquid-glass-container[data-backdrop="dark"] .saki-steer-btn,
+.saki-input-container.liquid-glass-container[data-backdrop="dark"] .saki-chip-interactive,
+.saki-composer[data-backdrop="dark"] .saki-input-toolbar .icon-button.mini,
+.saki-composer[data-backdrop="dark"] .saki-mode-icon-group,
+.saki-composer[data-backdrop="dark"] .saki-permission-btn,
+.saki-composer[data-backdrop="dark"] .saki-model-btn,
+.saki-composer[data-backdrop="dark"] .saki-steer-btn,
+.saki-composer[data-backdrop="dark"] .saki-chip-interactive {
+  color: #f8fafc !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 1px rgba(0, 0, 0, 0.4) !important;
+}
+
+.saki-input-container.liquid-glass-container[data-backdrop="dark"] .saki-model-btn .saki-model-full-name,
+.saki-input-container.liquid-glass-container[data-backdrop="dark"] .saki-model-btn .saki-model-short-name,
+.saki-input-container.liquid-glass-container[data-backdrop="dark"] .saki-steer-btn,
+.saki-input-container.liquid-glass-container[data-backdrop="dark"] .perm-label-text,
+.saki-composer[data-backdrop="dark"] .saki-model-btn .saki-model-full-name,
+.saki-composer[data-backdrop="dark"] .saki-model-btn .saki-model-short-name,
+.saki-composer[data-backdrop="dark"] .saki-steer-btn,
+.saki-composer[data-backdrop="dark"] .perm-label-text {
+  color: #f8fafc !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 1px rgba(0, 0, 0, 0.4) !important;
 }
 
 /* Mode Selector: Clean Icon-Only Group */
@@ -789,42 +861,122 @@
 .saki-input-toolbar.saki-composer-dock button svg {
   opacity: 1 !important;
   stroke: currentColor;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45)) !important;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.85)) !important;
+  transition: color 180ms ease, filter 180ms ease;
 }
 
-[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-input-toolbar button svg {
-  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45)) !important;
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-input-toolbar button svg,
+.saki-input-container.liquid-glass-container[data-backdrop="dark"] .saki-input-toolbar button svg,
+.saki-composer[data-backdrop="dark"] .saki-input-toolbar button svg {
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55)) !important;
 }
 
 .saki-input-container.liquid-glass-container .saki-permission-btn .perm-arrow,
 .saki-input-container.liquid-glass-container .saki-model-btn .model-chevron,
 .saki-input-toolbar.saki-composer-dock .perm-arrow,
 .saki-input-toolbar.saki-composer-dock .model-chevron {
-  color: rgba(255, 255, 255, 0.95) !important;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45)) !important;
+  color: #0f172a !important;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.85)) !important;
+  transition: color 180ms ease;
 }
 
 [data-theme="dark"] .saki-input-container.liquid-glass-container .saki-permission-btn .perm-arrow,
-[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-model-btn .model-chevron {
+[data-theme="dark"] .saki-input-container.liquid-glass-container .saki-model-btn .model-chevron,
+.saki-input-container.liquid-glass-container[data-backdrop="dark"] .saki-permission-btn .perm-arrow,
+.saki-input-container.liquid-glass-container[data-backdrop="dark"] .saki-model-btn .model-chevron,
+.saki-composer[data-backdrop="dark"] .saki-permission-btn .perm-arrow,
+.saki-composer[data-backdrop="dark"] .saki-model-btn .model-chevron {
   color: #ffffff !important;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45)) !important;
 }
 
-/* Explicit saki-composer-dock light mode bright text and icon rules */
+/* Saki Composer Dock Dynamic Text and Icon Colors */
 .saki-input-toolbar.saki-composer-dock .icon-button.mini,
 .saki-input-toolbar.saki-composer-dock .saki-mode-icon-btn,
 .saki-input-toolbar.saki-composer-dock .saki-chip-interactive,
 .saki-input-toolbar.saki-composer-dock .saki-permission-btn,
 .saki-input-toolbar.saki-composer-dock .saki-model-btn,
 .saki-input-toolbar.saki-composer-dock .saki-steer-btn {
-  color: #ffffff !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 1px rgba(0, 0, 0, 0.4) !important;
+  color: #0f172a !important;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.85) !important;
+  transition: color 180ms ease;
 }
 
 .saki-input-toolbar.saki-composer-dock .perm-label-text,
 .saki-input-toolbar.saki-composer-dock .saki-model-full-name,
 .saki-input-toolbar.saki-composer-dock .saki-model-short-name {
-  color: #ffffff !important;
+  color: #0f172a !important;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.85) !important;
+  transition: color 180ms ease;
+}
+
+.saki-composer[data-backdrop="dark"] .saki-input-toolbar.saki-composer-dock .icon-button.mini,
+.saki-composer[data-backdrop="dark"] .saki-input-toolbar.saki-composer-dock .saki-mode-icon-btn,
+.saki-composer[data-backdrop="dark"] .saki-input-toolbar.saki-composer-dock .saki-chip-interactive,
+.saki-composer[data-backdrop="dark"] .saki-input-toolbar.saki-composer-dock .saki-permission-btn,
+.saki-composer[data-backdrop="dark"] .saki-input-toolbar.saki-composer-dock .saki-model-btn,
+.saki-composer[data-backdrop="dark"] .saki-input-toolbar.saki-composer-dock .saki-steer-btn,
+[data-theme="dark"] .saki-input-toolbar.saki-composer-dock .icon-button.mini,
+[data-theme="dark"] .saki-input-toolbar.saki-composer-dock .saki-mode-icon-btn,
+[data-theme="dark"] .saki-input-toolbar.saki-composer-dock .saki-chip-interactive,
+[data-theme="dark"] .saki-input-toolbar.saki-composer-dock .saki-permission-btn,
+[data-theme="dark"] .saki-input-toolbar.saki-composer-dock .saki-model-btn,
+[data-theme="dark"] .saki-input-toolbar.saki-composer-dock .saki-steer-btn {
+  color: #f8fafc !important;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 1px rgba(0, 0, 0, 0.4) !important;
+}
+
+.saki-composer[data-backdrop="dark"] .saki-input-toolbar.saki-composer-dock .perm-label-text,
+.saki-composer[data-backdrop="dark"] .saki-input-toolbar.saki-composer-dock .saki-model-full-name,
+.saki-composer[data-backdrop="dark"] .saki-input-toolbar.saki-composer-dock .saki-model-short-name,
+[data-theme="dark"] .saki-input-toolbar.saki-composer-dock .perm-label-text,
+[data-theme="dark"] .saki-input-toolbar.saki-composer-dock .saki-model-full-name,
+[data-theme="dark"] .saki-input-toolbar.saki-composer-dock .saki-model-short-name {
+  color: #f8fafc !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 1px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* ==========================================================================
+   Saki Add Menu & Model Selector & Permission Dropdowns: Solid Frosted Glass
+   ========================================================================== */
+.saki-add-menu-wrapper.liquid-glass-container,
+.saki-model-dropdown-wrapper.liquid-glass-container,
+.saki-permission-dropdown-wrapper.liquid-glass-container,
+.saki-add-menu-wrapper,
+.saki-model-dropdown-wrapper,
+.saki-permission-dropdown-wrapper {
+  z-index: 9999 !important;
+  background: rgba(255, 255, 255, 0.94) !important;
+  border: 1px solid rgba(255, 255, 255, 0.98) !important;
+  border-top-color: #ffffff !important;
+  border-bottom-color: rgba(203, 213, 225, 0.70) !important;
+  box-shadow:
+    0 20px 50px -4px rgba(0, 0, 0, 0.18),
+    0 8px 20px rgba(0, 0, 0, 0.08),
+    inset 0 1px 2px #ffffff,
+    inset 0 0 0 1px rgba(255, 255, 255, 0.90) !important;
+  backdrop-filter: blur(24px) saturate(180%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(180%) contrast(1.05) !important;
+}
+
+[data-theme="dark"] .saki-add-menu-wrapper.liquid-glass-container,
+[data-theme="dark"] .saki-model-dropdown-wrapper.liquid-glass-container,
+[data-theme="dark"] .saki-permission-dropdown-wrapper.liquid-glass-container,
+[data-theme="dark"] .saki-add-menu-wrapper,
+[data-theme="dark"] .saki-model-dropdown-wrapper,
+[data-theme="dark"] .saki-permission-dropdown-wrapper {
+  background: rgba(10, 11, 16, 0.94) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-top-color: rgba(255, 255, 255, 0.28) !important;
+  border-bottom-color: rgba(0, 0, 0, 0.75) !important;
+  box-shadow:
+    0 24px 60px -4px rgba(0, 0, 0, 0.92),
+    0 8px 28px rgba(0, 0, 0, 0.75),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.18),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    inset 0 0 10px rgba(0, 0, 0, 0.60) !important;
+  backdrop-filter: blur(24px) saturate(180%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(180%) contrast(1.05) !important;
 }
 
 /* Notice Banner */

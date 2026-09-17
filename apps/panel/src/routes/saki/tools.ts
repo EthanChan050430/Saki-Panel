@@ -40,23 +40,24 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "describeInstance", description: "Show one instance configuration.", parameters: objectSchema({ instanceId: instanceLookupSchema }), aliases: ["getInstance"] },
   { name: "instanceLogs", description: "Read recent instance logs.", parameters: objectSchema({ instanceId: instanceLookupSchema, lines: { type: "integer", minimum: 1, maximum: 500 } }) },
   { name: "listFiles", description: "List a directory. Use limit on large folders.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, limit: { type: "integer", minimum: 1, maximum: 1000 } }) },
-  { name: "readFile", description: "Read a line window. Always pass startLine. Max 80 lines. Prefer searchFiles, outlineFile, or readSymbol first.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, lineCount: { type: "integer", minimum: 1, maximum: 80 } }, ["path"]), aliases: ["view_file", "viewFile", "read_file", "cat"] },
-  { name: "writeFile", description: "Create a NEW file only. Do not overwrite existing files. Checkpointed.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, content: { type: "string" } }, ["path", "content"]), aliases: ["write_file", "write_to_file", "saveFile", "createFile"] },
-  { name: "replaceInFile", description: "Replace one exact string. Prefer editLines when you have line numbers.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, oldText: { type: "string" }, newText: { type: "string" } }, ["path", "oldText", "newText"]), aliases: ["str_replace", "replace_file_content", "replace_in_file", "strReplace", "edit_file", "patch"] },
-  { name: "editLines", description: "Replace a 1-based line range. Preferred edit tool. Checkpointed.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, endLine: { type: "integer", minimum: 0 }, replacement: { type: "string" } }, ["path", "startLine", "endLine", "replacement"]), aliases: ["editFileLines", "replaceLines", "edit_lines", "patchLines"] },
+  { name: "readFile", description: "Read a line-numbered window. Always pass startLine. Max 120 lines. Locate with searchFiles, outlineFile, or readSymbol first — do not page the whole file.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, lineCount: { type: "integer", minimum: 1, maximum: 120 } }, ["path"]), aliases: ["view_file", "viewFile", "read_file", "cat"] },
+  { name: "writeFile", description: "Create a NEW file only. Do not overwrite existing files. For existing files use editLines, applyPatch, or replaceInFile.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, content: { type: "string" } }, ["path", "content"]), aliases: ["write_file", "write_to_file", "saveFile", "createFile"] },
+  { name: "replaceInFile", description: "Replace one unique exact string. Use editLines when you have line numbers; applyPatch for larger diffs.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, oldText: { type: "string" }, newText: { type: "string" } }, ["path", "oldText", "newText"]), aliases: ["str_replace", "replace_file_content", "replace_in_file", "strReplace", "edit_file"] },
+  { name: "editLines", description: "Replace a 1-based line range. Use this when you already have line numbers from readFile, outlineFile, or searchFiles. Checkpointed.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, endLine: { type: "integer", minimum: 0 }, replacement: { type: "string" } }, ["path", "startLine", "endLine", "replacement"]), aliases: ["editFileLines", "replaceLines", "edit_lines", "patchLines"] },
   { name: "mkdir", description: "Create a directory.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema }, ["path"]) },
   { name: "deletePath", description: "Delete a path after approval. Checkpointed.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema }, ["path"]), aliases: ["delete_path", "removeFile", "rm"] },
   { name: "renamePath", description: "Rename or move a path.", parameters: objectSchema({ instanceId: instanceLookupSchema, fromPath: relativePathSchema, toPath: relativePathSchema }, ["fromPath", "toPath"]), aliases: ["movePath", "mv", "rename_path"] },
   { name: "uploadBase64", description: "Upload a base64 file.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, contentBase64: { type: "string" } }, ["path", "contentBase64"]) },
   { name: "archivePaths", description: "Zip workspace paths. Prefer this over shell zip.", parameters: objectSchema({ instanceId: instanceLookupSchema, paths: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 200, description: "Relative paths to compress." }, outputPath: { type: "string", description: "Optional output .zip path." } }, ["paths"]), aliases: ["archive", "compressPaths", "zipPaths"] },
   { name: "extractArchive", description: "Extract zip/rar/7z. Prefer this over shell unzip.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, outputPath: { type: "string", description: "Optional output directory." }, conflictPolicy: { type: "string", enum: ["overwrite", "skip"] } }, ["path"]), aliases: ["extract", "unzipArchive", "decompressArchive"] },
-  { name: "runCommand", description: "Run a shell command in an isolated tab (reuses last shell). Medium/high risk needs approval. Not for live process stdin.", parameters: objectSchema({ instanceId: instanceLookupSchema, command: { type: "string" }, cwd: { type: "string" }, workingDirectory: { type: "string" }, timeoutMs: { type: "integer", minimum: 1000, maximum: 120000 }, input: { type: "string" }, stdin: { type: "string" } }, ["command"]), aliases: ["executeCommand", "terminal", "shell", "run_command", "bash", "bashTool", "cmd", "exec"] },
-  { name: "sendInput", description: "Type into the live instance process stdin (app prompts only). For shell commands use runCommand.", parameters: objectSchema({ instanceId: instanceLookupSchema, text: { type: "string" }, pressEnter: { type: "boolean" }, echo: { type: "boolean" } }, ["text"]), aliases: ["typeConsole", "consoleInput", "terminalInput", "sendStdin"] },
-  { name: "sendCommand", description: "Alias of sendInput for the live process console. Prefer runCommand for shell work.", parameters: objectSchema({ instanceId: instanceLookupSchema, command: { type: "string" } }, ["command"]) },
-  { name: "listShells", description: "List persistent shell tabs.", parameters: objectSchema({ instanceId: instanceLookupSchema }) },
-  { name: "createShell", description: "Open a persistent shell tab. Returns shellId.", parameters: objectSchema({ instanceId: instanceLookupSchema, workingDirectory: { type: "string" } }) },
-  { name: "sendShellInput", description: "Raw keystrokes to a persistent shell. Prefer runInShell for full commands.", parameters: objectSchema({ instanceId: instanceLookupSchema, shellId: { type: "string" }, text: { type: "string" }, pressEnter: { type: "boolean" } }, ["shellId", "text"]) },
-  { name: "runInShell", description: "Run a command in a persistent shell by shellId.", parameters: objectSchema({ instanceId: instanceLookupSchema, shellId: { type: "string" }, command: { type: "string" }, timeoutMs: { type: "integer", minimum: 1000, maximum: 120000 } }, ["shellId", "command"]) },
+  { name: "runCommand", description: "Default way to run a shell command: opens or reuses an independent terminal tab. Omit shellId to reuse the last Saki tab (or create one). Pass shellId to run in a specific tab. Do not use this for the live instance process on the main console.", parameters: objectSchema({ instanceId: instanceLookupSchema, command: { type: "string" }, shellId: { type: "string" }, cwd: { type: "string" }, workingDirectory: { type: "string" }, timeoutMs: { type: "integer", minimum: 1000, maximum: 120000 }, input: { type: "string" }, stdin: { type: "string" } }, ["command"]), aliases: ["executeCommand", "terminal", "shell", "run_command", "bash", "bashTool", "cmd", "exec"] },
+  { name: "sendInput", description: "Type into the live instance process on the main console (app prompts, game/server stdin). Use only when that running process needs input. For ordinary shell work use runCommand or createShell.", parameters: objectSchema({ instanceId: instanceLookupSchema, text: { type: "string" }, pressEnter: { type: "boolean" }, echo: { type: "boolean" } }, ["text"]), aliases: ["typeConsole", "consoleInput", "terminalInput", "sendStdin"] },
+  { name: "sendCommand", description: "Send a line to the live instance process on the main console. Use only when that running process must receive a command. Prefer runCommand/createShell for ordinary shell work.", parameters: objectSchema({ instanceId: instanceLookupSchema, command: { type: "string" } }, ["command"]) },
+  { name: "listShells", description: "List independent terminal tabs (not the main instance console).", parameters: objectSchema({ instanceId: instanceLookupSchema }) },
+  { name: "createShell", description: "Open another independent terminal tab. Returns shellId. Use this to run commands in parallel. Cannot target the main console.", parameters: objectSchema({ instanceId: instanceLookupSchema, workingDirectory: { type: "string" }, label: { type: "string" } }) },
+  { name: "closeShell", description: "Close an independent terminal tab by shellId. Cannot close the main instance console.", parameters: objectSchema({ instanceId: instanceLookupSchema, shellId: { type: "string" } }, ["shellId"]), aliases: ["deleteShell", "killShell"] },
+  { name: "sendShellInput", description: "Raw keystrokes to an independent terminal tab. Prefer runInShell for full commands.", parameters: objectSchema({ instanceId: instanceLookupSchema, shellId: { type: "string" }, text: { type: "string" }, pressEnter: { type: "boolean" } }, ["shellId", "text"]) },
+  { name: "runInShell", description: "Run a command in a specific independent terminal tab by shellId. Never the main console.", parameters: objectSchema({ instanceId: instanceLookupSchema, shellId: { type: "string" }, command: { type: "string" }, timeoutMs: { type: "integer", minimum: 1000, maximum: 120000 } }, ["shellId", "command"]) },
   { name: "instanceAction", description: "start/stop/restart/kill an instance. stop/restart/kill need approval.", parameters: objectSchema({ instanceId: instanceLookupSchema, action: { type: "string", enum: ["start", "stop", "restart", "kill"] } }, ["action"]) },
   { name: "updateInstanceSettings", description: "Update instance settings after approval.", parameters: objectSchema({ instanceId: instanceLookupSchema, name: { type: "string" }, workingDirectory: { type: "string" }, startCommand: { type: "string" }, stopCommand: { type: ["string", "null"] }, description: { type: ["string", "null"] }, autoStart: { type: "boolean" }, restartPolicy: { type: "string", enum: ["never", "on_failure", "always", "fixed_interval"] }, restartMaxRetries: { type: "integer", minimum: 0, maximum: 99 } }), aliases: ["setInstanceSettings", "updateInstance"] },
   { name: "searchAudit", description: "Search audit logs.", parameters: objectSchema({ query: { type: "string" } }, ["query"]) },
@@ -68,8 +69,8 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "taskRuns", description: "List recent scheduled task runs.", parameters: objectSchema({ taskId: { type: "string" } }, ["taskId"]) },
   { name: "searchFiles", description: "Regex search. Returns matches with 2 lines of context and line numbers.", parameters: objectSchema({ instanceId: instanceLookupSchema, pattern: { type: "string" }, path: { type: "string" }, include: { type: "string" }, maxResults: { type: "integer", minimum: 1, maximum: 80 } }, ["pattern"]), aliases: ["grep", "grepFiles", "searchCode", "codeSearch", "grep_search", "ripgrep", "grepTool"] },
   { name: "findFiles", description: "Glob file names. Skips node_modules.", parameters: objectSchema({ instanceId: instanceLookupSchema, pattern: { type: "string" }, path: { type: "string" }, maxResults: { type: "integer", minimum: 1, maximum: 1000 } }, ["pattern"]), aliases: ["glob", "globFiles", "findByName", "find_by_name", "globTool", "locateFiles"] },
-  { name: "outlineFile", description: "File structure with line numbers. Do not read the whole file first.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema }, ["path"]), aliases: ["fileOutline", "outline", "inspectStructure"] },
-  { name: "findSymbols", description: "Go-to-definition by symbol name.", parameters: objectSchema({ instanceId: instanceLookupSchema, query: { type: "string" }, path: { type: "string" } }, ["query"]), aliases: ["findDefinition", "findSymbol", "gotoDefinition", "symbolSearch"] },
+  { name: "outlineFile", description: "File structure with line numbers. Use this before reading a large file, then jump with readFile or readSymbol.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema }, ["path"]), aliases: ["fileOutline", "outline", "inspectStructure"] },
+  { name: "findSymbols", description: "Go-to-definition by symbol name. Returns path and line; then readSymbol or editLines.", parameters: objectSchema({ instanceId: instanceLookupSchema, query: { type: "string" }, path: { type: "string" } }, ["query"]), aliases: ["findDefinition", "findSymbol", "gotoDefinition", "symbolSearch"] },
   { name: "searchWeb", description: "Search the public web.", parameters: objectSchema({ query: { type: "string" }, maxResults: { type: "integer", minimum: 1, maximum: 8 } }, ["query"]), aliases: ["webSearch"] },
   { name: "browse", description: "Fetch one public web page.", parameters: objectSchema({ url: { type: "string" } }, ["url"]), aliases: ["browseUrl", "readUrl", "fetchPage"] },
   { name: "crawl", description: "Crawl same-site pages. Prefer searchWeb + browse unless you need multiple pages.", parameters: objectSchema({ url: { type: "string" }, maxPages: { type: "integer", minimum: 1, maximum: 6 }, maxDepth: { type: "integer", minimum: 0, maximum: 2 } }, ["url"]), aliases: ["crawlWeb", "crawlSite"] },
@@ -83,13 +84,13 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "diagnoseCode", description: "Fast syntax/typecheck. Call after edits before respond. Never uses npm test.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, command: { type: "string" } }), aliases: ["diagnostics", "checkTypes", "typecheck", "lintCode", "diagnose_code", "lint"] },
   { name: "manageTodos", description: "Markdown TODO list with [x]/[ ] for multi-step work.", parameters: objectSchema({ todos: { type: "string" } }, ["todos"]), aliases: ["setTodos", "todos", "updateTodos", "manage_todos", "todoTool", "taskList"] },
   { name: "spawnTask", description: "Research-only sub-agent. Inspect, do not edit. Use only for broad multi-file exploration.", parameters: objectSchema({ instanceId: instanceLookupSchema, task: { type: "string" }, maxSteps: { type: "integer", minimum: 1, maximum: 10 } }, ["task"]), aliases: ["subAgent", "delegate", "runSubTask"] },
-  { name: "batchEdit", description: "Apply multiple file edits in one step. Checkpointed.", parameters: objectSchema({ instanceId: instanceLookupSchema, edits: { type: "array", items: { type: "object", properties: { path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, endLine: { type: "integer", minimum: 0 }, replacement: { type: "string" }, oldText: { type: "string" }, newText: { type: "string" } }, required: ["path"] } } }, ["edits"]), aliases: ["batch_edit", "multiFileEdit", "batch_patch"] },
-  { name: "applyPatch", description: "Apply a unified diff or Codex-style patch to one or more existing/new files. Preferred edit tool.", parameters: objectSchema({ instanceId: instanceLookupSchema, patch: { type: "string", description: "Unified diff (---/+++ / @@) or *** Begin Patch format." } }, ["patch"]), aliases: ["apply_patch", "applyDiff", "applyPatches", "patchFiles"] },
-  { name: "statFile", description: "Metadata only: exists, size, line count, mtime. Does not load file content.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema }, ["path"]), aliases: ["fileInfo", "stat_file", "file_info", "inspectPath", "stat"] },
+  { name: "batchEdit", description: "Apply several editLines/replaceInFile operations in one step. Use when changing more than one region or file. Checkpointed.", parameters: objectSchema({ instanceId: instanceLookupSchema, edits: { type: "array", items: { type: "object", properties: { path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, endLine: { type: "integer", minimum: 0 }, replacement: { type: "string" }, oldText: { type: "string" }, newText: { type: "string" } }, required: ["path"] } } }, ["edits"]), aliases: ["batch_edit", "multiFileEdit", "batch_patch"] },
+  { name: "applyPatch", description: "Apply a unified diff or Codex-style patch. Best for multi-hunk or multi-file edits. Prefer editLines when you already have line numbers. writeFile is for NEW files only.", parameters: objectSchema({ instanceId: instanceLookupSchema, patch: { type: "string", description: "Unified diff (---/+++ / @@) or *** Begin Patch format." } }, ["patch"]), aliases: ["apply_patch", "applyDiff", "applyPatches", "patchFiles", "patch"] },
+  { name: "statFile", description: "Metadata only: exists, size, line count, mtime. Use this instead of reading a file just to see how large it is.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema }, ["path"]), aliases: ["fileInfo", "stat_file", "file_info", "inspectPath", "stat"] },
   { name: "gitStatus", description: "Git status (branch, staged, modified, untracked).", parameters: objectSchema({ instanceId: instanceLookupSchema }), aliases: ["git_status", "gitStatusTool"] },
   { name: "gitDiff", description: "Git unified diff of uncommitted changes.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, staged: { type: "boolean" } }), aliases: ["git_diff", "gitDiffTool", "diff"] },
   { name: "getEnvironmentInfo", description: "Cached OS and runtime versions. Call only when you need them.", parameters: objectSchema({ instanceId: instanceLookupSchema }), aliases: ["envInfo", "get_environment_info", "systemInfo", "env_info"] },
-  { name: "readSymbol", description: "Read one function/class/type body by name.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, symbol: { type: "string" } }, ["path", "symbol"]), aliases: ["viewSymbol", "getSymbol", "inspectSymbol", "viewFunction", "read_symbol", "extractSymbol"] },
+  { name: "readSymbol", description: "Read one function/class/type body by name. Prefer this over paging readFile through a large file.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, symbol: { type: "string" } }, ["path", "symbol"]), aliases: ["viewSymbol", "getSymbol", "inspectSymbol", "viewFunction", "read_symbol", "extractSymbol"] },
   { name: "plan", description: "Present a step plan before executing a complex task.", parameters: objectSchema({ steps: { type: "string" }, summary: { type: "string" } }, ["steps", "summary"]) },
   { name: "respond", description: "Return the final user-facing answer.", parameters: objectSchema({ text: { type: "string" } }, ["text"]) },
   {
@@ -163,10 +164,18 @@ const sakiCoreToolNames = [
   "readFile",
   "searchFiles",
   "findFiles",
+  "outlineFile",
+  "readSymbol",
+  "findSymbols",
+  "statFile",
   "applyPatch",
-  "writeFile",
+  "editLines",
   "replaceInFile",
+  "writeFile",
+  "batchEdit",
   "runCommand",
+  "createShell",
+  "closeShell",
   "diagnoseCode",
   "gitStatus",
   "gitDiff",
@@ -201,8 +210,8 @@ const sakiToolGroups: Record<SakiToolGroupId, { names: string[]; hint: RegExp }>
     hint: /\b(instance|start command|stop command|kill instance)\b|实例|节点|启动|停止|重启|杀死|listInstances|instanceAction/i
   },
   liveTerminal: {
-    names: ["sendInput", "sendCommand", "listShells", "createShell", "sendShellInput", "runInShell"],
-    hint: /\b(stdin|pty|interactive|password|console prompt|shell tab|sendInput|createShell|runInShell)\b|交互|密码|终端输入|进程控制台/
+    names: ["sendInput", "sendCommand", "listShells", "createShell", "closeShell", "sendShellInput", "runInShell"],
+    hint: /\b(stdin|pty|interactive|password|console prompt|shell tab|sendInput|createShell|runInShell|closeShell|parallel (command|shell|terminal)|main console)\b|交互|密码|终端输入|主终端|独立终端|多个终端/
   },
   schedule: {
     names: ["listTasks", "createScheduledTask", "updateScheduledTask", "deleteScheduledTask", "runTask", "taskRuns"],
@@ -337,7 +346,22 @@ export function toolSchemasForRuntime(runtime: SakiAgentRuntime): SakiToolSchema
 
 function capAdvertisedToolSchemas(schemas: SakiToolSchema[], maxTools: ReturnType<typeof sakiModelProfile>): SakiToolSchema[] {
   if (schemas.length <= maxTools.maxAdvertisedTools) return schemas;
-  const essential = new Set(["readFile", "searchFiles", "findFiles", "applyPatch", "replaceInFile", "writeFile", "diagnoseCode", "runCommand", "listFiles"]);
+  const essential = new Set([
+    "readFile",
+    "searchFiles",
+    "findFiles",
+    "listFiles",
+    "outlineFile",
+    "readSymbol",
+    "applyPatch",
+    "editLines",
+    "replaceInFile",
+    "writeFile",
+    "diagnoseCode",
+    "runCommand",
+    "createShell",
+    "closeShell"
+  ]);
   if (schemas.some((schema) => schema.name === "generateImage")) essential.add("generateImage");
   const kept: SakiToolSchema[] = [];
   const rest: SakiToolSchema[] = [];
@@ -440,7 +464,11 @@ const parameterAliases: Record<string, Record<string, string>> = {
   replaceinfile: { find: "oldText", search: "oldText", match: "oldText", replace: "newText", with: "newText", replacement: "newText" },
   editlines: { lines: "replacement", content: "replacement", text: "replacement", newContent: "replacement", new_content: "replacement" },
   readfile: { file: "path", filename: "path", filepath: "path" },
-  runcommand: { cmd: "command", shell: "command", script: "command" },
+  runcommand: { cmd: "command", shell: "command", script: "command", sessionId: "shellId", terminalId: "shellId" },
+  runinshell: { sessionId: "shellId", terminalId: "shellId", cmd: "command" },
+  closeshell: { sessionId: "shellId", terminalId: "shellId", id: "shellId" },
+  createshell: { cwd: "workingDirectory", name: "label" },
+  sendshellinput: { sessionId: "shellId", terminalId: "shellId", input: "text", data: "text" },
   sendinput: { value: "text", input: "text", content: "text" },
   listfiles: { dir: "path", directory: "path", folder: "path" },
   mkdir: { dir: "path", directory: "path", folder: "path" },
@@ -1065,6 +1093,7 @@ export const sakiReadOnlyToolNames = new Set([
   "updatetodos",
   "searchaudit",
   "listtasks",
+  "listshells",
   "plan",
   "taskruns",
   "searchweb",
@@ -1129,6 +1158,12 @@ export const sakiPlanBlockedToolNames = new Set([
   "deletepath",
   "sendinput",
   "sendcommand",
+  "createshell",
+  "closeshell",
+  "deleteshell",
+  "killshell",
+  "runinshell",
+  "sendshellinput",
   "instanceaction",
   "updateinstancesettings",
   "createscheduledtask",
@@ -1204,7 +1239,7 @@ export function assertSakiPermissionModeAllowsTool(
     throw new RouteError("Plan mode can inspect the workspace and propose a plan, but it cannot change files, settings, tasks, or instance state. Switch to Auto accept edits, Ask, or Bypass to execute changes.", 403);
   }
 
-  if (lower === "runcommand") {
+  if (lower === "runcommand" || lower === "runinshell") {
     const commandRisk = classifyCommandRisk(stringArg(args, "command"));
     if (commandRisk.risk !== "low") {
       throw new RouteError("Plan mode only permits low-risk inspection commands. Switch permission mode before running commands that can modify state.", 403);
@@ -1217,7 +1252,7 @@ export function isApprovalTool(toolName: string, args: Record<string, unknown>):
   if (["deletepath", "updateinstancesettings", "createscheduledtask", "updatescheduledtask", "deletescheduledtask", "runtask"].includes(lower)) {
     return true;
   }
-  if (lower === "runcommand") {
+  if (lower === "runcommand" || lower === "runinshell") {
     return classifyCommandRisk(stringArg(args, "command")).risk !== "low";
   }
   if (lower === "instanceaction") {
@@ -1241,7 +1276,7 @@ export function shouldRequestSakiApproval(runtime: SakiAgentRuntime, toolName: s
 
   if (permissionMode === "acceptEdits") {
     if (sakiAutoAcceptedFileToolNames.has(lower)) return false;
-    if (lower === "runcommand" || lower === "sendinput" || lower === "sendcommand" || lower === "instanceaction") {
+    if (lower === "runcommand" || lower === "runinshell" || lower === "sendshellinput" || lower === "sendinput" || lower === "sendcommand" || lower === "instanceaction") {
       return true;
     }
   }

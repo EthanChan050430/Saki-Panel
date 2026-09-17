@@ -16,12 +16,14 @@ function lastSeenIsOnline(lastSeenAt: Date | null): boolean {
   return (Date.now() - lastSeenAt.getTime()) / 1000 <= panelConfig.heartbeatOfflineSeconds;
 }
 
+import { ensureNodesFresh } from "../node-health.js";
+
 export async function registerDashboardRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/dashboard/overview", { preHandler: requirePermission("dashboard.view") }, async (request) => {
     const user = await loadCurrentUser(request.user.sub);
     const nodeWhere = user ? nodeVisibilityWhere(user) : {};
 
-    const [nodes, historyMetrics, recentOperations, recentLogins] = await Promise.all([
+    const [rawNodes, historyMetrics, recentOperations, recentLogins] = await Promise.all([
       prisma.node.findMany({
         where: nodeWhere,
         include: {
@@ -53,10 +55,25 @@ export async function registerDashboardRoutes(app: FastifyInstance): Promise<voi
       })
     ]);
 
+    let nodes = rawNodes;
+    if (rawNodes.length > 0) {
+      await ensureNodesFresh(rawNodes);
+      nodes = await prisma.node.findMany({
+        where: nodeWhere,
+        include: {
+          metrics: {
+            orderBy: { createdAt: "desc" },
+            take: 1
+          }
+        }
+      });
+    }
+
     const onlineNodes = nodes.filter((node) => lastSeenIsOnline(node.lastSeenAt));
     const latestMetrics = nodes
       .map((node) => node.metrics[0])
       .filter((metric): metric is NonNullable<typeof metric> => Boolean(metric));
+
 
     const overview: DashboardOverview = {
       version: PANEL_VERSION,

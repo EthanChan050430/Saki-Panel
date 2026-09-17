@@ -35,6 +35,7 @@ import {
 } from "../sakiChatHelpers.js";
 import { SakiMiniChat } from "./SakiMiniChat.js";
 import { LiquidGlassContainer } from "../../common/LiquidGlass.js";
+import { sampleLuminanceAtPoint } from "../sakiLuminance.js";
 
 export interface SakiComposerProps {
   // Submission & form
@@ -198,6 +199,77 @@ export const SakiComposer = React.memo(function SakiComposer({
     ? "问 Saki 当前实例里的问题"
     : "问 Saki";
 
+  const composerContainerRef = React.useRef<HTMLDivElement>(null);
+  const formRef = React.useRef<HTMLFormElement>(null);
+  const backdropRef = React.useRef<"light" | "dark">("light");
+  const [backdrop, setBackdrop] = React.useState<"light" | "dark">("light");
+
+  // Dynamic underlying backdrop luminance detection
+  React.useLayoutEffect(() => {
+    const el = composerContainerRef.current;
+    if (!el) return;
+
+    const checkBackdrop = () => {
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+
+      const samplePoints: Array<[number, number]> = [
+        [rect.left + rect.width * 0.2, rect.top + rect.height * 0.5],
+        [rect.left + rect.width * 0.5, rect.top + rect.height * 0.5],
+        [rect.left + rect.width * 0.8, rect.top + rect.height * 0.5],
+        [rect.left + rect.width * 0.5, rect.top + rect.height * 0.2],
+        [rect.left + rect.width * 0.5, rect.top + rect.height * 0.8]
+      ];
+
+      let totalLum = 0;
+      for (const [sx, sy] of samplePoints) {
+        totalLum += sampleLuminanceAtPoint(sx, sy, el, ".saki-panel, .saki-composer, .saki-input-container, .liquid-glass-container");
+      }
+      const avgLum = totalLum / samplePoints.length;
+      const nextBackdrop = avgLum > 0.45 ? "light" : "dark";
+
+      el.setAttribute("data-backdrop", nextBackdrop);
+      formRef.current?.setAttribute("data-backdrop", nextBackdrop);
+      if (backdropRef.current !== nextBackdrop) {
+        backdropRef.current = nextBackdrop;
+        setBackdrop(nextBackdrop);
+      }
+    };
+
+    checkBackdrop();
+
+    let checkRaf = 0;
+    const scheduleCheck = () => {
+      if (checkRaf) return;
+      checkRaf = requestAnimationFrame(() => {
+        checkRaf = 0;
+        checkBackdrop();
+      });
+    };
+
+    const resizeObserver = new ResizeObserver(scheduleCheck);
+    resizeObserver.observe(el);
+
+    const panel = el.closest(".saki-panel");
+    let mutationObserver: MutationObserver | null = null;
+    if (panel) {
+      mutationObserver = new MutationObserver(scheduleCheck);
+      mutationObserver.observe(panel, { attributes: true, attributeFilter: ["style", "class"] });
+    }
+
+    window.addEventListener("resize", scheduleCheck);
+    window.addEventListener("scroll", scheduleCheck, { passive: true });
+
+    return () => {
+      if (checkRaf) cancelAnimationFrame(checkRaf);
+      resizeObserver.disconnect();
+      mutationObserver?.disconnect();
+      window.removeEventListener("resize", scheduleCheck);
+      window.removeEventListener("scroll", scheduleCheck);
+    };
+  }, []);
+
   // Auto-expand textarea height smoothly
   React.useEffect(() => {
     const textarea = composerTextareaRef.current;
@@ -207,7 +279,12 @@ export const SakiComposer = React.memo(function SakiComposer({
   }, [draft, composerTextareaRef]);
 
   return (
-    <form className="saki-composer" onSubmit={(event) => void onSubmit(event)}>
+    <form
+      ref={formRef}
+      className="saki-composer"
+      data-backdrop={backdrop}
+      onSubmit={(event) => void onSubmit(event)}
+    >
       <input
         ref={imageInputRef}
         className="hidden-file-input"
@@ -288,7 +365,9 @@ export const SakiComposer = React.memo(function SakiComposer({
         )}
 
         <LiquidGlassContainer
+          ref={composerContainerRef}
           className="saki-input-container saki-composer-glass"
+          data-backdrop={backdrop}
           displacementScale={100}
           zoom={1.20}
           refractionIntensity={1.2}
@@ -418,7 +497,7 @@ export const SakiComposer = React.memo(function SakiComposer({
               <button
                 className={`icon-button mini saki-annotation-btn ${annotationMode ? "active" : ""}`}
                 type="button"
-                title={annotationMode ? "取消注释选择" : "注释选中文本"}
+                title={annotationMode ? "取消选中文本" : "选中文本填入输入框"}
                 aria-pressed={annotationMode}
                 disabled={loading}
                 onClick={onToggleSelectionAnnotation}

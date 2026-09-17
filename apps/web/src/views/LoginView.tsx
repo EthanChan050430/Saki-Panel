@@ -120,45 +120,16 @@ export function LoginView({
   const sakiBubbleTimeoutRef = useRef<number | null>(null);
   const sakiBounceTimeoutRef = useRef<number | null>(null);
 
-  const sakiHangQuotes = useMemo(() => {
-    if (language === "en-US") {
-      return [
-        "Saki is watching you log in~ ✨",
-        "Let's be full of energy today too! (｡♥‿♥｡)",
-        "Welcome to Saki Panel~ 🌸",
-        "Log in and we can play together!",
-        "Work hard today~ ฅ'ω'ฅ"
-      ];
-    }
-    if (language === "zh-TW") {
-      return [
-        "Saki 正在看著你登入哦~ ✨",
-        "今天也要元氣滿滿！(｡♥‿♥｡)",
-        "歡迎來到 Saki Panel~ 🌸",
-        "登入後就可以和 Saki 一起玩啦！",
-        "加油工作呀~ ฅ'ω'ฅ"
-      ];
-    }
-    if (language === "ja-JP") {
-      return [
-        "Saki がログインを見守ってるよ～ ✨",
-        "今日も元気いっぱいでいこうね！(｡♥‿♥｡)",
-        "Saki Panel へようこそ～ 🌸",
-        "ログインしたら一緒に遊ぼう！",
-        "今日も頑張ってね～ ฅ'ω'ฅ"
-      ];
-    }
-    return [
-      "Saki 正在看着你登录哦~ ✨",
-      "今天也要元气满满！(｡♥‿♥｡)",
-      "欢迎来到 Saki Panel~ 🌸",
-      "登录后就可以和 Saki 一起玩啦！",
-      "加油工作呀~ ฅ'ω'ฅ"
-    ];
-  }, [language]);
+  const sakiHangQuotes = useMemo(() => [
+    t("login.saki.quote.1"),
+    t("login.saki.quote.2"),
+    t("login.saki.quote.3"),
+    t("login.saki.quote.4"),
+    t("login.saki.quote.5")
+  ], [t]);
 
   const handleSakiHangClick = () => {
-    const randomQuote = sakiHangQuotes[Math.floor(Math.random() * sakiHangQuotes.length)] ?? "Saki 正在看着你登录哦~ ✨";
+    const randomQuote = sakiHangQuotes[Math.floor(Math.random() * sakiHangQuotes.length)] ?? t("login.saki.quote.1");
     setSakiBubble(randomQuote);
     setSakiBouncing(true);
 

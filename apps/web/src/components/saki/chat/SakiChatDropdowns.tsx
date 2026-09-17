@@ -22,6 +22,7 @@ import {
   resolveSakiModelPointsMultiplier,
   type SakiModelPointsMultiplierMap
 } from "../sakiChatHelpers.js";
+import { usePanelLanguage } from "../../../i18n/index.js";
 
 export interface SakiChatDropdownsProps {
   // Add menu
@@ -75,6 +76,7 @@ export const SakiChatDropdowns = React.memo(function SakiChatDropdowns({
   language,
   onSelectModel
 }: SakiChatDropdownsProps) {
+  const { t } = usePanelLanguage();
   return (
     <>
       {sakiAddMenuOpen && sakiAddBtnRef.current
@@ -91,7 +93,7 @@ export const SakiChatDropdowns = React.memo(function SakiChatDropdowns({
               displacementScale={100}
               zoom={1.20}
               refractionIntensity={1.2}
-              blurAmount={0}
+              blurAmount={16}
               saturation={108}
               mode="shader"
               onPointerDown={(e) => e.stopPropagation()}
@@ -160,7 +162,7 @@ export const SakiChatDropdowns = React.memo(function SakiChatDropdowns({
               displacementScale={100}
               zoom={1.20}
               refractionIntensity={1.2}
-              blurAmount={0}
+              blurAmount={16}
               saturation={108}
               mode="shader"
               onPointerDown={(e) => e.stopPropagation()}
@@ -218,7 +220,7 @@ export const SakiChatDropdowns = React.memo(function SakiChatDropdowns({
               displacementScale={100}
               zoom={1.20}
               refractionIntensity={1.2}
-              blurAmount={0}
+              blurAmount={16}
               saturation={108}
               mode="shader"
               onPointerDown={(e) => e.stopPropagation()}
@@ -228,12 +230,9 @@ export const SakiChatDropdowns = React.memo(function SakiChatDropdowns({
                 {availableModels.map((model) => {
                   const supportsVision = sakiListedModelSupportsVision(model);
                   const multiplier = resolveSakiModelPointsMultiplier(modelPointsMultipliers, model);
-                  const isEn = language === "en-US";
-                  const isTw = language === "zh-TW";
-                  const isJa = language === "ja-JP";
                   const multiplierText =
                     multiplier === 0
-                      ? isEn ? "Free" : isTw ? "免費" : isJa ? "無料" : "免费"
+                      ? t("common.free")
                       : formatSakiModelMultiplier(multiplier);
                   return (
                     <button
@@ -248,12 +247,12 @@ export const SakiChatDropdowns = React.memo(function SakiChatDropdowns({
                       <span className="saki-model-option-meta">
                         <span
                           className={`saki-model-multiplier ${multiplier === 0 ? "free" : multiplier !== 1 ? "custom" : ""}`}
-                          title={isEn ? "Points cost multiplier" : isTw ? "積分消耗乘區" : isJa ? "ポイント消費倍率" : "积分消耗乘区"}
+                          title={t("saki.chat.pointsMultiplier")}
                         >
                           {multiplierText}
                         </span>
                         {supportsVision ? (
-                          <span className="saki-model-vision-icon" title="支持视觉" aria-label="支持视觉">
+                          <span className="saki-model-vision-icon" title={t("saki.chat.supportsVision")} aria-label={t("saki.chat.supportsVision")}>
                             <ScanEye size={14} />
                           </span>
                         ) : null}

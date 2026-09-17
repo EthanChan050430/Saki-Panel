@@ -71,6 +71,7 @@ type RuntimeChild = ProcessRuntimeChild | PtyRuntimeChild;
 const runtimes = new Map<string, RuntimeState>();
 const instanceSpecs = new Map<string, DaemonInstanceSpec>();
 const shellSessions = new Map<string, ShellSession>();
+const maxShellsPerInstance = 12;
 const maxLogLines = 1000;
 const maxCommandCaptureChars = 80000;
 const maxCommandInputChars = 100000;
@@ -78,11 +79,14 @@ const runtimeEvents = new EventEmitter();
 runtimeEvents.setMaxListeners(1000);
 const gbkDecoder = new TextDecoder("gbk");
 
+type ShellKind = "powershell" | "cmd" | "posix";
+
 interface ShellSession {
   id: string;
   instanceId: string;
   label?: string | undefined;
   createdAt: number;
+  kind: ShellKind;
   pty: IPty;
   exited: boolean;
   exit?: RuntimeExit | undefined;
@@ -92,6 +96,7 @@ interface ShellSession {
   exitSubscription: IDisposable;
   outputBuffer: string[];
   outputBufferChars: number;
+  commandTail: Promise<void>;
 }
 
 function replacementCount(value: string): number {
@@ -434,11 +439,13 @@ function createInteractiveShellPty(instanceId: string, cwd: string, label?: stri
   const dataListeners = new Set<(text: string) => void>();
   const exitListeners = new Set<RuntimeExitListener>();
 
+  const kind: ShellKind = process.platform !== "win32" ? "posix" : /powershell|pwsh/i.test(shellCmd) ? "powershell" : "cmd";
   const session: ShellSession = {
     id,
     instanceId,
     label: label?.trim() || undefined,
     createdAt: Date.now(),
+    kind,
     pty,
     exited: false,
     exit: undefined,
@@ -448,7 +455,8 @@ function createInteractiveShellPty(instanceId: string, cwd: string, label?: stri
     dataSubscription: { dispose: () => undefined },
     exitSubscription: { dispose: () => undefined },
     outputBuffer: [],
-    outputBufferChars: 0
+    outputBufferChars: 0,
+    commandTail: Promise.resolve()
   };
 
   const maxBufferChars = 200000;
@@ -544,6 +552,53 @@ function closeShellSession(sessionId: string): void {
   session.dataListeners.clear();
   session.exitListeners.clear();
   shellSessions.delete(sessionId);
+}
+
+function stripTerminalText(value: string): string {
+  return value
+    .replace(/\u001b\][^\u0007]*\u0007/g, "")
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/\u001b[PX^_].*?\u001b\\/g, "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001A\u001C-\u001F]/g, "");
+}
+
+function wrapShellMarker(kind: ShellKind, marker: string): string {
+  if (kind === "powershell") {
+    return `Write-Host "${marker}:$(if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } elseif ($?) { 0 } else { 1 })"\r`;
+  }
+  if (kind === "cmd") {
+    return `echo ${marker}:%ERRORLEVEL%\r`;
+  }
+  return `printf '%s:%s\\n' '${marker}' $?\n`;
+}
+
+function parseShellMarker(captured: string, marker: string): { exitCode: number | null; stdout: string } | null {
+  const plain = stripTerminalText(captured).replace(/\r/g, "");
+  const token = `${marker}:`;
+  const index = plain.lastIndexOf(token);
+  if (index < 0) return null;
+  const after = plain.slice(index + token.length);
+  const match = after.match(/^(-?\d+)/);
+  const exitCode = match ? Number(match[1]) : null;
+  const before = plain.slice(0, index).replace(new RegExp(`(?:Write-Host |echo |printf )[^\n]*${marker}[^\\n]*\\n?$`), "");
+  return {
+    exitCode: Number.isFinite(exitCode) ? exitCode : null,
+    stdout: before.replace(/^\s+/, "").replace(/\n+$/, "")
+  };
+}
+
+function enqueueShellTask<T>(session: ShellSession, task: () => Promise<T>): Promise<T> {
+  const previous = session.commandTail;
+  let release!: () => void;
+  session.commandTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return previous
+    .catch(() => undefined)
+    .then(task)
+    .finally(() => {
+      release();
+    });
 }
 
 function startPtyRuntimeChild(
@@ -718,6 +773,17 @@ async function signalProcessTree(
   }
 }
 
+function isProcessAlive(pid: number | undefined | null): boolean {
+  if (!pid || typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "EPERM";
+  }
+}
+
 export class InstanceManager {
   private persistTimer: NodeJS.Timeout | null = null;
   private persistDebounceMs = 2000;
@@ -762,13 +828,23 @@ export class InstanceManager {
     for (const entry of persisted) {
       if (entry.status === "RUNNING" || entry.status === "STARTING") {
         const runtime = getRuntime(entry.instanceId);
-        runtime.status = "CRASHED";
-        runtime.exitCode = null;
-        if (entry.cwd !== undefined) runtime.cwd = entry.cwd;
-        runtime.restartAttempts = entry.restartAttempts;
-        appendLog(entry.instanceId, runtime, "system", "Daemon restarted; previously running instance marked as CRASHED.");
-        emitStatus(entry.instanceId, runtime);
-        this.notifyCrash(entry.instanceId, runtime, false);
+        if (isProcessAlive(entry.lastPid)) {
+          runtime.status = "RUNNING";
+          runtime.exitCode = null;
+          if (entry.cwd !== undefined) runtime.cwd = entry.cwd;
+          runtime.restartAttempts = entry.restartAttempts;
+          appendLog(entry.instanceId, runtime, "system", `Daemon restarted; existing process (PID ${entry.lastPid}) is still running.`);
+          emitStatus(entry.instanceId, runtime);
+          this.notifyStatus(entry.instanceId, runtime, false);
+        } else {
+          runtime.status = "CRASHED";
+          runtime.exitCode = null;
+          if (entry.cwd !== undefined) runtime.cwd = entry.cwd;
+          runtime.restartAttempts = entry.restartAttempts;
+          appendLog(entry.instanceId, runtime, "system", "Daemon restarted; previously running instance marked as CRASHED.");
+          emitStatus(entry.instanceId, runtime);
+          this.notifyStatus(entry.instanceId, runtime, false);
+        }
       } else if (entry.status === "STOPPING") {
         const runtime = getRuntime(entry.instanceId);
         runtime.status = "STOPPED";
@@ -776,6 +852,7 @@ export class InstanceManager {
         if (entry.cwd !== undefined) runtime.cwd = entry.cwd;
         appendLog(entry.instanceId, runtime, "system", "Daemon restarted; stopping instance marked as STOPPED.");
         emitStatus(entry.instanceId, runtime);
+        this.notifyStatus(entry.instanceId, runtime, false);
       } else {
         const runtime = getRuntime(entry.instanceId);
         runtime.status = entry.status as InstanceStatus;
@@ -835,8 +912,8 @@ export class InstanceManager {
     return runtime.logs.slice(-Math.max(1, Math.min(limit, 200)));
   }
 
-  private notifyCrash(instanceId: string, runtime: RuntimeState, willRetryByPolicy: boolean): void {
-    if (!instanceStatusPushHandler || runtime.status !== "CRASHED") return;
+  private notifyStatus(instanceId: string, runtime: RuntimeState, willRetryByPolicy = false): void {
+    if (!instanceStatusPushHandler) return;
     void instanceStatusPushHandler({
       instanceId,
       status: runtime.status,
@@ -847,7 +924,7 @@ export class InstanceManager {
       willRetryByPolicy
     })
       .then((response) => {
-        if (response?.suppressRestartUntil) {
+        if (response?.suppressRestartUntil && runtime.status === "CRASHED") {
           applyRestartLease(instanceId, response.suppressRestartUntil);
         }
       })
@@ -856,9 +933,13 @@ export class InstanceManager {
           instanceId,
           runtime,
           "system",
-          `Failed to notify panel of crash: ${error instanceof Error ? error.message : "unknown error"}`
+          `Failed to notify panel of status ${runtime.status}: ${error instanceof Error ? error.message : "unknown error"}`
         );
       });
+  }
+
+  private notifyCrash(instanceId: string, runtime: RuntimeState, willRetryByPolicy: boolean): void {
+    this.notifyStatus(instanceId, runtime, willRetryByPolicy);
   }
 
   private async startInternal(spec: DaemonInstanceSpec, resetRestartAttempts: boolean): Promise<DaemonInstanceState> {
@@ -901,6 +982,7 @@ export class InstanceManager {
     runtime.stopping = false;
     runtime.restartSpec = runtimeSpec;
     emitStatus(spec.id, runtime);
+    this.notifyStatus(spec.id, runtime, false);
     appendLog(spec.id, runtime, "system", `Starting: ${spec.startCommand}`);
     if (runtimeSpec.proxy?.enabled && runtimeSpec.proxy.server && runtimeSpec.proxy.port) {
       const nodeLabel =
@@ -959,6 +1041,7 @@ export class InstanceManager {
     runtime.child = child;
     runtime.status = "RUNNING";
     emitStatus(spec.id, runtime);
+    this.notifyStatus(spec.id, runtime, false);
     appendLog(spec.id, runtime, "system", `Process started in ${child.type === "pty" ? "PTY" : "pipe"} mode with pid ${runtimeChildPid(child) ?? "unknown"}.`);
 
     onRuntimeChildExit(child, ({ code, signal }) => {
@@ -1021,6 +1104,7 @@ export class InstanceManager {
             scheduleRestartIfAllowed();
           });
       } else {
+        this.notifyStatus(spec.id, runtime, false);
         scheduleRestartIfAllowed();
       }
       runtime.stopping = false;
@@ -1215,6 +1299,9 @@ export class InstanceManager {
     workingDirectory?: string,
     label?: string
   ): Promise<{ sessionId: string; label?: string | undefined }> {
+    if (this.listShells(instanceId).length >= maxShellsPerInstance) {
+      throw new Error(`Too many independent terminals (max ${maxShellsPerInstance}). Close one with closeShell before opening another.`);
+    }
     const spec = instanceSpecs.get(instanceId);
     const targetDir = workingDirectory || spec?.workingDirectory || ".";
     const cwd = await resolveWorkingDirectory(targetDir);
@@ -1239,6 +1326,133 @@ export class InstanceManager {
     closeShellSession(sessionId);
   }
 
+  async runShellCommand(
+    instanceId: string,
+    sessionId: string,
+    command: string,
+    options: { timeoutMs?: number; input?: string; signal?: AbortSignal } = {}
+  ): Promise<InstanceCommandResponse> {
+    assertCommandAllowed(command);
+    if (typeof options.input === "string") validateCommandInput(options.input);
+    const session = getShell(sessionId);
+    if (!session || session.exited) {
+      throw new Error("Independent terminal is not available. Open one with createShell or omit shellId.");
+    }
+    if (session.instanceId !== instanceId) {
+      throw new Error("That terminal does not belong to this instance.");
+    }
+    const timeoutMs = Math.max(1000, Math.min(Math.floor(options.timeoutMs ?? 30000), 120000));
+    const runtime = getRuntime(instanceId);
+    const cwd = runtime.cwd || ".";
+
+    return enqueueShellTask(session, async () => {
+      if (session.outputBufferChars === 0 && !session.exited) {
+        await new Promise<void>((resolve) => {
+          let settled = false;
+          const onReady = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            session.dataListeners.delete(onReady);
+            resolve();
+          };
+          const timer = setTimeout(onReady, 2500);
+          session.dataListeners.add(onReady);
+        });
+      }
+      return new Promise<InstanceCommandResponse>((resolve, reject) => {
+      if (session.exited) {
+        reject(new Error("Independent terminal closed before the command started."));
+        return;
+      }
+      const startedAt = Date.now();
+      const marker = `__SAKI_EXIT_${randomUUID().replace(/-/g, "")}__`;
+      let captured = "";
+      let settled = false;
+      let timedOut = false;
+      let aborted = false;
+
+      const finish = (exitCode: number | null, signal: NodeJS.Signals | string | null, stdout: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        options.signal?.removeEventListener("abort", onAbort);
+        session.dataListeners.delete(onData);
+        session.exitListeners.delete(onExit);
+        resolve({
+          command,
+          workingDirectory: cwd,
+          exitCode,
+          signal: aborted ? "ABORTED" : timedOut ? "TIMEOUT" : signal,
+          stdout,
+          stderr: "",
+          durationMs: Date.now() - startedAt,
+          shellId: session.id,
+          ...(session.label ? { label: session.label } : {})
+        });
+      };
+
+      const onData = (text: string) => {
+        captured += text;
+        const parsed = parseShellMarker(captured, marker);
+        if (parsed) finish(parsed.exitCode, null, parsed.stdout);
+      };
+
+      const onExit: RuntimeExitListener = (exit) => {
+        const parsed = parseShellMarker(captured, marker);
+        finish(parsed?.exitCode ?? exit.code ?? null, typeof exit.signal === "string" ? exit.signal : null, parsed?.stdout ?? stripTerminalText(captured).trim());
+      };
+
+      const interrupt = () => {
+        try {
+          writeToShell(sessionId, "\u0003");
+        } catch {}
+      };
+
+      const timer = setTimeout(() => {
+        timedOut = true;
+        interrupt();
+        setTimeout(() => {
+          const parsed = parseShellMarker(captured, marker);
+          finish(parsed?.exitCode ?? null, "TIMEOUT", parsed?.stdout ?? stripTerminalText(captured).trim());
+        }, 400);
+      }, timeoutMs);
+
+      const onAbort = () => {
+        aborted = true;
+        interrupt();
+        setTimeout(() => {
+          const parsed = parseShellMarker(captured, marker);
+          finish(parsed?.exitCode ?? null, "ABORTED", parsed?.stdout ?? stripTerminalText(captured).trim());
+        }, 400);
+      };
+
+      session.dataListeners.add(onData);
+      session.exitListeners.add(onExit);
+      if (options.signal?.aborted) {
+        onAbort();
+        return;
+      }
+      options.signal?.addEventListener("abort", onAbort, { once: true });
+
+      try {
+        const newline = session.kind === "posix" ? "\n" : "\r";
+        writeToShell(sessionId, `${command}${newline}`);
+        if (typeof options.input === "string" && options.input.length > 0) {
+          writeToShell(sessionId, options.input.endsWith("\n") || options.input.endsWith("\r") ? options.input : `${options.input}${newline}`);
+        }
+        writeToShell(sessionId, wrapShellMarker(session.kind, marker));
+      } catch (error) {
+        session.dataListeners.delete(onData);
+        session.exitListeners.delete(onExit);
+        clearTimeout(timer);
+        options.signal?.removeEventListener("abort", onAbort);
+        reject(error);
+      }
+    });
+    });
+  }
+
   listShells(instanceId: string): Array<{ id: string; label?: string | undefined; createdAt: number }> {
     const result: Array<{ id: string; label?: string | undefined; createdAt: number }> = [];
     for (const [sid, sess] of shellSessions.entries()) {
@@ -1256,7 +1470,7 @@ export class InstanceManager {
   async runCommand(
     instanceId: string,
     command: string,
-    options: { workingDirectory?: string; timeoutMs?: number; input?: string; signal?: AbortSignal } = {}
+    options: { workingDirectory?: string; timeoutMs?: number; input?: string; signal?: AbortSignal; logToInstance?: boolean } = {}
   ): Promise<InstanceCommandResponse> {
     const runtime = getRuntime(instanceId);
     assertCommandAllowed(command);
@@ -1264,11 +1478,14 @@ export class InstanceManager {
     const cwd = await resolveWorkingDirectory(options.workingDirectory || runtime.cwd || ".");
     const timeoutMs = Math.max(1000, Math.min(Math.floor(options.timeoutMs ?? 30000), 120000));
     await fs.mkdir(cwd, { recursive: true });
+    const logToInstance = options.logToInstance !== false;
 
-    appendLog(instanceId, runtime, "system", `Agent command cwd: ${cwd}`);
-    appendLog(instanceId, runtime, "stdin", `$ ${command}`);
-    if (typeof options.input === "string") {
-      appendLog(instanceId, runtime, "system", `Agent command stdin: ${options.input.length} chars supplied.`);
+    if (logToInstance) {
+      appendLog(instanceId, runtime, "system", `Agent command cwd: ${cwd}`);
+      appendLog(instanceId, runtime, "stdin", `$ ${command}`);
+      if (typeof options.input === "string") {
+        appendLog(instanceId, runtime, "system", `Agent command stdin: ${options.input.length} chars supplied.`);
+      }
     }
 
     return new Promise((resolve, reject) => {
@@ -1287,14 +1504,20 @@ export class InstanceManager {
         windowsHide: true
       });
       child.stdin?.on("error", (error) => {
-        appendLog(instanceId, runtime, "system", `Agent command stdin failed: ${error instanceof Error ? error.message : "unknown error"}`);
+        if (logToInstance) {
+          appendLog(instanceId, runtime, "system", `Agent command stdin failed: ${error instanceof Error ? error.message : "unknown error"}`);
+        }
       });
       child.stdin?.end(typeof options.input === "string" ? options.input : undefined);
 
       const killChild = (reason: string) => {
-        appendLog(instanceId, runtime, "system", reason);
-        void signalProcessTree({ type: "process", process: child }, "SIGKILL", true, (message) => appendLog(instanceId, runtime, "system", message)).catch((error) => {
-          appendLog(instanceId, runtime, "system", `Agent command kill failed: ${error instanceof Error ? error.message : "unknown error"}`);
+        if (logToInstance) appendLog(instanceId, runtime, "system", reason);
+        void signalProcessTree({ type: "process", process: child }, "SIGKILL", true, (message) => {
+          if (logToInstance) appendLog(instanceId, runtime, "system", message);
+        }).catch((error) => {
+          if (logToInstance) {
+            appendLog(instanceId, runtime, "system", `Agent command kill failed: ${error instanceof Error ? error.message : "unknown error"}`);
+          }
         });
       };
 
@@ -1332,12 +1555,12 @@ export class InstanceManager {
       child.stdout?.on("data", (chunk: Buffer) => {
         const text = decodeProcessOutput(chunk);
         stdout = appendCapturedText(stdout, text);
-        appendLog(instanceId, runtime, "stdout", text);
+        if (logToInstance) appendLog(instanceId, runtime, "stdout", text);
       });
       child.stderr?.on("data", (chunk: Buffer) => {
         const text = decodeProcessOutput(chunk);
         stderr = appendCapturedText(stderr, text);
-        appendLog(instanceId, runtime, "stderr", text);
+        if (logToInstance) appendLog(instanceId, runtime, "stderr", text);
       });
       child.once("error", (error) => {
         if (settled) return;
@@ -1346,7 +1569,9 @@ export class InstanceManager {
         reject(error);
       });
       child.once("close", (code, signal) => {
-        appendLog(instanceId, runtime, "system", `Agent command exited with code ${code ?? "null"}${signal ? ` and signal ${signal}` : ""}.`);
+        if (logToInstance) {
+          appendLog(instanceId, runtime, "system", `Agent command exited with code ${code ?? "null"}${signal ? ` and signal ${signal}` : ""}.`);
+        }
         finish(code, signal);
       });
     });

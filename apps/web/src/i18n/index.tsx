@@ -1,18 +1,20 @@
 import React, { createContext, useContext } from "react";
 import type { PanelAppearanceSettings } from "@webops/shared";
-import { panelT, type PanelLanguage, type PanelTextKey } from "./translations.js";
+import { panelT, panelFormatT, type PanelLanguage, type PanelTextKey } from "./translations.js";
 export * from "./translations.js";
 
 export interface PanelLanguageContextValue {
   language: PanelLanguage;
   setLanguage: (language: PanelLanguage) => void;
   t: (key: PanelTextKey) => string;
+  tFormat: (key: PanelTextKey, ...args: (string | number)[]) => string;
 }
 
 export const PanelLanguageContext = createContext<PanelLanguageContextValue>({
   language: "zh-CN",
   setLanguage: () => undefined,
-  t: (key) => panelT("zh-CN", key)
+  t: (key) => panelT("zh-CN", key),
+  tFormat: (key, ...args) => panelFormatT("zh-CN", key, ...args)
 });
 
 export function usePanelLanguage() {
@@ -21,6 +23,10 @@ export function usePanelLanguage() {
 
 export function usePanelT() {
   return usePanelLanguage().t;
+}
+
+export function usePanelFormatT() {
+  return usePanelLanguage().tFormat;
 }
 
 export const domTextOriginals = new WeakMap<Text, string>();

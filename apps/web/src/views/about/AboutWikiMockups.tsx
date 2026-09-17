@@ -30,6 +30,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Repeat,
   RotateCw,
   Server,
   Settings,
@@ -973,19 +974,11 @@ export function SakiAssistantWindowMockup() {
  * 陪伴房间 + 好感度 + 投喂（原版 saki-video-pane 样式）
  */
 export function SakiCompanionMockup() {
-  const { language } = usePanelLanguage();
+  const { t, language } = usePanelLanguage();
   const foodMenu = getLocalizedFoodMenu(language);
-  const favTitle =
-    language === "en-US" ? "Affection Lv.3 · Intimate" : language === "zh-TW" ? "好感度 Lv.3 · 親密" : language === "ja-JP" ? "親密度 Lv.3 · 親密" : "好感度 Lv.3 · 亲密";
-  const pokeHint =
-    language === "en-US"
-      ? "Tap to poke me, hold to speak and I'll copy you ♪"
-      : language === "zh-TW"
-        ? "點按戳戳我，長按說話我會學你～ ♪"
-        : language === "ja-JP"
-        ? "タップでつついて、長押しで話すと真似するよ～ ♪"
-        : "点按戳戳我，长按说话我会学你～ ♪";
-  const costUnit = language === "en-US" ? "pt" : language === "zh-TW" ? "點" : language === "ja-JP" ? "pt" : "分";
+  const favTitle = t("saki.companion.mockup.favTitle");
+  const pokeHint = t("saki.companion.mockup.pokeHint");
+  const costUnit = t("saki.companion.mockup.costUnit");
   return (
     <WikiLegendWrapper
       title="Saki 陪伴房间 · 好感度与投喂"
@@ -1425,6 +1418,14 @@ export function ReliabilityMockup() {
             <span>自动修复成功率</span>
             <strong>80%</strong>
             <small className="metric-sub">尝试 5 次 · 成功 4 次</small>
+          </div>
+        </div>
+        <div className="metric-tile metric-gray">
+          <div className="metric-icon"><Repeat size={22} /></div>
+          <div>
+            <span>复发率</span>
+            <strong>0%</strong>
+            <small className="metric-sub">复发事件占比</small>
           </div>
         </div>
       </section>

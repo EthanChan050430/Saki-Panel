@@ -231,17 +231,17 @@ export interface ManagedNode {
   port: number;
   protocol: string;
   status: NodeStatus;
-  os?: string | null;
-  arch?: string | null;
-  version?: string | null;
-  remarks?: string | null;
-  groupName?: string | null;
-  tags?: string | null;
+  os?: string | null | undefined;
+  arch?: string | null | undefined;
+  version?: string | null | undefined;
+  remarks?: string | null | undefined;
+  groupName?: string | null | undefined;
+  tags?: string | null | undefined;
   tokenLast4?: string | null | undefined;
-  lastSeenAt?: string | null;
+  lastSeenAt?: string | null | undefined;
   createdAt: string;
   updatedAt: string;
-  latestMetric?: NodeMetricSnapshot | null;
+  latestMetric?: NodeMetricSnapshot | null | undefined;
   createdById?: string | null | undefined;
   createdBy?: { id: string; username: string; displayName: string } | null | undefined;
 }
@@ -950,6 +950,7 @@ export interface InstanceCommandRequest {
   workingDirectory?: string;
   timeoutMs?: number;
   input?: string;
+  logToInstance?: boolean;
 }
 
 export interface InstanceCommandResponse {
@@ -960,6 +961,8 @@ export interface InstanceCommandResponse {
   stdout: string;
   stderr: string;
   durationMs: number;
+  shellId?: string;
+  label?: string;
 }
 
 export type InstanceFileType = "file" | "directory" | "symlink" | "other";

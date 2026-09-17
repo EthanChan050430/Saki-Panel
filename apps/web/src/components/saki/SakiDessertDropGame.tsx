@@ -262,7 +262,7 @@ class GameSoundFX {
 }
 
 export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDessertDropGameProps) {
-  const { language } = usePanelLanguage();
+  const { t } = usePanelLanguage();
   const [score, setScore] = useState(0);
   const [combo, setCombo] = useState(0);
   const [maxCombo, setMaxCombo] = useState(0);
@@ -780,64 +780,37 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
           <div className="settlement-ambient-glow" aria-hidden="true" />
 
           {(() => {
-            const isEn = language === "en-US";
-            const isTw = language === "zh-TW";
-            const isJa = language === "ja-JP";
             const rankInfo =
               score >= 1000
                 ? {
                     grade: "SSS",
-                    title: isEn ? "Dessert Master" : isTw ? "甜點神捕手" : isJa ? "デザートマスター" : "甜点神捕手",
+                    title: t("game.drop.sss.title"),
                     badgeColor: "gold",
                     expression: "/assets/expression/eating.webp",
-                    quote: isEn
-                      ? "Wowww! Caught so many desserts! Master is truly a dessert champion, amazing～ (੭ˊ꒳​ˋ)੭✧"
-                      : isTw
-                      ? "哇哇哇！接到超多甜點！主人簡直是甜點大師，太厲害啦～ (੭ˊ꒳​ˋ)੭✧"
-                      : isJa
-                      ? "わぁぁぁ！たくさんデザートをキャッチしたね！主人はデザートのチャンピオンだよ、すごい～ (੭ˊ꒳​ˋ)੭✧"
-                      : "哇哇哇！接到超多甜点！主人简直是甜点大师，太厉害啦～ (੭ˊ꒳​ˋ)੭✧"
+                    quote: t("game.drop.sss.quote")
                   }
                 : score >= 600
                 ? {
                     grade: "S",
-                    title: isEn ? "Sweet Harvest" : isTw ? "美味大豐收" : isJa ? "おいしい大収穫" : "美味大丰收",
+                    title: t("game.drop.s.title"),
                     badgeColor: "pink",
                     expression: "/assets/expression/eating.webp",
-                    quote: isEn
-                      ? "Caught so many delicious pastries! Afternoon tea is all set, the donuts smell incredible～ (≧∇≦)ﾉ"
-                      : isTw
-                      ? "接到了好多美味點心！今天的下午茶有著落啦，甜甜圈超香的～ (≧∇≦)ﾉ"
-                      : isJa
-                      ? "おいしいお菓子をたくさんキャッチしたね！今日の午後のおやつはバッチリ、ドーナツの香りが最高～ (≧∇≦)ﾉ"
-                      : "接到了好多美味点心！今天的下午茶有着落啦，甜甜圈超香的～ (≧∇≦)ﾉ"
+                    quote: t("game.drop.s.quote")
                   }
                 : score >= 300
                 ? {
                     grade: "A",
-                    title: isEn ? "Full Basket" : isTw ? "滿載而歸" : isJa ? "かごいっぱい" : "满载而归",
+                    title: t("game.drop.a.title"),
                     badgeColor: "cyan",
                     expression: "/assets/expression/wink.webp",
-                    quote: isEn
-                      ? "Phew～ Caught quite a few treats! We'll definitely catch even more together next time, hehe～ (๑>◡<๑)"
-                      : isTw
-                      ? "呼～接到了不少點心呢！下次我們配合一定能接到更多，嘿嘿～ (๑>◡<๑)"
-                      : isJa
-                      ? "ふぅ～結構たくさんキャッチしたね！次はもっとたくさん取れるように頑張ろうね、へへっ～ (๑>◡<๑)"
-                      : "呼～接到了不少点心呢！下次我们配合一定能接到更多，嘿嘿～ (๑>◡<๑)"
+                    quote: t("game.drop.a.quote")
                   }
                 : {
                     grade: "B",
-                    title: isEn ? "Keep It Up" : isTw ? "繼續加油" : isJa ? "もっと頑張って" : "继续加油",
+                    title: t("game.drop.b.title"),
                     badgeColor: "purple",
                     expression: "/assets/expression/cry.webp",
-                    quote: isEn
-                      ? "Aww, just missed by a little bit... But having Master play with me makes me super happy! Next time will be even better～ (´,,•ω•,,)"
-                      : isTw
-                      ? "嗚嗚就差一點點了... 不過有主人陪我玩就超開心！下次一定更棒～ (´,,•ω•,,)"
-                      : isJa
-                      ? "あぁ、あと少しだったのに…でも主人が一緒に遊んでくれてすごく嬉しい！次はもっと上手になるね～ (´,,•ω•,,)"
-                      : "呜呜就差一点点了... 不过有主人陪我玩就超开心！下次一定更棒～ (´,,•ω•,,)"
+                    quote: t("game.drop.b.quote")
                   };
 
             return (
@@ -848,7 +821,7 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
                   <span className="rank-divider">·</span>
                   <span className="rank-title">{rankInfo.title}</span>
                 </div>
-                <h3 className="settlement-title">{isEn ? "Challenge Complete!" : isTw ? "挑戰完成！" : isJa ? "チャレンジクリア！" : "挑战完成！"}</h3>
+                <h3 className="settlement-title">{t("game.drop.settlement.challengeComplete")}</h3>
 
                 <div className="settlement-character-wrap">
                   <div className="character-halo" aria-hidden="true" />

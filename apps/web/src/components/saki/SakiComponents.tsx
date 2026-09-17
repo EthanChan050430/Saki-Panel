@@ -46,7 +46,6 @@ import {
   Server,
   Settings,
   SlidersHorizontal,
-  Sparkles,
   Square,
   Terminal as TerminalIcon,
   TextQuote,
@@ -87,6 +86,7 @@ import { useSkinRevision } from "../../plugins/SkinLoader.js";
 import { compactContextText, formatBytes } from "../../utils/path.js";
 import { newClientId } from "../../utils/id.js";
 import { MarkdownContent } from "../common/MarkdownContent.js";
+import { panelT, type PanelLanguage } from "../../i18n/translations.js";
 
 export function sakiAttachmentKindLabel(kind: SakiInputAttachment["kind"]): string {
   if (kind === "screenshot") return "截图";
@@ -171,6 +171,8 @@ export type SakiActivityMood =
 const SAKI_READ_TOOLS = new Set([
   "readfile",
   "outlinefile",
+  "readsymbol",
+  "statfile",
   "instancelogs",
   "readmemory",
   "readskill",
@@ -211,6 +213,7 @@ const SAKI_WRITE_TOOLS = new Set([
   "applypatch",
   "apply_patch",
   "applydiff",
+  "batchedit",
   "uploadbase64",
   "renamepath",
   "archivepaths",
@@ -224,6 +227,9 @@ const SAKI_TERMINAL_TOOLS = new Set([
   "runinshell",
   "sendshellinput",
   "createshell",
+  "closeshell",
+  "deleteshell",
+  "killshell",
   "executecommand",
   "terminal",
   "shell",
@@ -1051,14 +1057,31 @@ export function workflowStatusText(step: LocalSakiWorkflowStep): string | null {
     const path = extractArgFromCall(call, "path");
     return path ? `写入 ${path}` : "写入文件...";
   }
-  if (tool === "replaceinfile" || tool === "editlines") {
+  if (tool === "replaceinfile" || tool === "editlines" || tool === "applypatch" || tool === "batchedit") {
     const path = extractArgFromCall(call, "path");
     return path ? `编辑 ${path}` : "编辑文件...";
   }
-  if (tool === "runcommand") {
+  if (tool === "outlinefile") {
+    const path = extractArgFromCall(call, "path");
+    return path ? `大纲 ${path}` : "查看文件结构...";
+  }
+  if (tool === "readsymbol") {
+    const symbol = extractArgFromCall(call, "symbol");
+    return symbol ? `读取符号 ${symbol}` : "读取符号...";
+  }
+  if (tool === "findsymbols") return "查找符号...";
+  if (tool === "statfile") {
+    const path = extractArgFromCall(call, "path");
+    return path ? `查看 ${path}` : "查看文件信息...";
+  }
+  if (tool === "runcommand" || tool === "runinshell") {
     const cmd = extractArgFromCall(call, "command");
     return cmd ? `运行 ${cmd.length > 60 ? cmd.slice(0, 60) + "..." : cmd}` : "运行命令...";
   }
+  if (tool === "createshell") return "打开独立终端...";
+  if (tool === "closeshell" || tool === "deleteshell" || tool === "killshell") return "关闭终端...";
+  if (tool === "listshells") return "查看终端...";
+  if (tool === "sendshellinput") return "向独立终端发送输入...";
   if (tool === "listfiles") {
     const path = extractArgFromCall(call, "path") || ".";
     return `浏览 ${path}`;
@@ -1512,8 +1535,11 @@ export function sakiActionTarget(action: SakiAgentAction): string {
     const toPath = sakiActionStringArg(action, ["toPath"]);
     return fromPath && toPath ? `${fromPath} -> ${toPath}` : fromPath || toPath;
   }
-  if (tool === "runcommand" || tool === "sendcommand") return sakiActionStringArg(action, ["command"]);
-  if (tool === "sendinput") return sakiActionStringArg(action, ["input", "stdin", "data"]);
+  if (tool === "runcommand" || tool === "runinshell" || tool === "sendcommand") return sakiActionStringArg(action, ["command"]);
+  if (tool === "sendinput" || tool === "sendshellinput") return sakiActionStringArg(action, ["input", "stdin", "data", "text"]);
+  if (tool === "closeshell" || tool === "deleteshell" || tool === "killshell" || tool === "createshell") {
+    return sakiActionStringArg(action, ["shellId", "label"]);
+  }
   if (tool === "searchweb" || tool === "researchweb" || tool === "searchskills" || tool === "searchaudit") {
     return sakiActionStringArg(action, ["query"]);
   }
@@ -1630,7 +1656,7 @@ export function SakiThinkingActionCard({
         }}
       >
         <span className="saki-action-icon">
-          {streaming ? <Loader2 size={13} className="status-spinner" /> : <Sparkles size={13} />}
+          <SakiThinkingIcon size={13} className={streaming ? "saki-thinking-sparkle" : ""} />
         </span>
         <span className="saki-action-label">
           <span style={{ fontWeight: 500 }}>
@@ -1701,7 +1727,7 @@ export function SakiThinkingContent({
             {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
           </span>
           <span className="saki-thinking-toggle-title">
-            <Sparkles size={13} className="saki-thinking-sparkle" />
+            <SakiThinkingIcon size={13} className="saki-thinking-sparkle" />
             {isThinkingActive ? "正在深度思考..." : "思考过程"}
           </span>
           {thinking ? (
@@ -1784,12 +1810,22 @@ export function sakiActionTitle(action: SakiAgentAction): string {
       return "查看目录结构";
     case "readfile":
       return "读取文件";
+    case "outlinefile":
+      return "查看文件结构";
+    case "readsymbol":
+      return "读取符号";
+    case "findsymbols":
+      return "查找符号";
+    case "statfile":
+      return "查看文件信息";
     case "writefile":
       return "写入文件";
     case "replaceinfile":
       return "替换文件内容";
     case "editlines":
       return "编辑文件行";
+    case "batchedit":
+      return "批量编辑";
     case "applypatch":
     case "apply_patch":
     case "applydiff":
@@ -1811,7 +1847,18 @@ export function sakiActionTitle(action: SakiAgentAction): string {
     case "imagine":
       return "生成图片";
     case "runcommand":
+    case "runinshell":
       return "运行终端命令";
+    case "createshell":
+      return "打开独立终端";
+    case "closeshell":
+    case "deleteshell":
+    case "killshell":
+      return "关闭独立终端";
+    case "listshells":
+      return "查看独立终端";
+    case "sendshellinput":
+      return "向独立终端输入";
     case "sendinput":
       return "发送控制台输入";
     case "sendcommand":
@@ -1935,6 +1982,7 @@ export function sakiActionDetailsLabel(action: SakiAgentAction): string {
     case "readfile":
       return "查看文件内容";
     case "runcommand":
+    case "runinshell":
       return "查看命令输出";
     default:
       return "查看调用结果";
@@ -1944,9 +1992,33 @@ export function sakiActionDetailsLabel(action: SakiAgentAction): string {
 export function sakiActionTone(action: SakiAgentAction): "read" | "write" | "delete" | "terminal" | "system" {
   const tool = action.tool.toLowerCase();
   if (tool === "deletepath") return "delete";
-  if (tool === "runcommand" || tool === "sendinput" || tool === "sendcommand") return "terminal";
-  if (tool === "writefile" || tool === "replaceinfile" || tool === "editlines" || tool === "mkdir" || tool === "renamepath" || tool === "uploadbase64") return "write";
-  if (tool === "listfiles" || tool === "readfile" || tool === "instancelogs" || tool === "listinstances" || tool === "describeinstance") return "read";
+  if (
+    tool === "runcommand" ||
+    tool === "runinshell" ||
+    tool === "sendshellinput" ||
+    tool === "createshell" ||
+    tool === "closeshell" ||
+    tool === "deleteshell" ||
+    tool === "killshell" ||
+    tool === "sendinput" ||
+    tool === "sendcommand"
+  ) {
+    return "terminal";
+  }
+  if (tool === "writefile" || tool === "replaceinfile" || tool === "editlines" || tool === "batchedit" || tool === "applypatch" || tool === "mkdir" || tool === "renamepath" || tool === "uploadbase64") return "write";
+  if (
+    tool === "listfiles" ||
+    tool === "readfile" ||
+    tool === "outlinefile" ||
+    tool === "readsymbol" ||
+    tool === "findsymbols" ||
+    tool === "statfile" ||
+    tool === "instancelogs" ||
+    tool === "listinstances" ||
+    tool === "describeinstance"
+  ) {
+    return "read";
+  }
   return "system";
 }
 
@@ -1957,15 +2029,46 @@ export function sakiActionStateClass(action: SakiAgentAction): string {
   return "ok";
 }
 
-export function SakiToolIcon({ action }: { action: SakiAgentAction }) {
+export function SakiThinkingIcon({ size = 15, className }: { size?: number | undefined; className?: string | undefined }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect
+        x="3.2"
+        y="2.4"
+        width="17.6"
+        height="13"
+        rx="6.5"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinejoin="round"
+      />
+      <circle cx="8.2" cy="18.15" r="1.9" stroke="currentColor" strokeWidth="1.65" />
+      <circle cx="5.15" cy="21.3" r="1.3" stroke="currentColor" strokeWidth="1.55" />
+    </svg>
+  );
+}
+
+export function SakiToolIcon({ action, size = 16 }: { action: Pick<SakiAgentAction, "tool">; size?: number }) {
   switch (action.tool.toLowerCase()) {
     case "listfiles":
-      return <Folder size={16} />;
+      return <Folder size={size} />;
     case "readfile":
-      return <FileText size={16} />;
+    case "outlinefile":
+    case "readsymbol":
+    case "statfile":
+      return <FileText size={size} />;
+    case "findsymbols":
+      return <FileSearch size={size} />;
     case "writefile":
     case "uploadbase64":
-      return <FilePlus size={16} />;
+      return <FilePlus size={size} />;
     case "generateimage":
     case "generate_image":
     case "drawimage":
@@ -1973,46 +2076,62 @@ export function SakiToolIcon({ action }: { action: SakiAgentAction }) {
     case "txt2img":
     case "imagegen":
     case "imagine":
-      return <ImageIcon size={16} />;
+      return <ImageIcon size={size} />;
     case "replaceinfile":
     case "editlines":
+    case "batchedit":
     case "applypatch":
     case "apply_patch":
     case "applydiff":
-      return <Code2 size={16} />;
+      return <Code2 size={size} />;
     case "mkdir":
-      return <FolderPlus size={16} />;
+      return <FolderPlus size={size} />;
     case "deletepath":
-      return <Trash2 size={16} />;
+      return <Trash2 size={size} />;
     case "runcommand":
+    case "runinshell":
+    case "sendshellinput":
     case "sendinput":
     case "sendcommand":
-      return <TerminalIcon size={16} />;
+      return <TerminalIcon size={size} />;
+    case "createshell":
+      return <Plus size={size} />;
+    case "closeshell":
+    case "deleteshell":
+    case "killshell":
+      return <X size={size} />;
+    case "listshells":
+      return <Layers size={size} />;
     case "instancelogs":
     case "searchaudit":
-      return <ClipboardList size={16} />;
+      return <ClipboardList size={size} />;
     case "listinstances":
     case "describeinstance":
-      return <Server size={16} />;
+      return <Server size={size} />;
     case "searchweb":
     case "researchweb":
     case "browse":
     case "crawl":
-      return <Search size={16} />;
+      return <Search size={size} />;
     case "searchfiles":
-      return <Search size={16} />;
+      return <Search size={size} />;
     case "findfiles":
-      return <FileSearch size={16} />;
+      return <FileSearch size={size} />;
     case "readmemory":
-      return <BookOpen size={16} />;
+    case "readskill":
+    case "listskills":
+    case "searchskills":
+      return <BookOpen size={size} />;
     case "writememory":
-      return <BookMarked size={16} />;
+      return <BookMarked size={size} />;
     case "plan":
-      return <ListChecks size={16} />;
+      return <ListChecks size={size} />;
     case "spawntask":
-      return <GitBranch size={16} />;
+      return <GitBranch size={size} />;
+    case "renamepath":
+      return <Move size={size} />;
     default:
-      return <Wrench size={16} />;
+      return <Wrench size={size} />;
   }
 }
 
@@ -2225,19 +2344,19 @@ export function SakiStreamStatus({ workflow }: { workflow: LocalSakiWorkflowStep
   if (!runningStep) return null;
   const statusText = workflowStatusText(runningStep);
   if (!statusText) return null;
-  const tool = runningStep.tool?.toLowerCase();
-  const iconMap: Record<string, string> = {
-    readfile: "📖", writefile: "✏️", replaceinfile: "✏️", editlines: "✏️",
-    runcommand: "💻", listfiles: "📁", searchfiles: "🔍", findfiles: "🔎",
-    deletepath: "🗑️", mkdir: "📁", renamepath: "📝", searchweb: "🌐",
-    browse: "🌐", crawl: "🌐", researchweb: "🌐", sendinput: "⌨️",
-    sendcommand: "⌨️", readmemory: "💾", writememory: "💾", plan: "📋",
-    spawntask: "🔄", readskill: "📖", instancelogs: "📋"
-  };
-  const icon = tool ? (iconMap[tool] ?? "⚙️") : runningStep.stage === "thinking" ? "💭" : "⚙️";
+  const tool = runningStep.tool;
+  const isThinking = !tool && runningStep.stage === "thinking";
   return (
     <div className="saki-stream-status">
-      <span className="saki-stream-status-icon">{icon}</span>
+      <span className={`saki-stream-status-icon${isThinking ? " is-thinking" : ""}`}>
+        {tool ? (
+          <SakiToolIcon action={{ tool }} size={14} />
+        ) : isThinking ? (
+          <SakiThinkingIcon size={14} className="saki-thinking-sparkle" />
+        ) : (
+          <Wrench size={14} />
+        )}
+      </span>
       <span className="saki-stream-status-text">{statusText}</span>
       <span className="saki-stream-status-dots">
         <span className="saki-dot saki-dot-1">·</span>
@@ -2282,107 +2401,37 @@ export const sakiFoodMenu = [
 ];
 
 export function getLocalizedFoodMenu(language?: string) {
-  if (language === "en-US") {
-    return [
-      {
-        id: "caomeidafu",
-        name: "Strawberry Daifuku",
-        image: "/assets/game/caomeidafu.webp",
-        cost: 1,
-        favorability: 10,
-        desc: "Soft and sweet, only 1 Saki Point",
-        greeting: "Nom nom～ The soft strawberry daifuku is so delicious! Thank you～ (๑>؂<๑)۶",
-        mood: "eating" as SakiActivityMood
-      },
-      {
-        id: "naicha",
-        name: "Boba Pearl Milk Tea",
-        image: "/assets/game/naicha.webp",
-        cost: 2,
-        favorability: 25,
-        desc: "Chewy boba, only 2 Saki Points",
-        greeting: "A sip of sweet pearl milk tea fills me with energy! (*╹▽╹*)",
-        mood: "eating" as SakiActivityMood
-      },
-      {
-        id: "biandang",
-        name: "Kitty Heart Bento",
-        image: "/assets/game/biandang.webp",
-        cost: 5,
-        favorability: 60,
-        desc: "Special kitty bento, only 5 Saki Points",
-        greeting: "Is... is this cute kitty bento made specially for me?! I'm so touched, I love you so much～ (｡♥‿♥｡)",
-        mood: "shy" as SakiActivityMood
-      }
-    ];
-  }
-  if (language === "zh-TW") {
-    return [
-      {
-        id: "caomeidafu",
-        name: "草莓大福",
-        image: "/assets/game/caomeidafu.webp",
-        cost: 1,
-        favorability: 10,
-        desc: "軟糯香甜，僅需 1 Saki 積分",
-        greeting: "嗷嗚～軟糯的草莓大福太美味啦！謝謝你～ (๑>؂<๑)۶",
-        mood: "eating" as SakiActivityMood
-      },
-      {
-        id: "naicha",
-        name: "波霸珍珠奶茶",
-        image: "/assets/game/naicha.webp",
-        cost: 2,
-        favorability: 25,
-        desc: "Q彈珍珠，僅需 2 Saki 積分",
-        greeting: "吸一口甜甜的珍珠奶茶，活力瞬間拉滿！(*╹▽╹*)",
-        mood: "eating" as SakiActivityMood
-      },
-      {
-        id: "biandang",
-        name: "貓咪愛心便當",
-        image: "/assets/game/biandang.webp",
-        cost: 5,
-        favorability: 60,
-        desc: "特製萌貓便當，僅需 5 Saki 積分",
-        greeting: "這...這是特製給我的貓咪便當嗎？！太感動了，最喜歡你啦～ (｡♥‿♥｡)",
-        mood: "shy" as SakiActivityMood
-      }
-    ];
-  }
-  if (language === "ja-JP") {
-    return [
-      {
-        id: "caomeidafu",
-        name: "いちご大福",
-        image: "/assets/game/caomeidafu.webp",
-        cost: 1,
-        favorability: 10,
-        desc: "もっちり甘くて、たった 1 Saki ポイント",
-        greeting: "もぐもぐ～もっちりいちご大福おいしい！ありがとう～ (๑>؂<๑)۶",
-        mood: "eating" as SakiActivityMood
-      },
-      {
-        id: "naicha",
-        name: "タピオカミルクティー",
-        image: "/assets/game/naicha.webp",
-        cost: 2,
-        favorability: 25,
-        desc: "もちもちタピオカ、たった 2 Saki ポイント",
-        greeting: "甘いタピオカミルクティーを飲むと元気が出るね！(*╹▽╹*)",
-        mood: "eating" as SakiActivityMood
-      },
-      {
-        id: "biandang",
-        name: "ハート猫弁当",
-        image: "/assets/game/biandang.webp",
-        cost: 5,
-        favorability: 60,
-        desc: "特製のキュートな猫弁当、たった 5 Saki ポイント",
-        greeting: "こ...これって私のために作ってくれた特別な猫弁当なの？！感動しちゃう、大好きだよ～ (｡♥‿♥｡)",
-        mood: "shy" as SakiActivityMood
-      }
-    ];
-  }
-  return sakiFoodMenu;
+  const lang = (language || "zh-CN") as PanelLanguage;
+  return [
+    {
+      id: "caomeidafu",
+      name: panelT(lang, "saki.food.caomeidafu.name"),
+      image: "/assets/game/caomeidafu.webp",
+      cost: 1,
+      favorability: 10,
+      desc: panelT(lang, "saki.food.caomeidafu.desc"),
+      greeting: panelT(lang, "saki.food.caomeidafu.greeting"),
+      mood: "eating" as SakiActivityMood
+    },
+    {
+      id: "naicha",
+      name: panelT(lang, "saki.food.naicha.name"),
+      image: "/assets/game/naicha.webp",
+      cost: 2,
+      favorability: 25,
+      desc: panelT(lang, "saki.food.naicha.desc"),
+      greeting: panelT(lang, "saki.food.naicha.greeting"),
+      mood: "eating" as SakiActivityMood
+    },
+    {
+      id: "biandang",
+      name: panelT(lang, "saki.food.biandang.name"),
+      image: "/assets/game/biandang.webp",
+      cost: 5,
+      favorability: 60,
+      desc: panelT(lang, "saki.food.biandang.desc"),
+      greeting: panelT(lang, "saki.food.biandang.greeting"),
+      mood: "shy" as SakiActivityMood
+    }
+  ];
 }

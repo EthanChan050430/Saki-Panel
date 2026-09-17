@@ -40,6 +40,9 @@
   color: #6b7280;
   flex-shrink: 0;
 }
+.saki-thinking-action-row .saki-action-icon {
+  color: #8b5cf6;
+}
 .saki-action-label {
   display: flex;
   align-items: center;
@@ -470,8 +473,9 @@
 }
 
 .saki-thinking-sparkle {
-  color: #a855f7;
+  color: currentColor;
   animation: saki-sparkle-pulse 2s ease-in-out infinite;
+  transform-origin: center;
 }
 
 .saki-thinking-badge {
@@ -580,6 +584,10 @@
 
 [data-theme="dark"] .saki-action-row.running .saki-action-row-main {
   background: rgba(147, 51, 234, 0.12);
+}
+
+[data-theme="dark"] .saki-thinking-action-row .saki-action-icon {
+  color: #c4b5fd;
 }
 
 [data-theme="dark"] .saki-thinking-toggle {
@@ -718,44 +726,47 @@
 .saki-model-btn .saki-model-short-name {
   display: none;
 }
-/* Liquid glass dropdown wrappers — pure physical liquid glass refraction
-   matching official shuding/liquid-glass organic styling with restrained translucent white reflection. */
+/* Liquid glass dropdown wrappers — pure physical liquid glass refraction with frosted diffusion
+   matching organic liquid glass styling with bright white light mode and deep obsidian dark mode. */
+/* ==========================================================================
+   Saki Dropdown Menus: Add Menu & Model Selector Dropdown & Permission Dropdown
+   ========================================================================== */
 .saki-add-menu-wrapper,
 .saki-model-dropdown-wrapper {
   z-index: 9999;
   background: linear-gradient(
     135deg,
-    rgba(255, 255, 255, 0.92) 0%,
-    rgba(248, 250, 252, 0.88) 100%
+    rgba(255, 255, 255, 0.98) 0%,
+    rgba(255, 255, 255, 0.95) 100%
   ) !important;
-  border: 1px solid rgba(255, 255, 255, 0.58) !important;
-  border-top-color: rgba(255, 255, 255, 0.78) !important;
-  border-bottom-color: rgba(255, 255, 255, 0.38) !important;
+  border: 1px solid rgba(255, 255, 255, 0.95) !important;
+  border-top-color: #ffffff !important;
+  border-bottom-color: rgba(226, 232, 240, 0.85) !important;
   box-shadow:
-    0 14px 40px -4px rgba(0, 0, 0, 0.18),
-    0 4px 12px rgba(0, 0, 0, 0.06),
-    inset 0 1px 1.5px rgba(255, 255, 255, 0.75),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.25),
-    inset 0 -6px 16px rgba(0, 0, 0, 0.05) !important;
+    0 20px 48px -4px rgba(0, 0, 0, 0.16),
+    0 6px 18px rgba(0, 0, 0, 0.06),
+    inset 0 1px 2px #ffffff,
+    inset 0 0 0 1px rgba(255, 255, 255, 0.80),
+    inset 0 -6px 16px rgba(255, 255, 255, 0.30) !important;
 }
 
 [data-theme="dark"] .saki-add-menu-wrapper,
 [data-theme="dark"] .saki-model-dropdown-wrapper {
   background: linear-gradient(
     135deg,
-    rgba(20, 23, 34, 0.90) 0%,
-    rgba(14, 16, 24, 0.86) 100%
+    rgba(8, 8, 12, 0.96) 0%,
+    rgba(4, 4, 6, 0.94) 100%
   ) !important;
-  border: 1px solid rgba(255, 255, 255, 0.24) !important;
-  border-top-color: rgba(255, 255, 255, 0.38) !important;
-  border-bottom-color: rgba(255, 255, 255, 0.18) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-top-color: rgba(255, 255, 255, 0.24) !important;
+  border-bottom-color: rgba(0, 0, 0, 0.70) !important;
   box-shadow:
-    0 18px 48px -4px rgba(0, 0, 0, 0.72),
-    0 6px 18px rgba(0, 0, 0, 0.42),
-    inset 0 1px 1.5px rgba(255, 255, 255, 0.35),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
-    inset 0 0 6px rgba(255, 255, 255, 0.08),
-    inset 0 -10px 25px rgba(0, 0, 0, 0.35) !important;
+    0 24px 60px -4px rgba(0, 0, 0, 0.92),
+    0 8px 28px rgba(0, 0, 0, 0.75),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.18),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    inset 0 0 10px rgba(0, 0, 0, 0.60),
+    inset 0 -12px 28px rgba(0, 0, 0, 0.70) !important;
 }
 
 /* Inner containers — layout only, transparent so glass wrapper shines through. */
@@ -783,7 +794,7 @@
   border-radius: 7px;
   cursor: pointer;
   font-size: 13px;
-  color: #0f172a;
+  color: #0f172a !important;
   font-weight: 550;
   transition: background 0.12s ease, color 0.12s ease;
   border: none;
@@ -792,12 +803,12 @@
   text-align: left;
 }
 .saki-model-option:hover {
-  background: rgba(0, 0, 0, 0.06);
-  color: #000000;
+  background: rgba(0, 0, 0, 0.05);
+  color: #020617 !important;
 }
 .saki-model-option.active {
   background: linear-gradient(135deg, rgba(255, 117, 172, 0.2) 0%, rgba(255, 60, 130, 0.24) 100%);
-  color: #be123c;
+  color: #be123c !important;
   font-weight: 700;
   box-shadow: inset 0 0 0 1px rgba(255, 117, 172, 0.35);
 }
@@ -806,6 +817,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: inherit !important;
 }
 .saki-model-vision-icon {
   flex: 0 0 auto;
@@ -1837,7 +1849,7 @@
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: #0f172a;
+  color: #0f172a !important;
   font-size: 13px;
   font-weight: 550;
   cursor: pointer;
@@ -1846,28 +1858,28 @@
 }
 
 .saki-add-menu-item:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.06);
-  color: #000000;
+  background: rgba(0, 0, 0, 0.05);
+  color: #020617 !important;
 }
 
 [data-theme="dark"] .saki-add-menu-item {
-  color: #f8fafc;
+  color: #f8fafc !important;
   font-weight: 550;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
 }
 
 [data-theme="dark"] .saki-add-menu-item:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.12);
-  color: #ffffff;
+  color: #ffffff !important;
 }
 
 .saki-add-menu-item svg {
-  color: #475569;
+  color: #475569 !important;
   flex-shrink: 0;
 }
 
 [data-theme="dark"] .saki-add-menu-item svg {
-  color: #cbd5e1;
+  color: #cbd5e1 !important;
 }
 
 .saki-add-menu-item:disabled {

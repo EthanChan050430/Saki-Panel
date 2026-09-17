@@ -18,6 +18,7 @@ import {
 import type { SakiPetController, SakiPetWidget } from "./sakiPetState.js";
 import { weatherGlyph } from "./sakiPetState.js";
 import { SakiPetWidgetCard } from "./SakiPetWidgets.js";
+import { panelT } from "../../../i18n/translations.js";
 
 function formatClock(ms: number) {
   const d = new Date(ms);
@@ -58,6 +59,35 @@ function overlayShouldSitBelow(
   return spaceBelow > spaceAbove;
 }
 
+import { sampleLuminanceAtPoint } from "../sakiLuminance.js";
+
+function detectUnderlyingBackdrop(stage: HTMLElement, chrome: HTMLElement | null): "light" | "dark" {
+  const stageRect = stage.getBoundingClientRect();
+  const samplePoints: Array<[number, number]> = [];
+
+  samplePoints.push([stageRect.left + stageRect.width / 2, stageRect.top + stageRect.height / 2]);
+  samplePoints.push([stageRect.left + stageRect.width / 2, stageRect.top + stageRect.height * 0.2]);
+  samplePoints.push([stageRect.left + stageRect.width * 0.2, stageRect.top + stageRect.height * 0.4]);
+  samplePoints.push([stageRect.left + stageRect.width * 0.8, stageRect.top + stageRect.height * 0.4]);
+
+  if (chrome && chrome.offsetParent !== null) {
+    const chromeRect = chrome.getBoundingClientRect();
+    if (chromeRect.width > 0 && chromeRect.height > 0) {
+      samplePoints.push([chromeRect.left + chromeRect.width / 2, chromeRect.top + chromeRect.height / 2]);
+      samplePoints.push([chromeRect.left + chromeRect.width * 0.25, chromeRect.top + chromeRect.height * 0.3]);
+      samplePoints.push([chromeRect.left + chromeRect.width * 0.75, chromeRect.top + chromeRect.height * 0.3]);
+    }
+  }
+
+  let totalLuminance = 0;
+  for (const [sx, sy] of samplePoints) {
+    totalLuminance += sampleLuminanceAtPoint(sx, sy, stage, ".saki-pet-stage");
+  }
+  const avgLuminance = totalLuminance / samplePoints.length;
+
+  return avgLuminance > 0.45 ? "light" : "dark";
+}
+
 export function SakiDesktopPet({
   pet,
   language,
@@ -85,15 +115,16 @@ export function SakiDesktopPet({
   onCaptureSticker: () => void;
   onIntimacy?: ((amount: number) => void) | undefined;
 }) {
-  const isEn = language === "en-US";
-  const isJa = language === "ja-JP";
+  const t = (k: Parameters<typeof panelT>[1]) => panelT(language || "zh-CN", k);
   const showChrome = visible && (pet.hovered || pet.widget !== null || pet.group !== "none");
   const chromeRef = useRef<HTMLDivElement>(null);
   const bubbleRef = useRef<HTMLDivElement>(null);
   const sitBelowRef = useRef(false);
   const sessionOpenRef = useRef(false);
   const stageTopRef = useRef<number | null>(null);
+  const backdropRef = useRef<"light" | "dark">("light");
   const [sitBelow, setSitBelow] = useState(false);
+  const [backdrop, setBackdrop] = useState<"light" | "dark">("light");
 
   useLayoutEffect(() => {
     const chrome = chromeRef.current;
@@ -113,21 +144,29 @@ export function SakiDesktopPet({
       if (overlayHeight <= 0) {
         sessionOpenRef.current = false;
         stageTopRef.current = null;
-        return;
+      } else {
+        const stageRect = stage.getBoundingClientRect();
+        const moved =
+          stageTopRef.current !== null && Math.abs(stageRect.top - stageTopRef.current) > moveThresholdPx;
+        const next = overlayShouldSitBelow(
+          stageRect,
+          overlayHeight,
+          sitBelowRef.current,
+          sessionOpenRef.current && !moved && mode === "lock"
+        );
+        stageTopRef.current = stageRect.top;
+        sessionOpenRef.current = true;
+        commit(next);
       }
 
-      const stageRect = stage.getBoundingClientRect();
-      const moved =
-        stageTopRef.current !== null && Math.abs(stageRect.top - stageTopRef.current) > moveThresholdPx;
-      const next = overlayShouldSitBelow(
-        stageRect,
-        overlayHeight,
-        sitBelowRef.current,
-        sessionOpenRef.current && !moved && mode === "lock"
-      );
-      stageTopRef.current = stageRect.top;
-      sessionOpenRef.current = true;
-      commit(next);
+      // Dynamic background luminance detection
+      const nextBackdrop = detectUnderlyingBackdrop(stage, chrome);
+      stage.setAttribute("data-backdrop", nextBackdrop);
+      chrome.setAttribute("data-backdrop", nextBackdrop);
+      if (backdropRef.current !== nextBackdrop) {
+        backdropRef.current = nextBackdrop;
+        setBackdrop(nextBackdrop);
+      }
     };
 
     place();
@@ -146,18 +185,29 @@ export function SakiDesktopPet({
     const mutationObserver = new MutationObserver(schedulePlace);
     mutationObserver.observe(stage, { attributes: true, attributeFilter: ["style", "class"] });
     const onViewportResize = () => place("unlock");
+    const onScroll = schedulePlace;
     window.addEventListener("resize", onViewportResize);
+    window.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       if (placeRaf) cancelAnimationFrame(placeRaf);
       resizeObserver.disconnect();
       mutationObserver.disconnect();
       window.removeEventListener("resize", onViewportResize);
+      window.removeEventListener("scroll", onScroll);
     };
   }, [showChrome, pet.scale, pet.behavior, pet.bubble]);
 
   return (
     <>
-      {pet.bubble ? <div ref={bubbleRef} className={`saki-pet-bubble ${sitBelow ? "is-below" : ""}`}>{pet.bubble}</div> : null}
+      {pet.bubble ? (
+        <div
+          ref={bubbleRef}
+          className={`saki-pet-bubble ${sitBelow ? "is-below" : ""}`}
+          data-backdrop={backdrop}
+        >
+          {pet.bubble}
+        </div>
+      ) : null}
       {pet.fx !== "none" ? <div className={`saki-pet-fx fx-${pet.fx}`} aria-hidden="true" /> : null}
       {pet.dueEvents.length > 0 ? (
         <div className="saki-pet-due-dot" title={pet.dueEvents[0]?.title}>
@@ -168,6 +218,7 @@ export function SakiDesktopPet({
       <div
         ref={chromeRef}
         className={`saki-pet-chrome ${showChrome ? "is-open" : ""} ${sitBelow ? "is-below" : ""}`}
+        data-backdrop={backdrop}
         onPointerDown={(event) => event.stopPropagation()}
       >
         <div className="saki-pet-nameplate">
@@ -189,9 +240,9 @@ export function SakiDesktopPet({
             </span>
           </div>
           <div className="saki-pet-stats">
-            <StatBar label={isEn ? "Hunger" : isJa ? "空腹" : "饱食"} value={pet.stats.hunger} tone="hunger" />
-            <StatBar label={isEn ? "Mood" : isJa ? "機嫌" : "心情"} value={pet.stats.mood} tone="mood" />
-            <StatBar label={isEn ? "Health" : isJa ? "健康" : "健康"} value={pet.stats.health} tone="health" />
+            <StatBar label={t("saki.pet.hunger")} value={pet.stats.hunger} tone="hunger" />
+            <StatBar label={t("saki.pet.mood")} value={pet.stats.mood} tone="mood" />
+            <StatBar label={t("saki.pet.health")} value={pet.stats.health} tone="health" />
           </div>
         </div>
 
@@ -202,11 +253,11 @@ export function SakiDesktopPet({
             onClick={() => pet.setGroup(pet.group === "companion" ? "none" : "companion")}
           >
             <PawPrint size={13} />
-            <span>{isEn ? "Care" : isJa ? "お世話" : "陪伴"}</span>
+            <span>{t("saki.pet.care")}</span>
           </button>
           <button type="button" className="saki-pet-petal chat" onClick={onOpenChat}>
             <MessageSquare size={14} />
-            <span>{isEn ? "Chat" : isJa ? "チャット" : "对话"}</span>
+            <span>{t("saki.pet.chat")}</span>
           </button>
           <button
             type="button"
@@ -214,7 +265,7 @@ export function SakiDesktopPet({
             onClick={() => pet.setGroup(pet.group === "tools" ? "none" : "tools")}
           >
             <ClipboardList size={13} />
-            <span>{isEn ? "Tools" : isJa ? "ツール" : "工具"}</span>
+            <span>{t("saki.pet.tools")}</span>
           </button>
         </div>
 
@@ -222,49 +273,49 @@ export function SakiDesktopPet({
           <div className="saki-pet-tray companion">
             <TrayChip
               icon={<UtensilsCrossed size={11} />}
-              label={isEn ? "Feed" : isJa ? "えさやり" : "喂食"}
+              label={t("saki.pet.feed")}
               active={pet.widget === "feed"}
               onClick={() => toggleWidget(pet, "feed")}
             />
             <TrayChip
               icon={<Heart size={11} />}
-              label={isEn ? "Pet" : isJa ? "なでる" : "摸摸"}
+              label={t("saki.pet.petAction")}
               onClick={() => {
                 pet.applyCare("pet");
                 onIntimacy?.(3);
-                pet.showBubble(isEn ? "Hehe, that tickles～" : isJa ? "くすぐったいよ～" : "嘿嘿，再摸摸～");
+                pet.showBubble(t("saki.pet.ticklesBubble"));
               }}
             />
             <TrayChip
               icon={<Moon size={11} />}
-              label={isEn ? "Sleep" : isJa ? "睡眠" : "睡觉"}
+              label={t("saki.pet.sleep")}
               onClick={() => {
                 pet.applyCare("sleep");
                 onIntimacy?.(2);
-                pet.showBubble(isEn ? "Napping… zzz" : isJa ? "お昼寝中… zzz" : "我先睡一会儿… zzz");
+                pet.showBubble(t("saki.pet.nappingBubble"));
               }}
             />
             <TrayChip
               icon={<Bath size={11} />}
-              label={isEn ? "Bath" : isJa ? "お風呂" : "洗澡"}
+              label={t("saki.pet.bath")}
               onClick={() => {
                 pet.applyCare("bath");
                 onIntimacy?.(4);
-                pet.showBubble(isEn ? "All clean!" : isJa ? "きれいになった！" : "洗香香啦～");
+                pet.showBubble(t("saki.pet.bathBubble"));
               }}
             />
             <TrayChip
               icon={<Stethoscope size={11} />}
-              label={isEn ? "Doctor" : isJa ? "お医者さん" : "看病"}
+              label={t("saki.pet.doctor")}
               onClick={() => {
                 pet.applyCare("doctor");
                 onIntimacy?.(2);
-                pet.showBubble(isEn ? "Full HP!" : isJa ? "HP全回復！" : "已经活力满满！");
+                pet.showBubble(t("saki.pet.doctorBubble"));
               }}
             />
             <TrayChip
               icon={<PawPrint size={11} />}
-              label={isEn ? "Skins" : isJa ? "着せ替え" : "换装"}
+              label={t("saki.pet.skins")}
               active={pet.widget === "skins"}
               onClick={() => toggleWidget(pet, "skins")}
             />
@@ -275,43 +326,43 @@ export function SakiDesktopPet({
           <div className="saki-pet-tray tools">
             <TrayChip
               icon={<ClipboardList size={11} />}
-              label={isEn ? "Todo" : isJa ? "タスク" : "待办"}
+              label={t("saki.pet.todo")}
               active={pet.widget === "todo"}
               onClick={() => toggleWidget(pet, "todo")}
             />
             <TrayChip
               icon={<Clock size={11} />}
-              label={isEn ? "Agenda" : isJa ? "予定" : "日程"}
+              label={t("saki.pet.agenda")}
               active={pet.widget === "schedule"}
               onClick={() => toggleWidget(pet, "schedule")}
             />
             <TrayChip
               icon={<Timer size={11} />}
-              label={isEn ? "Timer" : isJa ? "タイマー" : "番茄"}
+              label={t("saki.pet.timer")}
               active={pet.widget === "pomodoro"}
               onClick={() => toggleWidget(pet, "pomodoro")}
             />
             <TrayChip
               icon={<StickyNote size={11} />}
-              label={isEn ? "Notes" : isJa ? "メモ" : "便签"}
+              label={t("saki.pet.notes")}
               active={pet.widget === "notes"}
               onClick={() => toggleWidget(pet, "notes")}
             />
             <TrayChip
               icon={<Camera size={11} />}
-              label={isEn ? "Sticker" : isJa ? "ステッカー" : "截图"}
+              label={t("saki.pet.sticker")}
               active={pet.widget === "sticker"}
               onClick={() => toggleWidget(pet, "sticker")}
             />
             <TrayChip
               icon={<CalendarDays size={11} />}
-              label={isEn ? "Cal" : isJa ? "カレンダー" : "日历"}
+              label={t("saki.pet.calendar")}
               active={pet.widget === "calendar"}
               onClick={() => toggleWidget(pet, "calendar")}
             />
             <TrayChip
               icon={<Mic2 size={11} />}
-              label={isEn ? "Sing" : isJa ? "歌う" : "唱歌"}
+              label={t("saki.pet.sing")}
               active={pet.widget === "music"}
               onClick={() => toggleWidget(pet, "music")}
             />
@@ -325,28 +376,28 @@ export function SakiDesktopPet({
               className={pet.behavior === "idle" ? "active" : ""}
               onClick={() => pet.startBehavior("idle", 14000)}
             >
-              {isEn ? "Stand" : isJa ? "立つ" : "站起"}
+              {t("saki.pet.poseStand")}
             </button>
             <button
               type="button"
               className={pet.behavior === "sit" ? "active" : ""}
               onClick={() => pet.startBehavior(pet.behavior === "sit" ? "idle" : "sit", pet.behavior === "sit" ? 14000 : 10000)}
             >
-              {isEn ? "Sit" : isJa ? "座る" : "坐下"}
+              {t("saki.pet.poseSit")}
             </button>
             <button
               type="button"
               className={pet.behavior === "lie" ? "active" : ""}
               onClick={() => pet.startBehavior(pet.behavior === "lie" ? "idle" : "lie", pet.behavior === "lie" ? 14000 : 10000)}
             >
-              {isEn ? "Lie" : isJa ? "横になる" : "趴下"}
+              {t("saki.pet.poseLie")}
             </button>
             <button
               type="button"
               className={pet.behavior === "roll" ? "active" : ""}
               onClick={() => pet.startBehavior("roll", 2200)}
             >
-              {isEn ? "Roll" : isJa ? "ゴロン" : "打滚"}
+              {t("saki.pet.poseRoll")}
             </button>
           </div>
         ) : null}

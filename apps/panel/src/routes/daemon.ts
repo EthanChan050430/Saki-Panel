@@ -4,7 +4,7 @@ import { panelConfig } from "../config.js";
 import { prisma } from "../db.js";
 import { generateSecretToken, hashToken, safeEqual, tokenLast4, verifyToken } from "../security.js";
 import { writeAuditLog } from "../audit.js";
-import { handleDaemonInstanceEvent, ingestHeartbeatSnapshots } from "../watch/events.js";
+import { handleDaemonInstanceEvent, ingestHeartbeatSnapshots, markDaemonHeartbeatPushed } from "../watch/events.js";
 
 type HeartbeatNodeUpdate = HeartbeatRequest & {
   host?: string;
@@ -179,12 +179,28 @@ export async function registerDaemonRoutes(app: FastifyInstance): Promise<void> 
     }
 
     const now = new Date();
+    const callerIp = request.ip;
+    const isCallerRemote = Boolean(callerIp && callerIp !== "127.0.0.1" && callerIp !== "::1" && callerIp !== "localhost");
+    const isNodeHostLoopback = node.host === "127.0.0.1" || node.host === "localhost" || node.host === "::1";
+    let effectiveHost = node.host;
+    if (body.host && body.host.trim()) {
+      const trimmedBodyHost = body.host.trim();
+      const isTrimmedBodyHostLoopback = trimmedBodyHost === "127.0.0.1" || trimmedBodyHost === "localhost" || trimmedBodyHost === "::1";
+      if (!isTrimmedBodyHostLoopback) {
+        effectiveHost = trimmedBodyHost;
+      } else if (isNodeHostLoopback && isCallerRemote) {
+        effectiveHost = callerIp;
+      }
+    } else if (isNodeHostLoopback && isCallerRemote) {
+      effectiveHost = callerIp;
+    }
+
     await prisma.$transaction([
       prisma.node.update({
         where: { id: node.id },
         data: {
           status: "ONLINE",
-          host: body.host?.trim() || node.host,
+          host: effectiveHost,
           port: Number.isInteger(body.port) && body.port && body.port > 0 && body.port <= 65535 ? body.port : node.port,
           protocol: body.protocol === "http" || body.protocol === "https" ? body.protocol : node.protocol,
           os: body.os ?? node.os,
@@ -208,6 +224,8 @@ export async function registerDaemonRoutes(app: FastifyInstance): Promise<void> 
         }
       })
     ]);
+
+    markDaemonHeartbeatPushed(node.id);
 
     let restartLeases: Array<{ instanceId: string; suppressUntil: string }> = [];
     try {

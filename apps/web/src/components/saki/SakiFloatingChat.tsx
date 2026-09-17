@@ -22,6 +22,7 @@ import {
   Clock,
   Code2,
   Coins,
+  Compass,
   Copy,
   CornerDownLeft,
   CornerUpLeft,
@@ -29,6 +30,7 @@ import {
   Download,
   DownloadCloud,
   Edit3,
+  ExternalLink,
   Eye,
   EyeOff,
   FileArchive,
@@ -53,6 +55,7 @@ import {
   Info,
   KeyRound,
   Layers,
+  LayoutDashboard,
   LayoutGrid,
   LayoutTemplate,
   Link2,
@@ -148,7 +151,8 @@ import type {
   SakiFollowUpJob,
   SakiPromptSeed,
   SakiSelectionCapture,
-  SakiSubmitOverride
+  SakiSubmitOverride,
+  ViewMode
 } from "../../types/app.js";
 import {
   api,
@@ -296,6 +300,28 @@ function formatSakiModelMultiplier(value: number): string {
   return `${Number.isInteger(rounded) ? rounded.toFixed(1) : rounded}x`;
 }
 
+export type SakiWorkspaceSelection =
+  | { type: "current" }
+  | { type: "page"; view: ViewMode }
+  | { type: "instance"; instanceId: string };
+
+function getPanelContextForView(view: ViewMode, t: (key: any) => string): SakiPanelContext {
+  if (view === "audit") {
+    return { label: t("context.audit.label") || "审计日志", detail: t("context.audit.detail") || "安全审计事件检索", auditSearch: true };
+  }
+  if (view === "instances") {
+    return { label: t("context.instances.label") || "实例管理", detail: t("context.instances.detail") || "运行实例管理" };
+  }
+  if (view === "nodes") return { label: t("context.nodes.label") || "节点管理", detail: t("context.nodes.detail") || "节点连接与集群状态" };
+  if (view === "templates") return { label: t("context.templates.label") || "模板市场", detail: t("context.templates.detail") || "实例模板配置" };
+  if (view === "users") return { label: t("context.users.label") || "用户管理", detail: t("context.users.detail") || "用户权限管理" };
+  if (view === "settings") return { label: t("context.settings.label") || "系统设置", detail: t("context.settings.detail") || "Saki 与系统配置" };
+  if (view === "reliability") return { label: t("context.reliability.label") || "系统可靠性", detail: t("context.reliability.detail") || "服务可靠性监控" };
+  if (view === "plugins") return { label: t("context.plugins.label") || "插件中心", detail: t("context.plugins.detail") || "主题与插件拓展" };
+  if (view === "about") return { label: t("nav.about") || "关于", detail: "系统架构与帮助" };
+  return { label: t("context.dashboard.label") || "控制台", detail: t("context.dashboard.detail") || "全局概览与状态" };
+}
+
 export function SakiFloatingChat({
   token,
   instance,
@@ -324,7 +350,10 @@ export function SakiFloatingChat({
   pullDragRequest = null,
   onPullDragConsumed,
   onOpenWorkspaceFile,
-  onClearFileDrag
+  onClearFileDrag,
+  availableViews,
+  activeView,
+  onNavigateView
 }: {
   token: string;
   instance: ManagedInstance | null;
@@ -352,12 +381,54 @@ export function SakiFloatingChat({
   onFavorabilityChange?: (fav: number) => void;
   pullDragRequest?: SakiPullDragRequest | null;
   onPullDragConsumed?: () => void;
-  onOpenWorkspaceFile?: (path: string, line?: number) => void;
+  onOpenWorkspaceFile?: (path: string, line?: number, targetInstanceId?: string) => void;
   onClearFileDrag?: () => void;
+  availableViews?: ViewMode[];
+  activeView?: ViewMode;
+  onNavigateView?: (view: ViewMode, instanceId?: string) => void;
 }) {
-  const contextKey = instance ? `instance:${instance.id}` : `panel:${panelContext.label}:${panelContext.detail}`;
-  const baseContextLabel = instance ? instance.name : panelContext.label;
-  const baseContextPath = instance?.workingDirectory ?? panelContext.detail;
+  const { t, tFormat, language } = usePanelLanguage();
+  const [workspaceSelection, setWorkspaceSelection] = useState<SakiWorkspaceSelection>({ type: "current" });
+  const [workspaceDropdownOpen, setWorkspaceDropdownOpen] = useState(false);
+  const [availableInstances, setAvailableInstances] = useState<ManagedInstance[]>([]);
+  const [instancesLoading, setInstancesLoading] = useState(false);
+  const [workspaceSearch, setWorkspaceSearch] = useState("");
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const activeInstance = useMemo<ManagedInstance | null>(() => {
+    if (workspaceSelection.type === "current") {
+      return instance;
+    }
+    if (workspaceSelection.type === "instance") {
+      return (
+        availableInstances.find((item) => item.id === workspaceSelection.instanceId) ??
+        (instance?.id === workspaceSelection.instanceId ? instance : null)
+      );
+    }
+    return null;
+  }, [availableInstances, instance, workspaceSelection]);
+
+  const activePanelContext = useMemo<SakiPanelContext>(() => {
+    if (workspaceSelection.type === "current") {
+      return panelContext;
+    }
+    if (workspaceSelection.type === "page") {
+      return getPanelContextForView(workspaceSelection.view, t);
+    }
+    if (workspaceSelection.type === "instance" && activeInstance) {
+      return {
+        label: activeInstance.name,
+        detail: activeInstance.workingDirectory || `实例 ${activeInstance.name}`
+      };
+    }
+    return panelContext;
+  }, [activeInstance, panelContext, t, workspaceSelection]);
+
+  const contextKey = activeInstance
+    ? `instance:${activeInstance.id}`
+    : `panel:${activePanelContext.label}:${activePanelContext.detail}`;
+  const baseContextLabel = activeInstance ? activeInstance.name : activePanelContext.label;
+  const baseContextPath = activeInstance?.workingDirectory ?? activePanelContext.detail;
   const [open, setOpen] = useState(false);
   const [messagesExpanded, setMessagesExpanded] = useState(false);
   const [draft, setDraft] = useState("");
@@ -410,7 +481,6 @@ export function SakiFloatingChat({
       }
     };
   }, [onLauncherDraggingChange]);
-  const { language } = usePanelLanguage();
   const [draggingExpression, setDraggingExpression] = useState<string | null>(null);
   const [storedConversations, setStoredConversations] = useState<StoredSakiConversation[]>(() => readSakiConversations());
   const [activeConversationId, setActiveConversationId] = useState(() => newClientId());
@@ -427,6 +497,54 @@ export function SakiFloatingChat({
   const [composerNotice, setComposerNotice] = useState<string | null>(null);
   const [composerBusy, setComposerBusy] = useState<"image" | "file" | "screenshot" | null>(null);
   const [sakiFileHoverActive, setSakiFileHoverActive] = useState(false);
+
+  const loadInstances = useCallback(async () => {
+    if (!token) return;
+    try {
+      setInstancesLoading(true);
+      const list = await api.instances(token);
+      setAvailableInstances(list);
+    } catch (err) {
+      console.warn("[saki] failed to load instances for workspace selector:", err);
+    } finally {
+      setInstancesLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (open && token && availableInstances.length === 0) {
+      void loadInstances();
+    }
+  }, [availableInstances.length, loadInstances, open, token]);
+
+  useEffect(() => {
+    if (instance && !availableInstances.some((i) => i.id === instance.id)) {
+      setAvailableInstances((prev) => [instance, ...prev]);
+    }
+  }, [availableInstances, instance]);
+
+  useEffect(() => {
+    if (!workspaceDropdownOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setWorkspaceDropdownOpen(false);
+        setWorkspaceSearch("");
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setWorkspaceDropdownOpen(false);
+        setWorkspaceSearch("");
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [workspaceDropdownOpen]);
+
   const [listening, setListening] = useState(false);
   const [sakiEchoState, setSakiEchoState] = useState<SakiVoiceEchoState>("idle");
   const [annotationMode, setAnnotationMode] = useState(false);
@@ -546,19 +664,8 @@ export function SakiFloatingChat({
       } catch {}
 
       if (newLevel > oldLevel) {
-        const isEn = language === "en-US";
-        const isTw = language === "zh-TW";
-        const isJa = language === "ja-JP";
         setSakiPokeMood("happy");
-        setSakiVideoBubble(
-          isEn
-            ? `🎉 Wow! Affection leveled up! Reached Lv.${newLevel}～✨`
-            : isTw
-            ? `🎉 哇！好感度升級啦！達到 Lv.${newLevel}～✨`
-            : isJa
-            ? `🎉 わぁ！親密度がレベルアップしたよ！Lv.${newLevel} になった～✨`
-            : `🎉 哇！好感度升级啦！达到 Lv.${newLevel}～✨`
-        );
+        setSakiVideoBubble(tFormat("saki.chat.levelUp", newLevel));
         if (pokeTimerRef.current) window.clearTimeout(pokeTimerRef.current);
         pokeTimerRef.current = window.setTimeout(() => {
           setSakiPokeMood(null);
@@ -596,15 +703,7 @@ export function SakiFloatingChat({
   function handleFeedSaki(food: (typeof sakiFoodMenu)[number]) {
     if (!isUnlimitedPoints && numericSakiPoints < food.cost) {
       setSakiPokeMood("pout");
-      setSakiVideoBubble(
-        language === "en-US"
-          ? "Not enough Saki points to buy this～ Chat more with me to earn points! ✨"
-          : language === "zh-TW"
-          ? "目前 Saki 積分不夠買這個呢～可以多和我聊天賺取積分哦！✨"
-          : language === "ja-JP"
-          ? "これを買うのに足りるだけの Saki ポイントがないよ～もっとおしゃべりしてポイントを貯めよう！✨"
-          : "当前 Saki 积分不够买这个呢～可以多和我聊天赚取积分哦！✨"
-      );
+      setSakiVideoBubble(t("saki.chat.notEnoughPoints"));
       if (pokeTimerRef.current) window.clearTimeout(pokeTimerRef.current);
       pokeTimerRef.current = window.setTimeout(() => {
         setSakiPokeMood(null);
@@ -718,20 +817,9 @@ export function SakiFloatingChat({
   };
 
   function handleMiniGameFinish(score: number, expReward: number) {
-    const isEn = language === "en-US";
-    const isTw = language === "zh-TW";
-    const isJa = language === "ja-JP";
     addFavorabilityExp(expReward);
     setSakiPokeMood("gaming");
-    setSakiVideoBubble(
-      isEn
-        ? `Awesome! Scored ${score} pts, earned ${expReward} Affection EXP～✨`
-        : isTw
-        ? `太棒啦！得了 ${score} 分，獲得了 ${expReward} 點好感度經驗～✨`
-        : isJa
-        ? `すごい！${score} 点取ったよ、親密度経験値を ${expReward} 獲得した～✨`
-        : `太棒啦！得了 ${score} 分，获得了 ${expReward} 点好感度经验～✨`
-    );
+    setSakiVideoBubble(tFormat("saki.chat.miniGameFinish", score, expReward));
     if (pokeTimerRef.current) window.clearTimeout(pokeTimerRef.current);
     pokeTimerRef.current = window.setTimeout(() => {
       setSakiPokeMood(null);
@@ -999,7 +1087,7 @@ export function SakiFloatingChat({
     const seq = ++reconnectSeqRef.current;
     const checkActiveTask = async () => {
       try {
-        const result = await api.sakiGetActiveTask(token, instance?.id);
+        const result = await api.sakiGetActiveTask(token, activeInstance?.id);
         if (seq !== reconnectSeqRef.current) return;
         if (!result.hasActiveTask || !result.task || result.task.status !== "running") {
           activeTaskIdRef.current = null;
@@ -1304,7 +1392,7 @@ export function SakiFloatingChat({
 
   useEffect(() => {
     void reconnectActiveTask();
-  }, [token, instance?.id]);
+  }, [token, activeInstance?.id]);
 
   async function selectModel(modelId: string) {
     onCurrentModelIdChange(modelId);
@@ -1384,7 +1472,7 @@ export function SakiFloatingChat({
         if (!annotationModeRef.current) return;
         const capture = readSakiSelectionCapture(target);
         if (!capture) return;
-        void submitSakiSelectionCapture(capture);
+        applySakiSelectionCapture(capture);
       }, 0);
     };
 
@@ -1448,7 +1536,7 @@ export function SakiFloatingChat({
           contextKey: existing?.contextKey ?? contextKey,
           label: existing?.label ?? baseContextLabel,
           detail: existing?.detail ?? baseContextPath,
-          instanceId: (existing?.instanceId ?? instance?.id) || null,
+          instanceId: (existing?.instanceId ?? activeInstance?.id) || null,
           title: sakiConversationTitle(storedMessages),
           messages: storedMessages,
           createdAt: existing?.createdAt ?? now,
@@ -1476,7 +1564,7 @@ export function SakiFloatingChat({
         }
       }
     },
-    [baseContextLabel, baseContextPath, contextKey, instance?.id, syncConversationToCloud, token]
+    [baseContextLabel, baseContextPath, contextKey, activeInstance?.id, syncConversationToCloud, token]
   );
 
   useEffect(() => {
@@ -1502,7 +1590,7 @@ export function SakiFloatingChat({
     activeConversationIdRef.current = newId;
     setActiveConversationId(newId);
     setMessages([
-      createSakiWelcomeMessage(getSakiWelcomeMessageText(instance, panelContext.label))
+      createSakiWelcomeMessage(getSakiWelcomeMessageText(activeInstance, activePanelContext.label))
     ]);
     setDraft("");
     setPanelError(null);
@@ -1513,7 +1601,7 @@ export function SakiFloatingChat({
     setComposerNotice(null);
     setMode(coerceSakiMode("agent", canUseChat, canUseAgent));
     setPermissionMode(defaultSakiAgentPermissionMode);
-  }, [canUseAgent, canUseChat, contextKey, instance, loading, messages, panelContext.label, saveConversationStateDirectly]);
+  }, [canUseAgent, canUseChat, contextKey, activeInstance, loading, messages, activePanelContext.label, saveConversationStateDirectly]);
 
   useEffect(() => {
     if (restoringContextRef.current) {
@@ -1596,7 +1684,7 @@ export function SakiFloatingChat({
         let nextSkills = status.skills;
         if (canUseSkills) {
           try {
-            nextSkills = await api.sakiSkills(token, instance ? `${instance.name} ${instance.workingDirectory} coding agent` : "coding agent");
+            nextSkills = await api.sakiSkills(token, activeInstance ? `${activeInstance.name} ${activeInstance.workingDirectory} coding agent` : "coding agent");
           } catch {
             nextSkills = status.skills;
           }
@@ -1619,7 +1707,7 @@ export function SakiFloatingChat({
     return () => {
       disposed = true;
     };
-  }, [canUseSkills, instance, open, token]);
+  }, [canUseSkills, activeInstance, open, token]);
 
   useEffect(() => {
     function clampCurrentLauncherPosition() {
@@ -2003,7 +2091,7 @@ export function SakiFloatingChat({
     restoringContextRef.current = true;
     setActiveConversationId(id);
     setMessages([
-      createSakiWelcomeMessage(getSakiWelcomeMessageText(instance, panelContext.label))
+      createSakiWelcomeMessage(getSakiWelcomeMessageText(activeInstance, activePanelContext.label))
     ]);
     setDraft("");
     setPanelError(null);
@@ -2044,6 +2132,112 @@ export function SakiFloatingChat({
       startNewConversation();
     }
   }
+
+  const getContextKeyForSelection = useCallback(
+    (target: SakiWorkspaceSelection) => {
+      if (target.type === "current") {
+        return instance ? `instance:${instance.id}` : `panel:${panelContext.label}:${panelContext.detail}`;
+      }
+      if (target.type === "instance") {
+        return `instance:${target.instanceId}`;
+      }
+      const pContext = getPanelContextForView(target.view, t);
+      return `panel:${pContext.label}:${pContext.detail}`;
+    },
+    [instance, panelContext.detail, panelContext.label, t]
+  );
+
+  const handleSelectWorkspace = useCallback(
+    (target: SakiWorkspaceSelection) => {
+      if (hasPersistableSakiSpeech(messages)) {
+        conversationsRef.current[contextKey] = messages;
+        saveConversationStateDirectly(messages, activeConversationIdRef.current);
+      }
+      setWorkspaceSelection(target);
+      setWorkspaceDropdownOpen(false);
+      setWorkspaceSearch("");
+
+      const nextKey = getContextKeyForSelection(target);
+      const existingConv = storedConversations.find((c) => c.contextKey === nextKey);
+      if (existingConv) {
+        loadConversation(existingConv);
+      } else {
+        const nextInst =
+          target.type === "current"
+            ? instance
+            : target.type === "instance"
+              ? availableInstances.find((i) => i.id === target.instanceId) ?? null
+              : null;
+        const nextPContext =
+          target.type === "current"
+            ? panelContext
+            : target.type === "page"
+              ? getPanelContextForView(target.view, t)
+              : nextInst
+                ? { label: nextInst.name, detail: nextInst.workingDirectory || `实例 ${nextInst.name}` }
+                : panelContext;
+
+        const id = newClientId();
+        activeConversationIdRef.current = id;
+        restoringContextRef.current = true;
+        setActiveConversationId(id);
+        setMessages([
+          createSakiWelcomeMessage(getSakiWelcomeMessageText(nextInst, nextPContext.label))
+        ]);
+        setDraft("");
+        setPanelError(null);
+        setContextTitle(null);
+        setContextText(null);
+        setAttachments([]);
+        setComposerNotice(null);
+        setHistoryOpen(false);
+        setMessagesExpanded(true);
+      }
+    },
+    [availableInstances, contextKey, getContextKeyForSelection, instance, messages, panelContext, saveConversationStateDirectly, storedConversations, t]
+  );
+
+  const handleJumpToWorkspace = useCallback(
+    (event: React.MouseEvent, view: ViewMode, instanceId?: string) => {
+      event.stopPropagation();
+      setWorkspaceDropdownOpen(false);
+      setWorkspaceSearch("");
+      if (onNavigateView) {
+        onNavigateView(view, instanceId);
+      }
+    },
+    [onNavigateView]
+  );
+
+  const accessiblePages = useMemo(() => {
+    const list: Array<{ view: ViewMode; label: string; detail: string; icon: React.ComponentType<{ size?: number; className?: string }> }> = [
+      { view: "dashboard", label: t("nav.dashboard") || "控制台", detail: t("context.dashboard.detail") || "全局概览与状态", icon: LayoutDashboard },
+      { view: "instances", label: t("nav.instances") || "实例管理", detail: t("context.instances.detail") || "运行实例与容器", icon: Server },
+      { view: "nodes", label: t("nav.nodes") || "节点管理", detail: t("context.nodes.detail") || "节点连接与集群状态", icon: HardDrive },
+      { view: "templates", label: t("nav.templates") || "模板市场", detail: t("context.templates.detail") || "实例模板配置", icon: LayoutTemplate },
+      { view: "users", label: t("nav.users") || "用户管理", detail: t("context.users.detail") || "用户权限管理", icon: UserCog },
+      { view: "audit", label: t("nav.audit") || "审计日志", detail: t("context.audit.detail") || "安全审计事件追溯", icon: FileText },
+      { view: "settings", label: t("nav.settings") || "系统设置", detail: t("context.settings.detail") || "Saki 与系统配置", icon: Settings },
+      { view: "reliability", label: t("nav.reliability") || "系统可靠性", detail: t("context.reliability.detail") || "服务可靠性监控", icon: ShieldCheck },
+      { view: "plugins", label: t("nav.plugins") || "插件中心", detail: t("context.plugins.detail") || "主题与拓展插件", icon: Sparkles },
+      { view: "about", label: t("nav.about") || "关于", detail: "系统架构与帮助", icon: Info }
+    ];
+    if (availableViews && availableViews.length > 0) {
+      return list.filter((item) => availableViews.includes(item.view));
+    }
+    return list;
+  }, [availableViews, t]);
+
+  const filteredInstances = useMemo(() => {
+    if (!workspaceSearch.trim()) return availableInstances;
+    const query = workspaceSearch.trim().toLowerCase();
+    return availableInstances.filter(
+      (inst) =>
+        inst.name.toLowerCase().includes(query) ||
+        inst.id.toLowerCase().includes(query) ||
+        (inst.workingDirectory && inst.workingDirectory.toLowerCase().includes(query))
+    );
+  }, [availableInstances, workspaceSearch]);
 
   function replaceAction(action: SakiAgentAction) {
     setMessages((current) =>
@@ -2257,7 +2451,7 @@ export function SakiFloatingChat({
   function toggleSelectionAnnotation() {
     if (loading) return;
     if (annotationModeRef.current) {
-      stopSelectionAnnotation("已取消注释选择。");
+      stopSelectionAnnotation("已取消选中文本。");
       return;
     }
 
@@ -2266,10 +2460,10 @@ export function SakiFloatingChat({
     annotationModeRef.current = true;
     setAnnotationMode(true);
     setOpen(true);
-    showComposerNotice("请选择页面文本，松开鼠标后 Saki 会开始分析。按 Esc 取消。");
+    showComposerNotice("请选择页面或终端文本，选中文本后将填入输入框。按 Esc 取消。");
   }
 
-  async function submitSakiSelectionCapture(capture: SakiSelectionCapture) {
+  function applySakiSelectionCapture(capture: SakiSelectionCapture) {
     if (loading) return;
     const selectedText = compactContextText(capture.text, sakiSelectionContextLimit);
     if (!selectedText) return;
@@ -2281,16 +2475,20 @@ export function SakiFloatingChat({
       window.getSelection()?.removeAllRanges();
     }
 
-    const title = capture.title;
-    const message = draft.trim() || "请分析这段选中的文本。";
     setOpen(true);
-    setMessagesExpanded(true);
-    setContextTitle(title);
-    setContextText(selectedText);
-    await submit(undefined, {
-      message,
-      contextTitle: title,
-      contextText: selectedText
+    keepComposerVisible(true);
+    setDraft((prev) => {
+      if (!prev.trim()) return selectedText;
+      return `${prev}\n${selectedText}`;
+    });
+    showComposerNotice("已将选中文本填入输入框。");
+
+    window.requestAnimationFrame(() => {
+      const textarea = composerTextareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      const len = textarea.value.length;
+      textarea.setSelectionRange(len, len);
     });
   }
 
@@ -2489,7 +2687,7 @@ export function SakiFloatingChat({
 
   async function capturePetSticker() {
     if (!navigator.mediaDevices?.getDisplayMedia) {
-      pet.showBubble(language === "en-US" ? "This browser cannot capture the screen." : language === "ja-JP" ? "このブラウザはスクリーンショット撮影に対応していません。" : "当前浏览器不支持截图贴图。");
+      pet.showBubble(t("saki.chat.screenCaptureNotSupported"));
       return;
     }
     let stream: MediaStream | null = null;
@@ -2512,7 +2710,7 @@ export function SakiFloatingChat({
       const dataUrl = canvas.toDataURL("image/webp", 0.72);
       pet.addSticker(dataUrl, Math.round((globalThis.innerWidth || 800) / 2 - 90), 96);
       pet.closeWidget();
-      pet.showBubble(language === "en-US" ? "Sticker placed～" : language === "ja-JP" ? "シールを貼ったよ～" : "贴图放好啦～");
+      pet.showBubble(t("saki.chat.stickerPlaced"));
     } catch (err) {
       pet.showBubble(err instanceof Error ? err.message : "截图已取消");
     } finally {
@@ -2643,11 +2841,11 @@ export function SakiFloatingChat({
 
   function openWorkspacePath(path: string, line?: number) {
     if (!onOpenWorkspaceFile) return;
-    if (!instance) {
+    if (!activeInstance) {
       showComposerNotice("先选择一个实例，才能打开文件。");
       return;
     }
-    onOpenWorkspaceFile(path, line);
+    onOpenWorkspaceFile(path, line, activeInstance.id);
   }
 
   function stopSakiGeneration() {
@@ -2821,7 +3019,7 @@ export function SakiFloatingChat({
       const remaining = messages.slice(0, turn.userIndex);
       const nextMessages = remaining.length > 0
         ? remaining
-        : [createSakiWelcomeMessage(getSakiWelcomeMessageText(instance, panelContext.label))];
+        : [createSakiWelcomeMessage(getSakiWelcomeMessageText(activeInstance, activePanelContext.label))];
       setMessages(nextMessages);
       saveConversationStateDirectly(nextMessages);
       window.dispatchEvent(new CustomEvent("saki:files_modified"));
@@ -2851,7 +3049,7 @@ export function SakiFloatingChat({
       const remaining = [...messages.slice(0, turn.userIndex), ...messages.slice(turn.assistantIndex + 1)];
       const nextMessages = remaining.length > 0
         ? remaining
-        : [createSakiWelcomeMessage(getSakiWelcomeMessageText(instance, panelContext.label))];
+        : [createSakiWelcomeMessage(getSakiWelcomeMessageText(activeInstance, activePanelContext.label))];
       setMessages(nextMessages);
       saveConversationStateDirectly(nextMessages);
       window.dispatchEvent(new CustomEvent("saki:files_modified"));
@@ -2929,7 +3127,7 @@ export function SakiFloatingChat({
       const remaining = messages.slice(0, targetIndex);
       const nextMessages = remaining.length > 0
         ? remaining
-        : [createSakiWelcomeMessage(getSakiWelcomeMessageText(instance, panelContext.label))];
+        : [createSakiWelcomeMessage(getSakiWelcomeMessageText(activeInstance, activePanelContext.label))];
       
       setMessages(nextMessages);
 
@@ -3043,11 +3241,11 @@ export function SakiFloatingChat({
     const request = {
       message: value,
       history,
-      instanceId: (storedConversations.find((conversation) => conversation.id === activeConversationId)?.instanceId ?? instance?.id) || null,
+      instanceId: (storedConversations.find((conversation) => conversation.id === activeConversationId)?.instanceId ?? activeInstance?.id) || null,
       panelError: requestPanelError,
       contextTitle: requestContextTitle,
       contextText: requestContextText,
-      auditSearch: !instance && panelContext.auditSearch ? value : null,
+      auditSearch: !activeInstance && activePanelContext.auditSearch ? value : null,
       mode: requestMode,
       ...(requestMode === "agent" ? { agentPermissionMode: permissionMode } : {}),
       selectedSkillIds,
@@ -3394,7 +3592,7 @@ export function SakiFloatingChat({
   }
   submitRef.current = submit;
 
-  const auditSearchActive = !instance && panelContext.auditSearch;
+  const auditSearchActive = !activeInstance && activePanelContext.auditSearch;
   const activeConversation = storedConversations.find((conversation) => conversation.id === activeConversationId);
   const contextLabel = activeConversation?.label ?? baseContextLabel;
   const contextPath = activeConversation?.detail ?? baseContextPath;
@@ -3402,6 +3600,37 @@ export function SakiFloatingChat({
   const statusClass = reachable === false ? "fallback" : reachable ? "online" : "pending";
   const statusLabel = reachable === false ? "本地回退" : reachable ? "已接入" : "待连接";
   const agentModeStatusLabel = mode === "agent" ? `${statusLabel} · ${sakiPermissionModeLabel(permissionMode)}` : statusLabel;
+
+  const workspaceDisplayText = useMemo(() => {
+    if (statusClass === "fallback") {
+      return statusLabel;
+    }
+    if (workspaceSelection.type === "current") {
+      const currentName = activeInstance ? activeInstance.name : activePanelContext.label;
+      return `当前界面 · ${currentName}`;
+    }
+    if (workspaceSelection.type === "page") {
+      return `页面 · ${activePanelContext.label}`;
+    }
+    if (workspaceSelection.type === "instance") {
+      return `实例 · ${activeInstance?.name ?? "未知实例"}`;
+    }
+    return formatSakiContextPath(contextPath) || statusLabel;
+  }, [activeInstance, activePanelContext.label, contextPath, statusClass, statusLabel, workspaceSelection]);
+
+  const workspaceTitle = useMemo(() => {
+    if (statusClass === "fallback") {
+      return `Saki 状态: ${statusLabel}${contextPath ? ` (上下文: ${contextPath})` : ""}`;
+    }
+    const modeDesc =
+      workspaceSelection.type === "current"
+        ? "当前界面（自动跟随）"
+        : workspaceSelection.type === "page"
+          ? "固定页面工作区"
+          : "固定实例工作区";
+    return `Saki 工作区 [${modeDesc}]: ${activeInstance ? `${activeInstance.name} (${activeInstance.workingDirectory || "无路径"})` : activePanelContext.label}\n点击切换工作区`;
+  }, [activeInstance, activePanelContext.label, contextPath, statusClass, statusLabel, workspaceSelection.type]);
+
   const contextPreview = contextText ? compactContextText(contextText.replace(/\s+/g, " "), 180) : "";
   const hasStreamingAssistant = messages.some((message) => message.role === "assistant" && message.streaming);
   const isAgentBusy = Boolean(loading || hasStreamingAssistant);
@@ -3446,7 +3675,7 @@ export function SakiFloatingChat({
     };
     window.addEventListener("saki:active_task_updated", handleActiveTaskUpdated);
     return () => window.removeEventListener("saki:active_task_updated", handleActiveTaskUpdated);
-  }, [token, instance?.id]);
+  }, [token, activeInstance?.id]);
 
   useEffect(() => {
     if (mobileActiveTab === "chat") {
@@ -3464,42 +3693,13 @@ export function SakiFloatingChat({
     ...(launcherDragging ? {} : { transform: `translate(${launcherPosition.x}px, ${launcherPosition.y}px)` })
   };
 
-  const sakiGreetings = useMemo(() => {
-    if (language === "en-US") {
-      return [
-        "I'm here! Ready to help anytime～ (*╹▽╹*)",
-        "Let's do our best together today too! (ง •_•)ง",
-        "Feel free to ask me anything～ (◕ᴗ◕✿)",
-        "Standing by anytime! (๑•̀ㅂ•́)و✧",
-        "Ehehe, you can call me anytime～ (≧∇≦)ﾉ"
-      ];
-    }
-    if (language === "zh-TW") {
-      return [
-        "我在呢！隨時為你提供幫助～ (*╹▽╹*)",
-        "今天也一起加油吧！(ง •_•)ง",
-        "有什麼想問的儘管告訴我哦～ (◕ᴗ◕✿)",
-        "隨時待命！(๑•̀ㅂ•́)و✧",
-        "誒嘿，隨時都可以呼叫我～ (≧∇≦)ﾉ"
-      ];
-    }
-    if (language === "ja-JP") {
-      return [
-        "ここにいるよ！いつでも助けるね～ (*╹▽╹*)",
-        "今日も一緒に頑張ろう！(ง •_•)ง",
-        "聞きたいことがあればなんでも聞いて～ (◕ᴗ◕✿)",
-        "いつでも待機中！(๑•̀ㅂ•́)و✧",
-        "えへ、いつでも呼んでね～ (≧∇≦)ﾉ"
-      ];
-    }
-    return [
-      "我在呢！随时为你提供帮助～ (*╹▽╹*)",
-      "今天也一起加油吧！(ง •_•)ง",
-      "有什么想问的尽管告诉我哦～ (◕ᴗ◕✿)",
-      "随时待命！(๑•̀ㅂ•́)و✧",
-      "诶嘿，随时都可以呼叫我～ (≧∇≦)ﾉ"
-    ];
-  }, [language]);
+  const sakiGreetings = useMemo(() => [
+    t("saki.chat.greeting.1"),
+    t("saki.chat.greeting.2"),
+    t("saki.chat.greeting.3"),
+    t("saki.chat.greeting.4"),
+    t("saki.chat.greeting.5")
+  ], [t]);
 
   function handleSakiPoke() {
     if (pokeTimerRef.current !== null) {
@@ -3513,35 +3713,13 @@ export function SakiFloatingChat({
 
     if (streak.count >= 6) {
       streak.count = 0;
-      const eggLines = language === "en-US"
-        ? [
-            "Haaah? Poking me that much? Fine, here's your prize. I'm NOT embarrassed! (￣^￣)",
-            "Keep poking and I'll close your terminal… kidding. Dummy. Hmph.",
-            "Hmph! Middle finger delivered. Can you calm down now～ I'm not mad. I'm not!",
-            "You asked for this. Don't look so shocked. T-tsundere? That's not me!"
-          ]
-        : language === "zh-TW"
-        ? [
-            "哈啊？戳這麼多次很閒嗎……給你這個，看清楚了嗎！才、才沒有害羞！(￣^￣)",
-            "再戳就把你的終端關掉哦？……開玩笑的，笨蛋。哼。",
-            "哼！中指奉上，可以消停一下了吧～才沒有生氣呢。",
-            "……被煩到了啦。自己看去。傲嬌什麼的，才不是在說我！"
-          ]
-        : language === "ja-JP"
-        ? [
-            "はぁ？そんなにつつかないで…じゃあ、これをあげる。恥ずかしくなんてないんだからね！(￣^￣)",
-            "まだつつくならターミナル閉じるよ…って冗談だよ、バカ。ふん。",
-            "ふん！中指をプレゼント。もう落ち着いてくれるかな～怒ってないんだからね。",
-            "……もう、うるさいな。見ればいいじゃない。ツンデレなんて私じゃないもん！"
-          ]
-        : [
-            "哈啊？戳这么多次很闲吗……给你这个，看清楚了吗！才、才没有害羞！(￣^￣)",
-            "再戳就把你的终端关掉哦？……开玩笑的，笨蛋。哼。",
-            "哼！中指奉上，可以消停一下了吧～才没有生气呢。",
-            "……被烦到了啦。自己看去。傲娇什么的，才不是在说我！"
-          ];
-      const line = eggLines[Math.floor(Math.random() * eggLines.length)]
-        ?? "哼！中指奉上，可以消停一下了吧～才没有生气呢。";
+      const eggLines = [
+        t("saki.chat.egg.1"),
+        t("saki.chat.egg.2"),
+        t("saki.chat.egg.3"),
+        t("saki.chat.egg.4")
+      ];
+      const line = eggLines[Math.floor(Math.random() * eggLines.length)] ?? t("saki.chat.egg.3");
       setSakiPokeMood("middlefinger");
       setSakiVideoBubble(line);
       pokeTimerRef.current = window.setTimeout(() => {
@@ -3554,13 +3732,7 @@ export function SakiFloatingChat({
 
     const moods: NonNullable<SakiActivityMood>[] = ["wink", "happy", "OK", "surprised"];
     const randomMood: SakiActivityMood = moods[Math.floor(Math.random() * moods.length)] ?? "happy";
-    const defaultGreeting = language === "en-US"
-      ? "I'm here! Ready to help anytime～ (*╹▽╹*)"
-      : language === "zh-TW"
-      ? "我在呢！隨時為你提供幫助～ (*╹▽╹*)"
-      : language === "ja-JP"
-      ? "ここにいるよ！いつでも助けるね～ (*╹▽╹*)"
-      : "我在呢！随时为你提供帮助～ (*╹▽╹*)";
+    const defaultGreeting = t("saki.chat.greeting.1");
     const randomGreeting: string = sakiGreetings[Math.floor(Math.random() * sakiGreetings.length)] ?? defaultGreeting;
     setSakiPokeMood(randomMood);
     setSakiVideoBubble(randomGreeting);
@@ -3740,23 +3912,23 @@ export function SakiFloatingChat({
     : (activeStreamingAssistant && activeStreamingContent)
     ? activeStreamingContent
     : (activeStreamingAssistant && activeStreamingThinking)
-    ? (language === "en-US" ? "Thinking carefully... (•̀ᴗ•́)و" : language === "zh-TW" ? "正在認真思考中... (•̀ᴗ•́)و" : language === "ja-JP" ? "真剣に考え中... (•̀ᴗ•́)و" : "正在认真思考中... (•̀ᴗ•́)و")
+    ? t("saki.chat.thinking")
     : loading && !hasStreamingAssistant
-    ? (language === "en-US" ? "Thinking carefully... (•̀ᴗ•́)و" : language === "zh-TW" ? "正在認真思考中... (•̀ᴗ•́)و" : language === "ja-JP" ? "真剣に考え中... (•̀ᴗ•́)و" : "正在认真思考中... (•̀ᴗ•́)و")
+    ? t("saki.chat.thinking")
     : hasStreamingAssistant
-    ? (language === "en-US" ? "Replying... (*╹▽╹*)" : language === "zh-TW" ? "正在回覆中... (*╹▽╹*)" : language === "ja-JP" ? "返信中... (*╹▽╹*)" : "正在回复中... (*╹▽╹*)")
+    ? t("saki.chat.replying")
     : isAgentBusy && sakiActivityMood === "working"
-    ? (language === "en-US" ? "Working on code tasks... (ง •_•)ง" : language === "zh-TW" ? "正在處理程式碼任務... (ง •_•)ง" : language === "ja-JP" ? "コード作業中... (ง •_•)ง" : "正在处理代码任务... (ง •_•)ง")
+    ? t("saki.chat.working")
     : isAgentBusy && sakiActivityMood === "reading"
-    ? (language === "en-US" ? "Analyzing project... (๑•̀ㅂ•́)و" : language === "zh-TW" ? "正在分析專案中... (๑•̀ㅂ•́)و" : language === "ja-JP" ? "プロジェクト分析中... (๑•̀ㅂ•́)و" : "正在分析项目中... (๑•̀ㅂ•́)و")
+    ? t("saki.chat.reading")
     : isAgentBusy && sakiActivityMood === "checkfiles"
-    ? (language === "en-US" ? "Checking file changes... (oﾟ▽ﾟ)o" : language === "zh-TW" ? "正在檢查檔案變更... (oﾟ▽ﾟ)o" : language === "ja-JP" ? "ファイル変更確認中... (oﾟ▽ﾟ)o" : "正在检查文件变动... (oﾟ▽ﾟ)o")
+    ? t("saki.chat.checkfiles")
     : listening
-    ? (language === "en-US" ? "Dictating what you say... (◕ᴗ◕✿)" : language === "zh-TW" ? "正在聽寫你說的話... (◕ᴗ◕✿)" : language === "ja-JP" ? "話していることを書き起こし中... (◕ᴗ◕✿)" : "正在听写你说的话... (◕ᴗ◕✿)")
+    ? t("saki.chat.dictating")
     : sakiEchoState === "hearing"
-    ? (language === "en-US" ? "Release and I'll mimic your voice～" : language === "zh-TW" ? "放開後我會學你說話～" : language === "ja-JP" ? "離したら真似してみるね～" : "松开后我会学你说话～")
+    ? t("saki.chat.echoRelease")
     : sakiEchoState === "speaking"
-    ? (language === "en-US" ? "♪ Mimicking your voice～" : language === "zh-TW" ? "♪ 學你說話～" : language === "ja-JP" ? "♪ 真似中～" : "♪ 学你说话～")
+    ? t("saki.chat.echoSpeaking")
     : null;
 
   useEffect(() => {
@@ -3909,7 +4081,7 @@ export function SakiFloatingChat({
           />
 
           <div className={`saki-messages-inner ${mobileActiveTab === "chat" ? "mobile-show" : "mobile-hide"}`}>
-            <div className="saki-header">
+            <div className={`saki-header ${workspaceDropdownOpen ? "workspace-open" : ""}`}>
               <div className="saki-header-left">
                 <button
                   type="button"
@@ -3921,21 +4093,175 @@ export function SakiFloatingChat({
                   <ChevronLeft size={14} />
                   <span>陪伴</span>
                 </button>
-                <span
-                  className={`saki-agent-status ${statusClass}`}
-                  title={
-                    statusClass === "fallback"
-                      ? `Saki 状态: ${statusLabel}${contextPath ? ` (上下文: ${contextPath})` : ""}`
-                      : contextPath
-                        ? `工作区上下文: ${contextPath}`
-                        : `Saki 状态: ${statusLabel}`
-                  }
-                >
-                  <span className="saki-agent-status-dot" aria-hidden="true" />
-                  <span className="saki-agent-status-text">
-                    {statusClass === "fallback" ? statusLabel : (formatSakiContextPath(contextPath) || statusLabel)}
-                  </span>
-                </span>
+                <div className="saki-workspace-selector-container" ref={dropdownRef}>
+                  <button
+                    type="button"
+                    className={`saki-agent-status ${statusClass} ${workspaceDropdownOpen ? "dropdown-open" : ""}`}
+                    title={workspaceTitle}
+                    onClick={() => {
+                      setWorkspaceDropdownOpen((prev) => !prev);
+                      if (!workspaceDropdownOpen) {
+                        void loadInstances();
+                      }
+                    }}
+                    aria-expanded={workspaceDropdownOpen}
+                    aria-haspopup="listbox"
+                  >
+                    <span className="saki-agent-status-dot" aria-hidden="true" />
+                    <span className="saki-agent-status-text">
+                      {workspaceDisplayText}
+                    </span>
+                    <ChevronDown size={11} className={`saki-agent-status-chevron ${workspaceDropdownOpen ? "open" : ""}`} />
+                  </button>
+
+                  {workspaceDropdownOpen ? (
+                    <div className="saki-workspace-dropdown" role="listbox" aria-label="选择 Saki 工作区">
+                      <div className="saki-workspace-dropdown-header">
+                        <span className="saki-workspace-dropdown-title">工作区选择</span>
+                        <span className="saki-workspace-dropdown-hint">选择 Saki 智能体工作环境（默认自动跟随当前界面）</span>
+                      </div>
+
+                      {/* Default Workspace */}
+                      <div className="saki-workspace-section">
+                        <div className="saki-workspace-section-title">默认</div>
+                        <button
+                          type="button"
+                          className={`saki-workspace-item ${workspaceSelection.type === "current" ? "active" : ""}`}
+                          onClick={() => handleSelectWorkspace({ type: "current" })}
+                          role="option"
+                          aria-selected={workspaceSelection.type === "current"}
+                        >
+                          <div className="saki-workspace-item-icon current">
+                            <Compass size={14} />
+                          </div>
+                          <div className="saki-workspace-item-content">
+                            <div className="saki-workspace-item-title">
+                              当前界面 (自动跟随)
+                            </div>
+                            <div className="saki-workspace-item-subtitle">
+                              当前: {activeInstance ? activeInstance.name : activePanelContext.label}
+                            </div>
+                          </div>
+                          {workspaceSelection.type === "current" ? (
+                            <Check size={14} className="saki-workspace-item-check" />
+                          ) : null}
+                        </button>
+                      </div>
+
+                      {/* Pages Workspace */}
+                      <div className="saki-workspace-section">
+                        <div className="saki-workspace-section-title">页面 ({accessiblePages.length})</div>
+                        <div className="saki-workspace-items-grid">
+                          {accessiblePages.map((page) => {
+                            const isSelected = workspaceSelection.type === "page" && workspaceSelection.view === page.view;
+                            const PageIcon = page.icon;
+                            return (
+                              <div
+                                key={page.view}
+                                className={`saki-workspace-item ${isSelected ? "active" : ""}`}
+                                onClick={() => handleSelectWorkspace({ type: "page", view: page.view })}
+                                role="option"
+                                aria-selected={isSelected}
+                              >
+                                <div className="saki-workspace-item-icon page">
+                                  <PageIcon size={14} />
+                                </div>
+                                <div className="saki-workspace-item-content">
+                                  <div className="saki-workspace-item-title">{page.label}</div>
+                                  <div className="saki-workspace-item-subtitle">{page.detail}</div>
+                                </div>
+                                <div className="saki-workspace-item-actions">
+                                  {onNavigateView ? (
+                                    <button
+                                      type="button"
+                                      className="saki-workspace-item-jump-btn"
+                                      title={`前往${page.label}页面`}
+                                      onClick={(e) => handleJumpToWorkspace(e, page.view)}
+                                    >
+                                      <ExternalLink size={12} />
+                                    </button>
+                                  ) : null}
+                                  {isSelected ? <Check size={14} className="saki-workspace-item-check" /> : null}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Instances Workspace */}
+                      <div className="saki-workspace-section">
+                        <div className="saki-workspace-section-header">
+                          <span className="saki-workspace-section-title">实例 ({availableInstances.length})</span>
+                          {instancesLoading ? <Loader2 size={11} className="saki-spin" /> : null}
+                        </div>
+                        {availableInstances.length > 5 ? (
+                          <div className="saki-workspace-search-wrap">
+                            <Search size={12} />
+                            <input
+                              type="text"
+                              value={workspaceSearch}
+                              onChange={(e) => setWorkspaceSearch(e.target.value)}
+                              placeholder="搜索实例名称或目录..."
+                              className="saki-workspace-search-input"
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          </div>
+                        ) : null}
+                        <div className="saki-workspace-items-list">
+                          {filteredInstances.length > 0 ? (
+                            filteredInstances.map((inst) => {
+                              const isSelected = workspaceSelection.type === "instance" && workspaceSelection.instanceId === inst.id;
+                              const isRunning = inst.status === "RUNNING";
+                              return (
+                                <div
+                                  key={inst.id}
+                                  className={`saki-workspace-item ${isSelected ? "active" : ""}`}
+                                  onClick={() => handleSelectWorkspace({ type: "instance", instanceId: inst.id })}
+                                  role="option"
+                                  aria-selected={isSelected}
+                                >
+                                  <div className="saki-workspace-item-icon instance">
+                                    <Server size={14} />
+                                  </div>
+                                  <div className="saki-workspace-item-content">
+                                    <div className="saki-workspace-item-title">
+                                      <span
+                                        className={`saki-workspace-instance-dot ${isRunning ? "running" : "stopped"}`}
+                                        title={isRunning ? "运行中" : "已停止"}
+                                      />
+                                      <span>{inst.name}</span>
+                                    </div>
+                                    <div className="saki-workspace-item-subtitle" title={inst.workingDirectory || inst.id}>
+                                      {inst.workingDirectory ? formatSakiContextPath(inst.workingDirectory, 20) : inst.id}
+                                    </div>
+                                  </div>
+                                  <div className="saki-workspace-item-actions">
+                                    {onNavigateView ? (
+                                      <button
+                                        type="button"
+                                        className="saki-workspace-item-jump-btn"
+                                        title={`在主界面打开「${inst.name}」`}
+                                        onClick={(e) => handleJumpToWorkspace(e, "instances", inst.id)}
+                                      >
+                                        <ExternalLink size={12} />
+                                      </button>
+                                    ) : null}
+                                    {isSelected ? <Check size={14} className="saki-workspace-item-check" /> : null}
+                                  </div>
+                                </div>
+                              );
+                            })
+                          ) : (
+                            <div className="saki-workspace-empty">
+                              {instancesLoading ? "正在获取实例..." : "暂无可用实例"}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
               </div>
 
               <div className="saki-header-actions">
@@ -4119,7 +4445,7 @@ export function SakiFloatingChat({
         onStopSakiGeneration={stopSakiGeneration}
         contextText={contextText}
         auditSearchActive={Boolean(auditSearchActive)}
-        hasActiveInstance={Boolean(instance)}
+        hasActiveInstance={Boolean(activeInstance)}
         token={token}
       />
     {previewingAttachment ? (

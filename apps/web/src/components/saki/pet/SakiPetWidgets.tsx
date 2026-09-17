@@ -5,6 +5,7 @@ import type { SakiPetController, SakiPetNote, SakiPetSticker } from "./sakiPetSt
 import { weatherGlyph, weatherLabel } from "./sakiPetState.js";
 import { formatTrackTime, sakiMusicAccept } from "./sakiPetMusic.js";
 import { usePlugins } from "../../../plugins/PluginContext.js";
+import { panelT } from "../../../i18n/translations.js";
 
 function formatClock(ms: number) {
   const d = new Date(ms);
@@ -49,7 +50,7 @@ export function SakiPetDesktopBits({
       {pet.pomodoro.running
         ? createPortal(
             <div className={`saki-pet-pomo-chip ${pet.pomodoro.mode}`} title="番茄钟">
-              <span>{pet.pomodoro.mode === "focus" ? "Focus" : language === "en-US" ? "Break" : language === "ja-JP" ? "休憩" : "休息"}</span>
+              <span>{pet.pomodoro.mode === "focus" ? panelT(language || "zh-CN", "saki.pet.focus") : panelT(language || "zh-CN", "saki.pet.break")}</span>
               <strong>{formatPomodoro(pet.pomodoro.remainingMs)}</strong>
             </div>,
             document.body
@@ -161,7 +162,6 @@ export function SakiPetWidgetCard({
 }) {
   if (!pet.widget) return null;
   const isEn = language === "en-US";
-  const isJa = language === "ja-JP";
   return (
     <div className={`saki-pet-widget-card edge-${edge} ${below ? "is-below" : ""}`} onPointerDown={(event) => event.stopPropagation()}>
       <header>
@@ -359,7 +359,12 @@ function NotesPanel({ pet, isEn }: { pet: SakiPetController; isEn: boolean }) {
 
 function CalendarPanel({ pet, language }: { pet: SakiPetController; language?: string | undefined }) {
   const { year, month, cells, today } = useMemo(() => monthMatrix(pet.nowMs), [pet.nowMs]);
-  const week = language === "en-US" ? ["S", "M", "T", "W", "T", "F", "S"] : language === "ja-JP" ? ["日", "月", "火", "水", "木", "金", "土"] : ["日", "一", "二", "三", "四", "五", "六"];
+  const week = useMemo(() => {
+    const fmt = new Intl.DateTimeFormat(language || "zh-CN", { weekday: "narrow" });
+    return [0, 1, 2, 3, 4, 5, 6].map((dayOffset) => {
+      return fmt.format(new Date(Date.UTC(2023, 0, 1 + dayOffset, 12, 0, 0)));
+    });
+  }, [language]);
   return (
     <div className="saki-pet-widget-body">
       <div className="saki-pet-clock-row">

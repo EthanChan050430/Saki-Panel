@@ -1010,8 +1010,13 @@ export function Workspace({
           }}
           pullDragRequest={sakiPullDrag}
           onPullDragConsumed={() => setSakiPullDrag(null)}
-          onOpenWorkspaceFile={(path, line) => {
-            const instanceId = sakiInstance?.id ?? selectedInstanceId;
+          availableViews={availableViews}
+          activeView={effectiveView}
+          onNavigateView={(view, instanceId) => {
+            selectView(view, instanceId);
+          }}
+          onOpenWorkspaceFile={(path, line, targetInstanceId) => {
+            const instanceId = targetInstanceId ?? sakiInstance?.id ?? selectedInstanceId;
             if (!instanceId) return;
             selectView("instances");
             setSelectedInstanceId(instanceId);
