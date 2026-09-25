@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "kind": "instance-template",
+  "template": {
+    "name": "Docker Compose 服务",
+    "description": "面向自托管服务的保守 Docker Compose 实例模板。创建后请先运行配置校验与健康检查，再启动业务。",
+    "type": "docker_compose",
+    "defaultStartCommand": "docker compose up -d",
+    "defaultStopCommand": "docker compose stop",
+    "defaultWorkingDirectoryPrefix": "compose",
+    "ports": [],
+    "envs": [],
+    "autoStart": false,
+    "restartPolicy": "on_failure",
+    "restartMaxRetries": 3
+  },
+  "postCreateChecks": [
+    "确认目标目录包含经过审核的 Compose 文件，而不是从对话中临时拼接的配置。",
+    "运行 docker compose config -q 并记录结果。",
+    "确认所有持久化数据使用命名卷或明确的宿主挂载路径，并已配置备份。",
+    "为每个对外服务定义可验证的 healthcheck 或业务探针。"
+  ],
+  "nonGoals": [
+    "此模板不下载 Docker 镜像。镜像只在用户明确启动或更新服务时由 Docker 按需拉取。",
+    "此模板不创建、导入或覆盖 Compose 文件、.env、凭据和数据库。"
+  ]
+}

@@ -87,6 +87,17 @@ export const panelConfig = {
   maxTransferBytes: numberFromEnv(process.env.MAX_TRANSFER_LIMIT_MB || process.env.MAX_TRANSFER_MB, 2048) * 1024 * 1024,
   maxExtractedBytes: numberFromEnv(process.env.MAX_EXTRACTED_LIMIT_MB || process.env.MAX_EXTRACT_MB, 51200) * 1024 * 1024,
   maxArchiveEntries: numberFromEnv(process.env.MAX_ARCHIVE_ENTRIES, 200000),
+  // Operations packs are deliberately fetched at install time and never included
+  // in a Panel release archive. This URL can point at a private curated registry.
+  operationsPackRegistryUrl:
+    process.env.OPERATIONS_PACK_REGISTRY_URL?.trim() ||
+    "https://raw.githubusercontent.com/EthanChan050430/Saki-Panel/main/operations-packs/registry.json",
+  operationsPackRegistryTtlMs: Math.max(10, numberFromEnv(process.env.OPERATIONS_PACK_REGISTRY_TTL_SECONDS, 900)) * 1000,
+  operationsPackRequestTimeoutMs: Math.max(1000, numberFromEnv(process.env.OPERATIONS_PACK_REQUEST_TIMEOUT_MS, 20000)),
+  operationsPackMaxRegistryBytes: Math.max(64 * 1024, numberFromEnv(process.env.OPERATIONS_PACK_MAX_REGISTRY_MB, 2) * 1024 * 1024),
+  operationsPackMaxManifestBytes: Math.max(64 * 1024, numberFromEnv(process.env.OPERATIONS_PACK_MAX_MANIFEST_MB, 2) * 1024 * 1024),
+  operationsPackMaxResourceBytes: Math.max(1024 * 1024, numberFromEnv(process.env.OPERATIONS_PACK_MAX_RESOURCE_MB, 256) * 1024 * 1024),
+  operationsPackMaxResourcesPerPack: Math.max(1, Math.min(500, Math.floor(numberFromEnv(process.env.OPERATIONS_PACK_MAX_RESOURCES, 100)))),
   sakiProvider: process.env.SAKI_PROVIDER,
   sakiModel: process.env.SAKI_MODEL,
   sakiOllamaUrl: process.env.SAKI_OLLAMA_URL,
@@ -100,6 +111,7 @@ export const isProduction = process.env.NODE_ENV?.toLowerCase() === "production"
 export const panelPaths = {
   dataDir: path.resolve(rootDir, "data", "panel"),
   pluginsDir: path.resolve(rootDir, "data", "plugins"),
+  operationsPacksDir: path.resolve(rootDir, "data", "panel", "operations-packs"),
   sessionSettingsFile: path.resolve(rootDir, "data", "panel", "session-settings.json"),
   sakiConfigFile: path.resolve(rootDir, "data", "panel", "saki-settings.json"),
   sakiSkillsDir: path.resolve(rootDir, "data", "panel", "saki-skills")

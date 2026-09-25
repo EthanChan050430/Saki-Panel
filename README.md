@@ -119,6 +119,16 @@ When a watched instance exits unexpectedly:
 - **Access** — RBAC, session timeout, login rate limits, full audit log.
 - **Templates** — Reusable start commands, env, and deploy params.
 
+### On-demand operations packs
+
+The Templates screen offers high-quality **Minecraft Paper** and **Docker Compose Service Guardian** packs. Paper JARs, Docker images, worlds, backups, Compose projects, secrets, and bulky examples are not embedded in desktop packages, Docker images, or source-release archives. An authorized user explicitly downloads a pack; Panel then fetches the small manifest and selected Runbooks/templates/scripts/rules, verifies each file's SHA-256 and exact byte size, and caches it under `data/panel/operations-packs/`.
+
+- Minecraft includes an official Paper stable-build resolver/downloader, EULA boundary, Java guidance, TCP probe, checksum-recorded world backup, conservative log signatures, and upgrade/rollback Runbook.
+- Docker Compose includes preflight, health/log diagnosis, pinned-image deployment, verification, and rollback guidance.
+- Downloading never runs a script or changes an instance. Templates and Runbooks require a separate explicit import into the template library or Saki Skills; image pulls, server downloads, and stateful changes remain separately approved actions.
+
+Set `OPERATIONS_PACK_REGISTRY_URL` to a trusted HTTPS mirror for private deployments. Publishers should run `npm run verify:operation-packs`, which validates paths, hashes, sizes, manifests, and the two launch packs.
+
 ### Instance types
 
 | Type | For |

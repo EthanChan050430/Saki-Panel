@@ -130,6 +130,16 @@ SAKI_OLLAMA_URL=http://localhost:11434
 - **定时任务 (Cron)**：定时跑脚本、定时做冷备份、定时清理日志，每一次跑的输出日志全部存留可查。
 - **权限与模板**：RBAC 多角色分权，会话防暴力破解；常用启动命令和环境变量存为模板，下次建新实例一键套用。
 
+### 按需垂直运维包
+
+模板页现在提供 **Minecraft Paper** 与 **Docker Compose 服务守护** 两个高质量运维包。它们不把 Paper JAR、Docker 镜像、世界、备份、Compose 项目、密钥或大体积示例塞进桌面包、Docker 镜像或源码发行包：用户明确点击下载后，Panel 才从在线注册表拉取小型 manifest、Runbook、模板、脚本与诊断规则，并逐项验证 SHA-256 和精确文件大小后缓存到 `data/panel/operations-packs/`。
+
+- Minecraft：官方 Paper 稳定版解析/校验下载、EULA 边界、Java 提示、TCP 就绪探测、可追溯世界备份、日志风险签名和升级回滚 Runbook。
+- Docker Compose：配置预检、健康与日志诊断、镜像版本冻结、受控逐服务升级、验证及回滚 Runbook。
+- 下载绝不执行脚本或修改实例。已校验的模板与 Runbook 还要由用户单独点击“导入”，才会写进模板库或 Saki Skills；镜像拉取、服务端下载与任何有状态变更仍在实际操作时单独批准。
+
+私有部署可通过 `OPERATIONS_PACK_REGISTRY_URL` 指向受信任的 HTTPS 镜像。发布或改包时运行 `npm run verify:operation-packs`；该校验会检查每个资源及 manifest 的 SHA-256、大小、引用路径和两套首发包是否齐全。
+
 ---
 
 ## 插件工坊

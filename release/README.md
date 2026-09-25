@@ -66,6 +66,18 @@ export DAEMON_PORT=5480
 export WEB_PORT=5478
 ```
 
+### 按需运维包
+
+模板页中的 Minecraft Paper 与 Docker Compose 运维包不在此原生发行包内。用户明确下载后，Panel 才会从在线注册表拉取已签名校验的 Runbook、模板和诊断规则到 `data/panel/operations-packs/`；下载或导入都不会执行脚本、拉取镜像或修改实例。
+
+如需使用私有镜像，在启动前设置：
+
+```bash
+export OPERATIONS_PACK_REGISTRY_URL="https://packages.example.com/saki/operations-packs/registry.json"
+```
+
+要让模板或 Runbook 生效，还需要在模板页单独点击导入；真实的服务端下载、镜像拉取和有状态操作保持在实际执行时另行批准。
+
 ## 项目结构
 ```
 .

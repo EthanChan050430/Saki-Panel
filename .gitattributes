@@ -1,3 +1,8 @@
 *.sh text eol=lf
 *.service text eol=lf
 *.command text eol=lf
+# Pack files are hosted as repository resources, but intentionally omitted from
+# source archives and native release packages. This also keeps SHA-256 checks
+# stable between publisher machines and GitHub Raw.
+operations-packs/** text eol=lf
+/operations-packs export-ignore

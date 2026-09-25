@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "id": "minecraft-paper-log-signatures",
+  "name": "Paper 日志诊断信号",
+  "description": "供 Saki Watch 或人工排障使用的保守 Paper 日志匹配规则。所有匹配均默认只诊断；不包含自动接受 EULA、删除世界、更新插件或修改 JVM 内存等高影响动作。",
+  "engine": "saki-watch",
+  "defaults": {
+    "mode": "diagnose_only",
+    "autoApprove": false,
+    "evidence": [
+      "latest.log 的相关上下文",
+      "实例启动命令与 Java 主版本",
+      "server.properties、eula.txt 与 plugins/ 目录清单",
+      "磁盘余量和最近的实例/插件变更"
+    ]
+  },
+  "signatures": [
+    {
+      "id": "eula-not-accepted",
+      "pattern": "You need to agree to the EULA|eula=false",
+      "severity": "low",
+      "summary": "Paper 因未接受 Mojang EULA 而拒绝启动。",
+      "safeNextStep": "展示 EULA 链接并要求实例负责人显式确认；只有确认后才可写入 eula=true。",
+      "autoFix": false
+    },
+    {
+      "id": "java-version-mismatch",
+      "pattern": "UnsupportedClassVersionError|has been compiled by a more recent version of the Java Runtime|requires at least Java",
+      "severity": "medium",
+      "summary": "当前 Java 运行时版本与 Paper 或插件不兼容。",
+      "safeNextStep": "读取 java -version 和已批准的 Paper 版本；提出升级或回退方案，但不得自动安装/切换宿主机 Java。",
+      "autoFix": false
+    },
+    {
+      "id": "port-bind-failed",
+      "pattern": "FAILED TO BIND TO PORT|Address already in use|Could not bind to port",
+      "severity": "medium",
+      "summary": "Minecraft 端口无法绑定，通常是冲突进程或 server-ip/server-port 配置问题。",
+      "safeNextStep": "检查端口监听者和 server.properties；不得自动终止未知进程或修改公网暴露设置。",
+      "autoFix": false
+    },
+    {
+      "id": "jvm-out-of-memory",
+      "pattern": "OutOfMemoryError|Java heap space|GC overhead limit exceeded",
+      "severity": "high",
+      "summary": "JVM 内存耗尽，可能由玩家负载、区块、插件泄漏或错误的 Xmx 设置造成。",
+      "safeNextStep": "收集堆设置、节点内存、在线人数和最近插件变更；先建议受控重启或容量计划，不自动提高 Xmx。",
+      "autoFix": false
+    },
+    {
+      "id": "disk-full",
+      "pattern": "No space left on device|There is not enough space on the disk|Disk quota exceeded",
+      "severity": "high",
+      "summary": "节点或世界目录没有可用磁盘空间。",
+      "safeNextStep": "列出占用最大的备份/日志并创建清理计划；不自动删除世界、未知文件或唯一备份。",
+      "autoFix": false
+    },
+    {
+      "id": "plugin-load-failed",
+      "pattern": "Could not load 'plugins/|Error occurred while enabling|InvalidPluginException|Unsupported API version",
+      "severity": "medium",
+      "summary": "一个或多个插件无法加载或启用。",
+      "safeNextStep": "提取具体插件名、Paper/Minecraft 版本和完整异常链；建议禁用或升级前必须建立备份和人工批准。",
+      "autoFix": false
+    },
+    {
+      "id": "world-corruption-or-storage",
+      "pattern": "Failed to load world|Region file.*corrupt|Chunk file.*wrong location|Failed to save chunk",
+      "severity": "critical",
+      "summary": "世界文件可能损坏，或存储层发生故障。",
+      "safeNextStep": "停止自动修复，保护当前世界目录和现有备份，收集只读证据后交由负责人处理。",
+      "autoFix": false
+    }
+  ]
+}

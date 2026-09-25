@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "id": "docker-compose-service-guardian",
+  "name": "Docker Compose 服务守护",
+  "summary": "面向小型 SaaS 与自托管服务的安全诊断、升级、验证和回滚 Runbook。",
+  "category": "docker_compose",
+  "version": "1.0.0",
+  "description": "按需下载的 Docker Compose 运维包。不包含镜像、Compose 文件、凭据或备份数据；安装后仅把已校验的 Runbook、模板和策略建议缓存到控制面，所有实际命令仍由用户审批。",
+  "tags": ["docker", "compose", "self-hosted", "deployment", "backup", "rollback"],
+  "defaultResourceIds": [
+    "compose-operations-skill",
+    "compose-service-template",
+    "compose-watch-profile",
+    "compose-preflight-checklist"
+  ],
+  "capabilities": [
+    {
+      "id": "compose-preflight",
+      "name": "部署前检查",
+      "description": "发现 Compose 文件、变量、服务、端口、卷和健康检查缺口。",
+      "kind": "preflight",
+      "risk": "low"
+    },
+    {
+      "id": "compose-diagnostics",
+      "name": "故障诊断",
+      "description": "基于 compose config、状态、日志和健康检查定位最小修复。",
+      "kind": "diagnostic",
+      "risk": "low"
+    },
+    {
+      "id": "compose-safe-deploy",
+      "name": "受控部署",
+      "description": "在备份、Diff、验证和回滚点齐备后，逐服务执行升级。",
+      "kind": "deployment",
+      "risk": "high"
+    },
+    {
+      "id": "compose-rollback",
+      "name": "可验证回滚",
+      "description": "回到记录的 Compose 与镜像版本，并验证服务恢复。",
+      "kind": "rollback",
+      "risk": "high"
+    }
+  ],
+  "resources": [
+    {
+      "id": "compose-operations-skill",
+      "kind": "skill",
+      "path": "compose-operations.SKILL.md",
+      "name": "Docker Compose 安全运维 Skill",
+      "url": "./compose-operations.SKILL.md",
+      "sha256": "b8f7c850f5c4c55809eb1492d31f9452952ecfd260d47bf0d4e6777ba1da1946",
+      "sizeBytes": 4593,
+      "contentType": "text/markdown",
+      "description": "供 Saki 在 Compose 诊断、部署与回滚时使用的证据优先 Runbook。",
+      "required": true,
+      "risk": "medium"
+    },
+    {
+      "id": "compose-service-template",
+      "kind": "template",
+      "path": "template.json",
+      "name": "Docker Compose 服务模板",
+      "url": "./template.json",
+      "sha256": "c7d8022c9c0dca885c0b67d8da2de8745cdf3ad6372c2e8ed29c66372ed5c091",
+      "sizeBytes": 1169,
+      "contentType": "application/json",
+      "description": "用于创建实例时的保守默认值；不带任何应用镜像或 Compose 文件。",
+      "required": true,
+      "risk": "low"
+    },
+    {
+      "id": "compose-watch-profile",
+      "kind": "detector",
+      "path": "watch-profile.json",
+      "name": "Compose Watch 策略建议",
+      "url": "./watch-profile.json",
+      "sha256": "34d4548e8757072b5f9d32e85867aba16b88d094e6185b5f2faef457e3d54bba",
+      "sizeBytes": 1253,
+      "contentType": "application/json",
+      "description": "建议的 Watch 边界与人工批准要求；不会自动改变已有实例策略。",
+      "required": true,
+      "risk": "medium"
+    },
+    {
+      "id": "compose-preflight-checklist",
+      "kind": "documentation",
+      "path": "preflight-checklist.md",
+      "name": "Compose 上线前检查表",
+      "url": "./preflight-checklist.md",
+      "sha256": "ff15c793e1141112cc9070a8238e8f95bd573d8e07944d432aba5302d912635e",
+      "sizeBytes": 1350,
+      "contentType": "text/markdown",
+      "description": "适合人工审核、变更单与首次安全演练的检查清单。",
+      "required": true,
+      "risk": "low"
+    }
+  ]
+}

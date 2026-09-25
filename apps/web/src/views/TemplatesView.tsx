@@ -32,6 +32,7 @@ import {
 import type { CreateCustomTemplateRequest, InstanceTemplate, InstanceType, ManagedInstance, ManagedNode, RestartPolicy, UpdateTemplateRequest } from "@webops/shared";
 import { api, ApiError } from "../api.js";
 import { PageErrorToast } from "../components/common/CommonUI.js";
+import { OperationPacksPanel } from "../components/operations-packs/OperationPacksPanel.js";
 import { useNotificationCenter } from "../NotificationCenter.js";
 
 function restartPolicyLabel(policy: RestartPolicy): string {
@@ -431,6 +432,7 @@ export function TemplatesView({ token, onLogout, refreshTick }: { token: string;
   return (
     <>
       <PageErrorToast error={error} onDismiss={() => setError("")} />
+      <OperationPacksPanel token={token} onLogout={onLogout} refreshTick={refreshTick} onImported={refresh} />
 
       {/* Mobile Tab Switcher */}
       <div className="template-mobile-tabs" role="tablist">

@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "kind": "watch-profile",
+  "name": "Docker Compose 受控值班策略",
+  "recommendedPolicy": {
+    "enabled": true,
+    "mode": "diagnose_and_patch",
+    "cooldownSeconds": 900,
+    "maxRunsPerHour": 3,
+    "verifyWaitSeconds": 30,
+    "autoApproveRisk": "none",
+    "autoApproveMinConfidence": 0.9,
+    "healthCheckUrl": null,
+    "healthCheckTimeoutSeconds": 5,
+    "escalationMinutes": 20
+  },
+  "applyRules": [
+    "默认只自动收集证据和生成诊断；任何 Compose、镜像、迁移、卷或网络变更都必须人工批准。",
+    "仅在目标服务有明确 HTTP 健康端点时填写 healthCheckUrl；不要将容器端口猜测为 HTTP 服务。",
+    "升级前必须记录当前 Compose 内容和镜像版本；涉及数据库时还必须确认最近可恢复备份。",
+    "同一指纹在冷却期或频率预算内重复出现时，合并事件并升级人工处理，不循环重启。"
+  ],
+  "verification": [
+    "docker compose ps 显示目标服务已达到预期状态。",
+    "配置的 healthcheck 或业务探针通过。",
+    "关键日志不再持续产生同一错误指纹。",
+    "有状态服务的连接、迁移和数据完整性由用户定义的业务检查确认。"
+  ]
+}

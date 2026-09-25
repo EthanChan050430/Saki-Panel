@@ -29,6 +29,7 @@ import { registerJoinScriptRoutes } from "./routes/join-scripts.js";
 import { registerUserKeyRoutes } from "./routes/user-keys.js";
 import { registerPointsRoutes } from "./routes/points.js";
 import { registerPluginRoutes } from "./routes/plugins.js";
+import { registerOperationPackRoutes } from "./routes/operations-packs.js";
 import { registerIngestRoutes } from "./watch/ingest.js";
 import { registerGlobalEventSocket } from "./global-events.js";
 
@@ -103,6 +104,7 @@ export async function createPanelServer() {
   await registerUserKeyRoutes(app);
   await registerPointsRoutes(app);
   await registerPluginRoutes(app);
+  await registerOperationPackRoutes(app);
 
   // Global event bus — pushes state mutations to all connected browser sessions.
   registerGlobalEventSocket(app);

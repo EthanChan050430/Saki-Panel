@@ -17,7 +17,8 @@
     "dev:daemon": "npm run dev -w @webops/daemon",
     "dev:web": "npm run dev -w @webops/web",
     "daemon:key": "npm run key -w @webops/daemon",
-    "release": "node scripts/create-release-assets.mjs"
+    "release": "node scripts/create-release-assets.mjs",
+    "verify:operation-packs": "node scripts/verify-operation-packs.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

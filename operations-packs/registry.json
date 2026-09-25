@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-26T00:00:00.000Z",
+  "packs": [
+    {
+      "id": "minecraft-paper",
+      "name": "Minecraft Paper 运维包",
+      "summary": "按需获取官方 Paper 稳定版、保守 Watch 规则、一致备份与 TCP 就绪探测。",
+      "description": "不携带 Paper JAR、插件、世界或备份。仅在用户下载此包、并明确执行后续动作时，才分别获取可校验的脚本与官方服务端资源。",
+      "category": "minecraft",
+      "version": "1.0.0",
+      "tags": ["minecraft", "paper", "backup", "watch", "on-demand"],
+      "minPanelVersion": "3.7",
+      "manifest": {
+        "url": "./minecraft-paper/manifest.json",
+        "sha256": "c42e154339c0b14e9f7cf03c34b681572502442b3afbdb6d09bf9b24a1c8e35d",
+        "sizeBytes": 5729,
+        "contentType": "application/json"
+      }
+    },
+    {
+      "id": "docker-compose-service-guardian",
+      "name": "Docker Compose 服务守护",
+      "summary": "面向小型 SaaS 与自托管服务的安全诊断、升级、验证和回滚 Runbook。",
+      "description": "不携带镜像、Compose 文件、密钥或备份数据。下载后只缓存已校验的 Runbook、模板与策略建议，实际命令始终需要用户单独批准。",
+      "category": "docker_compose",
+      "version": "1.0.0",
+      "tags": ["docker", "compose", "self-hosted", "rollback", "on-demand"],
+      "minPanelVersion": "3.7",
+      "manifest": {
+        "url": "./docker-compose/manifest.json",
+        "sha256": "fac85fdca0a7f8599cae2ceb1eabb079571a5c7521921415a190d07c20a44772",
+        "sizeBytes": 3701,
+        "contentType": "application/json"
+      }
+    }
+  ]
+}

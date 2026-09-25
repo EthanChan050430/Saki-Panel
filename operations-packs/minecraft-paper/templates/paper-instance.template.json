@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "kind": "instance-template",
+  "template": {
+    "name": "Minecraft Paper Java 版服务器",
+    "description": "Paper 服务端的保守启动模板。先显式运行 install-paper.mjs 下载并校验 paper.jar，再创建实例；服务端 JAR 不随模板分发。停止命令刻意留空，请先在 Paper 控制台发送 stop 以完成世界保存。",
+    "type": "minecraft",
+    "defaultStartCommand": "java -Xms1024M -Xmx2048M -jar paper.jar --nogui",
+    "defaultStopCommand": null,
+    "defaultWorkingDirectoryPrefix": "minecraft",
+    "ports": [
+      {
+        "port": 25565,
+        "description": "Minecraft Java Edition 游戏端口"
+      }
+    ],
+    "envs": [],
+    "autoStart": false,
+    "restartPolicy": "on_failure",
+    "restartMaxRetries": 3
+  },
+  "variables": [
+    {
+      "id": "jarFile",
+      "name": "Paper JAR 文件",
+      "type": "string",
+      "default": "paper.jar",
+      "pattern": "^[A-Za-z0-9._-]+\\.jar$",
+      "description": "先使用 install-paper.mjs 下载并校验该文件；导入到当前 Panel 后，如需使用其他 JAR 名称，请在模板里显式编辑启动命令。"
+    },
+    {
+      "id": "memoryInitialMb",
+      "name": "初始堆内存 (MiB)",
+      "type": "integer",
+      "default": 1024,
+      "minimum": 512,
+      "description": "JVM 初始堆建议值。当前 Panel 模板不做变量替换；若需要调整，请编辑导入后的启动命令。"
+    },
+    {
+      "id": "memoryMaxMb",
+      "name": "最大堆内存 (MiB)",
+      "type": "integer",
+      "default": 2048,
+      "minimum": 1024,
+      "description": "JVM 最大堆建议值。为操作系统、原生内存、磁盘缓存和其他实例保留余量。"
+    }
+  ],
+  "preflight": [
+    "使用 install-paper.mjs --minecraft-version <已批准版本> --dry-run 解析稳定版与 SHA-256。",
+    "确认 Java 主版本满足该 Minecraft/Paper 版本要求；不要让运维包自动升级宿主机 Java。",
+    "在显式阅读并接受 Mojang EULA 后，才使用 --accept-eula 写入 eula=true。",
+    "确认 TCP 25565 已在防火墙、云安全组和反向代理策略中按需开放。"
+  ],
+  "rollback": [
+    "停止实例后，将 paper.jar.saki-previous-* 恢复为当前 paper.jar；旧 JAR 仅在 --replace 成功校验后保留。",
+    "恢复升级前的世界备份或配置前，先保留当前目录副本并记录操作原因。"
+  ]
+}

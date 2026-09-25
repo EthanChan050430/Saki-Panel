@@ -2370,3 +2370,166 @@ export interface PluginStoreState {
   mirrors: GitHubMirrorOption[];
 }
 
+// ==========================================
+// On-demand Operations Pack Interfaces
+// ==========================================
+//
+// Operations packs intentionally contain no bundled implementation in the
+// Panel release. The registry, pack manifest and every individual resource
+// are fetched at install time and pinned by SHA-256. This keeps large game
+// assets, Compose examples and optional automation out of the application
+// archive while still making the exact downloaded revision auditable.
+
+export const operationPackCategories = ["minecraft", "docker_compose"] as const;
+export type OperationPackCategory = (typeof operationPackCategories)[number];
+
+export const operationPackResourceKinds = [
+  "runbook",
+  "detector",
+  "template",
+  "compose",
+  "skill",
+  "script",
+  "documentation",
+  "binary",
+  "archive"
+] as const;
+export type OperationPackResourceKind = (typeof operationPackResourceKinds)[number];
+
+/** A remotely hosted file pinned by its content digest. */
+export interface OperationPackRemoteFile {
+  /** Absolute URL, or a URL relative to the registry/manifest that contains it. */
+  url: string;
+  /** Lowercase hexadecimal SHA-256 digest (without a `sha256:` prefix). */
+  sha256: string;
+  /** Optional publisher-declared byte count, checked before download when present. */
+  sizeBytes?: number | undefined;
+  contentType?: string | undefined;
+}
+
+/** A compact registry that points to independently downloadable pack manifests. */
+export interface OperationPackRegistryItem {
+  id: string;
+  name: string;
+  summary: string;
+  category: OperationPackCategory;
+  version: string;
+  manifest: OperationPackRemoteFile;
+  description?: string | undefined;
+  tags?: string[] | undefined;
+  iconUrl?: string | undefined;
+  minPanelVersion?: string | undefined;
+}
+
+export interface OperationPackRegistry {
+  schemaVersion: 1;
+  packs: OperationPackRegistryItem[];
+  generatedAt?: string | undefined;
+}
+
+/** One resource made available by a downloaded pack manifest. */
+export interface OperationPackResource extends OperationPackRemoteFile {
+  id: string;
+  kind: OperationPackResourceKind;
+  /** Safe, slash-separated path inside the runtime cache for this pack version. */
+  path: string;
+  name: string;
+  description?: string | undefined;
+  /** Required resources are fetched when no explicit resource selection is supplied. */
+  required?: boolean | undefined;
+  /** Downloading a resource never executes it; this only helps the UI flag review needs. */
+  risk?: SakiAgentRiskLevel | undefined;
+}
+
+/** Remote metadata only. Any executable/configuration payload belongs in `resources`. */
+export interface OperationPackManifest {
+  schemaVersion: 1;
+  id: string;
+  name: string;
+  summary: string;
+  category: OperationPackCategory;
+  version: string;
+  resources: OperationPackResource[];
+  description?: string | undefined;
+  tags?: string[] | undefined;
+  minPanelVersion?: string | undefined;
+  /** Optional defaults for a UI-driven installation. Required resources are always included. */
+  defaultResourceIds?: string[] | undefined;
+  capabilities?: Array<{
+    id: string;
+    name: string;
+    description: string;
+    kind: "preflight" | "health_check" | "backup" | "rollback" | "diagnostic" | "deployment";
+    risk?: SakiAgentRiskLevel | undefined;
+  }> | undefined;
+}
+
+export interface OperationPackDownloadedResource {
+  id: string;
+  kind: OperationPackResourceKind;
+  path: string;
+  sha256: string;
+  sizeBytes: number;
+  cached: boolean;
+}
+
+/** Persistent state for a pack cached under data/panel/operations-packs. */
+export interface InstalledOperationPack {
+  id: string;
+  name: string;
+  category: OperationPackCategory;
+  version: string;
+  manifestSha256: string;
+  installedAt: string;
+  updatedAt: string;
+  localPath: string;
+  resources: OperationPackDownloadedResource[];
+}
+
+export interface OperationPackRegistryResponse {
+  items: OperationPackRegistryItem[];
+  sourceUrl: string;
+  fetchedAt: string;
+  stale: boolean;
+  warning?: string | undefined;
+}
+
+export interface InstallOperationPackRequest {
+  /** Omit to fetch required resources plus the manifest defaults. */
+  resourceIds?: string[] | undefined;
+  /** Re-download selected resources even if their cached digest already matches. */
+  force?: boolean | undefined;
+}
+
+export interface InstallOperationPackResponse {
+  pack: InstalledOperationPack;
+  manifest: OperationPackManifest;
+  downloaded: OperationPackDownloadedResource[];
+  /** Security invariant: this endpoint only downloads and verifies; it does not execute pack files. */
+  executed: false;
+}
+
+/** Explicit, local-only import request for already verified pack resources. */
+export interface ActivateOperationPackRequest {
+  resourceIds: string[];
+}
+
+export type OperationPackActivationTarget = "template" | "saki_skill";
+
+export interface ActivatedOperationPackResource {
+  resourceId: string;
+  kind: OperationPackResourceKind;
+  target: OperationPackActivationTarget;
+  targetId: string;
+  name: string;
+  created: boolean;
+}
+
+export interface ActivateOperationPackResponse {
+  packId: string;
+  packVersion: string;
+  activated: ActivatedOperationPackResource[];
+  /** Importing a template or Skill never executes the pack's scripts. */
+  executed: false;
+}
+

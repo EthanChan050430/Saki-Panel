@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "id": "minecraft-paper",
+  "name": "Minecraft Paper 运维包",
+  "summary": "按需获取官方 Paper 稳定版、保守 Watch 规则、一致备份与端口就绪探测。",
+  "category": "minecraft",
+  "version": "1.0.0",
+  "description": "面向 Minecraft Java Edition Paper 服务器的轻量运维包。它只分发可审计的小型脚本、模板和诊断规则；Paper JAR、插件、世界和备份均不纳入 Saki Panel 镜像或发行包。安装脚本仅在操作员显式调用时，从 PaperMC 官方 Fill 服务下载一个固定版本的 STABLE 构建并校验 SHA-256。",
+  "tags": [
+    "minecraft",
+    "paper",
+    "java",
+    "watch",
+    "backup",
+    "on-demand"
+  ],
+  "minPanelVersion": "3.7",
+  "defaultResourceIds": [
+    "paper-installer",
+    "paper-instance-template",
+    "paper-watch-runbook",
+    "paper-log-signatures"
+  ],
+  "capabilities": [
+    {
+      "id": "paper-preflight",
+      "name": "稳定版预检",
+      "description": "在实际下载前解析指定 Minecraft 版本的 Paper STABLE build、SHA-256 和 Java 版本建议。",
+      "kind": "preflight",
+      "risk": "low"
+    },
+    {
+      "id": "paper-deployment",
+      "name": "按需部署 Paper",
+      "description": "只在显式执行脚本时下载官方 Paper JAR；拒绝无 --replace 的覆盖，也不会无人值守自动升级。",
+      "kind": "deployment",
+      "risk": "medium"
+    },
+    {
+      "id": "paper-world-backup",
+      "name": "一致性世界备份",
+      "description": "通过明确的 save-off 确认、tar 归档、SHA-256 回执和受限保留策略保护 world 目录。",
+      "kind": "backup",
+      "risk": "medium"
+    },
+    {
+      "id": "paper-jar-rollback",
+      "name": "JAR 回滚点",
+      "description": "批准升级后保留已校验替换前的旧 JAR；回滚仍需先停止实例并经人工确认。",
+      "kind": "rollback",
+      "risk": "medium"
+    },
+    {
+      "id": "paper-watch-diagnostics",
+      "name": "Paper Watch 诊断",
+      "description": "为 EULA、Java、端口、内存、磁盘、插件和世界风险提供只诊断的日志信号与人工处置边界。",
+      "kind": "diagnostic",
+      "risk": "low"
+    },
+    {
+      "id": "paper-port-readiness",
+      "name": "Minecraft TCP 就绪探测",
+      "description": "对指定主机和端口进行低风险 TCP 连接探测，不把 TCP 端口误作 HTTP 健康检查。",
+      "kind": "health_check",
+      "risk": "low"
+    }
+  ],
+  "resources": [
+    {
+      "id": "paper-installer",
+      "kind": "script",
+      "path": "scripts/install-paper.mjs",
+      "name": "Paper 官方稳定版安装器",
+      "url": "scripts/install-paper.mjs",
+      "sha256": "dbc5cb4014ca40700f8e362c502aa08b2ec9e0091d160c300d1f3b3c98c375c7",
+      "sizeBytes": 13704,
+      "contentType": "application/javascript",
+      "description": "显式调用后从 PaperMC Fill 下载并校验 Paper JAR；不自动接受 EULA、不自动覆盖 JAR、不自动更新。",
+      "required": true,
+      "risk": "medium"
+    },
+    {
+      "id": "paper-instance-template",
+      "kind": "template",
+      "path": "templates/paper-instance.template.json",
+      "name": "Paper 实例启动模板",
+      "url": "templates/paper-instance.template.json",
+      "sha256": "167c87a1b27dc772e4fc9068b415ae84a8c54a73233b47e0f9e47310ab0ebe6a",
+      "sizeBytes": 2433,
+      "contentType": "application/json",
+      "description": "带内存、JAR 名称、端口、预检和回滚提示的参数化实例模板。",
+      "required": false,
+      "risk": "low"
+    },
+    {
+      "id": "paper-watch-runbook",
+      "kind": "runbook",
+      "path": "runbooks/paper-watch.md",
+      "name": "Paper 值班与变更 Runbook",
+      "url": "runbooks/paper-watch.md",
+      "sha256": "d99bf4f158ffae1a32fc209a666d7809af82b09e3bd68f069877cc80511623e5",
+      "sizeBytes": 5049,
+      "contentType": "text/markdown",
+      "description": "首次部署、Watch、世界备份、升级和回滚的人工可审计步骤。",
+      "required": false,
+      "risk": "low"
+    },
+    {
+      "id": "paper-log-signatures",
+      "kind": "detector",
+      "path": "detectors/paper-log-signatures.json",
+      "name": "Paper 日志诊断信号",
+      "url": "detectors/paper-log-signatures.json",
+      "sha256": "a508a5d1cf898532d63fdca500535fdf9993982ede1ad5c6ca82d2a4e6bbc003",
+      "sizeBytes": 3635,
+      "contentType": "application/json",
+      "description": "只诊断的崩溃和风险签名；世界损坏、磁盘满、Java/插件问题均不会自动修复。",
+      "required": false,
+      "risk": "low"
+    },
+    {
+      "id": "paper-world-backup-script",
+      "kind": "script",
+      "path": "scripts/backup-world.mjs",
+      "name": "Minecraft 世界备份脚本",
+      "url": "scripts/backup-world.mjs",
+      "sha256": "40f164a1c0edbd2eb00c1d5b3b3eeaddc3315dd3df9fd361d63de7216e4e24fa",
+      "sizeBytes": 7720,
+      "contentType": "application/javascript",
+      "description": "按需创建本机 tar 备份、回执和 SHA-256；默认拒绝可能不一致的在线备份。",
+      "required": false,
+      "risk": "medium"
+    },
+    {
+      "id": "paper-port-check-script",
+      "kind": "script",
+      "path": "scripts/check-minecraft-port.mjs",
+      "name": "Minecraft TCP 端口探测",
+      "url": "scripts/check-minecraft-port.mjs",
+      "sha256": "0bf8bb9d4e09e05617b211aa03e86f1b937f8e76b4ae3500190e137887bda8e4",
+      "sizeBytes": 3218,
+      "contentType": "application/javascript",
+      "description": "按需运行的依赖零 TCP 探测，输出 JSON 并在连接失败时返回非零状态。",
+      "required": false,
+      "risk": "low"
+    }
+  ]
+}

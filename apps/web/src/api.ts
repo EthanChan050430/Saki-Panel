@@ -53,6 +53,12 @@ import type {
   PanelAppearanceSettings,
   PanelSessionSettings,
   InstalledPlugin,
+  InstalledOperationPack,
+  ActivateOperationPackRequest,
+  ActivateOperationPackResponse,
+  InstallOperationPackRequest,
+  InstallOperationPackResponse,
+  OperationPackRegistryResponse,
   PluginRegistryItem,
   PluginStoreState,
   PluginUpdateStatus,
@@ -1273,6 +1279,31 @@ export const api = {
   },
   templates(token: string) {
     return requestJson<InstanceTemplate[]>("/api/templates", {}, token);
+  },
+  operationPackRegistry(token: string, refresh = false) {
+    return requestJson<OperationPackRegistryResponse>(
+      pathWithQuery("/api/operations-packs", { refresh: refresh ? "true" : undefined }),
+      {},
+      token
+    );
+  },
+  async installedOperationPacks(token: string) {
+    const response = await requestJson<{ items: InstalledOperationPack[] }>("/api/operations-packs/installed", {}, token);
+    return Array.isArray(response.items) ? response.items : [];
+  },
+  installOperationPack(token: string, packId: string, input: InstallOperationPackRequest = {}) {
+    return requestJson<InstallOperationPackResponse>(
+      `/api/operations-packs/${encodeURIComponent(packId)}/install`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  activateOperationPack(token: string, packId: string, input: ActivateOperationPackRequest) {
+    return requestJson<ActivateOperationPackResponse>(
+      `/api/operations-packs/${encodeURIComponent(packId)}/activate`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
   },
   createCustomTemplate(token: string, input: CreateCustomTemplateRequest) {
     return requestJson<InstanceTemplate>(
