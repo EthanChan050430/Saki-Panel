@@ -92,8 +92,6 @@ __pycache__/
 .tmp-*/
 bin/
 dist-package/
-cmd/
-scripts/create-release-assets.mjs
 saki-panel*
 *.bat
 releases/
