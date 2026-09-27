@@ -10,7 +10,7 @@ import type {
   UploadInstanceFileRequest,
   WriteInstanceFileRequest
 } from "@webops/shared";
-import { requirePermission } from "../auth.js";
+import { requireInstancePermission } from "../auth.js";
 import { loadVisibleInstance, type InstanceWithAccess } from "../instance-access.js";
 import { writeAuditLog } from "../audit.js";
 import {
@@ -72,7 +72,7 @@ async function handleFailure(
 }
 
 export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/api/instances/:id/files", { preHandler: requirePermission("file.view") }, async (request, reply) => {
+  app.get("/api/instances/:id/files", { preHandler: requireInstancePermission("file.view") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const instance = await loadInstance(request, id);
     if (!instance) {
@@ -87,7 +87,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.get("/api/instances/:id/files/content", { preHandler: requirePermission("file.read") }, async (request, reply) => {
+  app.get("/api/instances/:id/files/content", { preHandler: requireInstancePermission("file.read") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const instance = await loadInstance(request, id);
     if (!instance) {
@@ -102,7 +102,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.put("/api/instances/:id/files/content", { preHandler: requirePermission("file.write") }, async (request, reply) => {
+  app.put("/api/instances/:id/files/content", { preHandler: requireInstancePermission("file.write") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as Partial<WriteInstanceFileRequest>;
     const instance = await loadInstance(request, id);
@@ -134,7 +134,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.post("/api/instances/:id/files/upload", { preHandler: requirePermission("file.write") }, async (request, reply) => {
+  app.post("/api/instances/:id/files/upload", { preHandler: requireInstancePermission("file.write") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const instance = await loadInstance(request, id);
     if (!instance) {
@@ -212,7 +212,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.get("/api/instances/:id/files/download", { preHandler: requirePermission("file.read") }, async (request, reply) => {
+  app.get("/api/instances/:id/files/download", { preHandler: requireInstancePermission("file.read") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const instance = await loadInstance(request, id);
     if (!instance) {
@@ -278,7 +278,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.post("/api/instances/:id/files/mkdir", { preHandler: requirePermission("file.write") }, async (request, reply) => {
+  app.post("/api/instances/:id/files/mkdir", { preHandler: requireInstancePermission("file.write") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as Partial<MakeInstanceDirectoryRequest>;
     const instance = await loadInstance(request, id);
@@ -307,7 +307,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.delete("/api/instances/:id/files", { preHandler: requirePermission("file.delete") }, async (request, reply) => {
+  app.delete("/api/instances/:id/files", { preHandler: requireInstancePermission("file.delete") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as Partial<DeleteInstanceFileRequest>;
     const instance = await loadInstance(request, id);
@@ -336,7 +336,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.post("/api/instances/:id/files/rename", { preHandler: requirePermission("file.write") }, async (request, reply) => {
+  app.post("/api/instances/:id/files/rename", { preHandler: requireInstancePermission("file.write") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as Partial<RenameInstanceFileRequest>;
     const instance = await loadInstance(request, id);
@@ -371,7 +371,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.post("/api/instances/:id/files/copy", { preHandler: requirePermission("file.write") }, async (request, reply) => {
+  app.post("/api/instances/:id/files/copy", { preHandler: requireInstancePermission("file.write") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as { fromPath?: string; toPath?: string };
     const instance = await loadInstance(request, id);
@@ -406,7 +406,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.post("/api/instances/:id/files/extract", { preHandler: requirePermission("file.write") }, async (request, reply) => {
+  app.post("/api/instances/:id/files/extract", { preHandler: requireInstancePermission("file.write") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as Partial<ExtractInstanceArchiveRequest>;
     const instance = await loadInstance(request, id);
@@ -454,7 +454,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.post("/api/instances/:id/files/archive", { preHandler: requirePermission("file.write") }, async (request, reply) => {
+  app.post("/api/instances/:id/files/archive", { preHandler: requireInstancePermission("file.write") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as Partial<ArchiveInstancePathsRequest>;
     const instance = await loadInstance(request, id);
@@ -494,7 +494,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.post("/api/instances/:id/files/archive/download", { preHandler: requirePermission("file.read") }, async (request, reply) => {
+  app.post("/api/instances/:id/files/archive/download", { preHandler: requireInstancePermission("file.read") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as Partial<DownloadInstanceArchiveRequest>;
     const instance = await loadInstance(request, id);

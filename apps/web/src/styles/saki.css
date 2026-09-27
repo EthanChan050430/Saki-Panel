@@ -4,6 +4,50 @@
 
 
 /* === Saki Action Row (Claude Code style) === */
+.saki-agent-widget {
+  --saki-widget-ink: #382b51;
+  --saki-widget-muted: #746985;
+  margin: 8px 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(167, 129, 202, .24);
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(255, 250, 255, .96), rgba(248, 242, 255, .92));
+  box-shadow: 0 5px 18px rgba(94, 59, 132, .07);
+  color: var(--saki-widget-ink);
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.saki-agent-widget-heading { display: flex; align-items: center; gap: 9px; font-size: 13px; }
+.saki-agent-widget-heading strong { font-size: 13px; font-weight: 700; }
+.saki-agent-widget-icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 9px; background: rgba(166, 116, 206, .14); color: #8b55b2; }
+.saki-todo-count, .saki-question-state { margin-left: auto; font-size: 11px; color: var(--saki-widget-muted); white-space: nowrap; }
+.saki-todo-progress { height: 5px; margin: 13px 0 12px; border-radius: 8px; overflow: hidden; background: rgba(151, 116, 180, .15); }
+.saki-todo-progress span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #a976d3, #e49ac6); transition: width .25s ease; }
+.saki-todo-items { list-style: none; display: grid; gap: 9px; padding: 0; margin: 0; }
+.saki-todo-items li { display: flex; align-items: flex-start; gap: 9px; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.saki-todo-items li.done { color: var(--saki-widget-muted); }
+.saki-todo-items li.done > span:last-child { text-decoration: line-through; text-decoration-color: rgba(139, 85, 178, .45); }
+.saki-todo-check { width: 17px; height: 17px; flex: 0 0 17px; display: inline-flex; align-items: center; justify-content: center; margin-top: 1px; border: 1.5px solid #b9a8cd; border-radius: 6px; }
+.saki-todo-items li.done .saki-todo-check { color: white; background: #a46ec4; border-color: #a46ec4; }
+.saki-question-text { margin: 12px 0; font-size: 13px; line-height: 1.6; font-weight: 600; overflow-wrap: anywhere; }
+.saki-question-options { display: grid; gap: 7px; margin-bottom: 10px; }
+.saki-question-option { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 11px; border: 1px solid rgba(158, 127, 188, .24); border-radius: 10px; background: rgba(255, 255, 255, .72); color: inherit; font: inherit; font-size: 12px; text-align: left; cursor: pointer; transition: border-color .15s, background .15s; overflow-wrap: anywhere; }
+.saki-question-option:hover, .saki-question-option.selected { border-color: #ae78ca; background: rgba(179, 126, 212, .12); }
+.saki-question-radio { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex: 0 0 16px; border: 1.5px solid #b9a8cd; border-radius: 50%; }
+.saki-question-option.selected .saki-question-radio { color: white; background: #a46ec4; border-color: #a46ec4; }
+.saki-question-custom { width: 100%; min-height: 60px; padding: 9px 11px; resize: vertical; border: 1px solid rgba(158, 127, 188, .3); border-radius: 10px; background: rgba(255, 255, 255, .78); color: inherit; font: inherit; font-size: 12px; box-sizing: border-box; }
+.saki-question-custom:focus { outline: 2px solid rgba(169, 118, 211, .3); border-color: #a976d3; }
+.saki-question-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.saki-question-actions button { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 9px; font: inherit; font-size: 12px; cursor: pointer; }
+.saki-question-submit { color: white; background: #9d66bd; border: 1px solid #9d66bd; }
+.saki-question-skip { color: var(--saki-widget-muted); background: transparent; border: 1px solid rgba(158, 127, 188, .3); }
+.saki-question-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.saki-question-answer { margin: 11px 0 0; padding: 9px 11px; border-radius: 9px; background: rgba(169, 118, 211, .1); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.saki-question-error { margin: 8px 0 0; color: #c23b63; font-size: 12px; }
+[data-theme="dark"] .saki-agent-widget { --saki-widget-ink: #f0e8f7; --saki-widget-muted: #baaccb; border-color: rgba(194, 150, 220, .26); background: linear-gradient(145deg, rgba(46, 35, 65, .96), rgba(39, 34, 58, .96)); box-shadow: 0 5px 18px rgba(0, 0, 0, .14); }
+[data-theme="dark"] .saki-question-option, [data-theme="dark"] .saki-question-custom { background: rgba(22, 20, 36, .38); border-color: rgba(194, 150, 220, .3); }
+[data-theme="dark"] .saki-question-option:hover, [data-theme="dark"] .saki-question-option.selected { background: rgba(169, 118, 211, .2); border-color: #bb8bd9; }
+
 .saki-action-row {
   margin: 2px 0;
   font-size: 13px;
@@ -192,6 +236,219 @@
   color: var(--accent, #3b82f6);
   background: color-mix(in srgb, var(--accent, #3b82f6) 14%, transparent);
 }
+.saki-action-diff-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.05);
+  margin-left: 4px;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+[data-theme="dark"] .saki-action-diff-stats {
+  background: rgba(255, 255, 255, 0.08);
+}
+.saki-diff-stat-add {
+  color: #16a34a;
+}
+[data-theme="dark"] .saki-diff-stat-add {
+  color: #4ade80;
+}
+.saki-diff-stat-del {
+  color: #dc2626;
+}
+[data-theme="dark"] .saki-diff-stat-del {
+  color: #f87171;
+}
+.saki-diff-stat-neutral {
+  color: #9ca3af;
+}
+
+.saki-action-diff-container {
+  margin: 4px 0;
+}
+.saki-action-edit-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  border-radius: 6px;
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  color: #15803d;
+  font-size: 12px;
+  font-weight: 500;
+}
+[data-theme="dark"] .saki-action-edit-summary {
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(34, 197, 94, 0.3);
+  color: #86efac;
+}
+
+.saki-git-diff-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0;
+}
+.saki-git-diff-file-card {
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.09);
+  background: #ffffff;
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+[data-theme="dark"] .saki-git-diff-file-card {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: #141622;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.saki-git-diff-file-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.03);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.07);
+  font-size: 12px;
+  font-weight: 500;
+  color: #374151;
+}
+[data-theme="dark"] .saki-git-diff-file-header {
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+}
+.saki-git-diff-file-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.saki-git-diff-file-icon {
+  color: #6b7280;
+  flex-shrink: 0;
+}
+[data-theme="dark"] .saki-git-diff-file-icon {
+  color: #9ca3af;
+}
+.saki-git-diff-file-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.saki-git-diff-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.saki-git-diff-copy-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #111827;
+}
+[data-theme="dark"] .saki-git-diff-copy-btn {
+  color: #9ca3af;
+}
+[data-theme="dark"] .saki-git-diff-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f3f4f6;
+}
+.saki-git-diff-lines {
+  margin: 0;
+  padding: 4px 0;
+  overflow-x: auto;
+  max-height: 420px;
+  line-height: 1.5;
+  white-space: pre;
+}
+.saki-git-diff-line {
+  display: flex;
+  align-items: flex-start;
+  padding: 1px 10px;
+  min-width: 100%;
+  box-sizing: border-box;
+}
+.saki-git-diff-line-gutter {
+  user-select: none;
+  width: 16px;
+  flex-shrink: 0;
+  text-align: center;
+  font-weight: 700;
+  margin-right: 8px;
+  opacity: 0.75;
+}
+.saki-git-diff-line-content {
+  flex: 1 1 auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.saki-git-diff-line.add {
+  background-color: rgba(34, 197, 94, 0.13);
+  color: #15803d;
+  border-left: 3px solid #22c55e;
+  padding-left: 7px;
+}
+[data-theme="dark"] .saki-git-diff-line.add {
+  background-color: rgba(34, 197, 94, 0.18);
+  color: #86efac;
+  border-left-color: #4ade80;
+}
+.saki-git-diff-line.del {
+  background-color: rgba(239, 68, 68, 0.13);
+  color: #b91c1c;
+  border-left: 3px solid #ef4444;
+  padding-left: 7px;
+}
+[data-theme="dark"] .saki-git-diff-line.del {
+  background-color: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+  border-left-color: #f87171;
+}
+.saki-git-diff-line.hunk {
+  background-color: rgba(59, 130, 246, 0.08);
+  color: #2563eb;
+  font-weight: 600;
+  padding: 3px 10px;
+  margin: 3px 0;
+  font-size: 11px;
+}
+[data-theme="dark"] .saki-git-diff-line.hunk {
+  background-color: rgba(59, 130, 246, 0.14);
+  color: #93c5fd;
+}
+.saki-git-diff-line.ctx {
+  color: #475569;
+}
+[data-theme="dark"] .saki-git-diff-line.ctx {
+  color: #94a3b8;
+}
+.saki-git-diff-line.clickable {
+  cursor: pointer;
+}
+.saki-git-diff-line.clickable:hover {
+  text-decoration: underline;
+}
+
 .saki-action-diff {
   margin: 4px 0;
   border-radius: 6px;

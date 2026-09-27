@@ -9,8 +9,7 @@ import {
   Loader2,
   PackageCheck,
   RefreshCw,
-  ShieldCheck,
-  Sparkles
+  ShieldCheck
 } from "lucide-react";
 import type { InstalledOperationPack, OperationPackRegistryResponse } from "@webops/shared";
 import { api, ApiError } from "../../api.js";
@@ -156,30 +155,25 @@ export function OperationPacksPanel({ token, onLogout, refreshTick = 0, onImport
     <section className="operations-packs-panel" aria-labelledby="operations-packs-heading">
       <div className="operations-packs-heading">
         <div className="operations-packs-heading-copy">
-          <span className="operations-packs-heading-icon"><Sparkles size={19} aria-hidden="true" /></span>
+          <span className="operations-packs-heading-icon"><Box size={17} aria-hidden="true" /></span>
           <div>
             <div className="operations-packs-title-line">
-              <h2 id="operations-packs-heading">垂直运维包</h2>
-              <span className="operations-packs-online-tag"><CloudDownload size={13} /> 按需下载</span>
+              <h2 id="operations-packs-heading">在线运维预设包</h2>
+              <span className="operations-packs-online-tag"><CloudDownload size={12} /> SHA-256 校验分发</span>
             </div>
-            <p>Runbook、模板与策略建议不随安装包发布；选择后才会在线下载、SHA-256 校验并缓存。</p>
+            <p>按需获取官方维护的实例模板、Runbook 与监控特征库。下载仅做本地校验缓存，不自动执行任何脚本。</p>
           </div>
         </div>
         <button
-          className="ghost-button operations-packs-refresh"
+          className="secondary-button mini operations-packs-refresh"
           type="button"
           disabled={loading || refreshing}
           onClick={() => void load(true)}
           title="刷新在线运维包目录"
         >
-          <RefreshCw size={15} className={refreshing ? "status-spinner" : ""} />
-          刷新目录
+          <RefreshCw size={13} className={refreshing ? "status-spinner" : ""} />
+          <span>刷新目录</span>
         </button>
-      </div>
-
-      <div className="operations-packs-safety-note">
-        <ShieldCheck size={17} aria-hidden="true" />
-        <span>安装只下载并验证资源，不会执行脚本、写入实例、拉取镜像或改动 Compose 文件。</span>
       </div>
 
       {registry?.warning ? <p className="operations-packs-warning">{registry.warning}</p> : null}
@@ -187,8 +181,8 @@ export function OperationPacksPanel({ token, onLogout, refreshTick = 0, onImport
 
       {loading ? (
         <div className="operations-packs-loading">
-          <Loader2 size={20} className="status-spinner" />
-          正在读取在线运维包目录…
+          <Loader2 size={18} className="status-spinner" />
+          <span>正在同步在线预设包目录…</span>
         </div>
       ) : packs.length > 0 ? (
         <div className="operations-packs-grid">
@@ -204,8 +198,23 @@ export function OperationPacksPanel({ token, onLogout, refreshTick = 0, onImport
               <article className={`operations-pack-card ${meta.accentClass}`} key={pack.id}>
                 <div className="operations-pack-card-topline">
                   <span className="operations-pack-category-icon">{meta.icon}</span>
-                  <span className="operations-pack-category-label">{meta.label}</span>
-                  <span className="operations-pack-version">v{pack.version}</span>
+                  <div className="operations-pack-meta-inline">
+                    <span className="operations-pack-category-label">{meta.label}</span>
+                    <span className="operations-pack-version">v{pack.version}</span>
+                  </div>
+                  <div className={`operations-pack-state-pill ${local ? "is-cached" : ""}`}>
+                    {local ? (
+                      <>
+                        <PackageCheck size={12} aria-hidden="true" />
+                        <span>
+                          {installedCurrent ? "已缓存" : `v${local.version}`}
+                          {displayPackDate(local.updatedAt) ? ` · ${displayPackDate(local.updatedAt)}` : ""}
+                        </span>
+                      </>
+                    ) : (
+                      <span>未下载</span>
+                    )}
+                  </div>
                 </div>
                 <h3>{pack.name}</h3>
                 <p>{pack.description || pack.summary}</p>
@@ -215,18 +224,9 @@ export function OperationPacksPanel({ token, onLogout, refreshTick = 0, onImport
                   </div>
                 ) : null}
                 <div className="operations-pack-card-footer">
-                  <div className="operations-pack-status">
-                    {local ? (
-                      <>
-                        <PackageCheck size={15} aria-hidden="true" />
-                        <span>
-                          {installedCurrent ? "已校验缓存" : `已缓存 v${local.version}`}
-                          {displayPackDate(local.updatedAt) ? ` · ${displayPackDate(local.updatedAt)}` : ""}
-                        </span>
-                      </>
-                    ) : (
-                      <><Download size={15} aria-hidden="true" /><span>尚未下载</span></>
-                    )}
+                  <div className="operations-pack-safety-inline">
+                    <ShieldCheck size={13} aria-hidden="true" />
+                    <span>只读资源包 · 需显式导入</span>
                   </div>
                   <div className="operations-pack-actions">
                     {local && hasTemplate ? (
@@ -237,8 +237,8 @@ export function OperationPacksPanel({ token, onLogout, refreshTick = 0, onImport
                         onClick={() => void activatePack(local, "template")}
                         title="将已校验模板显式导入模板库；不会执行脚本"
                       >
-                        {activating ? <Loader2 size={15} className="status-spinner" /> : <FilePlus2 size={15} />}
-                        {activating ? "导入中" : "导入模板"}
+                        {activating ? <Loader2 size={13} className="status-spinner" /> : <FilePlus2 size={13} />}
+                        <span>{activating ? "导入中" : "导入模板"}</span>
                       </button>
                     ) : null}
                     {local && hasSkill ? (
@@ -249,8 +249,8 @@ export function OperationPacksPanel({ token, onLogout, refreshTick = 0, onImport
                         onClick={() => void activatePack(local, "saki_skill")}
                         title="将已校验 Runbook 显式导入 Saki Skills；不会执行脚本"
                       >
-                        {activating ? <Loader2 size={15} className="status-spinner" /> : <FilePlus2 size={15} />}
-                        {activating ? "导入中" : "导入 Runbook"}
+                        {activating ? <Loader2 size={13} className="status-spinner" /> : <FilePlus2 size={13} />}
+                        <span>{activating ? "导入中" : "导入 Runbook"}</span>
                       </button>
                     ) : null}
                     <button
@@ -259,8 +259,8 @@ export function OperationPacksPanel({ token, onLogout, refreshTick = 0, onImport
                       disabled={busy || activating}
                       onClick={() => void installPack(pack.id, Boolean(local))}
                     >
-                      {busy ? <Loader2 size={15} className="status-spinner" /> : installedCurrent ? <CheckCircle2 size={15} /> : <CloudDownload size={15} />}
-                      {busy ? "校验中" : installedCurrent ? "重新校验" : local ? "更新资源" : "下载运维包"}
+                      {busy ? <Loader2 size={13} className="status-spinner" /> : installedCurrent ? <CheckCircle2 size={13} /> : <Download size={13} />}
+                      <span>{busy ? "校验中" : installedCurrent ? "重新校验" : local ? "更新包" : "下载缓存"}</span>
                     </button>
                   </div>
                 </div>
@@ -270,10 +270,10 @@ export function OperationPacksPanel({ token, onLogout, refreshTick = 0, onImport
         </div>
       ) : (
         <div className="operations-packs-empty">
-          <CloudDownload size={24} aria-hidden="true" />
+          <CloudDownload size={20} aria-hidden="true" />
           <div>
             <strong>在线目录暂时没有可用运维包</strong>
-            <p>检查网络，或由管理员配置 <code>OPERATIONS_PACK_REGISTRY_URL</code> 指向受信任的包目录。</p>
+            <p>请检查网络连接，或由管理员配置 <code>OPERATIONS_PACK_REGISTRY_URL</code> 指向受信任的预设目录。</p>
           </div>
         </div>
       )}

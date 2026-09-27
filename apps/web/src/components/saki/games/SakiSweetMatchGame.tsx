@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { Sparkles, Trophy, Volume2, VolumeX, X, ArrowLeft, RotateCcw, Zap, Bomb, Hammer, Shuffle, Clock } from "lucide-react";
+import { Sparkles, Trophy, Volume2, VolumeX, X, ArrowLeft, RotateCcw, Zap, Bomb, Hammer, Shuffle, Clock, Heart, Flame } from "lucide-react";
 import { usePanelLanguage } from "../../../i18n/index.js";
 
 interface SakiSweetMatchGameProps {
@@ -1022,15 +1022,17 @@ export function SakiSweetMatchGame({ onClose, onFinish, onBackToPhone }: SakiSwe
           <div className={`saki-match-board-area ${shakeMode === "intense" ? "shaking-intense" : shakeMode === "mild" ? "shaking-mild" : ""} ${isHammerActive ? "hammer-mode" : ""}`}>
             {/* Hammer Targeting Hint Banner */}
             {isHammerActive ? (
-              <div className="saki-match-hammer-hint">
-                🔨 {t("game.match.hammerHint")}
+              <div className="saki-match-hammer-hint inline-flex items-center justify-center gap-1.5">
+                <Hammer size={14} className="text-amber-300 animate-bounce" />
+                <span>{t("game.match.hammerHint")}</span>
               </div>
             ) : null}
 
             {/* Fever Banner */}
             {isFeverMode ? (
-              <div className="saki-match-fever-banner">
-                🔥 FEVER 狂欢 2X 得分!
+              <div className="saki-match-fever-banner inline-flex items-center justify-center gap-1.5">
+                <Flame size={14} className="text-amber-300 animate-pulse" />
+                <span>FEVER 狂欢 2X 得分!</span>
               </div>
             ) : null}
 
@@ -1208,7 +1210,7 @@ export function SakiSweetMatchGame({ onClose, onFinish, onBackToPhone }: SakiSwe
             return (
               <div className="settlement-header">
                 <div className={`settlement-rank-pill ${rankInfo.badgeColor}`}>
-                  <span className="rank-star">✦</span>
+                  <Sparkles size={12} className="rank-star text-amber-300" />
                   <span className="rank-grade">{rankInfo.grade}</span>
                   <span className="rank-divider">·</span>
                   <span className="rank-title">{rankInfo.title}</span>
@@ -1238,7 +1240,9 @@ export function SakiSweetMatchGame({ onClose, onFinish, onBackToPhone }: SakiSwe
           <div className="settlement-stats-grid">
             <div className="settlement-stat-card score-card">
               <div className="stat-card-header">
-                <span className="stat-icon">⭐</span>
+                <span className="stat-icon">
+                  <Trophy size={16} className="text-amber-400" />
+                </span>
                 <span className="stat-label">消除得分</span>
               </div>
               <div className="stat-card-val score-val">{score}</div>
@@ -1246,7 +1250,9 @@ export function SakiSweetMatchGame({ onClose, onFinish, onBackToPhone }: SakiSwe
 
             <div className="settlement-stat-card exp-card">
               <div className="stat-card-header">
-                <span className="stat-icon">💖</span>
+                <span className="stat-icon">
+                  <Heart size={16} className="text-pink-400 fill-pink-400" />
+                </span>
                 <span className="stat-label">好感经验</span>
               </div>
               <div className="stat-card-val exp-val">+{expReward}</div>
@@ -1254,7 +1260,9 @@ export function SakiSweetMatchGame({ onClose, onFinish, onBackToPhone }: SakiSwe
 
             <div className="settlement-stat-card combo-card">
               <div className="stat-card-header">
-                <span className="stat-icon">🔥</span>
+                <span className="stat-icon">
+                  <Flame size={16} className="text-orange-400" />
+                </span>
                 <span className="stat-label">最大连击</span>
               </div>
               <div className="stat-card-val combo-val">{maxCombo}x</div>

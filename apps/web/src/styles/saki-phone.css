@@ -1341,6 +1341,13 @@
   box-shadow: none;
 }
 
+.plant-bean-btn.cooldown {
+  background: linear-gradient(135deg, #334155, #475569);
+  box-shadow: 0 0 10px rgba(71, 85, 105, 0.4);
+  cursor: not-allowed;
+  filter: opacity(0.85);
+}
+
 .plant-bean-btn.ready {
   animation: beanReadyPulse 1.2s infinite alternate;
 }

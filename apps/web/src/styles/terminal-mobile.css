@@ -1182,11 +1182,32 @@
   gap: 12px;
   min-height: 0;
   max-height: min(100%, calc(100vh - 160px));
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 149, 0, 0.45) transparent;
   padding: 16px 18px !important;
   border-color: rgba(255, 149, 0, 0.28) !important;
   background: linear-gradient(180deg, rgba(255, 184, 77, 0.16), rgba(255, 255, 255, 0.62)) !important;
   box-shadow: 0 8px 24px rgba(255, 149, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.95) !important;
+}
+
+.incident-panel-card::-webkit-scrollbar {
+  width: 5px;
+}
+
+.incident-panel-card::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.incident-panel-card::-webkit-scrollbar-thumb {
+  background: rgba(255, 149, 0, 0.38);
+  border-radius: 999px;
+}
+
+.incident-panel-card::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 149, 0, 0.65);
 }
 
 .incident-panel-card:hover {
@@ -1200,6 +1221,23 @@
 .incident-panel-card.status-verifying {
   border-color: rgba(255, 59, 48, 0.28) !important;
   background: linear-gradient(180deg, rgba(255, 59, 48, 0.12), rgba(255, 255, 255, 0.62)) !important;
+  scrollbar-color: rgba(255, 59, 48, 0.45) transparent;
+}
+
+.incident-panel-card.status-open::-webkit-scrollbar-thumb,
+.incident-panel-card.status-diagnosing::-webkit-scrollbar-thumb,
+.incident-panel-card.status-awaiting_approval::-webkit-scrollbar-thumb,
+.incident-panel-card.status-applying::-webkit-scrollbar-thumb,
+.incident-panel-card.status-verifying::-webkit-scrollbar-thumb {
+  background: rgba(255, 59, 48, 0.38);
+}
+
+.incident-panel-card.status-open::-webkit-scrollbar-thumb:hover,
+.incident-panel-card.status-diagnosing::-webkit-scrollbar-thumb:hover,
+.incident-panel-card.status-awaiting_approval::-webkit-scrollbar-thumb:hover,
+.incident-panel-card.status-applying::-webkit-scrollbar-thumb:hover,
+.incident-panel-card.status-verifying::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 59, 48, 0.65);
 }
 
 .incident-panel-card.status-open .incident-panel-icon,
@@ -1332,8 +1370,18 @@
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
-  max-height: min(280px, 38vh);
-  padding-right: 2px;
+  max-height: min(340px, 45vh);
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 149, 0, 0.45) transparent;
+}
+
+.incident-panel-card.status-open .incident-panel-body,
+.incident-panel-card.status-diagnosing .incident-panel-body,
+.incident-panel-card.status-awaiting_approval .incident-panel-body,
+.incident-panel-card.status-applying .incident-panel-body,
+.incident-panel-card.status-verifying .incident-panel-body {
+  scrollbar-color: rgba(255, 59, 48, 0.45) transparent;
 }
 
 .incident-panel-body::-webkit-scrollbar {
@@ -1345,8 +1393,28 @@
 }
 
 .incident-panel-body::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.35);
+  background: rgba(255, 149, 0, 0.38);
   border-radius: 999px;
+}
+
+.incident-panel-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 149, 0, 0.65);
+}
+
+.incident-panel-card.status-open .incident-panel-body::-webkit-scrollbar-thumb,
+.incident-panel-card.status-diagnosing .incident-panel-body::-webkit-scrollbar-thumb,
+.incident-panel-card.status-awaiting_approval .incident-panel-body::-webkit-scrollbar-thumb,
+.incident-panel-card.status-applying .incident-panel-body::-webkit-scrollbar-thumb,
+.incident-panel-card.status-verifying .incident-panel-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 59, 48, 0.38);
+}
+
+.incident-panel-card.status-open .incident-panel-body::-webkit-scrollbar-thumb:hover,
+.incident-panel-card.status-diagnosing .incident-panel-body::-webkit-scrollbar-thumb:hover,
+.incident-panel-card.status-awaiting_approval .incident-panel-body::-webkit-scrollbar-thumb:hover,
+.incident-panel-card.status-applying .incident-panel-body::-webkit-scrollbar-thumb:hover,
+.incident-panel-card.status-verifying .incident-panel-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 59, 48, 0.65);
 }
 
 .incident-panel-summary,
@@ -1355,6 +1423,8 @@
   font-size: 13px;
   line-height: 1.55;
   color: #7c2d12;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .incident-panel-cause {
@@ -1362,6 +1432,7 @@
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.55);
   border: 1px solid rgba(255, 149, 0, 0.16);
+  white-space: pre-wrap;
 }
 
 .incident-panel-card .incident-banner-actions {
@@ -1378,6 +1449,51 @@
 [data-theme="dark"] .incident-panel-card {
   border-color: rgba(255, 184, 77, 0.28) !important;
   background: linear-gradient(180deg, rgba(255, 159, 67, 0.18), rgba(26, 27, 36, 0.78)) !important;
+  scrollbar-color: rgba(255, 184, 77, 0.45) transparent;
+}
+
+[data-theme="dark"] .incident-panel-card::-webkit-scrollbar-thumb {
+  background: rgba(255, 184, 77, 0.38);
+}
+
+[data-theme="dark"] .incident-panel-card::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 184, 77, 0.65);
+}
+
+[data-theme="dark"] .incident-panel-card.status-open,
+[data-theme="dark"] .incident-panel-card.status-diagnosing,
+[data-theme="dark"] .incident-panel-card.status-awaiting_approval,
+[data-theme="dark"] .incident-panel-card.status-applying,
+[data-theme="dark"] .incident-panel-card.status-verifying {
+  border-color: rgba(255, 80, 80, 0.32) !important;
+  background: linear-gradient(180deg, rgba(255, 59, 48, 0.16), rgba(26, 27, 36, 0.78)) !important;
+  scrollbar-color: rgba(255, 138, 128, 0.45) transparent;
+}
+
+[data-theme="dark"] .incident-panel-card.status-open::-webkit-scrollbar-thumb,
+[data-theme="dark"] .incident-panel-card.status-diagnosing::-webkit-scrollbar-thumb,
+[data-theme="dark"] .incident-panel-card.status-awaiting_approval::-webkit-scrollbar-thumb,
+[data-theme="dark"] .incident-panel-card.status-applying::-webkit-scrollbar-thumb,
+[data-theme="dark"] .incident-panel-card.status-verifying::-webkit-scrollbar-thumb,
+[data-theme="dark"] .incident-panel-card.status-open .incident-panel-body::-webkit-scrollbar-thumb,
+[data-theme="dark"] .incident-panel-card.status-diagnosing .incident-panel-body::-webkit-scrollbar-thumb,
+[data-theme="dark"] .incident-panel-card.status-awaiting_approval .incident-panel-body::-webkit-scrollbar-thumb,
+[data-theme="dark"] .incident-panel-card.status-applying .incident-panel-body::-webkit-scrollbar-thumb,
+[data-theme="dark"] .incident-panel-card.status-verifying .incident-panel-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 138, 128, 0.38);
+}
+
+[data-theme="dark"] .incident-panel-card.status-open::-webkit-scrollbar-thumb:hover,
+[data-theme="dark"] .incident-panel-card.status-diagnosing::-webkit-scrollbar-thumb:hover,
+[data-theme="dark"] .incident-panel-card.status-awaiting_approval::-webkit-scrollbar-thumb:hover,
+[data-theme="dark"] .incident-panel-card.status-applying::-webkit-scrollbar-thumb:hover,
+[data-theme="dark"] .incident-panel-card.status-verifying::-webkit-scrollbar-thumb:hover,
+[data-theme="dark"] .incident-panel-card.status-open .incident-panel-body::-webkit-scrollbar-thumb:hover,
+[data-theme="dark"] .incident-panel-card.status-diagnosing .incident-panel-body::-webkit-scrollbar-thumb:hover,
+[data-theme="dark"] .incident-panel-card.status-awaiting_approval .incident-panel-body::-webkit-scrollbar-thumb:hover,
+[data-theme="dark"] .incident-panel-card.status-applying .incident-panel-body::-webkit-scrollbar-thumb:hover,
+[data-theme="dark"] .incident-panel-card.status-verifying .incident-panel-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 138, 128, 0.65);
 }
 
 [data-theme="dark"] .incident-panel-icon {
@@ -1401,8 +1517,16 @@
   border-color: rgba(255, 184, 77, 0.18);
 }
 
+[data-theme="dark"] .incident-panel-body {
+  scrollbar-color: rgba(255, 184, 77, 0.45) transparent;
+}
+
 [data-theme="dark"] .incident-panel-body::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 184, 77, 0.38);
+}
+
+[data-theme="dark"] .incident-panel-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 184, 77, 0.65);
 }
 
 [data-theme="dark"] .incident-banner {

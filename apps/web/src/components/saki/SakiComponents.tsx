@@ -87,6 +87,7 @@ import { compactContextText, formatBytes } from "../../utils/path.js";
 import { newClientId } from "../../utils/id.js";
 import { MarkdownContent } from "../common/MarkdownContent.js";
 import { panelT, type PanelLanguage } from "../../i18n/translations.js";
+import { SakiAskUserCard, SakiTodoCard } from "./chat/SakiAgentWidgets.js";
 
 export function sakiAttachmentKindLabel(kind: SakiInputAttachment["kind"]): string {
   if (kind === "screenshot") return "截图";
@@ -1396,6 +1397,10 @@ export function renderableSakiTimeline(message: LocalSakiMessage): LocalSakiTime
     return timelineTextIsVisible(entry);
   });
   const visibleActions = visibleSakiActions(message.actions);
+  const latestTodoId = [...visibleActions].reverse().find((action) => action.tool.toLowerCase() === "managetodos" && action.todos?.length)?.id;
+  const currentTodoTimeline = (items: LocalSakiTimelineItem[]) => items.filter((entry) =>
+    entry.kind !== "action" || entry.action.tool.toLowerCase() !== "managetodos" || !latestTodoId || entry.action.id === latestTodoId
+  );
   if (timeline.length) {
     const hasThinkingItem = timeline.some((entry) => entry.kind === "text" && entry.thinking?.trim());
     if (!hasThinkingItem && message.thinking?.trim()) {
@@ -1420,7 +1425,7 @@ export function renderableSakiTimeline(message: LocalSakiMessage): LocalSakiTime
         action,
         createdAt: action.createdAt
       }));
-    return missingActionItems.length ? [...timeline, ...missingActionItems] : timeline;
+    return currentTodoTimeline(missingActionItems.length ? [...timeline, ...missingActionItems] : timeline);
   }
   const fallback: LocalSakiTimelineItem[] = [];
   if (message.content.trim() || message.thinking?.trim()) {
@@ -1441,7 +1446,7 @@ export function renderableSakiTimeline(message: LocalSakiMessage): LocalSakiTime
       createdAt: action.createdAt
     });
   }
-  return fallback;
+  return currentTodoTimeline(fallback);
 }
 
 export function SakiActivityTrace({ steps }: { steps: LocalSakiWorkflowStep[]; streaming: boolean }) {
@@ -1511,6 +1516,7 @@ export function isSakiFileRollbackAction(action: SakiAgentAction): boolean {
 }
 
 export function sakiActionStatusLabel(action: SakiAgentAction): string {
+  if (action.status === "pending_input") return "待回答";
   if (action.status === "pending_approval") return "待审批";
   if (action.status === "rejected") return "已拒绝";
   if (action.status === "rolled_back") return "已回滚";
@@ -1890,6 +1896,10 @@ export function sakiActionTitle(action: SakiAgentAction): string {
       return "保存项目记忆";
     case "plan":
       return "制定计划";
+    case "managetodos":
+      return "更新任务清单";
+    case "askuser":
+      return "询问用户";
     case "spawntask":
       return "子任务";
     default:
@@ -1951,6 +1961,16 @@ export function sakiResultSummary(action: SakiAgentAction): string {
     const removed = sakiObservationLine(observation, "Removed lines");
     const inserted = sakiObservationLine(observation, "Inserted lines");
     return `已编辑 ${target || "文件"}${removed ? `，删除 ${removed} 行` : ""}${inserted ? `，插入 ${inserted} 行` : ""}${size ? `，${sakiByteText(size)}` : ""}。`;
+  }
+
+  if (tool === "applypatch" || tool === "apply_patch" || tool === "applydiff" || tool === "patchfiles") {
+    const fileCount = observation.match(/applied patch to (\d+) file/i)?.[1];
+    return fileCount ? `已应用补丁到 ${fileCount} 个文件。` : `已应用补丁到 ${target || "文件"}。`;
+  }
+
+  if (tool === "batchedit" || tool === "applypatches" || tool === "multifileedit" || tool === "batch_patch") {
+    const opCount = observation.match(/across (\d+) operation/i)?.[1];
+    return opCount ? `批量编辑完成（${opCount} 处修改）。` : "批量编辑已完成。";
   }
 
   if (tool === "mkdir") return `目录已准备好：${target || "目标目录"}。`;
@@ -2023,6 +2043,7 @@ export function sakiActionTone(action: SakiAgentAction): "read" | "write" | "del
 }
 
 export function sakiActionStateClass(action: SakiAgentAction): string {
+  if (action.status === "pending_input") return "pending";
   if (action.status === "pending_approval") return "pending";
   if (action.status === "rolled_back") return "rolled-back";
   if (!action.ok || action.status === "failed" || action.status === "rejected") return "error";
@@ -2057,6 +2078,10 @@ export function SakiThinkingIcon({ size = 15, className }: { size?: number | und
 
 export function SakiToolIcon({ action, size = 16 }: { action: Pick<SakiAgentAction, "tool">; size?: number }) {
   switch (action.tool.toLowerCase()) {
+    case "managetodos":
+      return <ClipboardList size={size} />;
+    case "askuser":
+      return <UserCheck size={size} />;
     case "listfiles":
       return <Folder size={size} />;
     case "readfile":
@@ -2135,33 +2160,356 @@ export function SakiToolIcon({ action, size = 16 }: { action: Pick<SakiAgentActi
   }
 }
 
-function sakiDiffPathFromLine(line: string): string | null {
-  const update = line.match(/^\*\*\*\s+(?:Add|Update|Delete) File:\s+(.+)$/);
+export function sakiDiffPathFromLine(line: string): string | null {
+  const update = line.match(/^\*\*\*\s+(?:Add|Update|Delete)\s+File:\s*(.+)$/i);
   if (update?.[1]) return update[1].trim().replace(/^[ab]\//, "");
-  const unified = line.match(/^(?:\+\+\+|---) [ab]\/(.+)$/);
+  const gitDiff = line.match(/^diff --git\s+[ab]\/(.+)\s+[ab]\/(.+)$/);
+  if (gitDiff?.[2]) return gitDiff[2].trim();
+  const unified = line.match(/^(?:\+\+\+|---)\s+(?:[ab]\/)?(.+)$/);
   if (unified?.[1] && unified[1] !== "/dev/null") return unified[1].trim();
   return null;
 }
 
-function sakiDiffLineNumber(line: string): number | undefined {
+export function sakiDiffLineNumber(line: string): number | undefined {
   const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)/);
   if (!hunk?.[1]) return undefined;
   const parsed = Number(hunk[1]);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+export function sakiActionExtractDiff(action: SakiAgentAction): string {
+  if (action.approval?.diff && action.approval.diff.trim() && !/^No changes for/i.test(action.approval.diff)) {
+    return action.approval.diff.trim();
+  }
+  const tool = action.tool.toLowerCase();
+  if (
+    (tool === "applypatch" || tool === "apply_patch" || tool === "applydiff" || tool === "patchfiles") &&
+    typeof action.args.patch === "string" &&
+    action.args.patch.trim()
+  ) {
+    return action.args.patch.trim();
+  }
+  const observation = action.observation || "";
+  const patchMatch = observation.match(
+    /(?:\*\*\*\s*(?:Begin\s+Patch|Update\s+File|Add\s+File|Delete\s+File)[\s\S]*?(?:\*\*\*\s*End\s+Patch|$)|(?:^|\n)(?:--- [ab\/]|\+\+\+ [ab\/]|@@\s*(?:-\d+|\+?\d*|\s*))[\s\S]+)/
+  );
+  if (patchMatch && patchMatch[0].trim()) {
+    return patchMatch[0].trim();
+  }
+  if (tool === "replaceinfile" || tool === "replace_in_file") {
+    const oldText = typeof action.args.oldText === "string" ? action.args.oldText : (typeof action.args.old_str === "string" ? action.args.old_str : "");
+    const newText = typeof action.args.newText === "string" ? action.args.newText : (typeof action.args.new_str === "string" ? action.args.new_str : "");
+    if (oldText || newText) {
+      const oldLines = oldText ? oldText.split(/\r?\n/) : [];
+      const newLines = newText ? newText.split(/\r?\n/) : [];
+      const target = sakiActionTarget(action);
+      return [
+        target ? `*** Update File: ${target}` : "@@ Replace in file @@",
+        ...oldLines.map((line) => `-${line}`),
+        ...newLines.map((line) => `+${line}`)
+      ].join("\n");
+    }
+  }
+  if ((tool === "writefile" || tool === "write_file") && typeof action.args.content === "string") {
+    const content = action.args.content;
+    const lines = content.split(/\r?\n/);
+    const target = sakiActionTarget(action);
+    return [
+      target ? `*** Add File: ${target}` : "@@ New file @@",
+      ...lines.map((line) => `+${line}`)
+    ].join("\n");
+  }
+  return "";
+}
+
+export function sakiExtractCleanObservation(observation: string, diffText: string): string {
+  let text = observation.trim();
+  if (!text) return "";
+  text = text.replace(/\*\*\*\s*Begin\s+Patch[\s\S]*?(?:\*\*\*\s*End\s+Patch|$)/gi, "").trim();
+  if (diffText && text.includes(diffText)) {
+    text = text.replace(diffText, "").trim();
+  }
+  text = text.replace(/(?:^|\n)\*\*\*\s*(?:Add|Update|Delete)\s+File:[\s\S]*$/gi, "").trim();
+  text = text.replace(/(?:^|\n)(?:--- [ab\/]|\+\+\+ [ab\/]|@@\s*(?:-\d+|\+?\d*|\s*))[\s\S]*$/gi, "").trim();
+  return text;
+}
+
+export function sakiActionDiffStats(action: SakiAgentAction, diffText?: string): { added: number; removed: number } | null {
+  const tool = action.tool.toLowerCase();
+  const isEditTool =
+    isSakiFileEditTool(tool) ||
+    tool === "applypatch" ||
+    tool === "apply_patch" ||
+    tool === "applydiff" ||
+    tool === "batchedit" ||
+    tool === "batch_patch" ||
+    tool === "editlines" ||
+    tool === "replaceinfile";
+
+  const observation = action.observation || "";
+  const removedMatch = observation.match(/Removed lines:\s*(\d+)/i);
+  const insertedMatch = observation.match(/Inserted lines:\s*(\d+)/i);
+  if (removedMatch || insertedMatch) {
+    return {
+      added: insertedMatch ? Number(insertedMatch[1]) : 0,
+      removed: removedMatch ? Number(removedMatch[1]) : 0
+    };
+  }
+
+  const diff = diffText || sakiActionExtractDiff(action);
+  if (diff) {
+    let added = 0;
+    let removed = 0;
+    const lines = diff.split(/\r?\n/);
+    for (const line of lines) {
+      if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("***")) continue;
+      if (line.startsWith("+")) added += 1;
+      else if (line.startsWith("-")) removed += 1;
+    }
+    if (added > 0 || removed > 0 || isEditTool) {
+      return { added, removed };
+    }
+  }
+
+  if (isEditTool) {
+    return { added: 0, removed: 0 };
+  }
+  return null;
+}
+
+export interface ParsedDiffLine {
+  kind: "add" | "del" | "hunk" | "ctx";
+  text: string;
+  gutter: string;
+  lineNumber?: number | undefined;
+}
+
+export interface ParsedDiffFile {
+  path: string;
+  lines: ParsedDiffLine[];
+  stats: { added: number; removed: number };
+}
+
+export function parseGitDiff(diffText: string, defaultPath?: string): ParsedDiffFile[] {
+  const rawLines = diffText.split(/\r?\n/);
+  const files: ParsedDiffFile[] = [];
+  let currentFile: ParsedDiffFile | null = null;
+
+  const ensureCurrentFile = (path?: string) => {
+    if (!currentFile || (path && currentFile.path !== path && currentFile.lines.length > 0)) {
+      currentFile = {
+        path: path || defaultPath || "",
+        lines: [],
+        stats: { added: 0, removed: 0 }
+      };
+      files.push(currentFile);
+    } else if (path && !currentFile.path) {
+      currentFile.path = path;
+    }
+    return currentFile;
+  };
+
+  for (const line of rawLines) {
+    if (/^\*\*\*\s*(?:Begin|End)\s+Patch/i.test(line)) {
+      continue;
+    }
+
+    const fileHeaderMatch = line.match(/^\*\*\*\s*(?:Add|Update|Delete)\s+File:\s*(.+)$/i);
+    if (fileHeaderMatch && fileHeaderMatch[1]) {
+      const cleanPath = fileHeaderMatch[1].trim().replace(/^[ab]\//, "");
+      ensureCurrentFile(cleanPath);
+      continue;
+    }
+
+    const gitDiffMatch = line.match(/^diff --git\s+[ab]\/(.+)\s+[ab]\/(.+)$/);
+    if (gitDiffMatch && gitDiffMatch[2]) {
+      ensureCurrentFile(gitDiffMatch[2].trim());
+      continue;
+    }
+
+    const unifiedHeaderMatch = line.match(/^(?:\+\+\+|---)\s+(?:[ab]\/)?(.+)$/);
+    if (unifiedHeaderMatch && unifiedHeaderMatch[1]) {
+      const p = unifiedHeaderMatch[1].trim();
+      if (p !== "/dev/null") {
+        ensureCurrentFile(p);
+      }
+      continue;
+    }
+
+    if (line.startsWith("@@")) {
+      const file = ensureCurrentFile();
+      const hunkLineMatch = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)/);
+      const lineNumber = hunkLineMatch?.[1] ? Number(hunkLineMatch[1]) : undefined;
+      file.lines.push({
+        kind: "hunk",
+        text: line,
+        gutter: "@@",
+        lineNumber: Number.isFinite(lineNumber) ? lineNumber : undefined
+      });
+      continue;
+    }
+
+    if (line.startsWith("+")) {
+      const file = ensureCurrentFile();
+      file.stats.added += 1;
+      file.lines.push({
+        kind: "add",
+        text: line.slice(1),
+        gutter: "+"
+      });
+      continue;
+    }
+
+    if (line.startsWith("-")) {
+      const file = ensureCurrentFile();
+      file.stats.removed += 1;
+      file.lines.push({
+        kind: "del",
+        text: line.slice(1),
+        gutter: "-"
+      });
+      continue;
+    }
+
+    if (line.startsWith(" ")) {
+      const file = ensureCurrentFile();
+      file.lines.push({
+        kind: "ctx",
+        text: line.slice(1),
+        gutter: " "
+      });
+      continue;
+    }
+
+    if (line.trim()) {
+      const file = ensureCurrentFile();
+      file.lines.push({
+        kind: "ctx",
+        text: line,
+        gutter: " "
+      });
+    }
+  }
+
+  if (files.length === 0 && diffText.trim()) {
+    files.push({
+      path: defaultPath || "diff",
+      lines: rawLines.map((l) => ({ kind: "ctx", text: l, gutter: " " })),
+      stats: { added: 0, removed: 0 }
+    });
+  }
+
+  return files;
+}
+
+export function SakiGitDiffView({
+  diff,
+  target,
+  onOpenPath
+}: {
+  diff: string;
+  target?: string | undefined;
+  onOpenPath?: ((path: string, line?: number) => void) | undefined;
+}) {
+  const files = useMemo(() => parseGitDiff(diff, target), [diff, target]);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    void navigator.clipboard.writeText(diff);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <div className="saki-git-diff-container">
+      {files.map((file, fileIdx) => {
+        const filePath = file.path || target || "";
+        return (
+          <div className="saki-git-diff-file-card" key={`${fileIdx}:${filePath}`}>
+            <div className="saki-git-diff-file-header">
+              <div className="saki-git-diff-file-title">
+                <Code2 size={13} className="saki-git-diff-file-icon" />
+                {onOpenPath && filePath && !filePath.includes(" ") ? (
+                  <button
+                    type="button"
+                    className="saki-action-path-link"
+                    title={filePath}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenPath(filePath);
+                    }}
+                  >
+                    <code>{compactContextText(filePath, 100)}</code>
+                  </button>
+                ) : (
+                  <code title={filePath}>{compactContextText(filePath || "diff", 100)}</code>
+                )}
+              </div>
+              <div className="saki-git-diff-file-actions">
+                {(file.stats.added > 0 || file.stats.removed > 0) && (
+                  <span className="saki-action-diff-stats" title={`+${file.stats.added} / -${file.stats.removed}`}>
+                    {file.stats.added > 0 ? <span className="saki-diff-stat-add">+{file.stats.added}</span> : null}
+                    {file.stats.removed > 0 ? <span className="saki-diff-stat-del">-{file.stats.removed}</span> : null}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="saki-git-diff-copy-btn"
+                  title="复制差异代码"
+                  onClick={handleCopy}
+                >
+                  {copied ? <Check size={12} /> : <Copy size={12} />}
+                </button>
+              </div>
+            </div>
+            <div className="saki-git-diff-lines">
+              {file.lines.map((line, lineIdx) => {
+                const clickable = Boolean(onOpenPath && line.kind === "hunk" && line.lineNumber && filePath);
+                return (
+                  <div
+                    key={`${lineIdx}:${line.kind}:${line.text.slice(0, 16)}`}
+                    className={`saki-git-diff-line ${line.kind}${clickable ? " clickable" : ""}`}
+                    onClick={
+                      clickable
+                        ? (e) => {
+                            e.stopPropagation();
+                            onOpenPath?.(filePath, line.lineNumber);
+                          }
+                        : undefined
+                    }
+                  >
+                    <span className="saki-git-diff-line-gutter">{line.gutter}</span>
+                    <span className="saki-git-diff-line-content">{line.text || " "}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function SakiToolActionCard({
   action,
   actionBusyId,
   onDecision,
+  onAnswer,
   onOpenPath
 }: {
   action: SakiAgentAction;
   actionBusyId: string | null;
   onDecision: (action: SakiAgentAction, decision: "approve" | "reject" | "rollback") => void;
+  onAnswer: (action: SakiAgentAction, answer: { selection?: string; customText?: string; skipped?: boolean }) => Promise<void> | void;
   onOpenPath?: ((path: string, line?: number) => void) | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
+  if (action.tool.toLowerCase() === "managetodos" && action.todos?.length) return <SakiTodoCard action={action} />;
+  if (action.tool.toLowerCase() === "askuser" && action.question) {
+    return <SakiAskUserCard action={action} busy={Boolean(actionBusyId)} onAnswer={(answer) => onAnswer(action, answer)} />;
+  }
   const busy = actionBusyId === action.id;
   const controlsDisabled = Boolean(actionBusyId);
   const target = sakiActionTarget(action);
@@ -2169,18 +2517,15 @@ export function SakiToolActionCard({
   const observation = action.observation.trim() || "没有返回内容。";
   const toolLower = action.tool.toLowerCase();
   const isCommand = toolLower === "runcommand" || toolLower === "sendcommand" || toolLower === "sendinput";
-  const diffText =
-    action.approval?.diff ||
-    ((toolLower === "applypatch" || toolLower === "apply_patch" || toolLower === "applydiff") &&
-    /^(--- |\+\+\+ |\*\*\*)/m.test(observation)
-      ? observation
-      : "");
+  const diffText = sakiActionExtractDiff(action);
+  const diffStats = sakiActionDiffStats(action, diffText);
+  const cleanObservation = sakiExtractCleanObservation(observation, diffText);
   const isPending = action.status === "pending_approval";
   const isFailed = !action.ok || action.status === "failed" || action.status === "rejected";
   const statusColor = isPending ? "#f59e0b" : isFailed ? "#ef4444" : "#22c55e";
 
   return (
-    <div className={`saki-action-row ${isPending ? "pending" : ""} ${isFailed ? "failed" : ""}`}>
+    <div className={`saki-action-row ${isPending ? "pending" : ""} ${isFailed ? "failed" : ""}${diffText ? " has-diff" : ""}`}>
       <div className="saki-action-row-main" onClick={() => setExpanded(!expanded)}>
         <span className="saki-action-icon"><SakiToolIcon action={action} /></span>
         <span className="saki-action-label" title={target || undefined}>
@@ -2203,6 +2548,13 @@ export function SakiToolActionCard({
           ) : (
             <span>{sakiActionTitle(action)}</span>
           )}
+          {diffStats ? (
+            <span className="saki-action-diff-stats" title={`+${diffStats.added} 行新增, -${diffStats.removed} 行删除`}>
+              {diffStats.added > 0 ? <span className="saki-diff-stat-add">+{diffStats.added}</span> : null}
+              {diffStats.removed > 0 ? <span className="saki-diff-stat-del">-{diffStats.removed}</span> : null}
+              {diffStats.added === 0 && diffStats.removed === 0 ? <span className="saki-diff-stat-neutral">±0</span> : null}
+            </span>
+          ) : null}
           {meta ? <span className="saki-action-meta">{meta}</span> : null}
         </span>
         <span className="saki-action-status-dot" style={{ backgroundColor: statusColor }} />
@@ -2232,50 +2584,20 @@ export function SakiToolActionCard({
               </div>
               <pre className="saki-action-terminal-output">{compactContextText(observation, 8000)}</pre>
             </div>
+          ) : diffText ? (
+            <div className="saki-action-diff-container">
+              {cleanObservation && cleanObservation !== "没有返回内容。" ? (
+                <div className="saki-action-edit-summary">
+                  <CheckCircle2 size={13} style={{ flexShrink: 0 }} />
+                  <span>{cleanObservation}</span>
+                </div>
+              ) : null}
+              <SakiGitDiffView diff={diffText} target={target} onOpenPath={onOpenPath} />
+            </div>
           ) : (
             <pre className="saki-action-observation">{compactContextText(observation, 5200)}</pre>
           )}
-          {diffText ? (
-            <div className="saki-action-diff">
-              <div className="saki-action-diff-header">差异</div>
-              <pre className="saki-action-diff-body">
-                {compactContextText(diffText, 6000)
-                  .split("\n")
-                  .map((line, index) => {
-                    const kind = line.startsWith("+++") || line.startsWith("---") || line.startsWith("***")
-                      ? "file"
-                      : line.startsWith("+")
-                        ? "add"
-                        : line.startsWith("-")
-                          ? "del"
-                          : line.startsWith("@@")
-                            ? "hunk"
-                            : "ctx";
-                    const path = sakiDiffPathFromLine(line);
-                    const hunkLine = sakiDiffLineNumber(line);
-                    const clickable = Boolean(onOpenPath && (path || (kind === "hunk" && hunkLine && target)));
-                    return (
-                      <span
-                        key={`${index}:${line.slice(0, 24)}`}
-                        className={`saki-diff-line saki-diff-${kind}${clickable ? " saki-diff-clickable" : ""}`}
-                        onClick={
-                          clickable
-                            ? (event) => {
-                                event.stopPropagation();
-                                onOpenPath?.(path || target, hunkLine);
-                              }
-                            : undefined
-                        }
-                      >
-                        {line}
-                        {"\n"}
-                      </span>
-                    );
-                  })}
-              </pre>
-            </div>
-          ) : null}
-          {action.approval?.preview && !action.approval.diff ? (
+          {action.approval?.preview && !diffText ? (
             <div className="saki-action-diff">
               <div className="saki-action-diff-header">预览</div>
               <pre>{compactContextText(action.approval.preview, 2000)}</pre>

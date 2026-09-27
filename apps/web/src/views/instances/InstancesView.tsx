@@ -133,6 +133,7 @@ import type {
   ManagedInstance,
   ManagedNode,
   ManagedUser,
+  PermissionCode,
   RemoteNodeUserSummary,
   RestartPolicy,
   WatchPolicyMode
@@ -190,6 +191,7 @@ import { IncidentBanner, useIncidents } from "../../IncidentInbox.js";
 
 export function InstancesView({
   token,
+  user,
   onLogout,
   refreshTick,
   onOpenTemplates,
@@ -206,6 +208,7 @@ export function InstancesView({
   onFileManagerOpenChange
 }: {
   token: string;
+  user: CurrentUser;
   onLogout: () => void;
   refreshTick: number;
   onOpenTemplates: () => void;
@@ -261,7 +264,7 @@ export function InstancesView({
     toggleImmersive: () => void;
     isImmersive: boolean;
     connectionState: TerminalConnectionState;
-    sendCommand: (cmd: string) => void;
+    sendCommand: (cmd: string) => boolean;
     getHistory: () => string[];
     extractOrCopyLogs?: () => void;
   } | null>(null);
@@ -535,6 +538,18 @@ export function InstancesView({
 
   const selectedInstance = instances.find((instance) => instance.id === selectedId) ?? null;
   const selectedNode = selectedInstance ? nodes.find((node) => node.id === selectedInstance.nodeId) ?? null : null;
+
+  // 实例级有效权限：myPermissions 为数组时已被后端收窄（= 分配权限 ∩ 全局权限）；
+  // null/缺省表示不限制，跟随用户全局权限
+  const canDoOnInstance = useCallback(
+    (instance: ManagedInstance | null | undefined, code: PermissionCode) => {
+      if (!instance) return false;
+      const mine = instance.myPermissions;
+      if (mine === null || mine === undefined) return user.permissions.includes(code);
+      return mine.includes(code);
+    },
+    [user.permissions]
+  );
 
   const handleSelectTerminalTab = useCallback(
     (key: string) => {
@@ -1808,33 +1823,42 @@ export function InstancesView({
     const running = instance.status === "RUNNING" || instance.status === "STARTING";
     const busy = busyId === instance.id;
     const actionTitle = running ? "停止" : "启动";
+    const canToggle = canDoOnInstance(instance, running ? "instance.stop" : "instance.start");
+    const canRestart = canDoOnInstance(instance, "instance.restart");
+    const canDelete = canDoOnInstance(instance, "instance.delete");
 
     return (
       <div className="row-actions instance-row-actions">
-        <button
-          className="icon-button mini"
-          title={actionTitle}
-          disabled={busy || instance.status === "STOPPING"}
-          onClick={() => void runAction(instance, running ? "stop" : "start")}
-        >
-          {running ? <Square size={15} /> : <Play size={15} />}
-        </button>
-        <button
-          className="icon-button mini"
-          title="重启"
-          disabled={busy}
-          onClick={() => void runAction(instance, "restart")}
-        >
-          <RotateCw size={15} />
-        </button>
-        <button
-          className="icon-button mini danger-action"
-          title="删除"
-          disabled={busy}
-          onClick={() => void deleteInstance(instance)}
-        >
-          <Trash2 size={15} />
-        </button>
+        {canToggle ? (
+          <button
+            className="icon-button mini"
+            title={actionTitle}
+            disabled={busy || instance.status === "STOPPING"}
+            onClick={() => void runAction(instance, running ? "stop" : "start")}
+          >
+            {running ? <Square size={15} /> : <Play size={15} />}
+          </button>
+        ) : null}
+        {canRestart ? (
+          <button
+            className="icon-button mini"
+            title="重启"
+            disabled={busy}
+            onClick={() => void runAction(instance, "restart")}
+          >
+            <RotateCw size={15} />
+          </button>
+        ) : null}
+        {canDelete ? (
+          <button
+            className="icon-button mini danger-action"
+            title="删除"
+            disabled={busy}
+            onClick={() => void deleteInstance(instance)}
+          >
+            <Trash2 size={15} />
+          </button>
+        ) : null}
       </div>
     );
   }
@@ -1863,7 +1887,11 @@ export function InstancesView({
     const selectedIncident = watchActiveIncidents.find((item) => item.instanceId === selectedInstance.id) ?? null;
     const activeTab = terminalTabs.find((t) => t.key === activeTerminalKey);
     const isShellTab = Boolean(activeTab?.shellSessionId || (activeTab && activeTab.key !== "main"));
-    const canCommandInput = Boolean(selectedInstance && (running || isShellTab));
+    const canSel = (code: PermissionCode) => canDoOnInstance(selectedInstance, code);
+    const canTerminalView = canSel("terminal.view");
+    const canTerminalInput = canSel("terminal.input");
+    const onAskSakiForInstance = onAskSaki && canSel("saki.agent") ? onAskSaki : undefined;
+    const canCommandInput = Boolean(selectedInstance && (running || isShellTab)) && canTerminalInput;
 
     return (
       <>
@@ -1871,12 +1899,12 @@ export function InstancesView({
           error={error}
           onDismiss={() => setError("")}
           action={
-            onAskSaki ? (
+            onAskSakiForInstance ? (
               <button
                 className="small-button"
                 type="button"
                 onClick={() =>
-                  onAskSaki({
+                  onAskSakiForInstance({
                     message: `请解释并修复当前实例面板报错：\n${error}`,
                     panelError: error,
                     mode: "agent"
@@ -2120,7 +2148,10 @@ export function InstancesView({
               )}
 
               <div className="terminal-container">
-                {terminalTabs.map((tab) => {
+                {!canTerminalView ? (
+                  <div className="terminal-no-permission">当前账号未被授予该实例的终端访问权限</div>
+                ) : null}
+                {canTerminalView ? terminalTabs.map((tab) => {
                   const isActive = tab.key === activeTerminalKey;
                   return (
                     <div
@@ -2132,25 +2163,26 @@ export function InstancesView({
                         token={token}
                         instance={selectedInstance}
                         onStatus={updateInstanceStatus}
-                        onAskSaki={onAskSaki}
+                        onAskSaki={onAskSakiForInstance}
                         {...(tab.shellSessionId !== undefined ? { shellSessionId: tab.shellSessionId } : {})}
                         isActive={isActive}
                         onMountTerminalActions={setTerminalActions}
                       />
                     </div>
                   );
-                })}
+                }) : null}
               </div>
             </div>
 
             {/* Standalone separated Command Row (Integrated History Button inside Input + Circular Right Arrow Button) */}
+            {canTerminalInput ? (
             <form
               className="terminal-command-row"
               onSubmit={(e) => {
                 e.preventDefault();
                 const cmd = terminalCmd.trim();
                 if (!cmd) return;
-                terminalActions?.sendCommand(cmd);
+                if (!terminalActions?.sendCommand(cmd)) return;
                 setTerminalCmd("");
                 setTerminalHistoryIndex(null);
                 setTerminalHistoryDraft("");
@@ -2310,6 +2342,7 @@ export function InstancesView({
                 </button>
               </LiquidGlassContainer>
             </form>
+            ) : null}
           </section>
 
           {/* RIGHT: Master Sidebar Cards Column */}
@@ -2320,9 +2353,9 @@ export function InstancesView({
               onLogout={onLogout}
               variant="panel"
               onAskSaki={
-                onAskSaki
+                onAskSakiForInstance
                   ? () =>
-                      onAskSaki({
+                      onAskSakiForInstance({
                         message: "",
                         contextTitle: `值班：${selectedInstance.name}`,
                         contextText: selectedIncident?.summary || selectedIncident?.rootCause || "",
@@ -2386,6 +2419,7 @@ export function InstancesView({
             {/* 快捷操作 */}
             <div className="glass-panel instance-side-card instance-actions-panel-card">
               <div className="quick-actions-square-grid">
+                {canSel("instance.start") ? (
                 <button
                   className={`quick-action-square-btn ${running ? "disabled" : "action-start"}`}
                   type="button"
@@ -2397,7 +2431,9 @@ export function InstancesView({
                   </div>
                   <span className="action-text">启动</span>
                 </button>
+                ) : null}
 
+                {canSel("instance.restart") ? (
                 <button
                   className="quick-action-square-btn action-restart"
                   type="button"
@@ -2409,7 +2445,9 @@ export function InstancesView({
                   </div>
                   <span className="action-text">重启</span>
                 </button>
+                ) : null}
 
+                {canSel("instance.stop") ? (
                 <button
                   className={`quick-action-square-btn ${!running ? "disabled" : "action-stop"}`}
                   type="button"
@@ -2421,7 +2459,9 @@ export function InstancesView({
                   </div>
                   <span className="action-text">停止</span>
                 </button>
+                ) : null}
 
+                {canSel("instance.kill") ? (
                 <button
                   className="quick-action-square-btn action-kill"
                   type="button"
@@ -2433,7 +2473,9 @@ export function InstancesView({
                   </div>
                   <span className="action-text">强杀</span>
                 </button>
+                ) : null}
 
+                {canSel("file.view") ? (
                 <button
                   className="quick-action-square-btn action-files"
                   type="button"
@@ -2444,7 +2486,9 @@ export function InstancesView({
                   </div>
                   <span className="action-text">文件管理</span>
                 </button>
+                ) : null}
 
+                {canSel("instance.update") ? (
                 <button
                   className="quick-action-square-btn action-settings"
                   type="button"
@@ -2455,7 +2499,9 @@ export function InstancesView({
                   </div>
                   <span className="action-text">实例设置</span>
                 </button>
+                ) : null}
 
+                {canSel("task.view") ? (
                 <button
                   className="quick-action-square-btn action-tasks"
                   type="button"
@@ -2466,7 +2512,9 @@ export function InstancesView({
                   </div>
                   <span className="action-text">计划任务</span>
                 </button>
+                ) : null}
 
+                {canSel("instance.update") ? (
                 <button
                   className={`quick-action-square-btn action-proxy ${selectedInstance.proxyConfig?.enabled ? "proxy-active" : ""}`}
                   type="button"
@@ -2481,15 +2529,18 @@ export function InstancesView({
                   </div>
                   <span className="action-text">网络代理</span>
                 </button>
+                ) : null}
               </div>
             </div>
 
             {/* 实时性能与进程探针 */}
+            {canSel("system.view") ? (
             <InstanceProcessProbeCard
               instance={selectedInstance}
               running={running}
               nodeName={selectedNodeName}
             />
+            ) : null}
           </aside>
         </div>
       </>

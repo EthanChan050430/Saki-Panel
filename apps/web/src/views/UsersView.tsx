@@ -43,6 +43,7 @@ import type {
   PermissionCode,
   UpdateUserRequest
 } from "@webops/shared";
+import { isInstanceAssignablePermission } from "@webops/shared";
 import { api, ApiError } from "../api.js";
 import { usePanelT } from "../i18n/index.js";
 import { AccountAvatar, avatarFileToDataUrl } from "../components/common/AccountAvatar.js";
@@ -70,6 +71,22 @@ import {
 } from "../utils/role.js";
 import { AdminUserPointsModal } from "../AdminUserPointsModal.js";
 
+/** 实例分配时可细分的权限组（从全局权限组中过滤出可分配的权限码） */
+const ASSIGNABLE_PERMISSION_GROUPS = PERMISSION_GROUPS.map((group) => ({
+  ...group,
+  items: group.items.filter((item) => isInstanceAssignablePermission(item.code))
+})).filter((group) => group.items.length > 0);
+
+const ALL_ASSIGNABLE_PERMISSIONS: PermissionCode[] = ASSIGNABLE_PERMISSION_GROUPS.flatMap((group) => group.items.map((item) => item.code));
+
+function samePermissionSet(a: PermissionCode[] | null, b: PermissionCode[] | null): boolean {
+  if (a === null && b === null) return true;
+  if (a === null || b === null) return false;
+  if (a.length !== b.length) return false;
+  const setB = new Set(b);
+  return a.every((code) => setB.has(code));
+}
+
 export function UsersView({
   token,
   currentUser,
@@ -91,6 +108,9 @@ export function UsersView({
   const [databases, setDatabases] = useState<DatabaseVisualizerInstance[]>([]);
   const [assignmentTargetUser, setAssignmentTargetUser] = useState<InstanceAssignee | null>(null);
   const [assignmentDraftIds, setAssignmentDraftIds] = useState<string[]>([]);
+  const [assignmentSearch, setAssignmentSearch] = useState("");
+  const [assignmentPermDraft, setAssignmentPermDraft] = useState<Record<string, PermissionCode[] | null>>({});
+  const [assignmentPermExpanded, setAssignmentPermExpanded] = useState<Record<string, boolean>>({});
   const [selectedRoleId, setSelectedRoleId] = useState("");
   const [rolePermissions, setRolePermissions] = useState<PermissionCode[]>([]);
   const [error, setError] = useState("");
@@ -398,15 +418,71 @@ export function UsersView({
 
   function openAssignmentModal(user: InstanceAssignee) {
     setAssignmentTargetUser(user);
+    setAssignmentSearch("");
     const assignedInstIds = instances.filter((instance) => isInstanceAssignedTo(instance, user.id)).map((instance) => instance.id);
     const assignedDbIds = databases.filter((db) => isInstanceAssignedTo(db, user.id)).map((db) => db.id);
     setAssignmentDraftIds([...assignedInstIds, ...assignedDbIds]);
+    const permDraft: Record<string, PermissionCode[] | null> = {};
+    for (const instance of instances) {
+      const entry = instanceAssignedUsers(instance).find((item) => item.userId === user.id);
+      if (entry) permDraft[instance.id] = entry.permissions ?? null;
+    }
+    setAssignmentPermDraft(permDraft);
+    setAssignmentPermExpanded({});
   }
+
+  const filteredAssignmentInstances = useMemo(() => {
+    const q = assignmentSearch.trim().toLowerCase();
+    if (!q) return instances;
+    return instances.filter(
+      (i) => i.name.toLowerCase().includes(q) || (i.nodeName && i.nodeName.toLowerCase().includes(q)) || instanceTypeLabel(i.type).toLowerCase().includes(q)
+    );
+  }, [instances, assignmentSearch]);
+
+  const filteredAssignmentDatabases = useMemo(() => {
+    const q = assignmentSearch.trim().toLowerCase();
+    if (!q) return databases;
+    return databases.filter(
+      (db) => db.name.toLowerCase().includes(q) || (db.nodeName && db.nodeName.toLowerCase().includes(q)) || db.engine.toLowerCase().includes(q)
+    );
+  }, [databases, assignmentSearch]);
 
   function toggleAssignmentDraft(instanceId: string, checked: boolean) {
     setAssignmentDraftIds((current) =>
       checked ? [...new Set([...current, instanceId])] : current.filter((id) => id !== instanceId)
     );
+  }
+
+  function assignmentPermsFor(instanceId: string): PermissionCode[] | null {
+    return assignmentPermDraft[instanceId] ?? null;
+  }
+
+  function setAssignmentPermRestricted(instanceId: string, restricted: boolean) {
+    setAssignmentPermDraft((current) => ({
+      ...current,
+      [instanceId]: restricted ? [...ALL_ASSIGNABLE_PERMISSIONS] : null
+    }));
+  }
+
+  function toggleAssignmentPerm(instanceId: string, code: PermissionCode) {
+    setAssignmentPermDraft((current) => {
+      const list = current[instanceId] ?? [];
+      const next = list.includes(code) ? list.filter((item) => item !== code) : [...list, code];
+      return { ...current, [instanceId]: next };
+    });
+  }
+
+  function toggleAssignmentPermGroup(instanceId: string, codes: PermissionCode[]) {
+    setAssignmentPermDraft((current) => {
+      const list = current[instanceId] ?? [];
+      const allSelected = codes.every((code) => list.includes(code));
+      const next = allSelected ? list.filter((item) => !codes.includes(item)) : [...new Set([...list, ...codes])];
+      return { ...current, [instanceId]: next };
+    });
+  }
+
+  function toggleAssignmentPermExpanded(instanceId: string) {
+    setAssignmentPermExpanded((current) => ({ ...current, [instanceId]: !current[instanceId] }));
   }
 
   async function saveUserAssignments(event: React.FormEvent<HTMLFormElement>) {
@@ -419,7 +495,11 @@ export function UsersView({
       const updates = instances.filter((instance) => {
         const currentlyAssignedToTarget = isInstanceAssignedTo(instance, assignmentTargetUser.id);
         const shouldAssignToTarget = draftIds.has(instance.id);
-        return currentlyAssignedToTarget !== shouldAssignToTarget;
+        if (currentlyAssignedToTarget !== shouldAssignToTarget) return true;
+        if (!shouldAssignToTarget) return false;
+        // 仍在分配名单中但细分权限发生变化
+        const entry = instanceAssignedUsers(instance).find((item) => item.userId === assignmentTargetUser.id);
+        return !samePermissionSet(entry?.permissions ?? null, assignmentPermDraft[instance.id] ?? null);
       });
       const updatedInstances = await Promise.all(
         updates.map((instance) => {
@@ -427,7 +507,12 @@ export function UsersView({
           const assignedToUserIds = draftIds.has(instance.id)
             ? [...new Set([...currentAssigneeIds, assignmentTargetUser.id])]
             : currentAssigneeIds.filter((userId) => userId !== assignmentTargetUser.id);
-          return api.updateInstance(token, instance.id, { assignedToUserIds });
+          return api.updateInstance(token, instance.id, {
+            assignedToUserIds,
+            ...(draftIds.has(instance.id)
+              ? { assignmentPermissions: { [assignmentTargetUser.id]: assignmentPermDraft[instance.id] ?? null } }
+              : {})
+          });
         })
       );
       const updatedById = new Map(updatedInstances.map((instance) => [instance.id, instance]));
@@ -452,6 +537,8 @@ export function UsersView({
 
       setAssignmentTargetUser(null);
       setAssignmentDraftIds([]);
+      setAssignmentPermDraft({});
+      setAssignmentPermExpanded({});
     } catch (err) {
       setError(err instanceof Error ? err.message : t("users.errorAssignFailed"));
     } finally {
@@ -462,113 +549,256 @@ export function UsersView({
   return (
     <>
       <PageErrorToast error={error} onDismiss={() => setError("")} />
-      {assignmentTargetUser ? (
-        <div className="modal-backdrop">
-          <div className="modal-panel assignment-modal assignment-picker-modal" role="dialog" aria-modal="true" aria-labelledby="assignment-modal-title">
-            <div className="section-heading modal-heading">
-              <div className="role-heading-info">
-                <h2 id="assignment-modal-title">{t("users.assignment.title")}</h2>
-                <p>{t("users.assignment.copy")}</p>
-              </div>
-              <button
-                className="icon-button mini"
-                disabled={savingAssignment}
-                title={t("common.close")}
-                type="button"
-                onClick={() => {
+      {typeof document !== "undefined" && assignmentTargetUser
+        ? createPortal(
+            <div
+              className="modal-backdrop modal-fullscreen-backdrop"
+              role="presentation"
+              onMouseDown={(e) => {
+                if (e.target === e.currentTarget && !savingAssignment) {
                   setAssignmentTargetUser(null);
                   setAssignmentDraftIds([]);
-                }}
+                  setAssignmentPermDraft({});
+                  setAssignmentPermExpanded({});
+                }
+              }}
+            >
+              <div
+                className="modal-panel modal-fullscreen-panel assignment-modal assignment-fullscreen-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="assignment-modal-title"
               >
-                <X size={16} />
-              </button>
-            </div>
-            <div className="assignment-target-card">
-              <UserRound size={20} />
-              <div>
-                <strong>{assignmentTargetUser.displayName || assignmentTargetUser.username}</strong>
-                <span>
-                  @{assignmentTargetUser.username} · {ownerRoleLabel(assignmentTargetUser.role, t)}
-                </span>
-              </div>
-            </div>
-            <form className="assignment-form assignment-picker-form" onSubmit={saveUserAssignments}>
-              <div className="assignment-instance-summary">
-                <div>
-                  <strong>{assignmentDraftIds.length} {t("users.assignment.selected")}</strong>
-                  <span>{instances.length + databases.length} {t("users.assignment.available")}</span>
-                </div>
-              </div>
-              <div className="assignment-instance-grid assignment-picker-grid">
-                {instances.map((instance) => {
-                  const checked = assignmentDraftIds.includes(instance.id);
-                  return (
-                    <label className={`assignment-instance-row ${checked ? "active" : ""}`} key={instance.id}>
-                      <input
-                        type="checkbox"
-                        checked={checked}
+                <header className="modal-fullscreen-header">
+                  <div className="modal-fullscreen-title-wrap">
+                    <div className="modal-fullscreen-icon-wrap">
+                      <ShieldCheck size={20} className="points-title-icon" />
+                    </div>
+                    <div className="modal-fullscreen-title-text">
+                      <h3 id="assignment-modal-title">{t("users.assignment.title")}</h3>
+                      <p className="modal-fullscreen-subtitle">
+                        <span>{assignmentTargetUser.displayName || assignmentTargetUser.username} (@{assignmentTargetUser.username})</span>
+                        <span className="owner-role-pill">{ownerRoleLabel(assignmentTargetUser.role, t)}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    className="icon-button mini modal-fullscreen-close-btn"
+                    disabled={savingAssignment}
+                    title={t("common.close")}
+                    type="button"
+                    onClick={() => {
+                      setAssignmentTargetUser(null);
+                      setAssignmentDraftIds([]);
+                      setAssignmentPermDraft({});
+                      setAssignmentPermExpanded({});
+                    }}
+                  >
+                    <X size={18} />
+                  </button>
+                </header>
+
+                <form className="modal-fullscreen-form-wrapper" onSubmit={saveUserAssignments}>
+                  <div className="modal-fullscreen-body assignment-fullscreen-body">
+                    <div className="modal-fullscreen-content">
+                      <div className="assignment-instance-summary">
+                        <div className="summary-left">
+                          <strong>{assignmentDraftIds.length} {t("users.assignment.selected")}</strong>
+                          <span>{instances.length + databases.length} {t("users.assignment.available")}</span>
+                        </div>
+
+                        <div className="assignment-quick-actions">
+                          <div className="assignment-search-input-wrap">
+                            <Search size={13} className="search-icon" />
+                            <input
+                              type="text"
+                              placeholder="搜索实例或数据库名称..."
+                              value={assignmentSearch}
+                              onChange={(e) => setAssignmentSearch(e.target.value)}
+                            />
+                            {assignmentSearch && (
+                              <button
+                                type="button"
+                                className="clear-search-btn"
+                                onClick={() => setAssignmentSearch("")}
+                              >
+                                <X size={12} />
+                              </button>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            className="quick-pill-btn"
+                            disabled={savingAssignment}
+                            onClick={() => {
+                              const allIds = [
+                                ...filteredAssignmentInstances.map((i) => i.id),
+                                ...filteredAssignmentDatabases.map((db) => db.id)
+                              ];
+                              setAssignmentDraftIds((prev) => [...new Set([...prev, ...allIds])]);
+                            }}
+                          >
+                            全选
+                          </button>
+                          <button
+                            type="button"
+                            className="quick-pill-btn"
+                            disabled={savingAssignment || assignmentDraftIds.length === 0}
+                            onClick={() => setAssignmentDraftIds([])}
+                          >
+                            清空
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="assignment-instance-grid assignment-picker-grid">
+                        {filteredAssignmentInstances.map((instance) => {
+                          const checked = assignmentDraftIds.includes(instance.id);
+                          const permDraft = assignmentPermsFor(instance.id);
+                          const permExpanded = Boolean(assignmentPermExpanded[instance.id]);
+                          return (
+                            <div className={`assignment-instance-block ${checked ? "active" : ""}`} key={instance.id}>
+                              <label className={`assignment-instance-row ${checked ? "active" : ""}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={savingAssignment}
+                                  onChange={(event) => toggleAssignmentDraft(instance.id, event.target.checked)}
+                                />
+                                <span className="assignment-instance-icon">
+                                  <InstanceStatusIcon status={instance.status} size={16} />
+                                </span>
+                                <span className="assignment-instance-copy">
+                                  <strong>{instance.name}</strong>
+                                  <small>
+                                    {instanceTypeLabel(instance.type)} · {instance.nodeName ?? instance.nodeId}
+                                  </small>
+                                </span>
+                                <span className="assignment-instance-owner">{instanceAssigneeLabel(instance)}</span>
+                              </label>
+                              {checked ? (
+                                <div className="assignment-perm-wrap">
+                                  <button
+                                    type="button"
+                                    className={`assignment-perm-toggle ${permDraft !== null ? "restricted" : ""}`}
+                                    disabled={savingAssignment}
+                                    onClick={() => toggleAssignmentPermExpanded(instance.id)}
+                                  >
+                                    {permExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                                    {t("users.assignment.customize")}
+                                    {permDraft !== null ? <span className="assignment-perm-badge">{permDraft.length}</span> : null}
+                                  </button>
+                                  {permExpanded ? (
+                                    <div className="assignment-perm-panel">
+                                      <label className="assignment-perm-mode">
+                                        <input
+                                          type="checkbox"
+                                          checked={permDraft === null}
+                                          disabled={savingAssignment}
+                                          onChange={(event) => setAssignmentPermRestricted(instance.id, !event.target.checked)}
+                                        />
+                                        {t("users.assignment.unrestricted")}
+                                      </label>
+                                      {permDraft !== null ? (
+                                        <>
+                                          <div className="assignment-perm-hint">{t("users.assignment.restricted")}</div>
+                                          {ASSIGNABLE_PERMISSION_GROUPS.map((group) => {
+                                            const groupCodes = group.items.map((item) => item.code);
+                                            const allChecked = groupCodes.every((code) => permDraft.includes(code));
+                                            return (
+                                              <div className="assignment-perm-group" key={group.groupKey}>
+                                                <button
+                                                  type="button"
+                                                  className={`assignment-perm-group-head ${allChecked ? "all-checked" : ""}`}
+                                                  disabled={savingAssignment}
+                                                  onClick={() => toggleAssignmentPermGroup(instance.id, groupCodes)}
+                                                >
+                                                  {PERM_GROUP_ICONS[group.groupKey]}
+                                                  {t(group.groupKey)}
+                                                </button>
+                                                <div className="assignment-perm-items">
+                                                  {group.items.map((item) => (
+                                                    <label className="assignment-perm-item" key={item.code}>
+                                                      <input
+                                                        type="checkbox"
+                                                        checked={permDraft.includes(item.code)}
+                                                        disabled={savingAssignment}
+                                                        onChange={() => toggleAssignmentPerm(instance.id, item.code)}
+                                                      />
+                                                      {t(item.labelKey)}
+                                                    </label>
+                                                  ))}
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
+                                        </>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                        {filteredAssignmentDatabases.map((db) => {
+                          const checked = assignmentDraftIds.includes(db.id);
+                          return (
+                            <label className={`assignment-instance-row db-assignment-row ${checked ? "active" : ""}`} key={`db-${db.id}`}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                disabled={savingAssignment}
+                                onChange={(event) => toggleAssignmentDraft(db.id, event.target.checked)}
+                              />
+                              <span className="assignment-instance-icon db-icon">
+                                <Database size={16} />
+                              </span>
+                              <span className="assignment-instance-copy">
+                                <strong>{db.name}</strong>
+                                <small>
+                                  {db.engine.toUpperCase()} 数据库可视化 · {db.nodeName ?? db.nodeId}
+                                </small>
+                              </span>
+                              <span className="assignment-instance-owner">{instanceAssigneeLabel(db)}</span>
+                            </label>
+                          );
+                        })}
+                        {filteredAssignmentInstances.length === 0 && filteredAssignmentDatabases.length === 0 ? (
+                          <div className="empty-state">{t("users.assignment.empty")}</div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+
+                  <footer className="modal-fullscreen-footer assignment-actions">
+                    <div className="modal-fullscreen-footer-inner">
+                      <button
+                        className="secondary-button"
                         disabled={savingAssignment}
-                        onChange={(event) => toggleAssignmentDraft(instance.id, event.target.checked)}
-                      />
-                      <span className="assignment-instance-icon">
-                        <InstanceStatusIcon status={instance.status} size={16} />
-                      </span>
-                      <span className="assignment-instance-copy">
-                        <strong>{instance.name}</strong>
-                        <small>
-                          {instanceTypeLabel(instance.type)} · {instance.nodeName ?? instance.nodeId}
-                        </small>
-                      </span>
-                      <span className="assignment-instance-owner">{instanceAssigneeLabel(instance)}</span>
-                    </label>
-                  );
-                })}
-                {databases.map((db) => {
-                  const checked = assignmentDraftIds.includes(db.id);
-                  return (
-                    <label className={`assignment-instance-row db-assignment-row ${checked ? "active" : ""}`} key={`db-${db.id}`}>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        disabled={savingAssignment}
-                        onChange={(event) => toggleAssignmentDraft(db.id, event.target.checked)}
-                      />
-                      <span className="assignment-instance-icon db-icon">
-                        <Database size={16} />
-                      </span>
-                      <span className="assignment-instance-copy">
-                        <strong>{db.name}</strong>
-                        <small>
-                          {db.engine.toUpperCase()} 数据库可视化 · {db.nodeName ?? db.nodeId}
-                        </small>
-                      </span>
-                      <span className="assignment-instance-owner">{instanceAssigneeLabel(db)}</span>
-                    </label>
-                  );
-                })}
-                {instances.length === 0 && databases.length === 0 ? <div className="empty-state">{t("users.assignment.empty")}</div> : null}
+                        type="button"
+                        onClick={() => {
+                          setAssignmentTargetUser(null);
+                          setAssignmentDraftIds([]);
+                          setAssignmentPermDraft({});
+                          setAssignmentPermExpanded({});
+                        }}
+                      >
+                        {t("common.cancel")}
+                      </button>
+                      <button className="primary-button" disabled={savingAssignment} type="submit">
+                        <UserCheck size={17} />
+                        {savingAssignment ? t("common.saving") : t("users.assignment.save")}
+                      </button>
+                    </div>
+                  </footer>
+                </form>
               </div>
-              <div className="assignment-actions">
-                <button
-                  className="secondary-button"
-                  disabled={savingAssignment}
-                  type="button"
-                  onClick={() => {
-                    setAssignmentTargetUser(null);
-                    setAssignmentDraftIds([]);
-                  }}
-                >
-                  {t("common.cancel")}
-                </button>
-                <button className="primary-button" disabled={savingAssignment} type="submit">
-                  <UserCheck size={17} />
-                  {savingAssignment ? t("common.saving") : t("users.assignment.save")}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      ) : null}
+            </div>,
+            document.body
+          )
+        : null}
 
       {typeof document !== "undefined" && editingUser
         ? createPortal(

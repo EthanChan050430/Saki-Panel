@@ -5,6 +5,7 @@ import { prisma } from "../db.js";
 export const defaultWatchPolicy = {
   enabled: true,
   mode: "diagnose_and_patch" as WatchPolicyMode,
+  autoDiagnose: false,
   cooldownSeconds: 900,
   maxRunsPerHour: 3,
   verifyWaitSeconds: 20,
@@ -63,6 +64,7 @@ export function parseNotifyChannelIds(value: string | null | undefined): string[
 export function toManagedWatchPolicy(instanceId: string, row: {
   enabled: boolean;
   mode: string;
+  autoDiagnose: boolean;
   cooldownSeconds: number;
   maxRunsPerHour: number;
   verifyWaitSeconds: number;
@@ -78,6 +80,7 @@ export function toManagedWatchPolicy(instanceId: string, row: {
     instanceId,
     enabled: row?.enabled ?? defaultWatchPolicy.enabled,
     mode: normalizeWatchPolicyMode(row?.mode),
+    autoDiagnose: row?.autoDiagnose ?? defaultWatchPolicy.autoDiagnose,
     cooldownSeconds: row?.cooldownSeconds ?? defaultWatchPolicy.cooldownSeconds,
     maxRunsPerHour: row?.maxRunsPerHour ?? defaultWatchPolicy.maxRunsPerHour,
     verifyWaitSeconds: row?.verifyWaitSeconds ?? defaultWatchPolicy.verifyWaitSeconds,
@@ -101,6 +104,7 @@ export async function upsertWatchPolicy(instanceId: string, input: UpdateWatchPo
   const data = {
     enabled: input.enabled ?? current.enabled,
     mode: input.mode ? normalizeWatchPolicyMode(input.mode, current.mode) : current.mode,
+    autoDiagnose: input.autoDiagnose !== undefined ? Boolean(input.autoDiagnose) : current.autoDiagnose,
     cooldownSeconds: input.cooldownSeconds !== undefined
       ? clampInt(input.cooldownSeconds, current.cooldownSeconds, 60, 86400)
       : current.cooldownSeconds,
@@ -135,6 +139,7 @@ export async function upsertWatchPolicy(instanceId: string, input: UpdateWatchPo
     update: {
       enabled: data.enabled,
       mode: data.mode,
+      autoDiagnose: data.autoDiagnose,
       cooldownSeconds: data.cooldownSeconds,
       maxRunsPerHour: data.maxRunsPerHour,
       verifyWaitSeconds: data.verifyWaitSeconds,
@@ -150,6 +155,7 @@ export async function upsertWatchPolicy(instanceId: string, input: UpdateWatchPo
       instanceId,
       enabled: data.enabled,
       mode: data.mode,
+      autoDiagnose: data.autoDiagnose,
       cooldownSeconds: data.cooldownSeconds,
       maxRunsPerHour: data.maxRunsPerHour,
       verifyWaitSeconds: data.verifyWaitSeconds,

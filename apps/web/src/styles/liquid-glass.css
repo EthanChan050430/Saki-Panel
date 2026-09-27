@@ -62,7 +62,13 @@
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background: transparent;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.02) 45%, rgba(255, 255, 255, 0) 100%);
+}
+
+[data-theme="dark"] .liquid-glass-btn .glass__warp,
+[data-theme="dark"] .liquid-glass-container .glass__warp,
+[data-theme="dark"] .liquid-glass-warp {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.01) 45%, rgba(255, 255, 255, 0) 100%);
 }
 
 .liquid-glass-inner {
@@ -1755,7 +1761,7 @@
   padding: 4px 0 !important;
 }
 
-/* Terminal Input Wrap as LiquidGlassContainer (matching Saki input box refraction) */
+/* Terminal Input Wrap as LiquidGlassContainer (High-Transparency White Liquid Glass in Light Theme) */
 .terminal-input-wrap.liquid-glass-container,
 .terminal-command-row .terminal-input-wrap.liquid-glass-container {
   flex: 1 !important;
@@ -1767,43 +1773,50 @@
   border-radius: 24px !important;
   overflow: hidden !important;
   outline: none !important;
-  background: transparent !important;
-  border: 1px solid rgba(255, 255, 255, 0.55) !important;
-  border-top-color: rgba(255, 255, 255, 0.78) !important;
+  background: rgba(255, 255, 255, 0.22) !important;
+  border: 1px solid rgba(255, 255, 255, 0.65) !important;
+  border-top-color: rgba(255, 255, 255, 0.95) !important;
   border-bottom-color: rgba(255, 255, 255, 0.35) !important;
   box-shadow:
-    0 12px 36px rgba(0, 0, 0, 0.14),
-    0 3px 10px rgba(0, 0, 0, 0.05),
-    inset 0 1px 1.5px rgba(255, 255, 255, 0.75),
+    0 8px 28px rgba(0, 0, 0, 0.04),
+    0 2px 8px rgba(0, 0, 0, 0.02),
+    inset 0 1.5px 2px rgba(255, 255, 255, 0.95),
     inset 0 0 0 1px rgba(255, 255, 255, 0.25),
-    inset 0 -6px 16px rgba(0, 0, 0, 0.05) !important;
-  transition: box-shadow 0.24s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.24s ease !important;
+    inset 0 -4px 12px rgba(0, 0, 0, 0.02) !important;
+  transition: box-shadow 0.24s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.24s ease, background 0.24s ease !important;
   padding: 0 !important;
   box-sizing: border-box !important;
 }
 
 .terminal-input-wrap.liquid-glass-container:hover,
-.terminal-input-wrap.liquid-glass-container:focus-within,
-.terminal-command-row .terminal-input-wrap.liquid-glass-container:hover,
-.terminal-command-row .terminal-input-wrap.liquid-glass-container:focus-within {
-  background: transparent !important;
-  border: 1px solid rgba(255, 255, 255, 0.68) !important;
-  border-top-color: rgba(255, 255, 255, 0.90) !important;
-  border-bottom-color: rgba(255, 255, 255, 0.45) !important;
+.terminal-command-row .terminal-input-wrap.liquid-glass-container:hover {
+  background: rgba(255, 255, 255, 0.35) !important;
+  border: 1px solid rgba(255, 255, 255, 0.85) !important;
+  border-top-color: #ffffff !important;
+  border-bottom-color: rgba(255, 255, 255, 0.50) !important;
   box-shadow:
-    0 16px 42px rgba(0, 0, 0, 0.18),
-    0 4px 14px rgba(0, 0, 0, 0.06),
-    inset 0 1px 2px rgba(255, 255, 255, 0.88),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.35),
-    inset 0 -6px 18px rgba(0, 0, 0, 0.07) !important;
+    0 12px 34px rgba(0, 0, 0, 0.06),
+    0 3px 10px rgba(0, 0, 0, 0.03),
+    inset 0 1.5px 2px #ffffff,
+    inset 0 0 0 1px rgba(255, 255, 255, 0.35) !important;
+}
+
+.terminal-input-wrap.liquid-glass-container:focus-within,
+.terminal-command-row .terminal-input-wrap.liquid-glass-container:focus-within {
+  background: rgba(255, 255, 255, 0.45) !important;
+  border: 1px solid var(--primary, #ff75ac) !important;
+  box-shadow:
+    0 10px 32px var(--primary-light, rgba(255, 117, 172, 0.20)),
+    0 0 0 3px var(--primary-light, rgba(255, 117, 172, 0.25)),
+    inset 0 1.5px 2px rgba(255, 255, 255, 0.95) !important;
 }
 
 [data-theme="dark"] .terminal-input-wrap.liquid-glass-container,
 [data-theme="dark"] .terminal-command-row .terminal-input-wrap.liquid-glass-container {
-  background: transparent !important;
-  border: 1px solid rgba(255, 255, 255, 0.24) !important;
-  border-top-color: rgba(255, 255, 255, 0.38) !important;
-  border-bottom-color: rgba(255, 255, 255, 0.16) !important;
+  background: rgba(20, 22, 34, 0.35) !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  border-top-color: rgba(255, 255, 255, 0.36) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.12) !important;
   box-shadow:
     0 16px 42px rgba(0, 0, 0, 0.55),
     0 4px 14px rgba(0, 0, 0, 0.30),
@@ -1817,7 +1830,7 @@
 [data-theme="dark"] .terminal-input-wrap.liquid-glass-container:focus-within,
 [data-theme="dark"] .terminal-command-row .terminal-input-wrap.liquid-glass-container:hover,
 [data-theme="dark"] .terminal-command-row .terminal-input-wrap.liquid-glass-container:focus-within {
-  background: transparent !important;
+  background: rgba(26, 29, 44, 0.50) !important;
   border: 1px solid rgba(255, 255, 255, 0.30) !important;
   border-top-color: rgba(255, 255, 255, 0.46) !important;
   border-bottom-color: rgba(255, 255, 255, 0.20) !important;
@@ -1840,6 +1853,16 @@
   padding: 0 4px 0 14px !important;
   box-sizing: border-box !important;
   gap: 6px !important;
+  background: transparent !important;
+  border-radius: inherit !important;
+}
+
+.terminal-input-wrap.liquid-glass-container:hover .liquid-glass-inner,
+.terminal-input-wrap.liquid-glass-container:focus-within .liquid-glass-inner,
+[data-theme="dark"] .terminal-input-wrap.liquid-glass-container .liquid-glass-inner,
+[data-theme="dark"] .terminal-input-wrap.liquid-glass-container:hover .liquid-glass-inner,
+[data-theme="dark"] .terminal-input-wrap.liquid-glass-container:focus-within .liquid-glass-inner {
+  background: transparent !important;
 }
 
 /* Fallback for static .terminal-input-wrap outside LiquidGlassContainer */

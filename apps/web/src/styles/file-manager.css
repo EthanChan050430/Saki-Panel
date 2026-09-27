@@ -4556,6 +4556,7 @@ body.saki-selection-capture-active .saki-launcher {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 .saki-header-actions .icon-button,
@@ -4765,7 +4766,7 @@ body.saki-selection-capture-active .saki-launcher {
 .saki-agent-status {
   position: static;
   width: auto;
-  min-width: fit-content;
+  min-width: 0;
   max-width: 240px;
   height: 26px;
   display: inline-flex !important;
@@ -4776,7 +4777,7 @@ body.saki-selection-capture-active .saki-launcher {
   font-size: 11.5px !important;
   line-height: 1;
   font-weight: 500;
-  flex-shrink: 0;
+  flex-shrink: 1;
   overflow: hidden;
   cursor: pointer;
   user-select: none;

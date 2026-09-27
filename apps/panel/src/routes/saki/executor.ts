@@ -2,10 +2,11 @@ import path from "node:path";
 import { createPatch } from "diff";
 import { applyPatchToContent, parseWorkspacePatch, patchHunkStartLine } from "./patch.js";
 import type { CreateScheduledTaskRequest, PermissionCode, SakiAgentAction, SakiAgentRiskLevel, SakiChatRequest, SakiInputAttachment, UpdateScheduledTaskRequest } from "@webops/shared";
+import { isInstanceAssignablePermission } from "@webops/shared";
 import { prisma } from "../../db.js";
 import { writeAuditLog } from "../../audit.js";
 import { classifyCommandRisk, findCrossInstanceCommandEscape, findDangerousCommandReason } from "../../security.js";
-import { instanceAccessInclude, listVisibleInstances, loadVisibleInstance } from "../../instance-access.js";
+import { instanceAccessInclude, instancePermissionOverride, listVisibleInstances, loadInstanceAccessProfile, loadVisibleInstance } from "../../instance-access.js";
 import type { DaemonInstanceSpec } from "../../daemon-client.js";
 import {
   archiveDaemonInstancePaths,
@@ -99,6 +100,7 @@ import {
   buildInstanceSettingsPatch,
   instanceSettingsSnapshot,
   shouldRequestSakiApproval,
+  normalizedAgentToolName,
   toolArgs
 } from "./tools.js";
 import { attachIncidentCheckpoint } from "../../watch/incidents.js";
@@ -531,6 +533,32 @@ async function resolveAgentInstance(runtime: SakiAgentRuntime, args: Record<stri
   return activeInstance(runtime);
 }
 
+async function scopeToolPermissions(runtime: SakiAgentRuntime, args: Record<string, unknown>): Promise<SakiAgentRuntime> {
+  const lookup = stringArg(args, "instanceId") || stringArg(args, "instance");
+  const explicitId = stringArg(args, "id");
+  const contextInstance = runtime.context.instance
+    ? await loadVisibleInstance(runtime.userId, runtime.context.instance.id)
+    : null;
+  if (runtime.context.instance && !contextInstance) throw new RouteError("Instance not found.", 404);
+  const instance = lookup
+    ? await findInstanceByLookup(runtime.userId, lookup)
+    : explicitId
+      ? await loadVisibleInstance(runtime.userId, explicitId) ?? contextInstance
+      : contextInstance;
+  if (!instance) return runtime;
+  const profile = await loadInstanceAccessProfile(runtime.userId);
+  if (!profile) throw new RouteError("User not found.", 403);
+  const override = instancePermissionOverride(profile, instance, runtime.permissions);
+  if (override === null) return runtime;
+  const allowed = new Set(override);
+  return {
+    ...runtime,
+    permissions: runtime.permissions.filter((permission) =>
+      !isInstanceAssignablePermission(permission) || allowed.has(permission)
+    )
+  };
+}
+
 async function readFileForCheckpoint(instance: InstanceWithNode, relativePath: string): Promise<{ existed: boolean; content: string }> {
   try {
     const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath);
@@ -655,6 +683,12 @@ function taskUpdateFromArgs(args: Record<string, unknown>): UpdateScheduledTaskR
   return patch;
 }
 
+function assertWatchPatchScope(runtime: SakiAgentRuntime, files: ReturnType<typeof parseWorkspacePatch>): void {
+  if (runtime.kind === "watch" && (files.length !== 1 || files[0]?.kind !== "update")) {
+    throw new RouteError("Watch mode can only patch one existing file at a time.", 403);
+  }
+}
+
 async function buildApproval(runtime: SakiAgentRuntime, call: ParsedToolCall): Promise<NonNullable<SakiAgentAction["approval"]>> {
   const args = toolArgs(call);
   const toolName = call.name.toLowerCase();
@@ -669,12 +703,13 @@ async function buildApproval(runtime: SakiAgentRuntime, call: ParsedToolCall): P
     const patch = rawStringArg(args, "patch");
     if (!patch.trim()) throw new RouteError("applyPatch requires patch.", 400);
     const files = parseWorkspacePatch(patch);
+    assertWatchPatchScope(runtime, files);
     return {
       required: true,
       reason: "File patch requires approval. Review the diff; Saki will checkpoint previous files before writing.",
       risk: "high",
       preview: files.map((file) => `${file.kind} ${file.path}`).join(", "),
-      diff: patch.slice(0, 8000),
+      diff: runtime.kind === "watch" ? patch : patch.slice(0, 8000),
       rollbackAvailable: true
     };
   }
@@ -876,6 +911,38 @@ async function createPendingApprovalAction(
   };
 }
 
+async function createPendingQuestionAction(
+  runtime: SakiAgentRuntime,
+  call: ParsedToolCall,
+  resume?: SakiAgentResumeState
+): Promise<SakiAgentAction> {
+  const args = toolArgs(call);
+  const text = stringArg(args, "question").trim();
+  if (!text || text.length > 500) throw new RouteError("askUser requires a question of at most 500 characters.", 400);
+  let inputOptions = args.options;
+  if (typeof inputOptions === "string") {
+    const rawOptions = inputOptions;
+    try { inputOptions = JSON.parse(rawOptions); }
+    catch { inputOptions = rawOptions.split(/\r?\n/).map((item: string) => item.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim()).filter(Boolean); }
+  }
+  if (inputOptions !== undefined && (!Array.isArray(inputOptions) || inputOptions.length > 4 || inputOptions.some((item) => typeof item !== "string"))) {
+    throw new RouteError("askUser options must be an array of up to four strings.", 400);
+  }
+  const options = [...new Set((Array.isArray(inputOptions) ? inputOptions as string[] : []).map((item) => item.trim()).filter(Boolean))];
+  if (options.some((item) => item.length > 120)) throw new RouteError("askUser options must be at most 120 characters.", 400);
+  const id = call.id || actionId();
+  const createdAt = new Date().toISOString();
+  await savePendingSakiAction({
+    id, call: { ...call, name: "askUser", args: { question: text, options } }, userId: runtime.userId, contextInstanceId: runtime.context.instance?.id ?? null, createdAt,
+    approval: { required: false, reason: "Waiting for user input.", risk: "low" },
+    ...(resume ? { resume } : {}),
+    ...(runtime.kind ? { kind: runtime.kind } : {}),
+    ...(runtime.maxLoops ? { maxLoops: runtime.maxLoops } : {}),
+    ...(runtime.systemPromptOverride ? { systemPromptOverride: runtime.systemPromptOverride } : {})
+  });
+  return { id, tool: "askUser", args: { question: text, options }, observation: "Waiting for user input.", ok: false, status: "pending_input", question: { text, options }, createdAt };
+}
+
 export async function auditAgentTool(runtime: SakiAgentRuntime, action: SakiAgentAction): Promise<void> {
   await writeAuditLog({
     ...(runtime.request ? { request: runtime.request } : {}),
@@ -970,12 +1037,21 @@ export async function executeSakiAgentTool(
     let fileEditAfterContent: string | null = null;
     let fileEditBeforeContent: string | null = null;
     let fileEditPreview: string | undefined;
+    let fileEditDiff: string | undefined;
     let actionAttachments: SakiInputAttachment[] | undefined;
+    let actionTodos: SakiAgentAction["todos"];
 
     try {
+      runtime = await scopeToolPermissions(runtime, args);
       assertSakiPermissionModeAllowsTool(runtime, toolName, args);
       assertToolProfileAllowsTool(runtime, toolName);
       assertWatchToolAllowed(runtime, toolName, args);
+      if (normalizedAgentToolName(toolName) === "askuser") {
+        if (options.approved) throw new RouteError("Answer askUser through the answer endpoint.", 400);
+        const pending = await createPendingQuestionAction(runtime, { ...call, id: currentActionId }, options.pendingResume);
+        await auditAgentTool(runtime, pending);
+        return pending;
+      }
       if (!options.approved && shouldRequestSakiApproval(runtime, toolName, args)) {
         const pending = await createPendingApprovalAction(runtime, { ...call, id: currentActionId }, options.pendingResume);
         await auditAgentTool(runtime, pending);
@@ -1744,6 +1820,12 @@ export async function executeSakiAgentTool(
       } else if (toolName === "managetodos" || toolName === "settodos" || toolName === "todos" || toolName === "updatetodos") {
         const todos = rawStringArg(args, "todos") || rawStringArg(args, "list");
         if (!todos) throw new RouteError("manageTodos requires a todos markdown list (e.g. '- [ ] Step 1\\n- [x] Step 2').", 400);
+        const items = todos.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+          const match = line.match(/^- \[([ xX])\] (.+)$/);
+          if (!match || !match[2]?.trim() || match[2].trim().length > 200) throw new RouteError("manageTodos needs checklist lines of at most 200 characters.", 400);
+          return { text: match[2].trim(), completed: match[1]?.toLowerCase() === "x" };
+        });
+        if (items.length === 0 || items.length > 20) throw new RouteError("manageTodos needs 1–20 checklist items.", 400);
         observation = [
           "Current Task Status / TODO List:",
           "",
@@ -1751,6 +1833,7 @@ export async function executeSakiAgentTool(
           "",
           "Continue working through the remaining unchecked items."
         ].join("\n");
+        actionTodos = items;
       } else if (toolName === "spawntask" || toolName === "subagent" || toolName === "delegate" || toolName === "runsubtask") {
         if (runtime.toolProfile === "research" || /You are a (?:research-only )?sub-agent/i.test(runtime.input.message ?? "")) {
           throw new RouteError("Sub-agents cannot spawn further sub-agents.", 400);
@@ -1788,6 +1871,7 @@ export async function executeSakiAgentTool(
         const instance = await resolveAgentInstance(runtime, args);
         const patch = rawStringArg(args, "patch");
         const files = parseWorkspacePatch(patch);
+        assertWatchPatchScope(runtime, files);
         const results: string[] = [];
         const batchCheckpoints: SakiCheckpoint[] = [];
         const afterByPath = new Map<string, string>();
@@ -1844,11 +1928,12 @@ export async function executeSakiAgentTool(
           fileEditAfterContent = afterByPath.get(checkpoint.path) ?? null;
         }
         fileEditPreview = files.map((file) => file.path).join(", ");
+        fileEditDiff = patch;
         if (failed > 0) {
           ok = false;
           observation = `Patch finished with ${files.length - failed} applied, ${failed} failed:\n${results.join("\n\n")}`;
         } else {
-          observation = `Success: applied patch to ${files.length} file(s):\n${results.join("\n")}\n\n${patch.slice(0, 4000)}`;
+          observation = `Success: applied patch to ${files.length} file(s):\n${results.join("\n")}`;
         }
       } else if (toolName === "batchedit" || toolName === "applypatches" || toolName === "multifileedit" || toolName === "batch_patch") {
         requireUserPermission(runtime.permissions, "file.write");
@@ -2120,6 +2205,9 @@ export async function executeSakiAgentTool(
           )
         : buildCheckpointApproval(checkpoint, fileEditPreview, relatedCheckpointIds)
       : undefined;
+    if (approval && fileEditDiff) {
+      approval.diff = fileEditDiff;
+    }
     const action: SakiAgentAction = {
       id: currentActionId,
       tool,
@@ -2128,6 +2216,7 @@ export async function executeSakiAgentTool(
       ok,
       status: ok ? "completed" : "failed",
       ...(approval ? { approval } : {}),
+      ...(actionTodos ? { todos: actionTodos } : {}),
       ...(actionAttachments?.length ? { attachments: actionAttachments } : {}),
       createdAt: startedAt
     };

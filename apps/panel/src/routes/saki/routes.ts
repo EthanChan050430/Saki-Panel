@@ -14,6 +14,7 @@ import type {
 import { requireAnyPermission, requirePermission } from "../../auth.js";
 import { writeAuditLog } from "../../audit.js";
 import {
+  answerPendingSakiQuestion,
   approvePendingSakiAction,
   rejectPendingSakiAction,
   rollbackSakiAction,
@@ -389,6 +390,11 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/saki/actions/:id/reject", { preHandler: requirePermission("saki.agent") }, async (request) => {
     const { id } = request.params as { id: string };
     return rejectPendingSakiAction(request, id);
+  });
+
+  app.post("/api/saki/actions/:id/answer", { preHandler: requirePermission("saki.agent") }, async (request) => {
+    const { id } = request.params as { id: string };
+    return answerPendingSakiQuestion(request, id, (request.body ?? {}) as { selection?: unknown; customText?: unknown; skipped?: unknown });
   });
 
   app.post("/api/saki/actions/:id/rollback", { preHandler: requirePermission("saki.agent") }, async (request) => {

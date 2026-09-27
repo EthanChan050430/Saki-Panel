@@ -1261,7 +1261,7 @@ export function SakiFloatingChat({
               const response = streamEvent.response;
               activeTaskIdRef.current = null;
               const finishedActions = response.actions ?? [];
-              if (finishedActions.some((action) => action.status === "pending_approval")) {
+              if (finishedActions.some((action) => action.status === "pending_approval" || action.status === "pending_input")) {
                 setSakiActivityMood("waiting");
               } else if (finishedActions.some((action) => action.status === "failed" || action.ok === false)) {
                 setSakiActivityMood("sorry");
@@ -1334,7 +1334,7 @@ export function SakiFloatingChat({
             const finalResp = await api.sakiStreamTaskReconnect(token, task.id, applyStreamEvent, abortController.signal);
             activeTaskIdRef.current = null;
             const finishedActions = finalResp.actions ?? [];
-            if (finishedActions.some((action) => action.status === "pending_approval")) {
+            if (finishedActions.some((action) => action.status === "pending_approval" || action.status === "pending_input")) {
               setSakiActivityMood("waiting");
             } else if (finishedActions.some((action) => action.status === "failed" || action.ok === false)) {
               setSakiActivityMood("sorry");
@@ -2331,7 +2331,7 @@ export function SakiFloatingChat({
         if (response.response) {
           applyActionContinuationResponse(action.id, response.response);
           const contActions = response.response.actions ?? [];
-          if (contActions.some((a) => a.status === "pending_approval")) {
+          if (contActions.some((a) => a.status === "pending_approval" || a.status === "pending_input")) {
             setSakiActivityMood("waiting");
           } else if (contActions.some((a) => a.status === "failed" || a.ok === false)) {
             setSakiActivityMood("sorry");
@@ -2364,6 +2364,30 @@ export function SakiFloatingChat({
     } finally {
       setActionBusyId(null);
       if (decision === "approve") setLoading(false);
+    }
+  }
+
+  async function answerQuestion(action: SakiAgentAction, answer: { selection?: string; customText?: string; skipped?: boolean }) {
+    if (actionBusyId || action.status !== "pending_input") return;
+    setActionBusyId(action.id);
+    setLoading(true);
+    setSakiActivityMood("working");
+    try {
+      const result = await api.sakiAnswerQuestion(token, action.id, answer);
+      replaceAction(result.action);
+      if (result.response) {
+        applyActionContinuationResponse(action.id, result.response);
+        const pending = result.response.actions?.some((item) => item.status === "pending_approval" || item.status === "pending_input");
+        setSakiActivityMood(pending ? "waiting" : "happy");
+      } else {
+        setSakiActivityMood("happy");
+      }
+    } catch (error) {
+      setSakiActivityMood("sorry");
+      throw error;
+    } finally {
+      setActionBusyId(null);
+      setLoading(false);
     }
   }
 
@@ -3293,7 +3317,7 @@ export function SakiFloatingChat({
       if (response.skills) setSkills(response.skills);
       if (response.agentPermissionMode) setPermissionMode(response.agentPermissionMode);
       const finishedActions = response.actions ?? [];
-      if (finishedActions.some((action) => action.status === "pending_approval")) {
+      if (finishedActions.some((action) => action.status === "pending_approval" || action.status === "pending_input")) {
         setSakiActivityMood("waiting");
       } else if (finishedActions.some((action) => action.status === "failed" || action.ok === false)) {
         setSakiActivityMood("sorry");
@@ -4375,6 +4399,7 @@ export function SakiFloatingChat({
             onRetryAssistantTurn={retryAssistantTurn}
             onDeleteAssistantTurn={deleteAssistantTurn}
             onDecideAction={decideAction}
+            onAnswerQuestion={answerQuestion}
             onOpenPath={onOpenWorkspaceFile ? openWorkspacePath : undefined}
             onRollbackAllFileActions={rollbackAllFileActions}
             onPreviewAttachment={(preview) => setPreviewingAttachment(preview)}

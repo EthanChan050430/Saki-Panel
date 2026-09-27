@@ -14,6 +14,7 @@ import type {
   InstanceStatus,
   InstanceType,
   ManagedInstance,
+  PermissionCode,
   RestartPolicy,
   SuggestInstanceStartCommandRequest,
   SuggestInstanceStartCommandResponse,
@@ -22,20 +23,25 @@ import type {
   RemoteNodeUserSummary,
   UpdateInstanceRequest
 } from "@webops/shared";
+import { isInstanceAssignablePermission } from "@webops/shared";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../db.js";
-import { loadCurrentUser, requireAnyPermission, requirePermission } from "../auth.js";
+import { loadCurrentUser, requireAnyPermission, requireInstancePermission, requirePermission } from "../auth.js";
 import { canAccessNode } from "../node-access.js";
 import {
+  assignmentPermissionsFor,
   classifyInstanceUser,
   instanceAssignedUserIds,
   instanceAssignedUserSummaries,
   instanceAccessInclude,
+  instancePermissionOverride,
   listInstanceAssignees,
   listVisibleInstances,
   loadVisibleInstance,
   resolveAssignableUserId,
   resolveAssignableUserIds,
+  serializeAssignmentPermissions,
+  type InstanceAccessProfile,
   type InstanceWithAccess
 } from "../instance-access.js";
 import { writeAuditLog } from "../audit.js";
@@ -133,7 +139,7 @@ function testTcpConnectivity(
   });
 }
 
-function toManagedInstance(instance: InstanceWithAccess): ManagedInstance {
+function toManagedInstance(instance: InstanceWithAccess, viewer?: { profile: InstanceAccessProfile; permissions: PermissionCode[] }): ManagedInstance {
   const assignees = instanceAssignedUserSummaries(instance);
   const primaryAssignee = assignees[0] ?? null;
   return {
@@ -163,6 +169,7 @@ function toManagedInstance(instance: InstanceWithAccess): ManagedInstance {
     assignedToDisplayName: primaryAssignee?.displayName ?? null,
     assignedToRole: primaryAssignee?.role ?? null,
     assignees,
+    ...(viewer ? { myPermissions: instancePermissionOverride(viewer.profile, instance, viewer.permissions) } : {}),
     lastStartedAt: instance.lastStartedAt?.toISOString() ?? null,
     lastStoppedAt: instance.lastStoppedAt?.toISOString() ?? null,
     lastExitCode: instance.lastExitCode,
@@ -173,6 +180,21 @@ function toManagedInstance(instance: InstanceWithAccess): ManagedInstance {
 
 async function loadInstance(request: FastifyRequest, id: string): Promise<InstanceWithAccess | null> {
   return loadVisibleInstance(request.user.sub, id);
+}
+
+async function loadViewer(
+  request: FastifyRequest
+): Promise<{ profile: InstanceAccessProfile; permissions: PermissionCode[] } | undefined> {
+  const user = await loadCurrentUser(request.user.sub);
+  if (!user) return undefined;
+  return {
+    profile: {
+      userId: user.id,
+      role: (user.isSuperAdmin ? "super_admin" : user.isAdmin ? "admin" : "user") as InstanceAccessProfile["role"],
+      roleNames: user.roleNames
+    },
+    permissions: user.permissions
+  };
 }
 
 function specFromInstance(instance: InstanceWithAccess): DaemonInstanceSpec {
@@ -199,6 +221,32 @@ function normalizeRestartPolicy(value: unknown, fallback: RestartPolicy): Restar
 function normalizeRetryCount(value: unknown, fallback: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Math.max(0, Math.min(Math.floor(value), 99));
+}
+
+function normalizeAssignmentPermissions(value: unknown): Record<string, PermissionCode[] | null> | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw Object.assign(new Error("assignmentPermissions must be an object keyed by userId"), { statusCode: 400 });
+  }
+  const result: Record<string, PermissionCode[] | null> = {};
+  for (const [userId, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (raw === null || raw === undefined) {
+      result[userId] = null;
+      continue;
+    }
+    if (!Array.isArray(raw) || raw.some((item) => typeof item !== "string")) {
+      throw Object.assign(new Error("assignmentPermissions values must be arrays of permission codes or null"), {
+        statusCode: 400
+      });
+    }
+    const invalid = (raw as string[]).filter((code) => !isInstanceAssignablePermission(code));
+    if (invalid.length) {
+      throw Object.assign(new Error(`Unsupported instance permissions: ${invalid.join(", ")}`), { statusCode: 400 });
+    }
+    result[userId] = [...new Set(raw as PermissionCode[])];
+  }
+  return result;
 }
 
 function trimmedString(value: unknown): string {
@@ -687,6 +735,7 @@ async function runInstanceAction(
     await sendNotFound(reply);
     return;
   }
+  const viewer = await loadViewer(request);
 
   try {
     if (action === "start") {
@@ -700,7 +749,7 @@ async function runInstanceAction(
         resourceType: "instance",
         resourceId: id
       });
-      return { instance: toManagedInstance(updated) } satisfies InstanceActionResponse;
+      return { instance: toManagedInstance(updated, viewer) } satisfies InstanceActionResponse;
     }
 
     if (action === "stop") {
@@ -714,7 +763,7 @@ async function runInstanceAction(
         resourceType: "instance",
         resourceId: id
       });
-      return { instance: toManagedInstance(updated) } satisfies InstanceActionResponse;
+      return { instance: toManagedInstance(updated, viewer) } satisfies InstanceActionResponse;
     }
 
     if (action === "restart") {
@@ -728,7 +777,7 @@ async function runInstanceAction(
         resourceType: "instance",
         resourceId: id
       });
-      return { instance: toManagedInstance(updated) } satisfies InstanceActionResponse;
+      return { instance: toManagedInstance(updated, viewer) } satisfies InstanceActionResponse;
     }
 
     await prisma.instance.update({ where: { id }, data: { status: "STOPPING" } });
@@ -741,7 +790,7 @@ async function runInstanceAction(
       resourceType: "instance",
       resourceId: id
     });
-    return { instance: toManagedInstance(updated) } satisfies InstanceActionResponse;
+    return { instance: toManagedInstance(updated, viewer) } satisfies InstanceActionResponse;
   } catch (error) {
     await prisma.instance.update({
       where: { id },
@@ -1233,9 +1282,9 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
   );
 
   app.get("/api/instances", { preHandler: requirePermission("instance.view") }, async (request) => {
-    const instances = await listVisibleInstances(request.user.sub);
+    const [instances, viewer] = await Promise.all([listVisibleInstances(request.user.sub), loadViewer(request)]);
     const refreshed = await Promise.all(instances.map(refreshVolatileStatus));
-    return refreshed.map(toManagedInstance);
+    return refreshed.map((instance) => toManagedInstance(instance, viewer));
   });
 
   app.get("/api/instances/assignees", { preHandler: requirePermission("instance.update") }, async (request) => {
@@ -1326,12 +1375,17 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     }
 
     let assignedUserIds: string[] | undefined;
+    let assignmentPermissions: Record<string, PermissionCode[] | null> | undefined;
     try {
       if (body.assignedToUserIds !== undefined) {
         assignedUserIds = await resolveAssignableUserIds(request.user.sub, body.assignedToUserIds);
       } else {
         const assignedToId = await resolveAssignableUserId(request.user.sub, body.assignedToUserId);
         assignedUserIds = assignedToId === undefined ? undefined : assignedToId ? [assignedToId] : [];
+      }
+      assignmentPermissions = normalizeAssignmentPermissions(body.assignmentPermissions);
+      if (assignmentPermissions !== undefined && assignedUserIds === undefined) {
+        await resolveAssignableUserIds(request.user.sub, []);
       }
     } catch (error) {
       const statusCode =
@@ -1364,7 +1418,10 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
         ...(initialAssignedUserIds.length
           ? {
               assignedUsers: {
-                create: initialAssignedUserIds.map((userId) => ({ userId }))
+                create: initialAssignedUserIds.map((userId) => ({
+                  userId,
+                  permissionsJson: serializeAssignmentPermissions(assignmentPermissions?.[userId])
+                }))
               }
             }
           : {}),
@@ -1382,10 +1439,10 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       payload: { name: instance.name, nodeId: instance.nodeId, assignedUserIds: instanceAssignedUserIds(instance) }
     });
 
-    return toManagedInstance(instance);
+    return toManagedInstance(instance, await loadViewer(request));
   });
 
-  app.put("/api/instances/:id", { preHandler: requirePermission("instance.update") }, async (request, reply) => {
+  app.put("/api/instances/:id", { preHandler: requireInstancePermission("instance.update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as Partial<UpdateInstanceRequest>;
     const existing = await loadInstance(request, id);
@@ -1448,12 +1505,17 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     const nodeChanged = nextNodeId !== undefined;
 
     let assignedUserIds: string[] | undefined;
+    let assignmentPermissions: Record<string, PermissionCode[] | null> | undefined;
     try {
       if (body.assignedToUserIds !== undefined) {
         assignedUserIds = await resolveAssignableUserIds(request.user.sub, body.assignedToUserIds);
       } else {
         const assignedToId = await resolveAssignableUserId(request.user.sub, body.assignedToUserId);
         assignedUserIds = assignedToId === undefined ? undefined : assignedToId ? [assignedToId] : [];
+      }
+      assignmentPermissions = normalizeAssignmentPermissions(body.assignmentPermissions);
+      if (assignmentPermissions !== undefined && assignedUserIds === undefined) {
+        await resolveAssignableUserIds(request.user.sub, []);
       }
     } catch (error) {
       const statusCode =
@@ -1481,7 +1543,24 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       updateData.assignedTo = assignedUserIds[0] ? { connect: { id: assignedUserIds[0] } } : { disconnect: true };
       updateData.assignedUsers = {
         deleteMany: {},
-        create: assignedUserIds.map((userId) => ({ userId }))
+        create: assignedUserIds.map((userId) => ({
+          userId,
+          permissionsJson: serializeAssignmentPermissions(
+            assignmentPermissions && userId in assignmentPermissions
+              ? assignmentPermissions[userId]
+              : assignmentPermissionsFor(existing, userId)
+          )
+        }))
+      };
+    } else if (assignmentPermissions !== undefined) {
+      updateData.assignedUsers = {
+        deleteMany: {},
+        create: instanceAssignedUserIds(existing).map((userId) => ({
+          userId,
+          permissionsJson: serializeAssignmentPermissions(
+            userId in assignmentPermissions ? assignmentPermissions[userId] : assignmentPermissionsFor(existing, userId)
+          )
+        }))
       };
     }
     if (nodeChanged && nextNodeId) {
@@ -1512,10 +1591,10 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       }
     });
 
-    return toManagedInstance(instance);
+    return toManagedInstance(instance, await loadViewer(request));
   });
 
-  app.put("/api/instances/:id/proxy", { preHandler: requirePermission("instance.update") }, async (request, reply) => {
+  app.put("/api/instances/:id/proxy", { preHandler: requireInstancePermission("instance.update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const existing = await loadInstance(request, id);
     if (!existing) {
@@ -1544,7 +1623,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       payload: { proxyConfig }
     });
 
-    return toManagedInstance(instance);
+    return toManagedInstance(instance, await loadViewer(request));
   });
 
   app.post(
@@ -1585,7 +1664,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
 
   app.post(
     "/api/instances/:id/proxy/subscription",
-    { preHandler: requirePermission("instance.update") },
+    { preHandler: requireInstancePermission("instance.update") },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       const existing = await loadInstance(request, id);
@@ -1622,7 +1701,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
 
   app.post(
     "/api/instances/:id/proxy/subscription/apply",
-    { preHandler: requirePermission("instance.update") },
+    { preHandler: requireInstancePermission("instance.update") },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       const existing = await loadInstance(request, id);
@@ -1664,13 +1743,13 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
         resourceId: id,
         payload: { selectedProxy: applied.selectedProxy, port: applied.port }
       });
-      return { instance: toManagedInstance(instance), ...applied };
+      return { instance: toManagedInstance(instance, await loadViewer(request)), ...applied };
     }
   );
 
   app.post(
     "/api/instances/:id/proxy/subscription/stop",
-    { preHandler: requirePermission("instance.update") },
+    { preHandler: requireInstancePermission("instance.update") },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       const existing = await loadInstance(request, id);
@@ -1703,23 +1782,23 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     return { ok: true };
   });
 
-  app.post("/api/instances/:id/start", { preHandler: requirePermission("instance.start") }, (request, reply) =>
+  app.post("/api/instances/:id/start", { preHandler: requireInstancePermission("instance.start") }, (request, reply) =>
     runInstanceAction(request, reply, "start")
   );
 
-  app.post("/api/instances/:id/stop", { preHandler: requirePermission("instance.stop") }, (request, reply) =>
+  app.post("/api/instances/:id/stop", { preHandler: requireInstancePermission("instance.stop") }, (request, reply) =>
     runInstanceAction(request, reply, "stop")
   );
 
-  app.post("/api/instances/:id/restart", { preHandler: requirePermission("instance.restart") }, (request, reply) =>
+  app.post("/api/instances/:id/restart", { preHandler: requireInstancePermission("instance.restart") }, (request, reply) =>
     runInstanceAction(request, reply, "restart")
   );
 
-  app.post("/api/instances/:id/kill", { preHandler: requirePermission("instance.kill") }, (request, reply) =>
+  app.post("/api/instances/:id/kill", { preHandler: requireInstancePermission("instance.kill") }, (request, reply) =>
     runInstanceAction(request, reply, "kill")
   );
 
-  app.get("/api/instances/:id/logs", { preHandler: requirePermission("instance.logs") }, async (request, reply) => {
+  app.get("/api/instances/:id/logs", { preHandler: requireInstancePermission("instance.logs") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const query = request.query as { lines?: string };
     const instance = await loadInstance(request, id);
@@ -1746,7 +1825,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     }
   });
 
-  app.post("/api/instances/:id/command", { preHandler: requirePermission("terminal.input") }, async (request, reply) => {
+  app.post("/api/instances/:id/command", { preHandler: requireInstancePermission("terminal.input") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as { command?: string; timeoutMs?: number; input?: string };
     const command = body.command?.trim();
@@ -1813,7 +1892,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     }
   });
 
-  app.post("/api/instances/:id/shells", { preHandler: requirePermission("terminal.view") }, async (request, reply) => {
+  app.post("/api/instances/:id/shells", { preHandler: requireInstancePermission("terminal.view") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const instance = await loadInstance(request, id);
     if (!instance) {
@@ -1829,7 +1908,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     }
   });
 
-  app.get("/api/instances/:id/shells", { preHandler: requirePermission("terminal.view") }, async (request, reply) => {
+  app.get("/api/instances/:id/shells", { preHandler: requireInstancePermission("terminal.view") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const instance = await loadInstance(request, id);
     if (!instance) {
@@ -1843,7 +1922,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     }
   });
 
-  app.delete("/api/instances/:id/shells/:sid", { preHandler: requirePermission("terminal.view") }, async (request, reply) => {
+  app.delete("/api/instances/:id/shells/:sid", { preHandler: requireInstancePermission("terminal.view") }, async (request, reply) => {
     const { id, sid } = request.params as { id: string; sid: string };
     const instance = await loadInstance(request, id);
     if (!instance) {
@@ -1857,7 +1936,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     }
   });
 
-  app.post("/api/instances/:id/shells/:sid/input", { preHandler: requirePermission("terminal.input") }, async (request, reply) => {
+  app.post("/api/instances/:id/shells/:sid/input", { preHandler: requireInstancePermission("terminal.input") }, async (request, reply) => {
     const { id, sid } = request.params as { id: string; sid: string };
     const instance = await loadInstance(request, id);
     if (!instance) {
@@ -1877,7 +1956,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     }
   });
 
-  app.post("/api/instances/:id/shells/:sid/command", { preHandler: requirePermission("terminal.input") }, async (request, reply) => {
+  app.post("/api/instances/:id/shells/:sid/command", { preHandler: requireInstancePermission("terminal.input") }, async (request, reply) => {
     const { id, sid } = request.params as { id: string; sid: string };
     const instance = await loadInstance(request, id);
     if (!instance) {

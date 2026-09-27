@@ -14,6 +14,7 @@ import {
 import { listActiveRestartLeases } from "./leases.js";
 import { readWatchPolicy, toManagedWatchPolicy } from "./policy.js";
 import { truncateLogTail, updateIncident } from "./incidents.js";
+import { maybeAutoStartWatchDiagnosis } from "./runner.js";
 
 function statusPatch(status: string, exitCode?: number | null) {
   const now = new Date();
@@ -111,6 +112,9 @@ export async function handleDaemonInstanceEvent(event: DaemonInstanceStatusEvent
       status: "rate_limited",
       summary: "实例反复崩溃，本小时诊断次数已达上限。不会再自动消耗额度。"
     });
+  } else if (created && decision.policy.autoDiagnose && incident.status === "open") {
+    void maybeAutoStartWatchDiagnosis(incident.id, { willRetry: Boolean(event.restart?.willRetry) })
+      .catch((error) => console.error("Auto diagnosis failed:", error));
   }
 
   return { ok: true, suppressRestartUntil: decision.suppressRestartUntil };
@@ -157,6 +161,9 @@ async function evaluateHeartbeatCrash(snapshot: DaemonInstanceSnapshot, nodeId: 
       status: "rate_limited",
       summary: "实例反复崩溃，本小时诊断次数已达上限。不会再自动消耗额度。"
     });
+  } else if (created && policy.autoDiagnose && incident.status === "open") {
+    void maybeAutoStartWatchDiagnosis(incident.id, { willRetry: false })
+      .catch((error) => console.error("Auto diagnosis failed:", error));
   }
 }
 
@@ -182,7 +189,7 @@ async function openNodeResourceIncident(input: {
   const anchor = running[0] ?? watched[0];
   if (!anchor) return;
 
-  const policy = toManagedWatchPolicy(anchor.id, anchor.watchPolicy);
+  const policy = await readWatchPolicy(anchor.id);
   const metricLabel = input.trigger === "disk" ? "磁盘" : "内存";
   await materializeIncident({
     instanceId: anchor.id,
@@ -191,7 +198,7 @@ async function openNodeResourceIncident(input: {
     trigger: input.trigger,
     logTail: `节点${metricLabel}占用 ${input.usage.toFixed(1)}%。`,
     assigneeUserId: policy.approverUserId ?? anchor.assignedToId ?? anchor.createdById,
-    summary: `节点${metricLabel}占用超过 ${input.threshold}%。这是节点级告警，同一节点只开一单。确认后 Saki 才会开始诊断（会消耗模型额度）。`
+    summary: `节点${metricLabel}占用超过 ${input.threshold}%。硬件资源告警不触发自动修复（防误删/坏档且不消耗模型额度），请人工清理或排查。`
   });
 }
 

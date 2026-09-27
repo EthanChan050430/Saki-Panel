@@ -9,7 +9,7 @@ import type {
   UpdateWatchPolicyRequest
 } from "@webops/shared";
 import { notificationChannelTypes, notificationEventKinds } from "@webops/shared";
-import { requireAnyPermission, requirePermission } from "../auth.js";
+import { requireAnyPermission, requireInstancePermission, requirePermission } from "../auth.js";
 import { listVisibleInstances, loadVisibleInstance } from "../instance-access.js";
 import { approvePendingSakiAction } from "../routes/saki/approval.js";
 import { sakiUsePermissions } from "../routes/saki/types.js";
@@ -255,7 +255,7 @@ export async function registerWatchRoutes(app: FastifyInstance): Promise<void> {
     return readWatchPolicy(id);
   });
 
-  app.put("/api/instances/:id/watch-policy", { preHandler: requirePermission("instance.update") }, async (request, reply) => {
+  app.put("/api/instances/:id/watch-policy", { preHandler: requireInstancePermission("instance.update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const instance = await loadVisibleInstance(request.user.sub, id);
     if (!instance) {

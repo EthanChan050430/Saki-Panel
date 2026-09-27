@@ -43,6 +43,7 @@ export interface SakiMessagesListProps {
   onRetryAssistantTurn?: (messageId: string) => Promise<void> | void;
   onDeleteAssistantTurn?: (messageId: string) => Promise<void> | void;
   onDecideAction: (targetAction: SakiAgentAction, decision: "approve" | "reject" | "rollback") => Promise<void> | void;
+  onAnswerQuestion: (targetAction: SakiAgentAction, answer: { selection?: string; customText?: string; skipped?: boolean }) => Promise<void> | void;
   onOpenPath?: ((path: string, line?: number) => void) | undefined;
   onRollbackAllFileActions: (messageId: string, fileRollbackActions: SakiAgentAction[]) => Promise<void> | void;
   onPreviewAttachment: (preview: { attachment: SakiInputAttachment; editable: boolean }) => void;
@@ -76,6 +77,7 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
   onRetryAssistantTurn,
   onDeleteAssistantTurn,
   onDecideAction,
+  onAnswerQuestion,
   onOpenPath,
   onRollbackAllFileActions,
   onPreviewAttachment,
@@ -157,6 +159,7 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
                           action={item.action}
                           actionBusyId={actionBusyId}
                           onDecision={(targetAction, decision) => void onDecideAction(targetAction, decision)}
+                          onAnswer={(targetAction, answer) => onAnswerQuestion(targetAction, answer)}
                           onOpenPath={onOpenPath}
                         />
                       </div>

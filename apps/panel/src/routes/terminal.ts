@@ -3,9 +3,10 @@ import type { CurrentUser, TerminalClientMessage, TerminalServerMessage } from "
 import { WebSocket } from "ws";
 import { isAuthDisabled, loadAuthDisabledCurrentUser, loadCurrentUser, type JwtUser } from "../auth.js";
 import { writeAuditLog } from "../audit.js";
-import { loadVisibleInstance } from "../instance-access.js";
+import { instancePermissionOverride, loadVisibleInstance } from "../instance-access.js";
 import { panelConfig } from "../config.js";
 import { findDangerousCommandReason } from "../security.js";
+import type { InstanceOwnerRole, PermissionCode } from "@webops/shared";
 
 function send(socket: WebSocket, payload: TerminalServerMessage): void {
   if (socket.readyState === WebSocket.OPEN) {
@@ -183,6 +184,8 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
     let daemonSocket: WebSocket | null = null;
     let user: CurrentUser | null = null;
     let instanceId: string | null = null;
+    // 实例级细分权限：null = 不限制（跟随全局权限）；数组 = 该用户在此实例上的有效权限
+    let instancePermissions: PermissionCode[] | null = null;
     let authInProgress = false;
     const pendingMessages: TerminalClientMessage[] = [];
     const maxPendingMessages = 256;
@@ -284,6 +287,20 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
           return;
         }
 
+        // 应用实例级细分权限：分配时若设了权限列表，则收窄为该列表 ∩ 全局权限
+        const profile = {
+          userId: authenticatedUser.id,
+          role: (authenticatedUser.isSuperAdmin ? "super_admin" : authenticatedUser.isAdmin ? "admin" : "user") as InstanceOwnerRole,
+          roleNames: authenticatedUser.roleNames
+        };
+        instancePermissions = instancePermissionOverride(profile, instance, authenticatedUser.permissions);
+        if (instancePermissions !== null && !instancePermissions.includes("terminal.view")) {
+          authInProgress = false;
+          pendingMessages.length = 0;
+          closeWithError(browserSocket, "该实例的分配权限未包含终端访问", 1008);
+          return;
+        }
+
         user = authenticatedUser;
         instanceId = instance.id;
         authInProgress = false;
@@ -314,6 +331,10 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
       if (message.type === "input") {
         if (!user.permissions.includes("terminal.input")) {
           send(browserSocket, { type: "error", message: "Terminal input permission denied" });
+          return;
+        }
+        if (instancePermissions !== null && !instancePermissions.includes("terminal.input")) {
+          send(browserSocket, { type: "error", message: "该实例的分配权限未包含指令输入" });
           return;
         }
         if (message.data.length > 100000) {

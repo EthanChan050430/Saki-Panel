@@ -82,7 +82,8 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "writeMemory", description: "Overwrite SAKI.md project memory with full file content.", parameters: objectSchema({ instanceId: instanceLookupSchema, content: { type: "string" } }, ["content"]), aliases: ["updateMemory", "saveMemory"] },
   { name: "reportProgress", description: "Short user-visible status. Not hidden chain-of-thought.", parameters: objectSchema({ text: { type: "string" } }, ["text"]), aliases: ["progress", "statusUpdate"] },
   { name: "diagnoseCode", description: "Fast syntax/typecheck. Call after edits before respond. Never uses npm test.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, command: { type: "string" } }), aliases: ["diagnostics", "checkTypes", "typecheck", "lintCode", "diagnose_code", "lint"] },
-  { name: "manageTodos", description: "Markdown TODO list with [x]/[ ] for multi-step work.", parameters: objectSchema({ todos: { type: "string" } }, ["todos"]), aliases: ["setTodos", "todos", "updateTodos", "manage_todos", "todoTool", "taskList"] },
+  { name: "manageTodos", description: "Show or update the task checklist. For multi-step work call this before acting, after a step changes, and before finishing. Send the complete Markdown checklist using - [ ] and - [x].", parameters: objectSchema({ todos: { type: "string" } }, ["todos"]), aliases: ["setTodos", "todos", "updateTodos", "manage_todos", "todoTool", "taskList"] },
+  { name: "askUser", description: "Pause and ask the user one concise question when a missing preference or decision matters. Offer 2-4 distinct choices when useful; the user can choose, add custom text, or skip. Do not call for routine decisions you can make yourself.", parameters: objectSchema({ question: { type: "string" }, options: { type: "array", items: { type: "string" } } }, ["question"]), aliases: ["requestUserInput", "askQuestion"] },
   { name: "spawnTask", description: "Research-only sub-agent. Inspect, do not edit. Use only for broad multi-file exploration.", parameters: objectSchema({ instanceId: instanceLookupSchema, task: { type: "string" }, maxSteps: { type: "integer", minimum: 1, maximum: 10 } }, ["task"]), aliases: ["subAgent", "delegate", "runSubTask"] },
   { name: "batchEdit", description: "Apply several editLines/replaceInFile operations in one step. Use when changing more than one region or file. Checkpointed.", parameters: objectSchema({ instanceId: instanceLookupSchema, edits: { type: "array", items: { type: "object", properties: { path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, endLine: { type: "integer", minimum: 0 }, replacement: { type: "string" }, oldText: { type: "string" }, newText: { type: "string" } }, required: ["path"] } } }, ["edits"]), aliases: ["batch_edit", "multiFileEdit", "batch_patch"] },
   { name: "applyPatch", description: "Apply a unified diff or Codex-style patch. Best for multi-hunk or multi-file edits. Prefer editLines when you already have line numbers. writeFile is for NEW files only.", parameters: objectSchema({ instanceId: instanceLookupSchema, patch: { type: "string", description: "Unified diff (---/+++ / @@) or *** Begin Patch format." } }, ["patch"]), aliases: ["apply_patch", "applyDiff", "applyPatches", "patchFiles", "patch"] },
@@ -180,7 +181,9 @@ const sakiCoreToolNames = [
   "gitStatus",
   "gitDiff",
   "searchSkills",
-  "readSkill"
+  "readSkill",
+  "manageTodos",
+  "askUser"
 ] as const;
 
 const sakiResearchToolNames = new Set([
@@ -360,7 +363,9 @@ function capAdvertisedToolSchemas(schemas: SakiToolSchema[], maxTools: ReturnTyp
     "diagnoseCode",
     "runCommand",
     "createShell",
-    "closeShell"
+    "closeShell",
+    "manageTodos",
+    "askUser"
   ]);
   if (schemas.some((schema) => schema.name === "generateImage")) essential.add("generateImage");
   const kept: SakiToolSchema[] = [];
@@ -1088,6 +1093,7 @@ export const sakiReadOnlyToolNames = new Set([
   "typecheck",
   "lintcode",
   "managetodos",
+  "askuser",
   "settodos",
   "todos",
   "updatetodos",
@@ -1200,7 +1206,6 @@ export const watchAgentToolAllowlist = new Set([
   "managetodos",
   "plan",
   "respond",
-  "writefile",
   "replaceinfile",
   "editlines",
   "applypatch"
@@ -1214,16 +1219,88 @@ export const watchMutatingToolNames = new Set([
   "applypatch"
 ]);
 
+const watchAllowedConfigExtensions = new Set([
+  ".yml",
+  ".yaml",
+  ".json",
+  ".jsonc",
+  ".json5",
+  ".properties",
+  ".toml",
+  ".ini",
+  ".conf",
+  ".cfg",
+  ".xml",
+  ".env",
+  ".txt"
+]);
+
+const watchProtectedSegments = new Set([
+  "world",
+  "world_nether",
+  "world_the_end",
+  "saves",
+  "backups",
+  "logs",
+  "crash-reports",
+  "region",
+  "playerdata",
+  "stats",
+  "advancements",
+  ".git",
+  "node_modules"
+]);
+
+function assertWatchTargetPathSafe(rawPath: string): void {
+  const normalized = rawPath.replace(/\\/g, "/").trim().replace(/^\.\/+/, "");
+  if (!normalized || normalized.includes("..")) {
+    throw new RouteError("Watch mode blocked an invalid file path.", 403);
+  }
+  const segments = normalized.toLowerCase().split("/").filter(Boolean);
+  for (const seg of segments) {
+    if (watchProtectedSegments.has(seg)) {
+      throw new RouteError(`Watch mode cannot modify protected data/save/log directory "${seg}".`, 403);
+    }
+  }
+  const baseName = segments[segments.length - 1] ?? "";
+  const dotIdx = baseName.lastIndexOf(".");
+  const ext = baseName.startsWith(".env") ? ".env" : dotIdx >= 0 ? baseName.slice(dotIdx).toLowerCase() : "";
+  if (!watchAllowedConfigExtensions.has(ext)) {
+    throw new RouteError(
+      `Watch mode can only modify plain-text configuration files (${[...watchAllowedConfigExtensions].join(", ")}). Modifying "${baseName}" is blocked for safety.`,
+      403
+    );
+  }
+}
+
 export function assertWatchToolAllowed(runtime: SakiAgentRuntime, toolName: string, args: Record<string, unknown>): void {
   if (runtime.kind !== "watch") return;
   const lower = normalizedAgentToolName(toolName);
   if (!watchAgentToolAllowlist.has(lower)) {
-    throw new RouteError("Watch mode cannot use this tool. Shell, deletes, and instance lifecycle changes are blocked.", 403);
+    throw new RouteError("Watch mode cannot use this tool. Shell, file creation/deletion, and instance lifecycle changes are blocked.", 403);
   }
   if (runtime.watchMode === "diagnose_only" && watchMutatingToolNames.has(lower)) {
     throw new RouteError("Watch policy is diagnose-only. File edits are blocked for this incident.", 403);
   }
-  void args;
+  if (watchMutatingToolNames.has(lower)) {
+    const targetPath = stringArg(args, "path");
+    if (targetPath) {
+      assertWatchTargetPathSafe(targetPath);
+    }
+    const patchText = stringArg(args, "patch");
+    if (patchText) {
+      const patchHeaderMatches = [
+        ...patchText.matchAll(/^(?:\+\+\+|---)\s+(?:[ab]\/)?([^\r\n\t]+)/gm),
+        ...patchText.matchAll(/^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*([^\r\n]+)/gim)
+      ];
+      for (const m of patchHeaderMatches) {
+        const p = (m[1] ?? "").trim();
+        if (p && p !== "/dev/null") {
+          assertWatchTargetPathSafe(p);
+        }
+      }
+    }
+  }
 }
 
 export function assertSakiPermissionModeAllowsTool(

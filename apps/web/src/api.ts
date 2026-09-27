@@ -8,6 +8,13 @@ import type {
   ExtractConflictAction,
   ExtractInstanceArchiveResponse,
   AuditLogEntry,
+  AuditLogQueryParams,
+  AuditLogListResponse,
+  AuditRangeSummary,
+  AuditRetentionPolicy,
+  UpdateAuditRetentionPolicyRequest,
+  SakiAuditConversationItem,
+  SakiAuditConversationListResponse,
   CreateNodeRequest,
   CreateNodeResponse,
   ConnectNodeByKeyRequest,
@@ -42,6 +49,7 @@ import type {
   InstanceLogsResponse,
   InstanceProxyConfig,
   ClashSubscriptionProxy,
+  CheckUserResponse,
   LoginRequest,
   LoginResponse,
   ManagedInstance,
@@ -712,6 +720,12 @@ export const api = {
       body: JSON.stringify(input)
     });
   },
+  checkUser(username: string) {
+    return requestJson<CheckUserResponse>("/api/auth/check-user", {
+      method: "POST",
+      body: JSON.stringify({ username })
+    });
+  },
   register(input: RegisterRequest) {
     return requestJson<LoginResponse>("/api/auth/register", {
       method: "POST",
@@ -1208,22 +1222,86 @@ export const api = {
   taskRuns(token: string, id: string) {
     return requestJson<ManagedTaskRun[]>(`/api/tasks/${id}/runs`, {}, token);
   },
-  auditLogs(token: string, page: number = 1, limit: number = 20) {
-    return requestJson<PaginatedResult<AuditLogEntry>>(`/api/audit/logs?page=${page}&limit=${limit}`, {}, token);
+  auditLogs(token: string, queryOrPage: AuditLogQueryParams | number = 1, limitParam: number = 20) {
+    const params: Record<string, string | undefined> = {};
+    if (typeof queryOrPage === "number") {
+      params.page = String(queryOrPage);
+      params.limit = String(limitParam);
+    } else {
+      for (const [key, val] of Object.entries(queryOrPage)) {
+        if (val !== undefined && val !== null && val !== "") {
+          params[key] = String(val);
+        }
+      }
+    }
+    return requestJson<AuditLogListResponse>(pathWithQuery("/api/audit/logs", params), {}, token);
   },
-  deleteAuditLog(token: string, id: string) {
-    return requestJson<DeleteAuditLogsResponse>(`/api/audit/logs/${id}`, { method: "DELETE" }, token);
+  async exportAuditLogs(token: string, query: AuditLogQueryParams & { format: "csv" | "json" }): Promise<void> {
+    const params: Record<string, string | undefined> = {};
+    for (const [key, val] of Object.entries(query)) {
+      if (val !== undefined && val !== null && val !== "") {
+        params[key] = String(val);
+      }
+    }
+    const url = pathWithQuery("/api/audit/export", params);
+    const response = await fetch(new URL(url, API_BASE), {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    if (!response.ok) {
+      throw new ApiError(await responseErrorMessage(response), response.status);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("content-disposition");
+    let filename = `audit-logs-${Date.now()}.${query.format}`;
+    if (disposition) {
+      const match = disposition.match(/filename="?([^";]+)"?/);
+      if (match && match[1]) filename = match[1];
+    }
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(downloadUrl);
   },
-  deleteAuditLogs(token: string, ids: string[]) {
-    const input: DeleteAuditLogsRequest = { ids };
+  getAuditRetention(token: string) {
+    return requestJson<AuditRetentionPolicy>("/api/audit/retention", {}, token);
+  },
+  updateAuditRetention(token: string, input: UpdateAuditRetentionPolicyRequest) {
+    return requestJson<AuditRetentionPolicy>("/api/audit/retention", { method: "PUT", body: JSON.stringify(input) }, token);
+  },
+  cleanupExpiredAuditLogs(token: string) {
+    return requestJson<{ ok: true; deleted: number }>("/api/audit/retention/cleanup", { method: "POST", body: JSON.stringify({}) }, token);
+  },
+  deleteAuditLog(token: string, id: string, reason?: string) {
+    const path = reason ? `/api/audit/logs/${id}?reason=${encodeURIComponent(reason)}` : `/api/audit/logs/${id}`;
+    return requestJson<DeleteAuditLogsResponse>(path, { method: "DELETE" }, token);
+  },
+  deleteAuditLogs(token: string, ids: string[], reason?: string) {
+    const input: DeleteAuditLogsRequest = { ids, reason };
     return requestJson<DeleteAuditLogsResponse>(
       "/api/audit/logs/delete",
       { method: "POST", body: JSON.stringify(input) },
       token
     );
   },
-  clearAuditLogs(token: string) {
-    return requestJson<DeleteAuditLogsResponse>("/api/audit/logs", { method: "DELETE" }, token);
+  clearAuditLogs(token: string, reason?: string) {
+    const path = reason ? `/api/audit/logs?reason=${encodeURIComponent(reason)}` : "/api/audit/logs";
+    return requestJson<DeleteAuditLogsResponse>(path, { method: "DELETE" }, token);
+  },
+  auditListSakiConversations(token: string, query: { page?: number | undefined; limit?: number | undefined; userId?: string | undefined; instanceId?: string | undefined; keyword?: string | undefined; from?: string | undefined; to?: string | undefined } = {}) {
+    const params: Record<string, string | undefined> = {};
+    for (const [key, val] of Object.entries(query)) {
+      if (val !== undefined && val !== null && val !== "") {
+        params[key] = String(val);
+      }
+    }
+    return requestJson<SakiAuditConversationListResponse>(pathWithQuery("/api/audit/saki/conversations", params), {}, token);
+  },
+  auditGetSakiConversation(token: string, id: string) {
+    return requestJson<SakiAuditConversationItem>(`/api/audit/saki/conversations/${encodeURIComponent(id)}`, {}, token);
   },
   users(token: string) {
     return requestJson<ManagedUser[]>("/api/users", {}, token);
@@ -1831,6 +1909,13 @@ export const api = {
     return requestJson<SakiActionDecisionResponse>(
       `/api/saki/actions/${id}/${decision}`,
       { method: "POST", body: JSON.stringify({}) },
+      token
+    );
+  },
+  sakiAnswerQuestion(token: string, id: string, answer: { selection?: string; customText?: string; skipped?: boolean }) {
+    return requestJson<SakiActionDecisionResponse>(
+      `/api/saki/actions/${id}/answer`,
+      { method: "POST", body: JSON.stringify(answer) },
       token
     );
   },

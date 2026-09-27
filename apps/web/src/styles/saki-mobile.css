@@ -404,11 +404,14 @@
   }
 
   .saki-panel.fullscreen .saki-header {
-    padding-right: 92px;
+    padding: 0 10px;
   }
 
   .saki-header-actions {
-    right: 44px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0 !important;
   }
 }
 
@@ -2509,63 +2512,132 @@
     min-width: 0 !important;
   }
 
-  .template-layout {
-    display: flex !important;
-    flex-direction: column !important;
-    gap: 14px !important;
+  /* ==========================================================================
+     Template Studio Mobile & Responsive Optimization
+     ========================================================================== */
+  .tpl-studio {
     width: 100% !important;
     max-width: 100% !important;
     min-width: 0 !important;
     box-sizing: border-box !important;
-    overflow-x: clip !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
   }
 
+  /* Studio Command Bar */
+  .tpl-command-bar {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+    padding: 10px 12px !important;
+    border-radius: 14px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .tpl-command-bar-left {
+    width: 100% !important;
+  }
+
+  .tpl-nav-switcher {
+    width: 100% !important;
+    display: flex !important;
+    gap: 4px !important;
+    padding: 3px !important;
+    border-radius: 10px !important;
+  }
+
+  .tpl-nav-btn {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    justify-content: center !important;
+    height: 34px !important;
+    padding: 0 8px !important;
+    font-size: 12.5px !important;
+    font-weight: 600 !important;
+    gap: 6px !important;
+  }
+
+  .tpl-nav-btn span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tpl-nav-count {
+    font-size: 10.5px !important;
+    padding: 1px 5px !important;
+  }
+
+  .tpl-command-bar-right {
+    width: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+  }
+
+  .tpl-top-action-btn {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    height: 32px !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    justify-content: center !important;
+    padding: 0 6px !important;
+    white-space: nowrap !important;
+    border-radius: 8px !important;
+  }
+
+  .tpl-top-refresh-btn {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    flex-shrink: 0 !important;
+    border-radius: 8px !important;
+  }
+
+  /* Mobile Tabs (templates vs detail) */
   .template-mobile-tabs {
     display: flex !important;
-    gap: 6px;
-    padding: 5px;
-    background: rgba(255, 255, 255, 0.75);
+    gap: 6px !important;
+    padding: 4px !important;
+    background: rgba(255, 255, 255, 0.85);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
     border: 1px solid rgba(0, 0, 0, 0.08);
-    border-radius: 14px;
-    margin-bottom: 12px;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.03);
+    border-radius: 12px;
+    margin-bottom: 2px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
     width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
     box-sizing: border-box !important;
   }
 
   .template-mobile-tab-btn {
-    flex: 1 1 0;
+    flex: 1 1 0 !important;
     min-width: 0 !important;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 7px;
-    height: 38px;
-    padding: 0 8px;
-    border: none;
-    border-radius: 10px;
-    background: transparent;
-    color: #64748b;
-    font-size: 13.5px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-    overflow: hidden;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 6px !important;
+    height: 36px !important;
+    padding: 0 8px !important;
+    border: none !important;
+    border-radius: 8px !important;
+    background: transparent !important;
+    color: #64748b !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+    transition: all 0.15s ease !important;
   }
 
   .template-mobile-tab-btn.active {
-    background: #ffffff;
-    color: #ff75ac;
-    font-weight: 700;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(255, 117, 172, 0.2);
-  }
-
-  .template-mobile-tab-btn svg {
-    flex-shrink: 0;
+    background: #ffffff !important;
+    color: var(--primary, #ff75ac) !important;
+    font-weight: 700 !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 0 0 1.5px var(--primary, #ff75ac) !important;
   }
 
   .template-mobile-tab-btn span {
@@ -2575,325 +2647,369 @@
     white-space: nowrap !important;
   }
 
-  .templates-panel,
-  .template-create-panel {
+  /* Workbench Layout (Mobile: Single Column with View Switching) */
+  .tpl-workbench-layout {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
     width: 100% !important;
     max-width: 100% !important;
     min-width: 0 !important;
     box-sizing: border-box !important;
-    overflow: hidden !important;
+    min-height: auto !important;
   }
 
-  .templates-panel.mobile-hidden,
-  .template-create-panel.mobile-hidden {
+  .tpl-sidebar,
+  .tpl-inspector {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+    border-radius: 14px !important;
+  }
+
+  .tpl-sidebar.mobile-hidden,
+  .tpl-inspector.mobile-hidden {
     display: none !important;
   }
 
-  .templates-panel-heading {
-    flex-direction: row !important;
-    align-items: center !important;
-    flex-wrap: nowrap !important;
-    padding: 14px 16px !important;
+  /* Sidebar Controls & Search */
+  .tpl-sidebar-controls {
+    padding: 12px 14px !important;
     gap: 8px !important;
   }
 
-  .templates-heading-left {
-    min-width: 0 !important;
-    flex: 1 !important;
+  .tpl-search-box {
+    height: 34px !important;
+    border-radius: 8px !important;
+    padding: 0 10px !important;
   }
 
-  .templates-heading-text {
-    min-width: 0 !important;
-    flex: 1 !important;
+  .tpl-search-input {
+    font-size: 12.5px !important;
   }
 
-  .templates-heading-text h2 {
-    font-size: 15px !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-    white-space: nowrap !important;
-  }
-
-  .templates-heading-actions {
-    flex-shrink: 0 !important;
-  }
-
-  .template-actions-row {
+  .tpl-filter-pills {
+    display: flex !important;
+    gap: 4px !important;
     width: 100% !important;
-    max-width: 100% !important;
     box-sizing: border-box !important;
-    min-width: 0 !important;
   }
 
-  .template-action-btn {
+  .tpl-filter-pill {
+    flex: 1 1 0 !important;
     min-width: 0 !important;
-    padding: 0 6px !important;
-    font-size: 12px !important;
-    gap: 5px !important;
+    justify-content: center !important;
+    height: 28px !important;
+    font-size: 11.5px !important;
+    padding: 0 4px !important;
+    white-space: nowrap !important;
   }
 
-  .template-action-btn-text {
+  .tpl-filter-pill span {
+    display: none !important;
+  }
+
+  .tpl-runtime-tags-bar {
+    display: flex !important;
+    gap: 4px !important;
+    overflow-x: auto !important;
+    white-space: nowrap !important;
+    -webkit-overflow-scrolling: touch !important;
+    padding-bottom: 2px !important;
+    scrollbar-width: none !important;
+  }
+
+  .tpl-runtime-tags-bar::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  .tpl-runtime-tag {
+    flex-shrink: 0 !important;
+    height: 24px !important;
+    font-size: 11px !important;
+    padding: 0 8px !important;
+  }
+
+  .tpl-list-scroll {
+    max-height: none !important;
+    padding: 8px 10px 14px !important;
+    gap: 6px !important;
+  }
+
+  .tpl-list-item {
+    padding: 10px 12px !important;
+    border-radius: 10px !important;
+    gap: 10px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .tpl-item-main {
     min-width: 0 !important;
+    flex: 1 !important;
+  }
+
+  .tpl-item-topline {
+    gap: 6px !important;
+  }
+
+  .tpl-item-name {
+    font-size: 13.5px !important;
     overflow: hidden !important;
     text-overflow: ellipsis !important;
     white-space: nowrap !important;
+  }
+
+  .tpl-item-command-snippet {
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    max-width: calc(100vw - 200px) !important;
+  }
+
+  /* Inspector Pane */
+  .tpl-inspector-head {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    padding: 12px 14px !important;
+    gap: 10px !important;
+  }
+
+  .tpl-inspector-head-left {
+    display: flex !important;
+    align-items: flex-start !important;
+    gap: 10px !important;
+    width: 100% !important;
   }
 
   .template-mobile-back-btn {
     display: inline-flex !important;
-    align-items: center;
-    gap: 4px;
-    height: 32px;
-    padding: 0 10px 0 6px;
-    border-radius: 8px;
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    background: rgba(255, 255, 255, 0.8);
-    color: #475569;
-    font-size: 12.5px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.15s;
-    flex-shrink: 0;
+    align-items: center !important;
+    gap: 4px !important;
+    height: 32px !important;
+    padding: 0 10px 0 6px !important;
+    border-radius: 8px !important;
+    border: 1px solid rgba(0, 0, 0, 0.1) !important;
+    background: rgba(255, 255, 255, 0.9) !important;
+    color: #475569 !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+    flex-shrink: 0 !important;
+    transition: all 0.15s ease !important;
   }
 
   .template-mobile-back-btn:hover {
-    background: #ffffff;
-    color: #ff75ac;
-    border-color: #ff75ac;
+    background: var(--primary-light, rgba(255, 117, 172, 0.12)) !important;
+    color: var(--primary, #ff75ac) !important;
+    border-color: var(--primary, #ff75ac) !important;
   }
 
-  .template-list {
-    max-height: none !important;
-    overflow-y: visible !important;
-    overflow-x: hidden !important;
-    padding: 12px 14px !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
-    box-sizing: border-box !important;
+  .tpl-inspector-avatar {
+    width: 36px !important;
+    height: 36px !important;
+    min-width: 36px !important;
+    border-radius: 8px !important;
   }
 
-  .template-item {
-    width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
-    box-sizing: border-box !important;
-    overflow: hidden !important;
+  .tpl-inspector-title {
+    font-size: 15px !important;
+    word-break: break-word !important;
   }
 
-  .template-item-header {
-    width: 100% !important;
-    min-width: 0 !important;
+  .tpl-inspector-desc {
+    font-size: 12px !important;
+    word-break: break-word !important;
   }
 
-  .template-item-title-wrap {
-    min-width: 0 !important;
-    flex: 1 1 auto !important;
-  }
-
-  .template-item-name {
-    min-width: 0 !important;
-    flex: 1 !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-    white-space: nowrap !important;
-  }
-
-  .template-item-cmd {
-    width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
-    box-sizing: border-box !important;
-  }
-
-  .template-item code {
-    min-width: 0 !important;
-    width: 0 !important;
-    flex: 1 !important;
-    display: block !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-    white-space: nowrap !important;
-  }
-
-  .template-filter-bar {
-    padding: 10px 14px 6px !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
-    box-sizing: border-box !important;
-  }
-
-  .template-category-pills {
+  .tpl-inspector-head-actions {
+    display: flex !important;
     flex-wrap: wrap !important;
-  }
-
-  .template-detail {
-    padding: 14px !important;
+    gap: 6px !important;
     width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
-    box-sizing: border-box !important;
-    overflow-x: hidden !important;
+    justify-content: flex-start !important;
+    padding-top: 4px !important;
   }
 
-  .template-hero-card {
+  .tpl-head-action-btn,
+  .tpl-head-edit-btn,
+  .tpl-head-del-btn {
+    flex: 1 1 auto !important;
+    min-height: 32px !important;
+    font-size: 12px !important;
+    justify-content: center !important;
+    padding: 0 8px !important;
+    border-radius: 8px !important;
+  }
+
+  /* Blueprint Strip */
+  .tpl-blueprint-strip {
+    display: flex !important;
     flex-direction: column !important;
-    gap: 10px !important;
-    padding: 12px 14px !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
-    box-sizing: border-box !important;
+    padding: 10px 14px !important;
+    gap: 6px !important;
   }
 
-  .template-hero-info {
-    min-width: 0 !important;
-    width: 100% !important;
-  }
-
-  .template-hero-title {
-    word-break: break-word !important;
-  }
-
-  .template-hero-desc {
-    word-break: break-word !important;
-    overflow-wrap: anywhere !important;
-  }
-
-  .template-creation-form {
-    padding: 0 14px 16px !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
-    box-sizing: border-box !important;
-  }
-
-  .template-detail-grid {
-    grid-template-columns: 1fr !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
-    box-sizing: border-box !important;
-  }
-
-  .template-detail-row {
-    min-width: 0 !important;
+  .tpl-blueprint-item {
     width: 100% !important;
     box-sizing: border-box !important;
+    padding: 8px 10px !important;
   }
 
-  .template-detail-code {
+  .tpl-blueprint-cmd-wrap {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .tpl-blueprint-code {
     word-break: break-all !important;
     overflow-wrap: anywhere !important;
+    white-space: normal !important;
   }
-}
 
-/* ── Mobile Full-Screen Dialogs for Templates ── */
-@media (max-width: 900px) {
-  .template-modal-backdrop {
+  /* Deploy Sheet & Editor Form */
+  .tpl-deploy-sheet,
+  .tpl-editor-form {
+    padding: 14px !important;
+  }
+
+  .tpl-form-grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  .tpl-field-group {
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .tpl-field-input {
+    height: 38px !important;
+    font-size: 13px !important;
+  }
+
+  .tpl-cmd-input-container {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 6px !important;
+  }
+
+  .tpl-ai-detect-btn {
+    align-self: flex-end !important;
+    height: 30px !important;
+    font-size: 11.5px !important;
+  }
+
+  .tpl-toggles-row {
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
+  }
+
+  .tpl-toggle-card {
+    padding: 10px 12px !important;
+  }
+
+  .tpl-deploy-footer {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+    padding: 12px 14px !important;
+    border-radius: 12px !important;
+  }
+
+  .tpl-deploy-summary {
+    width: 100% !important;
+    font-size: 11.5px !important;
+    word-break: break-word !important;
+  }
+
+  .tpl-deploy-btn {
+    width: 100% !important;
+    height: 42px !important;
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    justify-content: center !important;
+    border-radius: 10px !important;
+  }
+
+  .tpl-editor-actions {
+    display: flex !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+
+  .tpl-editor-actions button {
+    flex: 1 1 0 !important;
+    height: 40px !important;
+    justify-content: center !important;
+    font-size: 13.5px !important;
+  }
+
+  /* Modals on Mobile */
+  .tpl-modal-backdrop {
     position: fixed !important;
     inset: 0 !important;
     width: 100dvw !important;
     height: 100dvh !important;
-    padding: 0 !important;
-    margin: 0 !important;
     z-index: 20000 !important;
     display: flex !important;
-    align-items: stretch !important;
+    align-items: flex-end !important;
     justify-content: stretch !important;
-    background: rgba(0, 0, 0, 0.75) !important;
-    backdrop-filter: blur(14px) !important;
-    -webkit-backdrop-filter: blur(14px) !important;
-    overflow: hidden !important;
+    background: rgba(0, 0, 0, 0.7) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    padding: 0 !important;
   }
 
-  .template-modal-panel {
-    position: fixed !important;
-    inset: 0 !important;
+  .tpl-modal-panel {
     width: 100dvw !important;
     max-width: 100dvw !important;
-    height: 100dvh !important;
-    max-height: 100dvh !important;
-    border-radius: var(--radius-modal, 24px) !important;
+    height: 92dvh !important;
+    max-height: 92dvh !important;
+    border-radius: 20px 20px 0 0 !important;
     border: none !important;
-    margin: 0 !important;
-    box-shadow: none !important;
     display: flex !important;
     flex-direction: column !important;
     overflow: hidden !important;
     background: #ffffff !important;
-    animation: mobileModalSheetIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+    animation: mobileModalSheetIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
   }
 
-  .template-modal-header {
-    position: sticky !important;
-    top: 0 !important;
-    z-index: 20 !important;
+  .tpl-modal-header {
     flex-shrink: 0 !important;
     padding: max(14px, env(safe-area-inset-top)) 16px 12px !important;
-    background: rgba(255, 255, 255, 0.95) !important;
-    backdrop-filter: blur(16px) !important;
-    -webkit-backdrop-filter: blur(16px) !important;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
   }
 
-  .template-modal-title {
-    font-size: 16px !important;
-  }
-
-  .template-modal-subtitle {
-    font-size: 11.5px !important;
-    max-width: calc(100vw - 90px) !important;
-    white-space: nowrap !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-  }
-
-  .template-modal-panel .template-save-form {
-    flex: 1 1 auto !important;
-    min-height: 0 !important;
-    display: flex !important;
-    flex-direction: column !important;
-    overflow: hidden !important;
-  }
-
-  .template-save-form-fields {
+  .tpl-modal-body {
     flex: 1 1 auto !important;
     overflow-y: auto !important;
     -webkit-overflow-scrolling: touch !important;
-    padding: 16px 16px 24px !important;
-    gap: 14px !important;
+    padding: 14px 16px 20px !important;
+    gap: 12px !important;
   }
 
-  .template-field-row {
+  .tpl-form-row-2 {
     grid-template-columns: 1fr !important;
-  }
-
-  .template-field-control {
-    height: 44px !important;
-    font-size: 15px !important;
+    gap: 10px !important;
   }
 
   .template-modal-actions {
-    position: sticky !important;
-    bottom: 0 !important;
-    z-index: 20 !important;
     flex-shrink: 0 !important;
     padding: 12px 16px max(14px, env(safe-area-inset-bottom)) !important;
-    background: rgba(255, 255, 255, 0.95) !important;
-    backdrop-filter: blur(16px) !important;
-    -webkit-backdrop-filter: blur(16px) !important;
-    border-top: 1px solid rgba(0, 0, 0, 0.08) !important;
     display: flex !important;
-    gap: 10px !important;
+    gap: 8px !important;
+    background: rgba(255, 255, 255, 0.95) !important;
+    border-top: 1px solid rgba(0, 0, 0, 0.08) !important;
   }
 
   .template-modal-actions button {
     flex: 1 !important;
-    min-height: 44px !important;
-    font-size: 15px !important;
-    border-radius: 12px !important;
+    height: 42px !important;
+    font-size: 14px !important;
+    border-radius: 10px !important;
     justify-content: center !important;
   }
 
@@ -2901,3 +3017,4 @@
     display: none !important;
   }
 }
+

@@ -115,9 +115,20 @@ export async function maybeFinishWatchIncident(incidentId: string): Promise<void
   }
 }
 
-// 风险分级自治：诊断 risk 不高于策略阈值且置信度达标时，自动批准本次诊断产生的待审批动作。
-// 任一动作执行失败都退回 awaiting_approval 交人工处理；diagnose_only 模式永不自动执行。
+// 自动批准只适用于小范围补丁，且实例必须处于非运行状态。
 const autoApproveRiskRank: Record<string, number> = { low: 1, medium: 2, high: 3, critical: 4 };
+const maxAutoApproveDiffLines = 12;
+
+function countChangedLinesInDiff(diff: string | undefined): number {
+  if (!diff) return 0;
+  let changed = 0;
+  for (const line of diff.split(/\r?\n/)) {
+    if ((line.startsWith("+") && !line.startsWith("+++")) || (line.startsWith("-") && !line.startsWith("---"))) {
+      changed += 1;
+    }
+  }
+  return changed;
+}
 
 async function maybeAutoApproveWatchActions(
   incidentId: string,
@@ -128,6 +139,23 @@ async function maybeAutoApproveWatchActions(
   user: CurrentUser
 ): Promise<void> {
   if (mode === "diagnose_only") return;
+  if (actionIds.length !== 1) return;
+
+  const pendingAction = pendingSakiActions.get(actionIds[0] ?? "");
+  if (!pendingAction) return;
+  if (!pendingAction.approval?.diff) return;
+  if (countChangedLinesInDiff(pendingAction.approval?.diff) > maxAutoApproveDiffLines) {
+    return;
+  }
+
+  const liveInstance = await prisma.instance.findUnique({
+    where: { id: instanceId },
+    select: { status: true }
+  }).catch(() => null);
+  if (!liveInstance || liveInstance.status === "RUNNING" || liveInstance.status === "STARTING") {
+    return;
+  }
+
   const policyRow = await prisma.watchPolicy.findUnique({ where: { instanceId } }).catch(() => null);
   const autoApproveRisk = policyRow?.autoApproveRisk ?? "none";
   if (autoApproveRisk !== "low" && autoApproveRisk !== "medium") return;
@@ -145,7 +173,7 @@ async function maybeAutoApproveWatchActions(
     if (!current || current.status === "ignored" || current.status === "rolled_back") return;
     await updateIncident(incidentId, {
       autoApplied: true,
-      summary: `${current.summary ?? diagnosis.summary}（已按自治策略自动执行）`
+      summary: `${current.summary ?? diagnosis.summary}（已按自治权限自动执行）`
     });
   } catch (error) {
     // 自动执行失败：退回人工审批。maybeFinishWatchIncident 会在仍有 pending 动作时
@@ -320,6 +348,199 @@ const diagnosableStatuses = new Set(["open", "diagnosed", "failed", "rate_limite
 // watchRunsInLastHour 检查与 recordWatchRun 之间按实例串行化，降低并发确认导致的超预算。
 const confirmLocks = new Map<string, Promise<unknown>>();
 
+const sameFingerprintCooldownMs = 6 * 60 * 60 * 1000;
+const instanceFailureCircuitBreakerMs = 2 * 60 * 60 * 1000;
+
+export async function maybeAutoStartWatchDiagnosis(
+  incidentId: string,
+  options?: { willRetry?: boolean }
+): Promise<boolean> {
+  const incident = await getIncident(incidentId);
+  if (!incident || incident.status !== "open") return false;
+  const previous = confirmLocks.get(incident.instanceId) ?? Promise.resolve();
+  const task = previous.catch(() => false).then(() => autoStartWatchDiagnosisLocked(incidentId, options));
+  confirmLocks.set(incident.instanceId, task);
+  try {
+    return await task;
+  } finally {
+    if (confirmLocks.get(incident.instanceId) === task) confirmLocks.delete(incident.instanceId);
+  }
+}
+
+async function autoStartWatchDiagnosisLocked(
+  incidentId: string,
+  options?: { willRetry?: boolean }
+): Promise<boolean> {
+  const incident = await getIncident(incidentId);
+  if (!incident || incident.status !== "open") return false;
+  if (incident.trigger !== "crash" && incident.trigger !== "crash_loop") {
+    return false;
+  }
+  if (runningInstanceIds.has(incident.instanceId)) return false;
+
+  const policy = await readWatchPolicy(incident.instanceId);
+  if (!policy.enabled || policy.mode === "off" || !policy.autoDiagnose) {
+    return false;
+  }
+
+  const instance = await prisma.instance.findUnique({
+    where: { id: incident.instanceId },
+    include: instanceAccessInclude
+  });
+  if (!instance || instance.status !== "CRASHED") {
+    return false;
+  }
+
+  // 同一错误曾修复失败或近期复发时，留给人工处理。
+  const prevSameFingerprint = await prisma.incident.findFirst({
+    where: {
+      instanceId: incident.instanceId,
+      fingerprint: incident.fingerprint,
+      id: { not: incident.id },
+      status: { not: "ignored" }
+    },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true, status: true, updatedAt: true }
+  });
+
+  if (prevSameFingerprint) {
+    const isUnfixableStatus =
+      prevSameFingerprint.status === "rolled_back" ||
+      prevSameFingerprint.status === "failed" ||
+      prevSameFingerprint.status === "diagnosed" ||
+      prevSameFingerprint.status === "awaiting_approval" ||
+      prevSameFingerprint.status === "rate_limited";
+    const isRecentRecurrence = Date.now() - prevSameFingerprint.updatedAt.getTime() < sameFingerprintCooldownMs;
+    if (isUnfixableStatus || isRecentRecurrence || incident.recurrenceCount > 0) {
+      await updateIncident(incident.id, {
+        status: "open",
+        summary:
+          "【Saki 自治熔断】该相同报错此前已诊断过或自动修复未成功（可能为服务端/外部故障），为防止重复消耗 Token，已暂停自动诊断并转交人工确认。"
+      });
+      return false;
+    }
+  }
+
+  // 指纹变化时仍检查实例最近一次诊断结果。
+  const lastInstanceIncident = await prisma.incident.findFirst({
+    where: {
+      instanceId: incident.instanceId,
+      id: { not: incident.id },
+      status: { in: ["rolled_back", "failed", "diagnosed", "awaiting_approval", "resolved"] }
+    },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true, status: true, updatedAt: true }
+  });
+
+  if (
+    lastInstanceIncident &&
+    lastInstanceIncident.status !== "resolved" &&
+    Date.now() - lastInstanceIncident.updatedAt.getTime() < instanceFailureCircuitBreakerMs
+  ) {
+    await updateIncident(incident.id, {
+      status: "open",
+      summary:
+        "【Saki 自治熔断】该实例上次自动诊断未能恢复运行，疑似外部或服务端顽固故障；为防止变化报错循环消耗 Token，已暂停自动诊断并转交人工确认。"
+    });
+    return false;
+  }
+
+  // 数据库计数补足面板重启后丢失的内存记录。
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+  const dbRunsLastHour = await prisma.incident.count({
+    where: {
+      instanceId: incident.instanceId,
+      id: { not: incident.id },
+      updatedAt: { gte: oneHourAgo },
+      status: { in: ["diagnosing", "diagnosed", "awaiting_approval", "applying", "verifying", "resolved", "rolled_back", "failed"] }
+    }
+  });
+  if (Math.max(watchRunsInLastHour(incident.instanceId), dbRunsLastHour) >= policy.maxRunsPerHour) {
+    await updateIncident(incident.id, {
+      status: "rate_limited",
+      summary: "本小时诊断次数已达上限，Saki 完全自治已暂停触发以保护模型额度。"
+    });
+    return false;
+  }
+
+  let cooldownRemaining = watchCooldownRemainingSeconds(incident.instanceId, policy.cooldownSeconds);
+  if (cooldownRemaining <= 0 && lastInstanceIncident) {
+    const elapsedSec = (Date.now() - lastInstanceIncident.updatedAt.getTime()) / 1000;
+    if (elapsedSec < policy.cooldownSeconds) {
+      cooldownRemaining = Math.ceil(policy.cooldownSeconds - elapsedSec);
+    }
+  }
+  if (cooldownRemaining > 0) {
+    await updateIncident(incident.id, {
+      status: "open",
+      summary: `【Saki 完全自治】距离上次诊断不足 ${policy.cooldownSeconds} 秒冷却期（剩余约 ${cooldownRemaining} 秒），已暂缓自动调用模型，你也可以手动点击确认诊断。`
+    });
+    return false;
+  }
+
+  const user = await resolveWatchUser(instance, policy.approverUserId);
+  if (!user) {
+    await updateIncident(incident.id, {
+      status: "open",
+      summary: "【Saki 完全自治】未找到具备 saki.agent 权限的可用负责人账号，请手动确认诊断。"
+    });
+    return false;
+  }
+
+  try {
+    await assertUserHasSpendablePoints(user.id);
+  } catch (error) {
+    await updateIncident(incident.id, {
+      status: "open",
+      summary:
+        error instanceof InsufficientPointsError
+          ? "【Saki 完全自治】负责人账号可用模型额度不足，已暂停自动诊断。"
+          : "【Saki 完全自治】无法校验模型额度，请手动确认诊断。"
+    });
+    return false;
+  }
+
+  const mode = policy.mode === "diagnose_only" ? "diagnose_only" : "diagnose_and_patch";
+  const claimed = await prisma.incident.updateMany({
+    where: { id: incident.id, status: "open" },
+    data: {
+      status: "diagnosing",
+      assigneeUserId: user.id,
+      summary: "【Saki 完全自治】已自动触发模型诊断（内置同报错与连续失败双重熔断保护）…"
+    }
+  });
+  if (claimed.count === 0) return false;
+
+  void emitIncident(incident.id);
+  void startWatchRun({
+    incidentId: incident.id,
+    instanceId: incident.instanceId,
+    ...(incident.exitCode !== undefined && incident.exitCode !== null ? { exitCode: incident.exitCode } : {}),
+    logTail: incident.logTail,
+    trigger: incident.trigger,
+    willRetry: Boolean(options?.willRetry),
+    mode,
+    requestedByUserId: user.id
+  }).catch(async (error) => {
+    console.error("Saki auto watch run failed to start:", error instanceof Error ? error.stack ?? error.message : error);
+    const current = await getIncident(incident.id);
+    if (!current || current.status === "ignored" || current.status === "rolled_back") return;
+    if (current.taskId) {
+      cancelActiveSakiTask(current.taskId);
+    }
+    if (!(error instanceof WatchRunConflictError)) {
+      clearRestartLease(incident.instanceId);
+    }
+    await updateIncident(incident.id, {
+      status: "open",
+      taskId: null,
+      summary: "【Saki 完全自治】自动启动诊断时遇到冲突或异常，已退回待人工确认状态。"
+    }).catch(() => undefined);
+  });
+
+  return true;
+}
+
 export async function confirmWatchDiagnosis(input: {
   incidentId: string;
   requestedByUserId: string;
@@ -367,7 +588,8 @@ async function confirmWatchDiagnosisLocked(input: {
     throw new Error("Hourly watch budget reached. Saki will not start another diagnosis.");
   }
 
-  const mode = policy.mode === "diagnose_only" ? "diagnose_only" : "diagnose_and_patch";
+  const isResourceIncident = incident.trigger === "disk" || incident.trigger === "memory";
+  const mode = policy.mode === "diagnose_only" || isResourceIncident ? "diagnose_only" : "diagnose_and_patch";
   const claimed = await prisma.incident.updateMany({
     where: { id: incident.id, status: { in: [...diagnosableStatuses] } },
     data: {

@@ -1,5 +1,5 @@
-// Adapted & enhanced from https://github.com/shuding/liquid-glass
-// Realistic liquid glass lens shader: SDF-based magnification & meniscus refraction
+// Adapted directly from https://github.com/shuding/liquid-glass
+// Realistic liquid glass lens shader: SDF-based magnification & meniscus edge refraction
 
 export interface Vec2 {
   x: number;
@@ -36,7 +36,7 @@ export function roundedRectSDF(
   y: number,
   halfWidth: number,
   halfHeight: number,
-  radius: number
+  radius: number,
 ): number {
   const qx = Math.abs(x) - halfWidth + radius;
   const qy = Math.abs(y) - halfHeight + radius;
@@ -49,64 +49,44 @@ export function texture(x: number, y: number): Vec2 {
 
 /**
  * Creates a sized liquid glass fragment function.
- * Combines bounded physical lens magnification in the interior with a meniscus liquid rim refraction near edges.
- * Uses physical screen pixel units to ensure invariant refraction angle across any container width or height.
+ * Combines physical lens magnification in the interior with a meniscus liquid rim refraction near edges,
+ * matching the official shuding/liquid-glass SDF shader.
  */
 export function createSizedLiquidGlassFragment(
   physicalWidth: number,
   physicalHeight: number,
-  cornerRadius: number,
+  cornerRadius = 24,
   zoom = 1.15,
-  refractionIntensity = 1.0
+  refractionIntensity = 1.2,
 ): (uv: Vec2, mouse?: Vec2) => Vec2 {
   const w = Math.max(1, physicalWidth);
   const h = Math.max(1, physicalHeight);
   const halfW = w / 2;
   const halfH = h / 2;
-  const r = Math.max(2, Math.min(cornerRadius, halfW - 1, halfH - 1));
+  const r = Math.max(0, Math.min(cornerRadius, Math.min(halfW, halfH)));
 
-  // Physical meniscus rim width in screen pixels (fixed 8px - 16px, capped at 38% of half-dimension)
-  const rimWidth = Math.max(8, Math.min(16, Math.min(halfW, halfH) * 0.38));
-
-  // Physical magnification displacement bounds (at most ~4px)
-  const maxMagDisplacement = Math.min(4, rimWidth * 0.28);
-  const zoomFactor = Math.max(1.01, zoom);
-  const zoomDelta = 1 - 1 / zoomFactor;
+  // Bevel rim width in screen pixels (responsive between 10px and 28px)
+  const rimWidth = Math.max(10, Math.min(28, Math.min(halfW, halfH) * 0.45));
+  const peakRimDisplacement = rimWidth * 0.75 * refractionIntensity;
 
   return (uv: Vec2, mouse?: Vec2): Vec2 => {
     // Current pixel coordinate in physical element space, centered at (0, 0)
     const px = (uv.x - 0.5) * w;
     const py = (uv.y - 0.5) * h;
 
-    // Signed distance to rounded rectangle boundary in physical pixels
+    // Signed distance to rounded rectangle boundary
     const dist = roundedRectSDF(px, py, halfW, halfH, r);
-
-    // Outside the glass border: zero displacement
-    if (dist > 0) {
+    if (dist > 1.0) {
       return { x: uv.x, y: uv.y };
     }
 
-    // Depth from border towards inside: 0 at border, >0 in interior
-    const depth = -dist;
+    const depth = -dist; // depth > 0 inside the glass border
 
-    // 1. Magnification component: pulls coordinates inward to magnify backdrop
-    // Using tanh to ensure magnification displacement never blows up on elongated elements
-    let magDx = -maxMagDisplacement * Math.tanh((px * zoomDelta) / Math.max(0.1, maxMagDisplacement));
-    let magDy = -maxMagDisplacement * Math.tanh((py * zoomDelta) / Math.max(0.1, maxMagDisplacement));
-
-    // Optional mouse interaction subtly pulls lens focus
-    if (mouse && (mouse.x !== 0 || mouse.y !== 0)) {
-      const mouseInfluence = smoothStep(0, 1, 1 - depth / Math.max(halfW, halfH)) * 0.05;
-      magDx += mouse.x * Math.min(halfW, 40) * mouseInfluence;
-      magDy += mouse.y * Math.min(halfH, 40) * mouseInfluence;
-    }
-
-    // 2. Meniscus liquid rim refraction:
+    // 1. Edge Refraction via SDF Normal Gradient (shuding meniscus bend)
     let rimDx = 0;
     let rimDy = 0;
 
     if (depth < rimWidth) {
-      // Normal of the SDF boundary (points outward)
       const eps = 1.0;
       const dX =
         roundedRectSDF(px + eps, py, halfW, halfH, r) -
@@ -115,27 +95,36 @@ export function createSizedLiquidGlassFragment(
         roundedRectSDF(px, py + eps, halfW, halfH, r) -
         roundedRectSDF(px, py - eps, halfW, halfH, r);
       const gradLen = Math.sqrt(dX * dX + dY * dY) || 1;
-      const normX = dX / gradLen;
+      const normX = dX / gradLen; // outward normal
       const normY = dY / gradLen;
 
-      // Normalized depth in rim: 0 at outer edge, 1 at interior rim junction
-      const t = depth / rimWidth;
-      // Meniscus arch curve: 0 at outer edge, peaks mid-rim, smoothly reaches 0 at interior
-      const peakRimDisplacement = 12 * refractionIntensity;
-      const rimFactor =
-        Math.sin(t * Math.PI) * Math.pow(1 - t, 0.25) * peakRimDisplacement;
+      // Smooth meniscus profile: arch curve peaking near border, smoothly tapering inward
+      const t = Math.max(0, depth / rimWidth);
+      const rimFactor = Math.sin(t * Math.PI) * Math.pow(1 - t, 0.25);
 
-      rimDx = -normX * rimFactor;
-      rimDy = -normY * rimFactor;
-
-      // Feather magnification near edge so it smoothly meets 0 at border
-      const edgeFeather = smoothStep(0, 2.5, depth);
-      magDx *= edgeFeather;
-      magDy *= edgeFeather;
+      // Inward displacement towards the center axis
+      rimDx = -normX * rimFactor * peakRimDisplacement;
+      rimDy = -normY * rimFactor * peakRimDisplacement;
     }
 
-    const totalDx = magDx + rimDx;
-    const totalDy = magDy + rimDy;
+    // 2. Center Lens Magnification (subtle zoom)
+    const zoomDelta = zoom - 1.0;
+    const interiorFactor = smoothStep(0, rimWidth, depth);
+    const maxMag = Math.min(8, rimWidth * 0.35);
+    const magDx = -(px / Math.max(1, halfW)) * zoomDelta * interiorFactor * maxMag;
+    const magDy = -(py / Math.max(1, halfH)) * zoomDelta * interiorFactor * maxMag;
+
+    // 3. Mouse Focus Interaction
+    let mouseDx = 0;
+    let mouseDy = 0;
+    if (mouse && (mouse.x !== 0 || mouse.y !== 0)) {
+      const mouseInfluence = smoothStep(0, 1, 1 - depth / Math.max(halfW, halfH)) * 0.08;
+      mouseDx = mouse.x * Math.min(halfW, 30) * mouseInfluence;
+      mouseDy = mouse.y * Math.min(halfH, 30) * mouseInfluence;
+    }
+
+    const totalDx = rimDx + magDx + mouseDx;
+    const totalDy = rimDy + magDy + mouseDy;
 
     return {
       x: uv.x + totalDx / w,
@@ -155,35 +144,41 @@ export interface LiquidGlassShaderOptions {
 }
 
 /**
- * Generates an SVG displacement map where optical refraction angle and rim bevel width
- * remain strictly constant regardless of how wide or tall the container expands.
+ * Generates an SVG displacement map using the SDF fragment shader.
+ * Encodes physical displacement vectors directly into RGB channels for feDisplacementMap.
  */
 export function generateLiquidGlassMap(options: LiquidGlassShaderOptions): ShaderResult {
   const {
     physicalWidth,
     physicalHeight,
-    cornerRadius = 26,
+    cornerRadius = 24,
     zoom = 1.15,
-    refractionIntensity = 1.0,
+    refractionIntensity = 1.2,
     mousePosition,
     maxEdge = 480,
   } = options;
 
   const srcW = Math.max(1, Math.round(physicalWidth));
   const srcH = Math.max(1, Math.round(physicalHeight));
-  const halfW = srcW / 2;
-  const halfH = srcH / 2;
-  const r = Math.max(2, Math.min(cornerRadius, halfW - 1, halfH - 1));
 
-  // Meniscus rim width in physical screen pixels (capped between 8px and 16px)
-  const rimWidth = Math.max(8, Math.min(16, Math.min(halfW, halfH) * 0.38));
-  const maxMagDisplacement = Math.min(4, rimWidth * 0.28);
-  const zoomFactor = Math.max(1.01, zoom);
-  const zoomDelta = 1 - 1 / zoomFactor;
+  // Scaled canvas resolution capped for performance while ensuring smooth gradient sampling
+  let canvasW = srcW;
+  let canvasH = srcH;
+  if (canvasW > maxEdge || canvasH > maxEdge) {
+    if (canvasW >= canvasH) {
+      canvasH = Math.max(16, Math.round((srcH / srcW) * maxEdge));
+      canvasW = maxEdge;
+    } else {
+      canvasW = Math.max(16, Math.round((srcW / srcH) * maxEdge));
+      canvasH = maxEdge;
+    }
+  }
+  canvasW = Math.max(16, canvasW);
+  canvasH = Math.max(16, canvasH);
 
-  // Internal canvas resolution capped for performance while ensuring smooth gradient sampling
-  const canvasW = Math.max(16, Math.min(srcW, maxEdge));
-  const canvasH = Math.max(16, Math.min(srcH, Math.round(maxEdge * 0.5)));
+  if (typeof document === "undefined") {
+    return { dataUrl: "", scale: 24 };
+  }
 
   const canvas = document.createElement("canvas");
   canvas.width = canvasW;
@@ -193,6 +188,14 @@ export function generateLiquidGlassMap(options: LiquidGlassShaderOptions): Shade
     return { dataUrl: "", scale: 24 };
   }
 
+  const fragment = createSizedLiquidGlassFragment(
+    srcW,
+    srcH,
+    cornerRadius,
+    zoom,
+    refractionIntensity,
+  );
+
   let maxPhysicalDisplacement = 0;
   const totalPixels = canvasW * canvasH;
   const rawDx = new Float32Array(totalPixels);
@@ -201,69 +204,21 @@ export function generateLiquidGlassMap(options: LiquidGlassShaderOptions): Shade
   let idx = 0;
   for (let y = 0; y < canvasH; y++) {
     const v = (y + 0.5) / canvasH;
-    const py = (v - 0.5) * srcH;
-
     for (let x = 0; x < canvasW; x++) {
       const u = (x + 0.5) / canvasW;
-      const px = (u - 0.5) * srcW;
+      const pos = fragment({ x: u, y: v }, mousePosition);
 
-      const dist = roundedRectSDF(px, py, halfW, halfH, r);
-      if (dist > 0) {
-        rawDx[idx] = 0;
-        rawDy[idx] = 0;
-        idx++;
-        continue;
-      }
+      // pos is in normalized UV [0, 1]
+      const dx = (pos.x - u) * srcW;
+      const dy = (pos.y - v) * srcH;
 
-      const depth = -dist;
+      const absX = Math.abs(dx);
+      const absY = Math.abs(dy);
+      if (absX > maxPhysicalDisplacement) maxPhysicalDisplacement = absX;
+      if (absY > maxPhysicalDisplacement) maxPhysicalDisplacement = absY;
 
-      let magDx = -maxMagDisplacement * Math.tanh((px * zoomDelta) / Math.max(0.1, maxMagDisplacement));
-      let magDy = -maxMagDisplacement * Math.tanh((py * zoomDelta) / Math.max(0.1, maxMagDisplacement));
-
-      if (mousePosition && (mousePosition.x !== 0 || mousePosition.y !== 0)) {
-        const mouseInfluence = smoothStep(0, 1, 1 - depth / Math.max(halfW, halfH)) * 0.05;
-        magDx += mousePosition.x * Math.min(halfW, 40) * mouseInfluence;
-        magDy += mousePosition.y * Math.min(halfH, 40) * mouseInfluence;
-      }
-
-      let rimDx = 0;
-      let rimDy = 0;
-
-      if (depth < rimWidth) {
-        const eps = 1.0;
-        const dX =
-          roundedRectSDF(px + eps, py, halfW, halfH, r) -
-          roundedRectSDF(px - eps, py, halfW, halfH, r);
-        const dY =
-          roundedRectSDF(px, py + eps, halfW, halfH, r) -
-          roundedRectSDF(px, py - eps, halfW, halfH, r);
-        const gradLen = Math.sqrt(dX * dX + dY * dY) || 1;
-        const normX = dX / gradLen;
-        const normY = dY / gradLen;
-
-        const t = depth / rimWidth;
-        const peakRimDisplacement = 12 * refractionIntensity;
-        const rimFactor =
-          Math.sin(t * Math.PI) * Math.pow(1 - t, 0.25) * peakRimDisplacement;
-
-        rimDx = -normX * rimFactor;
-        rimDy = -normY * rimFactor;
-
-        const edgeFeather = smoothStep(0, 2.5, depth);
-        magDx *= edgeFeather;
-        magDy *= edgeFeather;
-      }
-
-      const totalDx = magDx + rimDx;
-      const totalDy = magDy + rimDy;
-
-      const absDx = Math.abs(totalDx);
-      const absDy = Math.abs(totalDy);
-      if (absDx > maxPhysicalDisplacement) maxPhysicalDisplacement = absDx;
-      if (absDy > maxPhysicalDisplacement) maxPhysicalDisplacement = absDy;
-
-      rawDx[idx] = totalDx;
-      rawDy[idx] = totalDy;
+      rawDx[idx] = dx;
+      rawDy[idx] = dy;
       idx++;
     }
   }
@@ -274,28 +229,22 @@ export function generateLiquidGlassMap(options: LiquidGlassShaderOptions): Shade
   const imageData = ctx.createImageData(canvasW, canvasH);
   const data = imageData.data;
 
-  idx = 0;
-  for (let y = 0; y < canvasH; y++) {
-    for (let x = 0; x < canvasW; x++) {
-      const dx = rawDx[idx]!;
-      const dy = rawDy[idx]!;
-      idx++;
+  for (let i = 0; i < totalPixels; i++) {
+    const dx = rawDx[i]!;
+    const dy = rawDy[i]!;
 
-      const edgeDistance = Math.min(x, y, canvasW - x - 1, canvasH - y - 1);
-      const edgeFactor = Math.min(1, edgeDistance / 1.5);
+    // Normalized displacement in [-1, 1] mapped to [0, 1]
+    const normDx = dx / maxDisp;
+    const normDy = dy / maxDisp;
 
-      const normDx = (dx * edgeFactor) / maxDisp;
-      const normDy = (dy * edgeFactor) / maxDisp;
+    const rVal = normDx * 0.5 + 0.5;
+    const gVal = normDy * 0.5 + 0.5;
 
-      const rVal = normDx * 0.5 + 0.5;
-      const gVal = normDy * 0.5 + 0.5;
-
-      const pixelIndex = (y * canvasW + x) * 4;
-      data[pixelIndex] = Math.max(0, Math.min(255, Math.round(rVal * 255)));
-      data[pixelIndex + 1] = Math.max(0, Math.min(255, Math.round(gVal * 255)));
-      data[pixelIndex + 2] = Math.max(0, Math.min(255, Math.round(gVal * 255)));
-      data[pixelIndex + 3] = 255;
-    }
+    const pixelIndex = i * 4;
+    data[pixelIndex] = Math.max(0, Math.min(255, Math.round(rVal * 255)));
+    data[pixelIndex + 1] = Math.max(0, Math.min(255, Math.round(gVal * 255)));
+    data[pixelIndex + 2] = 0;
+    data[pixelIndex + 3] = 255;
   }
 
   ctx.putImageData(imageData, 0, 0);
@@ -322,7 +271,7 @@ export const fragmentShaders = {
 export type FragmentShaderType = keyof typeof fragmentShaders;
 
 /**
- * Generator that executes the fragment shader over a 2D canvas and outputs
+ * Generator that executes a fragment shader over a 2D canvas and outputs
  * an SVG displacement map image dataURL and computed maximum scale.
  */
 export class ShaderDisplacementGenerator {
@@ -350,13 +299,11 @@ export class ShaderDisplacementGenerator {
     let maxScale = 0;
     const rawValues: number[] = [];
 
-    // Calculate displacement vectors for each canvas pixel
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const uv: Vec2 = { x: x / w, y: y / h };
         const pos = this.options.fragment(uv, mousePosition);
 
-        // Displacement in pixels on this canvas
         const dx = pos.x * w - x;
         const dy = pos.y * h - y;
 
@@ -365,7 +312,6 @@ export class ShaderDisplacementGenerator {
       }
     }
 
-    // Minimum scale to avoid division by zero
     const maxDisplacement = Math.max(1, maxScale);
     const svgScale = maxDisplacement * 2;
 
@@ -378,25 +324,17 @@ export class ShaderDisplacementGenerator {
         const dx = rawValues[rawIndex++] ?? 0;
         const dy = rawValues[rawIndex++] ?? 0;
 
-        // Smooth pixel borders to prevent aliasing
-        const edgeDistance = Math.min(x, y, w - x - 1, h - y - 1);
-        const edgeFactor = Math.min(1, edgeDistance / 1.5);
+        const normDx = dx / maxDisplacement;
+        const normDy = dy / maxDisplacement;
 
-        const smoothedDx = dx * edgeFactor;
-        const smoothedDy = dy * edgeFactor;
-
-        // Map displacement to 0..255 (128 is 0 displacement)
-        const normDx = smoothedDx / maxDisplacement; // [-1, 1]
-        const normDy = smoothedDy / maxDisplacement; // [-1, 1]
-
-        const r = normDx * 0.5 + 0.5; // [0, 1]
-        const g = normDy * 0.5 + 0.5; // [0, 1]
+        const r = normDx * 0.5 + 0.5;
+        const g = normDy * 0.5 + 0.5;
 
         const pixelIndex = (y * w + x) * 4;
-        data[pixelIndex] = Math.max(0, Math.min(255, Math.round(r * 255))); // R: X displacement
-        data[pixelIndex + 1] = Math.max(0, Math.min(255, Math.round(g * 255))); // G: Y displacement
-        data[pixelIndex + 2] = Math.max(0, Math.min(255, Math.round(g * 255))); // B: for chromatic aberration / compatibility
-        data[pixelIndex + 3] = 255; // Alpha
+        data[pixelIndex] = Math.max(0, Math.min(255, Math.round(r * 255)));
+        data[pixelIndex + 1] = Math.max(0, Math.min(255, Math.round(g * 255)));
+        data[pixelIndex + 2] = 0;
+        data[pixelIndex + 3] = 255;
       }
     }
 

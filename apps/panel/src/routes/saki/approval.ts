@@ -119,6 +119,7 @@ export async function executeApprovedSakiAction(
 ): Promise<SakiActionDecisionResponse> {
   const pending = pendingSakiActions.get(id);
   if (!pending) throw new RouteError("Pending Saki action not found or already handled.", 404);
+  if (pending.call.name.toLowerCase() === "askuser") throw new RouteError("Use the answer action for a question.", 400);
   assertPendingSakiActionOwner(user.id, pending);
   const runtime = await runtimeForSakiActionDecision(user, pending, request);
   const action = await executeSakiAgentTool(runtime, pending.call, { approved: true, actionId: id });
@@ -141,6 +142,7 @@ export async function approvePendingSakiAction(request: FastifyRequest, id: stri
 export async function rejectPendingSakiAction(request: FastifyRequest, id: string): Promise<SakiActionDecisionResponse> {
   const pending = pendingSakiActions.get(id);
   if (!pending) throw new RouteError("Pending Saki action not found or already handled.", 404);
+  if (pending.call.name.toLowerCase() === "askuser") throw new RouteError("Use the answer action to skip a question.", 400);
   assertPendingSakiActionOwner(request.user.sub, pending);
   await removePendingSakiAction(id);
   const runtime = await runtimeForSakiActionDecision({ id: request.user.sub, permissions: request.user.permissions }, pending, request);
@@ -164,6 +166,50 @@ export async function rejectPendingSakiAction(request: FastifyRequest, id: strin
     });
   }
   return { action, message: "Saki action rejected." };
+}
+
+const answeringSakiQuestions = new Set<string>();
+
+export async function answerPendingSakiQuestion(
+  request: FastifyRequest,
+  id: string,
+  input: { selection?: unknown; customText?: unknown; skipped?: unknown }
+): Promise<SakiActionDecisionResponse> {
+  const pending = pendingSakiActions.get(id);
+  if (!pending) throw new RouteError("Pending Saki question not found or already handled.", 404);
+  assertPendingSakiActionOwner(request.user.sub, pending);
+  if (pending.call.name.toLowerCase() !== "askuser") throw new RouteError("This action is not a question.", 400);
+  if (answeringSakiQuestions.has(id)) throw new RouteError("This question is already being answered.", 409);
+  const args = toolArgs(pending.call);
+  const options = Array.isArray(args.options) ? args.options.filter((value): value is string => typeof value === "string") : [];
+  const skipped = input.skipped === true;
+  const selection = typeof input.selection === "string" ? input.selection.trim() : "";
+  const customText = typeof input.customText === "string" ? input.customText.trim() : "";
+  if (selection && !options.includes(selection)) throw new RouteError("Please choose a listed option.", 400);
+  if (customText.length > 4000) throw new RouteError("The answer is too long.", 400);
+  if (!skipped && !selection && !customText) throw new RouteError("Choose an option, write an answer, or skip.", 400);
+  answeringSakiQuestions.add(id);
+  try {
+    const runtime = await runtimeForSakiActionDecision({ id: request.user.sub, permissions: request.user.permissions }, pending, request);
+    const answer = skipped ? { skipped: true } : {
+      ...(selection ? { selection } : {}),
+      ...(customText ? { customText } : {})
+    };
+    const observation = skipped
+      ? "The user skipped this question. Continue using reasonable judgment; do not ask the same question again."
+      : `User answer:\n${selection ? `Selected option: ${selection}\n` : ""}${customText ? `Custom answer: ${customText}` : ""}`;
+    const action: SakiAgentAction = {
+      id, tool: "askUser", args, question: { text: String(args.question ?? ""), options }, answer,
+      observation, ok: true, status: "completed", createdAt: new Date().toISOString()
+    };
+    await removePendingSakiAction(id);
+    await saveCompletedSakiAction(action);
+    await auditAgentTool(runtime, action);
+    const response = await continueSakiAgentAfterActionDecision(pending, action, runtime);
+    return { action, message: skipped ? "Question skipped." : "Answer sent to Saki.", ...(response ? { response } : {}) };
+  } finally {
+    answeringSakiQuestions.delete(id);
+  }
 }
 
 export async function rollbackSakiAction(request: FastifyRequest, id: string): Promise<SakiActionDecisionResponse> {

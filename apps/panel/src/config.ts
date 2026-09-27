@@ -113,6 +113,7 @@ export const panelPaths = {
   pluginsDir: path.resolve(rootDir, "data", "plugins"),
   operationsPacksDir: path.resolve(rootDir, "data", "panel", "operations-packs"),
   sessionSettingsFile: path.resolve(rootDir, "data", "panel", "session-settings.json"),
+  auditRetentionFile: path.resolve(rootDir, "data", "panel", "audit-retention.json"),
   sakiConfigFile: path.resolve(rootDir, "data", "panel", "saki-settings.json"),
   sakiSkillsDir: path.resolve(rootDir, "data", "panel", "saki-skills")
 };

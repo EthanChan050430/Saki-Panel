@@ -2,11 +2,13 @@ import React, {
   type CSSProperties,
   forwardRef,
   useCallback,
-  useEffect,
   useId,
+  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   displacementMap,
   polarDisplacementMap,
@@ -20,12 +22,15 @@ import {
 
 export type LiquidGlassMode = "standard" | "polar" | "prominent" | "shader";
 
+const useIsomorphicLayoutEffect =
+  typeof window !== "undefined" ? useLayoutEffect : React.useEffect;
+
 const generateShaderDisplacementMap = (
   width: number,
   height: number,
-  cornerRadius = 26,
+  cornerRadius = 24,
   zoom = 1.15,
-  refractionIntensity = 1.0,
+  refractionIntensity = 1.2,
 ): { dataUrl: string; scale: number } => {
   return generateLiquidGlassMap({
     physicalWidth: width,
@@ -72,23 +77,25 @@ const GlassFilter: React.FC<{
   const map = getMap(mode, shaderMapUrl);
   const w = Math.max(1, Math.round(width));
   const h = Math.max(1, Math.round(height));
-  const baseScale = scale || 40;
+  const baseScale = scale || 24;
   const factor = displacementScale ? displacementScale / 100 : 1;
   const finalScale = baseScale * factor;
 
-  return (
+  const svgContent = (
     <svg
       xmlns="http://www.w3.org/2000/svg"
       xmlnsXlink="http://www.w3.org/1999/xlink"
       width="0"
       height="0"
       style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
+        position: "absolute",
+        top: "-9999px",
+        left: "-9999px",
         width: 0,
         height: 0,
+        opacity: 0,
         pointerEvents: "none",
+        overflow: "hidden",
       }}
       aria-hidden="true"
     >
@@ -122,11 +129,16 @@ const GlassFilter: React.FC<{
       </defs>
     </svg>
   );
+
+  if (typeof document !== "undefined" && document.body) {
+    return createPortal(svgContent, document.body);
+  }
+  return svgContent;
 };
 
 const useFirefox = () => {
   const [isFirefox, setIsFirefox] = useState(false);
-  useEffect(() => {
+  React.useEffect(() => {
     setIsFirefox(typeof navigator !== "undefined" && navigator.userAgent.toLowerCase().includes("firefox"));
   }, []);
   return isFirefox;
@@ -137,7 +149,7 @@ const assignRef = <T,>(forwarded: React.ForwardedRef<T>, node: T | null) => {
   else if (forwarded) (forwarded as React.MutableRefObject<T | null>).current = node;
 };
 
-interface SharedGlassProps {
+export interface SharedGlassProps {
   displacementScale?: number;
   blurAmount?: number;
   saturation?: number;
@@ -150,18 +162,20 @@ interface SharedGlassProps {
 
 function useGlassSize() {
   const glassRef = useRef<HTMLElement | null>(null);
-  const [glassSize, setGlassSize] = useState({ width: 270, height: 69 });
+  const [glassSize, setGlassSize] = useState({ width: 300, height: 60 });
 
-  useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const el = glassRef.current;
     if (!el) return;
     const update = () => {
       const rect = el.getBoundingClientRect();
       if (rect.width > 0 && rect.height > 0) {
+        const nextW = Math.round(rect.width);
+        const nextH = Math.round(rect.height);
         setGlassSize((prev) =>
-          prev.width === Math.round(rect.width) && prev.height === Math.round(rect.height)
+          prev.width === nextW && prev.height === nextH
             ? prev
-            : { width: Math.round(rect.width), height: Math.round(rect.height) },
+            : { width: nextW, height: nextH },
         );
       }
     };
@@ -182,42 +196,23 @@ function useShaderMap(
   mode: LiquidGlassMode,
   width: number,
   height: number,
-  cornerRadius = 26,
-  zoom = 1.20,
+  cornerRadius = 24,
+  zoom = 1.15,
   refractionIntensity = 1.2,
 ) {
-  // Synchronous initial generation so the very first render immediately has optical refraction
-  const [shaderData, setShaderData] = useState<{ dataUrl: string; scale: number; version: number }>(() => {
-    if (typeof window !== "undefined" && (mode === "standard" || mode === "shader")) {
-      try {
-        const initialW = width > 0 ? width : 600;
-        const initialH = height > 0 ? height : 110;
-        const res = generateShaderDisplacementMap(initialW, initialH, cornerRadius, zoom, refractionIntensity);
-        return { ...res, version: 1 };
-      } catch (err) {
-        console.warn("Initial shader displacement map generation fallback:", err);
-      }
+  return useMemo(() => {
+    if (typeof window === "undefined" || (mode !== "standard" && mode !== "shader")) {
+      return { dataUrl: displacementMap, scale: 24 };
     }
-    return {
-      dataUrl: displacementMap,
-      scale: 40,
-      version: 1,
-    };
-  });
-
-  useEffect(() => {
-    if (width <= 0 || height <= 0) return;
-    if (mode === "polar" || mode === "prominent") {
-      return;
+    const w = Math.max(1, Math.round(width));
+    const h = Math.max(1, Math.round(height));
+    try {
+      return generateShaderDisplacementMap(w, h, cornerRadius, zoom, refractionIntensity);
+    } catch (err) {
+      console.warn("Liquid glass shader map generation fallback:", err);
+      return { dataUrl: displacementMap, scale: 24 };
     }
-    const res = generateShaderDisplacementMap(width, height, cornerRadius, zoom, refractionIntensity);
-    setShaderData((prev) => ({
-      ...res,
-      version: prev.version + 1,
-    }));
   }, [mode, width, height, cornerRadius, zoom, refractionIntensity]);
-
-  return shaderData;
 }
 
 const GlassShell: React.FC<{
@@ -230,7 +225,6 @@ const GlassShell: React.FC<{
   cornerRadius: number;
   mode: LiquidGlassMode;
   shaderMapUrl?: string | undefined;
-  shaderVersion?: number | undefined;
   glassSize: { width: number; height: number };
   isFirefox: boolean;
   mouseOffset: { x: number; y: number };
@@ -245,9 +239,8 @@ const GlassShell: React.FC<{
   cornerRadius,
   mode,
   shaderMapUrl,
-  shaderVersion,
   glassSize,
-  isFirefox,
+  isFirefox: _isFirefox,
   mouseOffset: _mouseOffset,
   children,
 }) => {
@@ -267,7 +260,6 @@ const GlassShell: React.FC<{
       />
       {/* Backdrop Refraction Layer */}
       <span
-        key={shaderVersion}
         className="glass__warp liquid-glass-warp"
         style={{
           position: "absolute",
@@ -278,7 +270,7 @@ const GlassShell: React.FC<{
         }}
       />
       {/* Liquid Glass Inner Content */}
-      <div className="liquid-glass-inner" style={{ position: "relative", zIndex: 1 }}>
+      <div className="liquid-glass-inner" style={{ position: "relative", zIndex: 1, width: "100%", height: "100%" }}>
         {children}
       </div>
     </>
@@ -300,7 +292,7 @@ export const LiquidGlassButton = forwardRef<HTMLButtonElement, LiquidGlassButton
       saturation = 108,
       aberrationIntensity = 1.5,
       cornerRadius = 18,
-      zoom = 1.20,
+      zoom = 1.15,
       refractionIntensity = 1.2,
       mode = "shader",
       className = "",
@@ -317,10 +309,10 @@ export const LiquidGlassButton = forwardRef<HTMLButtonElement, LiquidGlassButton
     },
     forwardedRef,
   ) => {
-    const filterId = `lg${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+    const rawId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
     const isFirefox = useFirefox();
     const { glassRef, glassSize } = useGlassSize();
-    const { dataUrl: shaderMapUrl, scale, version: shaderVersion } = useShaderMap(
+    const { dataUrl: shaderMapUrl, scale } = useShaderMap(
       mode,
       glassSize.width,
       glassSize.height,
@@ -341,11 +333,12 @@ export const LiquidGlassButton = forwardRef<HTMLButtonElement, LiquidGlassButton
       });
     }, []);
 
-    const filterUrl = `url(#${filterId})`;
+    const activeFilterId = `lg_btn_${rawId}_${glassSize.width}x${glassSize.height}`;
+    const filterUrl = `url(#${activeFilterId})`;
     const blurPart = blurAmount && blurAmount > 0 ? `blur(${blurAmount}px) ` : "";
     const backdropFilterValue = isFirefox
       ? `blur(${blurAmount && blurAmount > 0 ? blurAmount : 16}px) saturate(180%) contrast(1.05) brightness(1.05)`
-      : `${filterUrl} ${blurPart}contrast(1.06) brightness(1.03) saturate(1.15)`;
+      : `${filterUrl} ${blurPart}contrast(1.08) brightness(1.04) saturate(1.15)`;
 
     return (
       <button
@@ -379,7 +372,7 @@ export const LiquidGlassButton = forwardRef<HTMLButtonElement, LiquidGlassButton
         {...buttonProps}
       >
         <GlassShell
-          filterId={filterId}
+          filterId={activeFilterId}
           displacementScale={displacementScale}
           scale={scale}
           blurAmount={blurAmount}
@@ -388,7 +381,6 @@ export const LiquidGlassButton = forwardRef<HTMLButtonElement, LiquidGlassButton
           cornerRadius={cornerRadius}
           mode={mode}
           shaderMapUrl={shaderMapUrl}
-          shaderVersion={shaderVersion}
           glassSize={glassSize}
           isFirefox={isFirefox}
           mouseOffset={mouseOffset}
@@ -416,8 +408,8 @@ export const LiquidGlassContainer = forwardRef<HTMLDivElement, LiquidGlassContai
       blurAmount = 0,
       saturation = 108,
       aberrationIntensity = 1.5,
-      cornerRadius = 26,
-      zoom = 1.20,
+      cornerRadius = 24,
+      zoom = 1.15,
       refractionIntensity = 1.2,
       mode = "shader",
       className = "",
@@ -433,10 +425,10 @@ export const LiquidGlassContainer = forwardRef<HTMLDivElement, LiquidGlassContai
     },
     forwardedRef,
   ) => {
-    const filterId = `lg${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+    const rawId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
     const isFirefox = useFirefox();
     const { glassRef, glassSize } = useGlassSize();
-    const { dataUrl: shaderMapUrl, scale, version: shaderVersion } = useShaderMap(
+    const { dataUrl: shaderMapUrl, scale } = useShaderMap(
       mode,
       glassSize.width,
       glassSize.height,
@@ -457,11 +449,12 @@ export const LiquidGlassContainer = forwardRef<HTMLDivElement, LiquidGlassContai
       });
     }, []);
 
-    const filterUrl = `url(#${filterId})`;
+    const activeFilterId = `lg_cnt_${rawId}_${glassSize.width}x${glassSize.height}`;
+    const filterUrl = `url(#${activeFilterId})`;
     const blurPart = blurAmount && blurAmount > 0 ? `blur(${blurAmount}px) ` : "";
     const backdropFilterValue = isFirefox
       ? `blur(${blurAmount && blurAmount > 0 ? blurAmount : 16}px) saturate(180%) contrast(1.05) brightness(1.05)`
-      : `${filterUrl} ${blurPart}contrast(1.06) brightness(1.03) saturate(1.15)`;
+      : `${filterUrl} ${blurPart}contrast(1.08) brightness(1.04) saturate(1.15)`;
 
     return (
       <div
@@ -493,7 +486,7 @@ export const LiquidGlassContainer = forwardRef<HTMLDivElement, LiquidGlassContai
         {...divProps}
       >
         <GlassShell
-          filterId={filterId}
+          filterId={activeFilterId}
           displacementScale={displacementScale}
           scale={scale}
           blurAmount={blurAmount}
@@ -502,7 +495,6 @@ export const LiquidGlassContainer = forwardRef<HTMLDivElement, LiquidGlassContai
           cornerRadius={cornerRadius}
           mode={mode}
           shaderMapUrl={shaderMapUrl}
-          shaderVersion={shaderVersion}
           glassSize={glassSize}
           isFirefox={isFirefox}
           mouseOffset={mouseOffset}

@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Sparkles, Trophy, Volume2, VolumeX, X, ArrowLeft } from "lucide-react";
-import { sakiArtAssets } from "../../constants.js";
+import { Sparkles, Trophy, Volume2, VolumeX, X, ArrowLeft, Heart, Flame } from "lucide-react";
 import { usePanelLanguage } from "../../i18n/index.js";
 
 interface SakiDessertDropGameProps {
@@ -519,7 +518,7 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
             spawnShockwave(item.x, item.y, "rgba(244, 63, 94, 0.8)");
             setFloatTexts((prev) => [
               ...prev.slice(-5),
-              { id: Date.now() + Math.random(), x: item.x, y: item.y, text: "-15 💥", rating: "MISS!", color: "#f43f5e" }
+              { id: Date.now() + Math.random(), x: item.x, y: item.y, text: "-15", rating: "MISS!", color: "#f43f5e" }
             ]);
           } else {
             const isFever = comboRef.current >= 4;
@@ -540,7 +539,7 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
             spawnParticleBurst(item.x, item.y, false);
             spawnShockwave(item.x, item.y, isFever ? "rgba(251, 191, 36, 0.9)" : "rgba(255, 117, 172, 0.8)");
 
-            const rating = isFever ? "FEVER! 🔥" : comboRef.current >= 6 ? "PERFECT! 🌟" : comboRef.current >= 3 ? "GREAT! ✨" : "NICE!";
+            const rating = isFever ? "FEVER!" : comboRef.current >= 6 ? "PERFECT!" : comboRef.current >= 3 ? "GREAT!" : "NICE!";
             const comboText = isFever ? `+${pts} (2X)` : `+${pts}`;
             setFloatTexts((prev) => [
               ...prev.slice(-5),
@@ -816,7 +815,7 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
             return (
               <div className="settlement-header">
                 <div className={`settlement-rank-pill ${rankInfo.badgeColor}`}>
-                  <span className="rank-star">✦</span>
+                  <Sparkles size={12} className="rank-star text-amber-300" />
                   <span className="rank-grade">{rankInfo.grade}</span>
                   <span className="rank-divider">·</span>
                   <span className="rank-title">{rankInfo.title}</span>
@@ -832,9 +831,9 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
                     draggable={false}
                   />
                   <div className="character-sweets-float" aria-hidden="true">
-                    <span className="sweet-icon sweet-left">🍓</span>
-                    <span className="sweet-icon sweet-right">🍩</span>
-                    <span className="sweet-icon sweet-spark">✨</span>
+                    <img src="/assets/game/caomeidafu.webp" alt="" className="sweet-icon sweet-left w-5 h-5 object-contain" />
+                    <img src="/assets/game/donut.webp" alt="" className="sweet-icon sweet-right w-5 h-5 object-contain" />
+                    <Sparkles size={16} className="sweet-icon sweet-spark text-amber-300" />
                   </div>
                 </div>
 
@@ -849,7 +848,9 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
           <div className="settlement-stats-grid">
             <div className="settlement-stat-card score-card">
               <div className="stat-card-header">
-                <span className="stat-icon">⭐</span>
+                <span className="stat-icon">
+                  <Trophy size={16} className="text-amber-400" />
+                </span>
                 <span className="stat-label">最终得分</span>
               </div>
               <div className="stat-card-val score-val">{score}</div>
@@ -857,7 +858,9 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
 
             <div className="settlement-stat-card exp-card">
               <div className="stat-card-header">
-                <span className="stat-icon">💖</span>
+                <span className="stat-icon">
+                  <Heart size={16} className="text-pink-400 fill-pink-400" />
+                </span>
                 <span className="stat-label">好感经验</span>
               </div>
               <div className="stat-card-val exp-val">+{expReward}</div>
@@ -865,7 +868,9 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
 
             <div className="settlement-stat-card combo-card">
               <div className="stat-card-header">
-                <span className="stat-icon">🔥</span>
+                <span className="stat-icon">
+                  <Flame size={16} className="text-orange-400" />
+                </span>
                 <span className="stat-label">最高连击</span>
               </div>
               <div className="stat-card-val combo-val">{maxCombo}x</div>

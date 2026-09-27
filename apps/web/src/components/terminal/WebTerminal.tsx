@@ -32,6 +32,12 @@ import type { InstanceLogLine, InstanceStatus, ManagedInstance, TerminalServerMe
 import type { SakiPromptSeed } from "../../types/app.js";
 import { api, ApiError } from "../../api.js";
 import { sakiArtAssets } from "../../constants.js";
+import {
+  appendTerminalInputHistory,
+  collectTerminalInputCommands,
+  emptyTerminalInputDraft,
+  readTerminalInputHistory
+} from "./terminalHistory.js";
 
 export function isTerminalIssue(line: InstanceLogLine): boolean {
   return (
@@ -143,7 +149,7 @@ export const terminalShortcutKeys: TerminalShortcutKey[] = [
   { type: "key", id: "enter", label: "Enter", title: "Enter", data: "\r", viaBufferedInput: true, wide: true }
 ];
 
-export const terminalInputHistoryLimit = 100;
+export { terminalInputHistoryLimit } from "./terminalHistory.js";
 
 export type TerminalAutocompleteState = {
   candidates: string[];
@@ -660,7 +666,7 @@ export function WebTerminal({
     toggleImmersive: () => void;
     isImmersive: boolean;
     connectionState: TerminalConnectionState;
-    sendCommand: (cmd: string) => void;
+    sendCommand: (cmd: string) => boolean;
     getHistory: () => string[];
     extractOrCopyLogs?: () => void;
   }) => void;
@@ -674,6 +680,7 @@ export function WebTerminal({
   const reconnectAttemptRef = useRef(0);
   const inputHistoryRef = useRef<string[]>([]);
   const inputHistoryInstanceIdRef = useRef<string | null>(null);
+  const terminalInputDraftRef = useRef(emptyTerminalInputDraft());
   const commandHistoryIndexRef = useRef<number | null>(null);
   const commandHistoryDraftRef = useRef("");
   const commandCompletionStateRef = useRef<TerminalAutocompleteState | null>(null);
@@ -756,21 +763,19 @@ export function WebTerminal({
     resetCommandCompletion();
   }
 
+  function currentInputHistory(): string[] {
+    inputHistoryRef.current = readTerminalInputHistory(instanceId);
+    return inputHistoryRef.current;
+  }
+
   function rememberInputHistory(value: string) {
     if (!value.trim()) return;
-
-    const history = inputHistoryRef.current;
-    if (history[history.length - 1] === value) {
-      resetCommandInputNavigation();
-      return;
-    }
-
-    inputHistoryRef.current = [...history, value].slice(-terminalInputHistoryLimit);
+    inputHistoryRef.current = appendTerminalInputHistory(instanceId, value);
     resetCommandInputNavigation();
   }
 
   function autocompleteCommandInput() {
-    const completion = nextTerminalAutocompleteValue(command, inputHistoryRef.current, commandCompletionStateRef.current);
+    const completion = nextTerminalAutocompleteValue(command, currentInputHistory(), commandCompletionStateRef.current);
     if (!completion) return false;
 
     resetCommandHistoryNavigation();
@@ -780,7 +785,7 @@ export function WebTerminal({
   }
 
   function navigateCommandHistory(direction: "previous" | "next") {
-    const history = inputHistoryRef.current;
+    const history = currentInputHistory();
     if (history.length === 0) return;
 
     resetCommandCompletion();
@@ -821,7 +826,7 @@ export function WebTerminal({
       return;
     }
     if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-    if (inputHistoryRef.current.length === 0) return;
+    if (currentInputHistory().length === 0) return;
 
     event.preventDefault();
     navigateCommandHistory(event.key === "ArrowUp" ? "previous" : "next");
@@ -830,7 +835,8 @@ export function WebTerminal({
   useEffect(() => {
     if (inputHistoryInstanceIdRef.current === instanceId) return;
     inputHistoryInstanceIdRef.current = instanceId;
-    inputHistoryRef.current = [];
+    inputHistoryRef.current = readTerminalInputHistory(instanceId);
+    terminalInputDraftRef.current = emptyTerminalInputDraft();
     resetCommandInputNavigation();
     setCommand("");
   }, [instanceId]);
@@ -1089,7 +1095,22 @@ export function WebTerminal({
     const fitTerminalSafe = () => {
       if (!isActiveRef.current || !terminalHost) return;
       try {
-        fitAddon.fit();
+        const proposed = fitAddon.proposeDimensions();
+        if (!proposed) return;
+
+        // FitAddon measures the padded host, while xterm renders inside its content box.
+        // Limit rows to the viewport's actual height so the last line is never clipped.
+        const screen = terminal.element?.querySelector<HTMLElement>(".xterm-screen");
+        const viewport = terminal.element?.querySelector<HTMLElement>(".xterm-viewport");
+        const cellHeight = screen ? Number.parseFloat(screen.style.height) / terminal.rows : 0;
+        const viewportHeight = viewport?.getBoundingClientRect().height ?? 0;
+        const visibleRows = cellHeight > 0 && viewportHeight > 0
+          ? Math.max(1, Math.floor((viewportHeight + 0.01) / cellHeight))
+          : proposed.rows;
+        const rows = Math.min(proposed.rows, visibleRows);
+        if (terminal.cols !== proposed.cols || terminal.rows !== rows) {
+          terminal.resize(proposed.cols, rows);
+        }
         sendResizeRef.current(terminal.cols, terminal.rows);
       } catch {}
     };
@@ -1228,6 +1249,7 @@ export function WebTerminal({
 
       socket.onopen = () => {
         reconnectAttemptRef.current = 0;
+        terminalInputDraftRef.current = emptyTerminalInputDraft();
         setConnectionState("connected");
         const authPayload: any = { type: "auth", token, instanceId };
         if (shellSessionId) authPayload.sessionId = shellSessionId;
@@ -1291,6 +1313,7 @@ export function WebTerminal({
           setConnectionState("closed");
           return;
         }
+        terminalInputDraftRef.current = emptyTerminalInputDraft();
         // 1008 = policy violation (unauthorized / permission denied). Reconnecting
         // with the same credentials would loop forever, so stop and show the error.
         if (event.code === 1008) {
@@ -1340,6 +1363,11 @@ export function WebTerminal({
       socket.send(JSON.stringify(payload));
       index = end;
     }
+    if (!echo) {
+      const captured = collectTerminalInputCommands(terminalInputDraftRef.current, data);
+      terminalInputDraftRef.current = captured.draft;
+      for (const command of captured.commands) rememberInputHistory(command);
+    }
     return true;
   }
 
@@ -1348,6 +1376,7 @@ export function WebTerminal({
     const value = command.trim();
     if (!value) return;
     if (sendInput(`${value}\r`)) {
+      terminalInputDraftRef.current = emptyTerminalInputDraft();
       rememberInputHistory(value);
       setCommand("");
     }
@@ -1357,6 +1386,7 @@ export function WebTerminal({
     if (!instance || terminalActionBusy) return;
     if (running) {
       sendInput("\u0003");
+      terminalInputDraftRef.current = emptyTerminalInputDraft();
       return;
     }
 
@@ -1424,11 +1454,13 @@ export function WebTerminal({
       connectionState,
       sendCommand: (cmd: string) => {
         const trimmed = cmd.trim();
-        if (!trimmed) return;
+        if (!trimmed) return false;
+        if (!sendInput(`${trimmed}\r`, true)) return false;
+        terminalInputDraftRef.current = emptyTerminalInputDraft();
         rememberInputHistory(trimmed);
-        sendInput(`${trimmed}\r`, true);
+        return true;
       },
-      getHistory: () => inputHistoryRef.current,
+      getHistory: currentInputHistory,
       extractOrCopyLogs: () => {
         const term = terminalRef.current;
         if (!term) return;
@@ -1447,7 +1479,7 @@ export function WebTerminal({
         setShowLogExtractModal(true);
       }
     });
-  }, [isActive, immersive, connectionState, onMountTerminalActions]);
+  }, [isActive, immersive, connectionState, instanceId, onMountTerminalActions]);
 
   const terminalPanel = (
     <div

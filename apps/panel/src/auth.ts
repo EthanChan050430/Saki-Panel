@@ -1,10 +1,10 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
-import type { PermissionCode, CurrentUser } from "@webops/shared";
+import type { PermissionCode, CurrentUser, InstanceOwnerRole } from "@webops/shared";
 import { noRolePermissionRoleName, permissions as allPermissions } from "@webops/shared";
 import { panelConfig } from "./config.js";
 import { prisma } from "./db.js";
 import { hashToken } from "./security.js";
-import { classifyInstanceUser, roleNamesFromUser } from "./instance-access.js";
+import { classifyInstanceUser, roleNamesFromUser, loadVisibleInstance, hasInstancePermission } from "./instance-access.js";
 
 export interface JwtUser {
   sub: string;
@@ -176,6 +176,48 @@ export function requireSuperAdmin() {
     if (!user || user.status !== "ACTIVE" || !user.isSuperAdmin) {
       reply.code(403).send({ message: "Super administrator privileges are required" });
     }
+  };
+}
+
+/**
+ * 实例级权限校验：先通过全局权限，再应用"按实例分配时设置的细分权限"。
+ * 用于 /api/instances/:id/... 这类路由；实例不存在或不可见时返回 404。
+ */
+export function requireInstancePermission(permission: PermissionCode) {
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    await authenticate(request, reply);
+    if (reply.sent) return;
+    if (panelConfig.disableAuth) return;
+
+    const user = await loadCurrentUser(request.user.sub);
+    if (!user || user.status !== "ACTIVE" || !user.permissions.includes(permission)) {
+      reply.code(403).send({ message: "Forbidden" });
+      return;
+    }
+
+    const instanceId = (request.params as { id?: string }).id;
+    if (!instanceId) {
+      reply.code(400).send({ message: "Instance id is required" });
+      return;
+    }
+    const instance = await loadVisibleInstance(user.id, instanceId);
+    if (!instance) {
+      reply.code(404).send({ message: "Instance not found" });
+      return;
+    }
+    const role: InstanceOwnerRole = user.isSuperAdmin ? "super_admin" : user.isAdmin ? "admin" : "user";
+    const profile = {
+      userId: user.id,
+      role,
+      roleNames: user.roleNames
+    };
+    if (!hasInstancePermission(profile, instance, user.permissions, permission)) {
+      reply.code(403).send({ message: "该实例的分配权限未包含此操作" });
+      return;
+    }
+
+    request.user.username = user.username;
+    request.user.permissions = user.permissions;
   };
 }
 

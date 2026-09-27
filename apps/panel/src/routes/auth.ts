@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { LoginRequest, RegisterRequest, RegistrationIdentity, UpdateCurrentUserRequest } from "@webops/shared";
+import type { CheckUserRequest, CheckUserResponse, LoginRequest, RegisterRequest, RegistrationIdentity, UpdateCurrentUserRequest } from "@webops/shared";
 import { prisma } from "../db.js";
 import { isAuthDisabled, loadAuthDisabledCurrentUser, loadCurrentUser } from "../auth.js";
 import { normalizeAvatarDataUrl } from "../avatar.js";
@@ -174,6 +174,52 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       }
       reply.code(errorStatus(error)).send({ message: error instanceof Error ? error.message : "Registration failed" });
     }
+  });
+
+  app.post("/api/auth/check-user", async (request, reply): Promise<CheckUserResponse | void> => {
+    if (isAuthDisabled()) {
+      const currentUser = await loadAuthDisabledCurrentUser();
+      return {
+        exists: true,
+        username: currentUser.username,
+        displayName: currentUser.displayName,
+        avatarDataUrl: currentUser.avatarDataUrl ?? null
+      };
+    }
+
+    const body = (request.body as Partial<CheckUserRequest>) || {};
+    const username = typeof body.username === "string" ? body.username.trim() : "";
+    if (!username) {
+      reply.code(400).send({ message: "Username is required" });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { username },
+      select: {
+        id: true,
+        username: true,
+        displayName: true,
+        avatarDataUrl: true,
+        status: true
+      }
+    });
+
+    if (!user || user.status !== "ACTIVE") {
+      return {
+        exists: false,
+        username,
+        displayName: null,
+        avatarDataUrl: null
+      };
+    }
+
+    return {
+      exists: true,
+      username: user.username,
+      displayName: user.displayName,
+      avatarDataUrl: user.avatarDataUrl ?? null
+    };
   });
 
   app.post("/api/auth/login", async (request, reply) => {

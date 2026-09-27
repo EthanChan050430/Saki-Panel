@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import type { InstanceAssignedUser, InstanceAssignee, InstanceOwnerRole, PermissionCode } from "@webops/shared";
-import { noRolePermissionRoleName } from "@webops/shared";
+import { noRolePermissionRoleName, isInstanceAssignablePermission } from "@webops/shared";
 import { prisma } from "./db.js";
 
 const adminRoleNames = new Set(["admin", "administrator", "operator"]);
@@ -99,6 +99,31 @@ export function instanceAssignedUsers(instance: InstanceWithAccess): InstanceUse
   return [...assigned.values()];
 }
 
+export function parseAssignmentPermissions(json: string | null | undefined): PermissionCode[] | null {
+  if (json == null) return null;
+  try {
+    const value = JSON.parse(json);
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is PermissionCode => typeof item === "string" && isInstanceAssignablePermission(item));
+  } catch {
+    return [];
+  }
+}
+
+export function serializeAssignmentPermissions(permissions: PermissionCode[] | null | undefined): string | null {
+  if (!permissions) return null;
+  return JSON.stringify([...new Set(permissions)].sort());
+}
+
+export function assignmentPermissionsFor(instance: InstanceWithAccess, userId: string): PermissionCode[] | null {
+  for (const assignment of instance.assignedUsers ?? []) {
+    if (assignment.userId === userId) {
+      return parseAssignmentPermissions((assignment as { permissionsJson?: string | null }).permissionsJson);
+    }
+  }
+  return null;
+}
+
 export function instanceAssignedUserIds(instance: InstanceWithAccess): string[] {
   return instanceAssignedUsers(instance).map((user) => user.id);
 }
@@ -108,7 +133,8 @@ export function instanceAssignedUserSummaries(instance: InstanceWithAccess): Ins
     userId: user.id,
     username: user.username,
     displayName: user.displayName,
-    role: classifyInstanceUser(user)
+    role: classifyInstanceUser(user),
+    permissions: assignmentPermissionsFor(instance, user.id)
   }));
 }
 
@@ -173,6 +199,32 @@ export async function loadVisibleInstance(userId: string, instanceId: string): P
   ]);
   if (!profile || !instance || !canAccessInstance(profile, instance)) return null;
   return instance;
+}
+
+// null 表示没有实例级限制；显式空数组表示禁止所有可分配权限。
+export function instancePermissionOverride(
+  profile: InstanceAccessProfile,
+  instance: InstanceWithAccess,
+  userPermissions: readonly PermissionCode[]
+): PermissionCode[] | null {
+  if (profile.role === "super_admin") return null;
+  if (instanceAccessUserIds(instance).createdById === profile.userId) return null;
+  const override = assignmentPermissionsFor(instance, profile.userId);
+  if (!override) return null;
+  const global = new Set(userPermissions);
+  return override.filter((permission) => global.has(permission));
+}
+
+export function hasInstancePermission(
+  profile: InstanceAccessProfile,
+  instance: InstanceWithAccess,
+  userPermissions: readonly PermissionCode[],
+  permission: PermissionCode
+): boolean {
+  if (!userPermissions.includes(permission)) return false;
+  const effective = instancePermissionOverride(profile, instance, userPermissions);
+  if (effective === null) return true;
+  return effective.includes(permission);
 }
 
 export async function listVisibleInstances(userId: string, take?: number): Promise<InstanceWithAccess[]> {

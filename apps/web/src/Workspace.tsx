@@ -921,6 +921,7 @@ export function Workspace({
           ) : effectiveView === "instances" ? (
             <InstancesView
               token={token}
+              user={user}
               onLogout={onLogout}
               refreshTick={refreshTick}
               onOpenTemplates={() => selectView("templates")}
@@ -966,6 +967,7 @@ export function Workspace({
               onAskSaki={canUseSaki ? openSaki : undefined}
               canDeleteLogs={user.isSuperAdmin}
               darkMode={darkMode}
+              currentUser={user}
             />
           )}
           </div>

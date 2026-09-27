@@ -55,6 +55,7 @@ export function InstanceSettingsModal({
     restartPolicy: "never" as RestartPolicy,
     restartMaxRetries: 3,
     watchMode: "diagnose_and_patch" as WatchPolicyMode | "off",
+    watchAutoDiagnose: false,
     watchCooldownSeconds: 900,
     watchMaxRunsPerHour: 3,
     watchVerifyWaitSeconds: 20,
@@ -86,6 +87,7 @@ export function InstanceSettingsModal({
       restartPolicy: instanceSnapshot.restartPolicy,
       restartMaxRetries: instanceSnapshot.restartMaxRetries,
       watchMode: "diagnose_and_patch",
+      watchAutoDiagnose: false,
       watchCooldownSeconds: 900,
       watchMaxRunsPerHour: 3,
       watchVerifyWaitSeconds: 20,
@@ -117,6 +119,7 @@ export function InstanceSettingsModal({
         setSettingsForm((current) => ({
           ...current,
           watchMode: policy.enabled ? policy.mode : "off",
+          watchAutoDiagnose: Boolean(policy.autoDiagnose),
           watchCooldownSeconds: policy.cooldownSeconds ?? 900,
           watchMaxRunsPerHour: policy.maxRunsPerHour ?? 3,
           watchVerifyWaitSeconds: policy.verifyWaitSeconds ?? 20,
@@ -201,6 +204,7 @@ export function InstanceSettingsModal({
         await api.updateWatchPolicy(token, updated.id, {
           enabled: watchMode !== "off",
           mode: watchMode === "off" ? "diagnose_and_patch" : watchMode,
+          autoDiagnose: Boolean(settingsForm.watchAutoDiagnose),
           cooldownSeconds: clampInt(settingsForm.watchCooldownSeconds, 30, 86400, 900),
           maxRunsPerHour: clampInt(settingsForm.watchMaxRunsPerHour, 1, 60, 3),
           verifyWaitSeconds: clampInt(settingsForm.watchVerifyWaitSeconds, 1, 600, 20),
@@ -437,10 +441,36 @@ export function InstanceSettingsModal({
                   </small>
                 </label>
 
+                <div className="wide-field">
+                  <label className="checkbox-field" style={{ marginBottom: "0.25rem" }}>
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.watchAutoDiagnose}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setSettingsForm((prev) => ({
+                          ...prev,
+                          watchAutoDiagnose: checked,
+                          watchAutoApproveRisk:
+                            checked && prev.watchAutoApproveRisk === "none" && prev.watchMode !== "diagnose_only"
+                              ? "low"
+                              : prev.watchAutoApproveRisk
+                        }));
+                      }}
+                    />
+                    <span>Saki 完全自治（故障时免人工确认，自动调用模型诊断与自愈）</span>
+                  </label>
+                  <small className="watch-policy-field-hint">
+                    开启后仅在「实例进程崩溃」时自动调用模型诊断并按「自治权限」修复配置（磁盘/内存告警仅发通知，绝不自动调模型、删文件或杀进程）。内置双重熔断保护：同一报错或上次自动排障未恢复时自动暂停并转人工。
+                  </small>
+                </div>
+
                 <label>
-                  <span>自治级别</span>
+                  <span>自治权限</span>
                   <select
                     value={settingsForm.watchAutoApproveRisk}
+                    disabled={settingsForm.watchMode === "diagnose_only"}
+                    title={settingsForm.watchMode === "diagnose_only" ? "只诊断模式下不修改文件" : undefined}
                     onChange={(e) =>
                       setSettingsForm((prev) => ({
                         ...prev,
@@ -448,7 +478,7 @@ export function InstanceSettingsModal({
                       }))
                     }
                   >
-                    <option value="none">全部人工批准</option>
+                    <option value="none">全部人工批准（改文件需手动点批准）</option>
                     <option value="low">低风险自动执行</option>
                     <option value="medium">中低风险自动执行</option>
                   </select>

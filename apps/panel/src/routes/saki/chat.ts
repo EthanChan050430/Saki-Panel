@@ -12,7 +12,9 @@ import type {
 import { sakiListedModelSupportsVision } from "@webops/shared";
 import { writeAuditLog } from "../../audit.js";
 import { readDaemonInstanceFile, readDaemonInstanceLogs } from "../../daemon-client.js";
-import { loadVisibleInstance } from "../../instance-access.js";
+import { loadVisibleInstance, instancePermissionOverride } from "../../instance-access.js";
+import { loadCurrentUser } from "../../auth.js";
+import type { InstanceOwnerRole, PermissionCode } from "@webops/shared";
 import { buildDirectSystemPrompt, buildPrompt } from "./prompt.js";
 import { estimateModelCallTokens } from "../../tokenizer.js";
 import {
@@ -312,9 +314,36 @@ export async function prepareSakiChatInvocation(
   if (input.instanceId) {
     requireUserPermission(request.user.permissions, "instance.view");
   }
-  const includeInstanceLogs = Boolean(input.instanceId && hasPermission(request.user.permissions, "instance.logs"));
-  const context = await resolveSakiContext(request.user.sub, input.instanceId, includeInstanceLogs);
-  const projectMemory = await loadInstanceProjectMemory(context.instance);
+  let includeInstanceLogs = Boolean(input.instanceId && hasPermission(request.user.permissions, "instance.logs"));
+  let includeInstanceFiles = request.user.permissions.includes("file.read");
+  const context = await resolveSakiContext(request.user.sub, input.instanceId, false);
+  if (context.instance) {
+    const sakiPermission: PermissionCode = input.mode === "agent" ? "saki.agent" : "saki.chat";
+    const sakiUser = await loadCurrentUser(request.user.sub);
+    if (sakiUser) {
+      const profile = {
+        userId: sakiUser.id,
+        role: (sakiUser.isSuperAdmin ? "super_admin" : sakiUser.isAdmin ? "admin" : "user") as InstanceOwnerRole,
+        roleNames: sakiUser.roleNames
+      };
+      const override = instancePermissionOverride(profile, context.instance, sakiUser.permissions);
+      if (override !== null && !override.includes(sakiPermission)) {
+        throw Object.assign(new Error("该实例的分配权限未包含使用 Saki"), { statusCode: 403 });
+      }
+      if (override !== null) {
+        includeInstanceLogs = includeInstanceLogs && override.includes("instance.logs");
+        includeInstanceFiles = includeInstanceFiles && override.includes("file.read");
+      }
+    }
+  }
+  if (includeInstanceLogs && context.instance) {
+    try {
+      context.logs = (await readDaemonInstanceLogs(context.instance.node, context.instance.id, 180)).lines;
+    } catch {
+      context.logs = [];
+    }
+  }
+  const projectMemory = includeInstanceFiles ? await loadInstanceProjectMemory(context.instance) : null;
   const memoryContext = projectMemory ?? "";
 
   const skillQuery =

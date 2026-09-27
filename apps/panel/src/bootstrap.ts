@@ -29,6 +29,11 @@ export async function ensureBootstrapData(): Promise<void> {
     if (!tokenColumns.some((column) => column.name === "createdById")) {
       await prisma.$executeRawUnsafe(`ALTER TABLE node_enrollment_tokens ADD COLUMN createdById TEXT;`);
     }
+
+    const watchPolicyColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info(watch_policies);`);
+    if (!watchPolicyColumns.some((column) => column.name === "autoDiagnose")) {
+      await prisma.$executeRawUnsafe(`ALTER TABLE watch_policies ADD COLUMN autoDiagnose INTEGER NOT NULL DEFAULT 0;`);
+    }
   } catch (error) {
     console.warn("column check skipped:", error instanceof Error ? error.message : error);
   }

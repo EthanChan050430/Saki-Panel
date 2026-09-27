@@ -256,11 +256,13 @@ model Template {
 }
 
 model InstanceAssignment {
-  instanceId String
-  userId     String
-  assignedAt DateTime @default(now())
-  instance   Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  instanceId      String
+  userId          String
+  assignedAt      DateTime @default(now())
+  // 实例级细分权限：JSON 数组存 PermissionCode；null 表示不限制（跟随用户全局角色权限）
+  permissionsJson String?
+  instance        Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([instanceId, userId])
   @@index([userId])
@@ -271,6 +273,7 @@ model WatchPolicy {
   instanceId                String   @id
   enabled                   Boolean  @default(true)
   mode                      String   @default("diagnose_and_patch")
+  autoDiagnose              Boolean  @default(false)
   cooldownSeconds           Int      @default(900)
   maxRunsPerHour            Int      @default(3)
   verifyWaitSeconds         Int      @default(20)

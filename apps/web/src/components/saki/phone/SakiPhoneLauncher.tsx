@@ -9,7 +9,8 @@ import {
   Heart,
   PhoneOff,
   Settings,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Music
 } from "lucide-react";
 import { usePanelLanguage } from "../../../i18n/index.js";
 import { usePlugins } from "../../../plugins/PluginContext.js";
@@ -169,7 +170,7 @@ export function SakiPhoneLauncher({
         >
           <span className="island-dot" />
           <span className="island-text">
-            {islandMessage || (isMusicPlaying ? "🎵 Saki Music" : "Saki Phone")}
+            {islandMessage || (isMusicPlaying ? "Saki Music" : "Saki Phone")}
           </span>
         </button>
 
@@ -287,7 +288,11 @@ export function SakiPhoneLauncher({
           >
             <div className="saki-app-icon-squircle">
               <img src="/assets/phone/app_music.svg" alt="音乐盒" draggable={false} />
-              {isMusicPlaying ? <span className="saki-app-badge-dot blue">♫</span> : null}
+              {isMusicPlaying ? (
+                <span className="saki-app-badge-dot blue flex items-center justify-center">
+                  <Music size={8} />
+                </span>
+              ) : null}
             </div>
             <span className="saki-app-label">
               {t("saki.phone.app.music")}

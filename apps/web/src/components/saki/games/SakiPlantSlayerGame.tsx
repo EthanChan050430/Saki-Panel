@@ -8,7 +8,18 @@ import {
   RotateCcw,
   Zap,
   Skull,
-  Heart
+  Heart,
+  Flame,
+  FlaskConical,
+  Snowflake,
+  Sprout,
+  Layers,
+  Crosshair,
+  Gauge,
+  Crown,
+  Flag,
+  Clock,
+  ShieldAlert
 } from "lucide-react";
 import { usePanelLanguage } from "../../../i18n/index.js";
 
@@ -29,7 +40,6 @@ export interface ElementalOption {
   desc: string;
   descTw: string;
   descEn: string;
-  icon: string;
   color: string;
   glow: string;
 }
@@ -43,7 +53,6 @@ export const ELEMENTAL_OPTIONS: ElementalOption[] = [
     desc: "每一发子弹伤害大幅暴涨，命中产生剧烈烈焰爆炸群伤！",
     descTw: "每一發子彈傷害大幅暴漲，命中產生劇烈烈焰爆炸群傷！",
     descEn: "Massive bullet damage with burning fiery explosive splash!",
-    icon: "🔥",
     color: "#ea580c",
     glow: "rgba(234, 88, 12, 0.6)"
   },
@@ -55,7 +64,6 @@ export const ELEMENTAL_OPTIONS: ElementalOption[] = [
     desc: "子弹附带剧毒，命中持续叠层使后续伤害翻倍，打BOSS与精英的终极神器！",
     descTw: "子彈附帶劇毒，命中持續疊層使後續傷害翻倍，打BOSS與精英的終極神器！",
     descEn: "Every hit stacks poison doubling subsequent damage, ultimate boss melter!",
-    icon: "🧪",
     color: "#16a34a",
     glow: "rgba(22, 163, 74, 0.6)"
   },
@@ -67,7 +75,6 @@ export const ELEMENTAL_OPTIONS: ElementalOption[] = [
     desc: "每发子弹自带无限穿透 + 狂暴电击，对周围所有目标造成致命连锁电弧！",
     descTw: "每發子彈自帶無限穿透 + 狂暴電擊，對周圍所有目標造成致命連鎖電弧！",
     descEn: "Infinite pierce + chain shock damage arching to all surrounding zombies!",
-    icon: "⚡",
     color: "#0284c7",
     glow: "rgba(2, 132, 199, 0.6)"
   },
@@ -79,11 +86,30 @@ export const ELEMENTAL_OPTIONS: ElementalOption[] = [
     desc: "每发子弹直接绝对冻结僵尸，并在击杀时产生大范围极冻粉碎冰爆！",
     descTw: "每發子彈直接絕對凍結殭屍，並在擊殺時產生大範圍極凍粉碎冰爆！",
     descEn: "Every bullet freezes zombies solid with shattering AoE frost ring on kill!",
-    icon: "❄️",
     color: "#06b6d4",
     glow: "rgba(6, 182, 212, 0.6)"
   }
 ];
+
+export function renderElementalOptionIcon(type: "fire" | "poison" | "lightning" | "ice", size = 20) {
+  if (type === "fire") return <Flame size={size} className="text-white" />;
+  if (type === "poison") return <FlaskConical size={size} className="text-white" />;
+  if (type === "lightning") return <Zap size={size} className="text-white" />;
+  if (type === "ice") return <Snowflake size={size} className="text-white" />;
+  return <Sparkles size={size} className="text-white" />;
+}
+
+export function renderStageBadgeIcon(stage: PlantStage, elem: ElementalType, size = 15) {
+  if (stage === 6 && elem) {
+    return renderElementalOptionIcon(elem, size);
+  }
+  if (stage === 1) return <Sprout size={size} className="text-emerald-400" />;
+  if (stage === 2) return <Layers size={size} className="text-green-400" />;
+  if (stage === 3) return <Crosshair size={size} className="text-emerald-300" />;
+  if (stage === 4) return <Gauge size={size} className="text-amber-400" />;
+  if (stage >= 5) return <Crown size={size} className="text-yellow-400" />;
+  return <Sprout size={size} className="text-emerald-400" />;
+}
 
 // 游戏音效合成器
 class PlantSoundFX {
@@ -443,13 +469,13 @@ interface Shockwave {
   color: string;
 }
 
-export const PLANT_STAGE_INFO: Record<PlantStage, { name: string; nameTw: string; nameEn: string; icon: string }> = {
-  1: { name: "基础豌豆", nameTw: "基礎豌豆", nameEn: "Peashooter", icon: "🌱" },
-  2: { name: "双发射手", nameTw: "雙發射手", nameEn: "Repeater", icon: "🌿" },
-  3: { name: "三线射手", nameTw: "三線射手", nameEn: "Threepeater", icon: "🎯" },
-  4: { name: "机枪射手", nameTw: "機槍射手", nameEn: "Gatling Pea", icon: "🎖️" },
-  5: { name: "超级机枪射手", nameTw: "超級機槍射手", nameEn: "Super Gatling", icon: "👑" },
-  6: { name: "元素超级机枪", nameTw: "元素超級機槍", nameEn: "Elemental Gatling", icon: "⚡" }
+export const PLANT_STAGE_INFO: Record<PlantStage, { name: string; nameTw: string; nameEn: string }> = {
+  1: { name: "基础豌豆", nameTw: "基礎豌豆", nameEn: "Peashooter" },
+  2: { name: "双发射手", nameTw: "雙發射手", nameEn: "Repeater" },
+  3: { name: "三线射手", nameTw: "三線射手", nameEn: "Threepeater" },
+  4: { name: "机枪射手", nameTw: "機槍射手", nameEn: "Gatling Pea" },
+  5: { name: "超级机枪射手", nameTw: "超級機槍射手", nameEn: "Super Gatling" },
+  6: { name: "元素超级机枪", nameTw: "元素超級機槍", nameEn: "Elemental Gatling" }
 };
 
 export function SakiPlantSlayerGame({
@@ -470,12 +496,13 @@ export function SakiPlantSlayerGame({
   const [kills, setKills] = useState(0);
   const [level, setLevel] = useState(1);
   const [sunExp, setSunExp] = useState(0);
-  const [sunNext, setSunNext] = useState(120);
+  const [sunNext, setSunNext] = useState(240);
   const [hp, setHp] = useState(100);
   const [maxHp] = useState(100);
   const [shield, setShield] = useState(0);
   const [energyBeans, setEnergyBeans] = useState(1);
   const [isUltimate, setIsUltimate] = useState(false);
+  const [ultimateCd, setUltimateCd] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [bossHp, setBossHp] = useState<number | null>(null);
@@ -493,6 +520,7 @@ export function SakiPlantSlayerGame({
 
   // 实体状态引用
   const nextEntityId = useRef(1);
+  const beanDropCooldownRef = useRef(0);
   const playerRef = useRef({
     x: 180,
     y: 320,
@@ -504,6 +532,7 @@ export function SakiPlantSlayerGame({
     shootCooldown: 0,
     isUltimate: false,
     ultimateTimer: 0,
+    ultimateCooldown: 0,
     energyBeans: 1,
     recoil: 0,
     invulnerableTimer: 0,
@@ -513,7 +542,7 @@ export function SakiPlantSlayerGame({
     extraAtkBonus: 0,
     level: 1,
     sunExp: 0,
-    sunNext: 120
+    sunNext: 240
   });
 
   const spritesRef = useRef<GameSprites | null>(null);
@@ -586,13 +615,15 @@ export function SakiPlantSlayerGame({
       if ("preventDefault" in e) e.preventDefault();
     }
     const p = playerRef.current;
-    if (p.energyBeans <= 0 || p.isUltimate || isElementalChoose || isFinished) return;
+    if (p.energyBeans <= 0 || p.isUltimate || p.ultimateCooldown > 0 || isElementalChoose || isFinished) return;
 
     soundRef.current.playUltimate();
     p.energyBeans -= 1;
     setEnergyBeans(p.energyBeans);
     p.isUltimate = true;
     p.ultimateTimer = 5.5;
+    p.ultimateCooldown = 0;
+    setUltimateCd(0);
 
     // 大招期间无敌
     p.invulnerableTimer = 5.5;
@@ -607,7 +638,7 @@ export function SakiPlantSlayerGame({
     // 各阶段与元素大招效果
     if (p.stage === 1) {
       // 基础豌豆射手大招
-      setSakiShout(isEn ? "🌱 MEGA PEA CANNON BURST!! 💣" : isTw ? "🌱 巨型毀滅豌豆加農炮連發——！！💣" : "🌱 巨型毁灭豌豆加农炮连发——！！💣");
+      setSakiShout(isEn ? "MEGA PEA CANNON BURST!" : isTw ? "巨型毀滅豌豆加農炮連發——！！" : "巨型毁灭豌豆加农炮连发——！！");
       shockwavesRef.current.push({
         id: nextEntityId.current++,
         x: p.x,
@@ -635,7 +666,7 @@ export function SakiPlantSlayerGame({
       }
     } else if (p.stage === 2) {
       // 双发射手大招
-      setSakiShout(isEn ? "🌿 TWIN HELIX PLASMA STORM!! 🌀" : isTw ? "🌿 雙螺旋等離子風暴——！！🌀" : "🌿 双螺旋等离子风暴——！！🌀");
+      setSakiShout(isEn ? "TWIN HELIX PLASMA STORM!" : isTw ? "雙螺旋等離子風暴——！！" : "双螺旋等离子风暴——！！");
       shockwavesRef.current.push({
         id: nextEntityId.current++,
         x: p.x,
@@ -663,7 +694,7 @@ export function SakiPlantSlayerGame({
       }
     } else if (p.stage === 3) {
       // 三线射手大招
-      setSakiShout(isEn ? "🎯 THREE-HEADED 360° BULLET HELL!! 🌪️" : isTw ? "🎯 三頭全域360°彈幕狂歡地獄——！！🌪️" : "🎯 三头全域360°弹幕狂欢地狱——！！🌪️");
+      setSakiShout(isEn ? "THREE-HEADED 360° BULLET HELL!" : isTw ? "三頭全域360°彈幕狂歡地獄——！！" : "三头全域360°弹幕狂欢地狱——！！");
       for (let ring = 0; ring < 3; ring++) {
         shockwavesRef.current.push({
           id: nextEntityId.current++,
@@ -693,7 +724,7 @@ export function SakiPlantSlayerGame({
       }
     } else if (p.stage === 4) {
       // 机枪射手大招
-      setSakiShout(isEn ? "🎖️ SUPERSONIC METALSTORM SHREDDER!! 💥" : isTw ? "🎖️ 戰術金屬風暴加特林絞殺——！！💥" : "🎖️ 战术金属风暴加特林绞杀——！！💥");
+      setSakiShout(isEn ? "SUPERSONIC METALSTORM SHREDDER!" : isTw ? "戰術金屬風暴加特林絞殺——！！" : "战术金属风暴加特林绞杀——！！");
       shockwavesRef.current.push({
         id: nextEntityId.current++,
         x: p.x,
@@ -721,7 +752,7 @@ export function SakiPlantSlayerGame({
       }
     } else if (p.stage === 5 && !p.element) {
       // 超级机枪射手大招
-      setSakiShout(isEn ? "👑 HYPER-NOVA ZENITH PULSE!! 🌟" : isTw ? "👑 五維天頂超頻等離子脈衝——！！🌟" : "👑 五维天顶超频等离子脉冲——！！🌟");
+      setSakiShout(isEn ? "HYPER-NOVA ZENITH PULSE!" : isTw ? "五維天頂超頻等離子脈衝——！！" : "五维天顶超频等离子脉冲——！！");
       shockwavesRef.current.push({
         id: nextEntityId.current++,
         x: p.x,
@@ -744,7 +775,7 @@ export function SakiPlantSlayerGame({
       });
     } else if (p.element === "fire") {
       // 火焰元素大招
-      setSakiShout(isEn ? "🔥 INFERNO HELLFIRE MELTDOWN!! 🌋" : isTw ? "🔥 滅世紅蓮流星煉獄焚燒——！！🌋" : "🔥 灭世红莲流星炼狱焚烧——！！🌋");
+      setSakiShout(isEn ? "INFERNO HELLFIRE MELTDOWN!" : isTw ? "滅世紅蓮流星煉獄焚燒——！！" : "灭世红莲流星炼狱焚烧——！！");
       shockwavesRef.current.push({
         id: nextEntityId.current++,
         x: p.x,
@@ -777,7 +808,7 @@ export function SakiPlantSlayerGame({
       });
     } else if (p.element === "poison") {
       // 毒液元素大招
-      setSakiShout(isEn ? "🧪 BIOHAZARD ACID TSUNAMI!! ☣️" : isTw ? "🧪 劇毒生化酸雨海嘯溶蝕——！！☣️" : "🧪 剧毒生化酸雨海啸溶蚀——！！☣️");
+      setSakiShout(isEn ? "BIOHAZARD ACID TSUNAMI!" : isTw ? "劇毒生化酸雨海嘯溶蝕——！！" : "剧毒生化酸雨海啸溶蚀——！！");
       shockwavesRef.current.push({
         id: nextEntityId.current++,
         x: p.x,
@@ -812,7 +843,7 @@ export function SakiPlantSlayerGame({
       });
     } else if (p.element === "lightning") {
       // 电能元素大招
-      setSakiShout(isEn ? "⚡ BILLION-VOLT EMP SUPERSTORM!! 🌩️" : isTw ? "⚡ 億伏特超導電磁雷暴核爆——！！🌩️" : "⚡ 亿伏特超导电磁雷暴核爆——！！🌩️");
+      setSakiShout(isEn ? "BILLION-VOLT EMP SUPERSTORM!" : isTw ? "億伏特超導電磁雷暴核爆——！！" : "亿伏特超导电磁雷暴核爆——！！");
       shockwavesRef.current.push({
         id: nextEntityId.current++,
         x: p.x,
@@ -856,7 +887,7 @@ export function SakiPlantSlayerGame({
       });
     } else if (p.element === "ice") {
       // 寒冰元素大招
-      setSakiShout(isEn ? "❄️ ABSOLUTE ZERO GLACIATION!! 🧊" : isTw ? "❄️ 絕對零度極凍冰河世紀——！！🧊" : "❄️ 绝对零度极冻冰河世纪——！！🧊");
+      setSakiShout(isEn ? "ABSOLUTE ZERO GLACIATION!" : isTw ? "絕對零度極凍冰河世紀——！！" : "绝对零度极冻冰河世纪——！！");
       shockwavesRef.current.push({
         id: nextEntityId.current++,
         x: p.x,
@@ -925,10 +956,10 @@ export function SakiPlantSlayerGame({
 
     setSakiShout(
       isEn
-        ? `🔥 ${chosenName} ACTIVATED! ANNIHILATE THEM!`
+        ? `${chosenName} ACTIVATED! ANNIHILATE THEM!`
         : isTw
-        ? `🔥 ${chosenName} 已就緒！主人盡情割草吧！`
-        : `🔥 ${chosenName} 已就绪！主人尽情割草吧！`
+        ? `${chosenName} 已就緒！主人盡情割草吧！`
+        : `${chosenName} 已就绪！主人尽情割草吧！`
     );
     window.setTimeout(() => setSakiShout(null), 3500);
 
@@ -948,6 +979,12 @@ export function SakiPlantSlayerGame({
       keysDownRef.current.add(e.key.toLowerCase());
       if (e.key === " " || e.key.toLowerCase() === "q" || e.key.toLowerCase() === "e") {
         triggerPlantFoodUltimate();
+      } else if (e.key === "Escape") {
+        if (!isFinished) {
+          soundRef.current.playVictory();
+          setIsVictory(false);
+          setIsFinished(true);
+        }
       }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
@@ -959,7 +996,7 @@ export function SakiPlantSlayerGame({
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [triggerPlantFoodUltimate]);
+  }, [triggerPlantFoodUltimate, isFinished]);
 
   // 虚拟摇杆控制
   const handlePointerDown = (e: React.PointerEvent) => {
@@ -1046,13 +1083,27 @@ export function SakiPlantSlayerGame({
           p.invulnerableTimer -= dt;
         }
 
-        // 大招计时
+        // 大招计时与冷却
         if (p.isUltimate) {
           p.ultimateTimer -= dt;
           if (p.ultimateTimer <= 0) {
             p.isUltimate = false;
+            p.ultimateCooldown = 2.5; // 2.5秒大招冷却缓冲，防止无缝连续开大
             setIsUltimate(false);
+            setUltimateCd(2.5);
           }
+        } else if (p.ultimateCooldown > 0) {
+          const prevCeil = Math.ceil(p.ultimateCooldown * 10);
+          p.ultimateCooldown = Math.max(0, p.ultimateCooldown - dt);
+          const nextCeil = Math.ceil(p.ultimateCooldown * 10);
+          if (prevCeil !== nextCeil || p.ultimateCooldown === 0) {
+            setUltimateCd(Number(p.ultimateCooldown.toFixed(1)));
+          }
+        }
+
+        // 能量豆掉落内置冷却衰减
+        if (beanDropCooldownRef.current > 0) {
+          beanDropCooldownRef.current = Math.max(0, beanDropCooldownRef.current - dt);
         }
 
         // 自动瞄准最近目标
@@ -1327,7 +1378,7 @@ export function SakiPlantSlayerGame({
               id: nextEntityId.current++,
               x: p.x,
               y: p.y - 28,
-              text: "⚡ OVERDRIVE BURST! ⚡",
+              text: "OVERDRIVE BURST!",
               color: "#38bdf8",
               isCrit: true,
               life: 0.75,
@@ -1480,9 +1531,9 @@ export function SakiPlantSlayerGame({
                   x: z.x + (Math.random() * 20 - 10),
                   y: z.y - 12,
                   text: isPoisonStacked
-                    ? `${finalDamage} (x${(1 + (z.poisonStacks || 0) * 0.45).toFixed(1)}) 🧪`
+                    ? `${finalDamage} (x${(1 + (z.poisonStacks || 0) * 0.45).toFixed(1)})`
                     : b.element === "fire"
-                    ? `CRIT ${finalDamage}! 🔥`
+                    ? `CRIT ${finalDamage}!`
                     : b.isCrit
                     ? `CRIT ${finalDamage}!`
                     : `-${finalDamage}`,
@@ -1629,10 +1680,10 @@ export function SakiPlantSlayerGame({
           triggerScreenShake(18);
           setSakiShout(
             isEn
-              ? `⚠️ WARNING: TITAN MECH GARGANTUAR MK.${bLv} HAS ARRIVED!`
+              ? `WARNING: TITAN MECH GARGANTUAR MK.${bLv} HAS ARRIVED!`
               : isTw
-              ? `⚠️ 警告：毀滅泰坦機甲巨人 MK.${bLv} 降臨！`
-              : `⚠️ 警告：毁灭泰坦机甲巨人 MK.${bLv} 降临！`
+              ? `警告：毀滅泰坦機甲巨人 MK.${bLv} 降臨！`
+              : `警告：毁灭泰坦机甲巨人 MK.${bLv} 降临！`
           );
           window.setTimeout(() => setSakiShout(null), 4000);
 
@@ -1762,10 +1813,10 @@ export function SakiPlantSlayerGame({
                   triggerScreenShake(14);
                   setSakiShout(
                     isEn
-                      ? "⚠️ EMERGENCY SHIELD DEPLOYED! USE ENERGY BEAN!"
+                      ? "EMERGENCY SHIELD DEPLOYED! USE ENERGY BEAN!"
                       : isTw
-                      ? "⚠️ 緊急防護罩已展開！主人快用能量豆大招！"
-                      : "⚠️ 紧急防护罩已展开！主人快用能量豆大招！"
+                      ? "緊急防護罩已展開！主人快用能量豆大招！"
+                      : "紧急防护罩已展开！主人快用能量豆大招！"
                   );
                   window.setTimeout(() => setSakiShout(null), 3500);
 
@@ -1824,12 +1875,12 @@ export function SakiPlantSlayerGame({
             if (currentKills % 25 === 0) {
               setComboText(
                 currentKills >= 150
-                  ? "🌟 GODLIKE SAKI SLAYER! 🌟"
+                  ? "GODLIKE SAKI SLAYER!"
                   : currentKills >= 100
-                  ? "🔥 UNSTOPPABLE RAMPAGE! 🔥"
+                  ? "UNSTOPPABLE RAMPAGE!"
                   : currentKills >= 50
-                  ? "⚡ MEGA KILL STREAK! ⚡"
-                  : "💥 MULTI KILL!"
+                  ? "MEGA KILL STREAK!"
+                  : "MULTI KILL!"
               );
               window.setTimeout(() => setComboText(null), 2000);
             }
@@ -1857,17 +1908,39 @@ export function SakiPlantSlayerGame({
             }
 
             // 掉落阳光/能量豆
-            let dropVal = 12;
-            let beanChance = 0.08;
+            let dropVal = 6;
+            let canDropBean = false;
+
             if (z.type === "boss_titan") {
-              dropVal = 200;
-              beanChance = 1.0;
-            } else if (z.isElite) {
-              dropVal = 45;
-              beanChance = 0.35;
-            } else if (z.type === "chainsaw") {
-              dropVal = 18;
-              beanChance = 0.12;
+              dropVal = 120;
+              canDropBean = true; // Boss 击杀必定掉落 1 颗能量豆
+            } else if (p.isUltimate) {
+              // 大招期间大幅抑制能量豆掉落，彻底阻断无限大招循环
+              // 普通小怪 0%，特殊怪 0%，精英怪仅 3% 极低概率且受内置冷却限制
+              if (z.isElite && beanDropCooldownRef.current <= 0 && p.energyBeans < 3) {
+                if (Math.random() < 0.03) {
+                  canDropBean = true;
+                  beanDropCooldownRef.current = 8.0;
+                }
+              }
+            } else if (beanDropCooldownRef.current <= 0 && p.energyBeans < 3) {
+              // 常态战斗下平衡后的能量豆掉落概率（受内置 CD 与存量上限保护）
+              let beanChance = 0.008; // 普通小怪 0.8% 概率
+              if (z.isElite) {
+                dropVal = 28;
+                beanChance = 0.12; // 精英怪 12% 概率
+              } else if (z.type === "chainsaw" || z.type === "void_reaper") {
+                dropVal = 12;
+                beanChance = 0.025; // 强力怪 2.5% 概率
+              }
+
+              if (Math.random() < beanChance) {
+                canDropBean = true;
+                beanDropCooldownRef.current = 6.0; // 触发后 6 秒内普通/精英怪不再掉落能量豆
+              }
+            } else {
+              if (z.isElite) dropVal = 28;
+              else if (z.type === "chainsaw" || z.type === "void_reaper") dropVal = 12;
             }
 
             sunDropsRef.current.push({
@@ -1875,7 +1948,7 @@ export function SakiPlantSlayerGame({
               x: z.x,
               y: z.y,
               value: dropVal,
-              isBean: Math.random() < beanChance || z.type === "boss_titan",
+              isBean: canDropBean,
               isMagnetized: p.isUltimate
             });
 
@@ -1927,32 +2000,32 @@ export function SakiPlantSlayerGame({
               soundRef.current.playVictory();
               triggerScreenShake(22);
 
-              for (let s = 0; s < 22; s++) {
+              for (let s = 0; s < 16; s++) {
                 sunDropsRef.current.push({
                   id: nextEntityId.current++,
                   x: z.x + (Math.random() - 0.5) * 160,
                   y: z.y + (Math.random() - 0.5) * 160,
-                  isBean: s < 2,
-                  value: 55,
+                  isBean: false, // 纯阳光喷发，给与适度经验奖励
+                  value: 25,
                   isMagnetized: true
                 });
               }
 
               setSakiShout(
                 isEn
-                  ? `🎉 TITAN MECH MK.${defeatedLevel} ANNIHILATED! Next wave incoming!`
+                  ? `TITAN MECH MK.${defeatedLevel} ANNIHILATED! Next wave incoming!`
                   : isTw
-                  ? `🎉 泰坦機甲 MK.${defeatedLevel} 已被徹底消滅！能量豆噴發！`
-                  : `🎉 泰坦机甲 MK.${defeatedLevel} 已被彻底消灭！能量豆喷发！`
+                  ? `泰坦機甲 MK.${defeatedLevel} 已被徹底消滅！能量豆噴發！`
+                  : `泰坦机甲 MK.${defeatedLevel} 已被彻底消灭！能量豆喷发！`
               );
               window.setTimeout(() => setSakiShout(null), 3500);
 
               setComboText(
                 isEn
-                  ? `👑 TITAN MK.${defeatedLevel} DESTROYED! 👑`
+                  ? `TITAN MK.${defeatedLevel} DESTROYED!`
                   : isTw
-                  ? `👑 泰坦巨人 MK.${defeatedLevel} 已被粉碎！👑`
-                  : `👑 泰坦巨人 MK.${defeatedLevel} 已被粉碎！👑`
+                  ? `泰坦巨人 MK.${defeatedLevel} 已被粉碎！`
+                  : `泰坦巨人 MK.${defeatedLevel} 已被粉碎！`
               );
               window.setTimeout(() => setComboText(null), 2500);
             }
@@ -1981,7 +2054,7 @@ export function SakiPlantSlayerGame({
                 id: nextEntityId.current++,
                 x: drop.x,
                 y: drop.y,
-                text: "+1 能量豆! 🌟",
+                text: "+1 能量豆!",
                 color: "#34d399",
                 life: 0.9,
                 maxLife: 0.9
@@ -1996,15 +2069,15 @@ export function SakiPlantSlayerGame({
                 p.level += 1;
 
                 if (p.level === 2) {
-                  p.sunNext = 260;
+                  p.sunNext = 580;
                 } else if (p.level === 3) {
-                  p.sunNext = 480;
+                  p.sunNext = 1100;
                 } else if (p.level === 4) {
-                  p.sunNext = 800;
+                  p.sunNext = 1800;
                 } else if (p.level === 5) {
-                  p.sunNext = 1250;
+                  p.sunNext = 2800;
                 } else {
-                  p.sunNext = Math.round(p.sunNext * 1.45);
+                  p.sunNext = Math.round(p.sunNext * 1.4);
                 }
 
                 const newLevel = p.level;
@@ -2012,36 +2085,38 @@ export function SakiPlantSlayerGame({
                 setSunExp(p.sunExp);
                 setSunNext(p.sunNext);
 
-                // 升级吸附全部阳光
+                // 升级吸附周围阳光
                 sunDropsRef.current.forEach((d) => {
-                  d.isMagnetized = true;
+                  if (Math.hypot(p.x - d.x, p.y - d.y) < 220) {
+                    d.isMagnetized = true;
+                  }
                 });
 
                 if (newLevel === 2) {
                   p.stage = 2;
                   setPlantStage(2);
-                  setSakiShout(isEn ? "🌱 EVOLVED: Repeater! Twin Barrel Fire!" : isTw ? "🌱 植物進化：【雙發射手】！雙倍彈幕連射！" : "🌱 植物进化：【双发射手】！双倍弹幕连射！");
+                  setSakiShout(isEn ? "EVOLVED: Repeater! Twin Barrel Fire!" : isTw ? "植物進化：【雙發射手】！雙倍彈幕連射！" : "植物进化：【双发射手】！双倍弹幕连射！");
                   window.setTimeout(() => setSakiShout(null), 3000);
                   setComboText(isEn ? "PLANT EVOLVED: REPEATER!" : isTw ? "植物進化：雙發射手！" : "植物进化：双发射手！");
                   window.setTimeout(() => setComboText(null), 2500);
                 } else if (newLevel === 3) {
                   p.stage = 3;
                   setPlantStage(3);
-                  setSakiShout(isEn ? "🌿 EVOLVED: Threepeater! Triple Fan Spread!" : isTw ? "🌿 植物進化：【三線射手】！三向散射彈幕覆蓋！" : "🌿 植物进化：【三线射手】！三向散射弹幕覆盖！");
+                  setSakiShout(isEn ? "EVOLVED: Threepeater! Triple Fan Spread!" : isTw ? "植物進化：【三線射手】！三向散射彈幕覆蓋！" : "植物进化：【三线射手】！三向散射弹幕覆盖！");
                   window.setTimeout(() => setSakiShout(null), 3000);
                   setComboText(isEn ? "PLANT EVOLVED: THREEPEATER!" : isTw ? "植物進化：三線射手！" : "植物进化：三线射手！");
                   window.setTimeout(() => setComboText(null), 2500);
                 } else if (newLevel === 4) {
                   p.stage = 4;
                   setPlantStage(4);
-                  setSakiShout(isEn ? "🎖️ EVOLVED: Gatling Pea! Rapid Armor Piercing!" : isTw ? "🎖️ 植物進化：【機槍射手】！超高速4連發穿透彈！" : "🎖️ 植物进化：【机枪射手】！超高速4连发穿透弹！");
+                  setSakiShout(isEn ? "EVOLVED: Gatling Pea! Rapid Armor Piercing!" : isTw ? "植物進化：【機槍射手】！超高速4連發穿透彈！" : "植物进化：【机枪射手】！超高速4连发穿透弹！");
                   window.setTimeout(() => setSakiShout(null), 3000);
                   setComboText(isEn ? "PLANT EVOLVED: GATLING PEA!" : isTw ? "植物進化：機槍射手！" : "植物进化：机枪射手！");
                   window.setTimeout(() => setComboText(null), 2500);
                 } else if (newLevel === 5) {
                   p.stage = 5;
                   setPlantStage(5);
-                  setSakiShout(isEn ? "👑 EVOLVED: Super Gatling Pea! Overdrive Chance Unlocked!" : isTw ? "👑 植物進化：【超級機槍射手】！普攻有幾率釋放能量豆暴走！" : "👑 植物进化：【超级机枪射手】！普攻有几率释放能量豆暴走！");
+                  setSakiShout(isEn ? "EVOLVED: Super Gatling Pea! Overdrive Chance Unlocked!" : isTw ? "植物進化：【超級機槍射手】！普攻有幾率釋放能量豆暴走！" : "植物进化：【超级机枪射手】！普攻有几率释放能量豆暴走！");
                   window.setTimeout(() => setSakiShout(null), 3500);
                   setComboText(isEn ? "PLANT EVOLVED: SUPER GATLING PEA!" : isTw ? "植物進化：超級機槍射手！" : "植物进化：超级机枪射手！");
                   window.setTimeout(() => setComboText(null), 2500);
@@ -2055,7 +2130,7 @@ export function SakiPlantSlayerGame({
                   p.shield = Math.min(80, p.shield + 20);
                   setHp(p.hp);
                   setShield(p.shield);
-                  setComboText(isEn ? `⚡ POWER BREAKTHROUGH Lv.${newLevel}! ATK +22, HP +25` : isTw ? `⚡ 屬性突破 Lv.${newLevel}！攻擊力 +22，生命恢復 +25` : `⚡ 属性突破 Lv.${newLevel}！攻击力 +22，生命恢复 +25`);
+                  setComboText(isEn ? `POWER BREAKTHROUGH Lv.${newLevel}! ATK +22, HP +25` : isTw ? `屬性突破 Lv.${newLevel}！攻擊力 +22，生命恢復 +25` : `属性突破 Lv.${newLevel}！攻击力 +22，生命恢复 +25`);
                   window.setTimeout(() => setComboText(null), 2200);
                 }
               }
@@ -2254,12 +2329,12 @@ export function SakiPlantSlayerGame({
         // 血条与精英标记
         if (z.isElite) {
           ctx.save();
-          ctx.font = "bold 11px sans-serif";
+          ctx.font = "bold 10px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
           ctx.textAlign = "center";
           ctx.fillStyle = "#facc15";
-          ctx.shadowColor = "rgba(0,0,0,0.8)";
+          ctx.shadowColor = "rgba(0,0,0,0.85)";
           ctx.shadowBlur = 4;
-          ctx.fillText("👑 ELITE", 0, -sH / 2 - 12);
+          ctx.fillText("ELITE", 0, -sH / 2 - 12);
           ctx.restore();
         }
 
@@ -2596,7 +2671,7 @@ export function SakiPlantSlayerGame({
         const orbitSpeed = currentTime * 0.003;
         const orbitRadius = 48;
         const elemColor = p.element === "fire" ? "#f97316" : p.element === "poison" ? "#22c55e" : p.element === "lightning" ? "#0284c7" : "#06b6d4";
-        const elemIcon = p.element === "fire" ? "🔥" : p.element === "poison" ? "🧪" : p.element === "lightning" ? "⚡" : "❄️";
+        const innerColor = p.element === "fire" ? "#fdba74" : p.element === "poison" ? "#86efac" : p.element === "lightning" ? "#7dd3fc" : "#a5f3fc";
 
         for (let i = 0; i < 2; i++) {
           const angle = orbitSpeed + i * Math.PI;
@@ -2605,15 +2680,29 @@ export function SakiPlantSlayerGame({
 
           ctx.save();
           ctx.translate(fx, fy);
+          
+          // 外发光环
           ctx.beginPath();
           ctx.arc(0, 0, 11, 0, Math.PI * 2);
           ctx.fillStyle = elemColor;
           ctx.shadowColor = elemColor;
-          ctx.shadowBlur = 12;
+          ctx.shadowBlur = 14;
           ctx.fill();
+
+          // 核心高光球
+          ctx.beginPath();
+          ctx.arc(0, 0, 5.5, 0, Math.PI * 2);
+          ctx.fillStyle = innerColor;
+          ctx.shadowColor = "#ffffff";
+          ctx.shadowBlur = 6;
+          ctx.fill();
+
+          // 高光亮点
+          ctx.beginPath();
+          ctx.arc(-2, -2, 2.2, 0, Math.PI * 2);
           ctx.fillStyle = "#ffffff";
-          ctx.font = "11px sans-serif";
-          ctx.fillText(elemIcon, -6, 4);
+          ctx.fill();
+
           ctx.restore();
 
           zombiesRef.current.forEach((z) => {
@@ -2695,16 +2784,25 @@ export function SakiPlantSlayerGame({
     }
   };
 
+  // 主动退出触发结算
+  const handleRequestExit = useCallback(() => {
+    if (isFinished) return;
+    soundRef.current.playVictory();
+    setIsVictory(false);
+    setIsFinished(true);
+  }, [isFinished]);
+
   const handleRestart = () => {
     setScore(0);
     setKills(0);
     setLevel(1);
     setSunExp(0);
-    setSunNext(120);
+    setSunNext(240);
     setHp(100);
     setShield(0);
     setEnergyBeans(1);
     setIsUltimate(false);
+    setUltimateCd(0);
     setElapsedTime(0);
     setBossHp(null);
     setBossMaxHp(null);
@@ -2728,12 +2826,14 @@ export function SakiPlantSlayerGame({
     nextBossKillsRef.current = 45;
     bossLevelRef.current = 1;
     activeBossRef.current = false;
+    beanDropCooldownRef.current = 0;
     playerRef.current.x = 180;
     playerRef.current.y = 320;
     playerRef.current.hp = 100;
     playerRef.current.shield = 0;
     playerRef.current.energyBeans = 1;
     playerRef.current.isUltimate = false;
+    playerRef.current.ultimateCooldown = 0;
     playerRef.current.recoil = 0;
     playerRef.current.invulnerableTimer = 0;
     playerRef.current.emergencyShieldUsed = false;
@@ -2742,7 +2842,7 @@ export function SakiPlantSlayerGame({
     playerRef.current.extraAtkBonus = 0;
     playerRef.current.level = 1;
     playerRef.current.sunExp = 0;
-    playerRef.current.sunNext = 120;
+    playerRef.current.sunNext = 240;
   };
 
   const currentStageInfo = PLANT_STAGE_INFO[plantStage] || PLANT_STAGE_INFO[1];
@@ -2758,7 +2858,6 @@ export function SakiPlantSlayerGame({
     : isTw
     ? currentStageInfo.nameTw
     : currentStageInfo.name;
-  const currentStageIcon = currentElem ? currentElem.icon : currentStageInfo.icon;
 
   return (
     <div ref={containerRef} className="saki-plant-slayer-container">
@@ -2768,8 +2867,8 @@ export function SakiPlantSlayerGame({
           <button
             type="button"
             className="plant-icon-btn"
-            onClick={onBackToPhone || onClose}
-            title={isEn ? "Exit" : isTw ? "退出" : "退出"}
+            onClick={handleRequestExit}
+            title={isEn ? "Exit & Settle" : isTw ? "退出結算" : "退出结算"}
           >
             <ArrowLeft size={16} />
           </button>
@@ -2796,7 +2895,7 @@ export function SakiPlantSlayerGame({
         <div className="hud-center">
           {/* Plant Evolution Stage Badge */}
           <div className={`plant-stage-badge stage-${plantStage} ${elementalType || ""}`}>
-            <span>{currentStageIcon}</span>
+            <span className="stage-icon-wrap">{renderStageBadgeIcon(plantStage, elementalType, 14)}</span>
             <span>{currentStageName}</span>
           </div>
 
@@ -2815,13 +2914,10 @@ export function SakiPlantSlayerGame({
           <button
             type="button"
             className="plant-extract-btn"
-            onClick={() => {
-              setIsVictory(true);
-              setIsFinished(true);
-            }}
+            onClick={handleRequestExit}
             title={isEn ? "Extract & Settle" : isTw ? "撤離結算" : "撤离结算"}
           >
-            <span>🏁</span>
+            <Flag size={14} className="text-sky-300" />
             <span>{isEn ? "Extract" : isTw ? "撤離" : "撤离"}</span>
           </button>
 
@@ -2843,8 +2939,9 @@ export function SakiPlantSlayerGame({
       {bossHp !== null && bossMaxHp !== null ? (
         <div className="plant-boss-bar-wrap">
           <div className="boss-title">
-            <span>
-              ⚠️ {isEn ? `TITAN MECH GARGANTUAR MK.${currentBossLevel}` : isTw ? `毀滅泰坦機甲巨人 MK.${currentBossLevel}` : `毁灭泰坦机甲巨人 MK.${currentBossLevel}`}
+            <span className="inline-flex items-center gap-1">
+              <ShieldAlert size={14} className="text-rose-400 animate-pulse" />
+              {isEn ? `TITAN MECH GARGANTUAR MK.${currentBossLevel}` : isTw ? `毀滅泰坦機甲巨人 MK.${currentBossLevel}` : `毁灭泰坦机甲巨人 MK.${currentBossLevel}`}
             </span>
             <span>{Math.round((bossHp / bossMaxHp) * 100)}%</span>
           </div>
@@ -2884,14 +2981,43 @@ export function SakiPlantSlayerGame({
       <div className="plant-ultimate-wrap">
         <button
           type="button"
-          className={`plant-bean-btn ${energyBeans > 0 ? "ready" : "empty"} ${isUltimate ? "active" : ""}`}
+          className={`plant-bean-btn ${
+            isUltimate
+              ? "active"
+              : ultimateCd > 0
+              ? "cooldown"
+              : energyBeans > 0
+              ? "ready"
+              : "empty"
+          }`}
           onClick={(e) => triggerPlantFoodUltimate(e)}
           onPointerDown={(e) => e.stopPropagation()}
-          title={isEn ? "Plant Food Ultimate (Space / Q)" : isTw ? "能量豆大招 (空格鍵 / Q)" : "能量豆大招 (空格键 / Q)"}
+          disabled={energyBeans <= 0 || isUltimate || ultimateCd > 0}
+          title={
+            ultimateCd > 0
+              ? isEn
+                ? `Cooldown: ${ultimateCd.toFixed(1)}s`
+                : isTw
+                ? `冷卻中：${ultimateCd.toFixed(1)}秒`
+                : `冷却中：${ultimateCd.toFixed(1)}秒`
+              : isEn
+              ? "Plant Food Ultimate (Space / Q)"
+              : isTw
+              ? "能量豆大招 (空格鍵 / Q)"
+              : "能量豆大招 (空格键 / Q)"
+          }
         >
           <div className="bean-inner">
-            <span className="bean-emoji">🌟</span>
-            <span className="bean-count">{energyBeans}/3</span>
+            <span className="bean-emoji">
+              {ultimateCd > 0 ? (
+                <Clock size={16} className="text-amber-200 animate-spin" />
+              ) : (
+                <Zap size={18} className="fill-amber-300 text-amber-300" />
+              )}
+            </span>
+            <span className="bean-count">
+              {ultimateCd > 0 ? `${ultimateCd.toFixed(1)}s` : `${energyBeans}/3`}
+            </span>
           </div>
           <div className="bean-pulse" aria-hidden="true" />
         </button>
@@ -2922,7 +3048,7 @@ export function SakiPlantSlayerGame({
                   onClick={() => handleSelectElement(opt.type)}
                 >
                   <div className="upgrade-icon-wrap" style={{ background: opt.color, boxShadow: `0 0 14px ${opt.glow}` }}>
-                    <span>{opt.icon}</span>
+                    <span>{renderElementalOptionIcon(opt.type, 20)}</span>
                   </div>
                   <div className="upgrade-content">
                     <div className="upgrade-title-row">
@@ -2955,7 +3081,9 @@ export function SakiPlantSlayerGame({
             <div className="settlement-stats-grid">
               <div className="settlement-stat-card score-card">
                 <div className="stat-card-header">
-                  <span className="stat-icon">💀</span>
+                  <span className="stat-icon">
+                    <Skull size={16} className="text-rose-400" />
+                  </span>
                   <span className="stat-label">{isEn ? "Kills" : isTw ? "殲滅殭屍" : "歼灭僵尸"}</span>
                 </div>
                 <div className="stat-card-val score-val">{kills}</div>
@@ -2963,7 +3091,9 @@ export function SakiPlantSlayerGame({
 
               <div className="settlement-stat-card exp-card">
                 <div className="stat-card-header">
-                  <span className="stat-icon">💖</span>
+                  <span className="stat-icon">
+                    <Heart size={16} className="text-pink-400 fill-pink-400" />
+                  </span>
                   <span className="stat-label">{isEn ? "Affection EXP" : isTw ? "好感度獎勵" : "好感度奖励"}</span>
                 </div>
                 <div className="stat-card-val exp-val">+{Math.min(2500, Math.max(500, Math.round(score / 8) + kills * 12))}</div>
@@ -2971,7 +3101,9 @@ export function SakiPlantSlayerGame({
 
               <div className="settlement-stat-card combo-card">
                 <div className="stat-card-header">
-                  <span className="stat-icon">⏱️</span>
+                  <span className="stat-icon">
+                    <Clock size={16} className="text-cyan-400" />
+                  </span>
                   <span className="stat-label">{isEn ? "Time" : isTw ? "作戰時長" : "作战时长"}</span>
                 </div>
                 <div className="stat-card-val combo-val">{Math.round(elapsedTime)}s</div>
@@ -2988,15 +3120,15 @@ export function SakiPlantSlayerGame({
               <p>
                 {isVictory
                   ? isEn
-                    ? "Incredible! Saki saw your electric gatling wipe out the whole horde! Master is invincible! ✨"
+                    ? "Incredible! Saki saw your electric gatling wipe out the whole horde! Master is invincible!"
                     : isTw
-                    ? "太厲害啦！Saki 看見主人的電能機槍把泰坦機甲都融化了，好帥氣呀～✨"
-                    : "太厉害啦！Saki 看见主人的电能机枪把泰坦机甲都融化了，好帅气呀～✨"
+                    ? "太厲害啦！Saki 看見主人的電能機槍把泰坦機甲都融化了，好帥氣呀～"
+                    : "太厉害啦！Saki 看见主人的电能机枪把泰坦机甲都融化了，好帅气呀～"
                   : isEn
-                  ? "Great battle! The zombie horde was huge, but we harvested tons of sun and data! Let's play again! 💖"
+                  ? "Great battle! The zombie horde was huge, but we harvested tons of sun and data! Let's play again!"
                   : isTw
-                  ? "辛苦啦主人！剛才的割草彈幕好過癮，Saki 為你準備了滿滿的好感度獎勵唷～💖"
-                  : "辛苦啦主人！刚才的割草弹幕好过瘾，Saki 为你准备了满满的好感度奖励唷～💖"}
+                  ? "辛苦啦主人！剛才的割草彈幕好過癮，Saki 為你準備了滿滿的好感度獎勵唷～"
+                  : "辛苦啦主人！刚才的割草弹幕好过瘾，Saki 为你准备了满满的好感度奖励唷～"}
               </p>
             </div>
 

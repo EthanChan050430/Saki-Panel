@@ -784,6 +784,19 @@ function isProcessAlive(pid: number | undefined | null): boolean {
   }
 }
 
+function isProcessGroupAlive(pid: number | undefined | null): boolean {
+  if (process.platform === "win32") return false;
+  if (!pid || typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false;
+  // The workload can outlive its process group leader after a daemon restart.
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "EPERM";
+  }
+}
+
 export class InstanceManager {
   private persistTimer: NodeJS.Timeout | null = null;
   private persistDebounceMs = 2000;
@@ -828,12 +841,21 @@ export class InstanceManager {
     for (const entry of persisted) {
       if (entry.status === "RUNNING" || entry.status === "STARTING") {
         const runtime = getRuntime(entry.instanceId);
-        if (isProcessAlive(entry.lastPid)) {
+        const directAlive = isProcessAlive(entry.lastPid);
+        const groupAlive = !directAlive && isProcessGroupAlive(entry.lastPid);
+        if (directAlive || groupAlive) {
           runtime.status = "RUNNING";
           runtime.exitCode = null;
           if (entry.cwd !== undefined) runtime.cwd = entry.cwd;
           runtime.restartAttempts = entry.restartAttempts;
-          appendLog(entry.instanceId, runtime, "system", `Daemon restarted; existing process (PID ${entry.lastPid}) is still running.`);
+          appendLog(
+            entry.instanceId,
+            runtime,
+            "system",
+            directAlive
+              ? `Daemon restarted; existing process (PID ${entry.lastPid}) is still running.`
+              : `Daemon restarted; leader process (PID ${entry.lastPid}) exited but its process group is still running; instance kept as RUNNING.`
+          );
           emitStatus(entry.instanceId, runtime);
           this.notifyStatus(entry.instanceId, runtime, false);
         } else {

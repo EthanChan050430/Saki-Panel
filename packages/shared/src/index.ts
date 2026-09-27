@@ -53,6 +53,41 @@ export const permissions = [
 
 export type PermissionCode = (typeof permissions)[number];
 
+/**
+ * 实例级可细分权限：管理员把实例分配给用户时，可逐项限制该用户在此实例上能做什么。
+ * 未设置（null）表示不限制，跟随用户全局角色权限。
+ */
+export const instanceAssignablePermissions = [
+  "instance.logs",
+  "instance.start",
+  "instance.stop",
+  "instance.restart",
+  "instance.kill",
+  "instance.update",
+  "terminal.view",
+  "terminal.input",
+  "file.view",
+  "file.read",
+  "file.write",
+  "file.delete",
+  "task.view",
+  "task.create",
+  "task.update",
+  "task.delete",
+  "task.run",
+  "saki.chat",
+  "saki.agent",
+  "system.view"
+] as const;
+
+export type InstanceAssignablePermission = (typeof instanceAssignablePermissions)[number];
+
+const instanceAssignablePermissionSet: ReadonlySet<string> = new Set(instanceAssignablePermissions);
+
+export function isInstanceAssignablePermission(code: string): code is InstanceAssignablePermission {
+  return instanceAssignablePermissionSet.has(code);
+}
+
 export type UserStatus = "ACTIVE" | "DISABLED";
 export type NodeStatus = "UNKNOWN" | "ONLINE" | "OFFLINE";
 export type InstanceStatus = "CREATED" | "STARTING" | "RUNNING" | "STOPPING" | "STOPPED" | "CRASHED" | "UNKNOWN";
@@ -172,6 +207,17 @@ export interface UpdateRolePermissionsRequest {
 export interface LoginRequest {
   username: string;
   password: string;
+}
+
+export interface CheckUserRequest {
+  username: string;
+}
+
+export interface CheckUserResponse {
+  exists: boolean;
+  username: string;
+  displayName: string | null;
+  avatarDataUrl: string | null;
 }
 
 export interface RegisterRequest {
@@ -363,6 +409,7 @@ export interface ManagedWatchPolicy {
   instanceId: string;
   enabled: boolean;
   mode: WatchPolicyMode;
+  autoDiagnose: boolean;
   cooldownSeconds: number;
   maxRunsPerHour: number;
   verifyWaitSeconds: number;
@@ -378,6 +425,7 @@ export interface ManagedWatchPolicy {
 export interface UpdateWatchPolicyRequest {
   enabled?: boolean;
   mode?: WatchPolicyMode;
+  autoDiagnose?: boolean;
   cooldownSeconds?: number;
   maxRunsPerHour?: number;
   verifyWaitSeconds?: number;
@@ -709,6 +757,15 @@ export interface InstanceAssignedUser {
   username: string;
   displayName: string;
   role: InstanceOwnerRole;
+  /** 该用户在此实例上的细分权限；null/缺省表示不限制（跟随全局角色权限） */
+  permissions?: PermissionCode[] | null;
+}
+
+/** 分配实例时为单个用户指定的实例级权限 */
+export interface InstanceAssignmentInput {
+  userId: string;
+  /** null/缺省 = 不限制（跟随全局角色权限） */
+  permissions?: PermissionCode[] | null;
 }
 
 export interface ClashSubscriptionProxy {
@@ -759,6 +816,8 @@ export interface ManagedInstance {
   assignedToDisplayName?: string | null | undefined;
   assignedToRole?: InstanceOwnerRole | null | undefined;
   assignees: InstanceAssignedUser[];
+  /** 当前请求用户在该实例上的有效权限（已应用实例级细分限制）；null = 不限制（跟随全局权限） */
+  myPermissions?: PermissionCode[] | null;
   lastStartedAt?: string | null | undefined;
   lastStoppedAt?: string | null | undefined;
   lastExitCode?: number | null | undefined;
@@ -780,6 +839,8 @@ export interface CreateInstanceRequest {
   restartMaxRetries?: number;
   assignedToUserId?: string | null;
   assignedToUserIds?: string[] | null;
+  /** 可选：按用户设置实例级细分权限，key 为 userId；值 null/缺项 = 不限制 */
+  assignmentPermissions?: Record<string, PermissionCode[] | null> | null;
 }
 
 export interface RemoteNodeUserSummary {
@@ -923,6 +984,8 @@ export interface UpdateInstanceRequest {
   restartMaxRetries?: number;
   assignedToUserId?: string | null;
   assignedToUserIds?: string[] | null;
+  /** 可选：按用户设置实例级细分权限，key 为 userId；值 null/缺项 = 不限制 */
+  assignmentPermissions?: Record<string, PermissionCode[] | null> | null;
   proxyConfig?: InstanceProxyConfig | null;
 }
 
@@ -1192,13 +1255,122 @@ export interface AuditLogEntry {
   createdAt: string;
 }
 
+export type AuditSortBy = "createdAt" | "action" | "actor" | "resourceType" | "result" | "ip";
+export type AuditSortOrder = "asc" | "desc";
+export type AuditFocusCategory = "all" | "failed_login" | "permission_change" | "delete_operation" | "saki_chat" | "file_change";
+
+export interface AuditLogQueryParams {
+  page?: number | undefined;
+  limit?: number | undefined;
+  from?: string | undefined;
+  to?: string | undefined;
+  actor?: string | undefined;
+  ip?: string | undefined;
+  resourceType?: string | undefined;
+  resourceId?: string | undefined;
+  resource?: string | undefined;
+  action?: string | undefined;
+  result?: "SUCCESS" | "FAILURE" | undefined;
+  category?: AuditFocusCategory | undefined;
+  keyword?: string | undefined;
+  sortBy?: AuditSortBy | undefined;
+  sortOrder?: AuditSortOrder | undefined;
+}
+
+export interface AuditRangeSummary {
+  total: number;
+  success: number;
+  failure: number;
+  successRate: number;
+  actors: number;
+  resourceTypes: number;
+  failedLogins: number;
+  permissionChanges: number;
+  deleteOperations: number;
+  sakiChats: number;
+  fileChanges: number;
+  latestLogAt?: string | null;
+}
+
+export interface SakiAuditConversationItem {
+  id: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  avatarDataUrl?: string | null;
+  contextKey: string;
+  label: string;
+  detail: string;
+  instanceId?: string | null;
+  instanceName?: string | null;
+  title: string;
+  messageCount: number;
+  lastMessagePreview: string;
+  messages: Array<{
+    id?: string;
+    role: "user" | "assistant" | "system";
+    content: string;
+    timestamp?: string;
+    model?: string;
+    thinking?: string;
+    actions?: any[];
+    usage?: any;
+  }>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SakiAuditConversationListResponse {
+  data: SakiAuditConversationItem[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+export interface AuditRetentionPolicy {
+  retentionDays: number;
+  autoCleanupEnabled: boolean;
+  protectFailureLogs: boolean;
+  protectAuditTrailLogs: boolean;
+  allowManualDelete: boolean;
+  lastCleanupAt?: string | null;
+  lastCleanupDeleted?: number;
+}
+
+export interface UpdateAuditRetentionPolicyRequest {
+  retentionDays?: number;
+  autoCleanupEnabled?: boolean;
+  protectFailureLogs?: boolean;
+  protectAuditTrailLogs?: boolean;
+  allowManualDelete?: boolean;
+}
+
+export interface AuditLogListResponse {
+  data: AuditLogEntry[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  summary: AuditRangeSummary;
+  facets?: {
+    resourceTypes: string[];
+    actions: string[];
+    users?: Array<{ id: string; username: string; displayName: string; avatarDataUrl?: string | null }>;
+  };
+  retention?: AuditRetentionPolicy;
+}
+
 export interface DeleteAuditLogsRequest {
   ids: string[];
+  reason?: string | undefined;
 }
 
 export interface DeleteAuditLogsResponse {
   ok: true;
   deleted: number;
+  skippedProtected?: number;
+  auditRecordId?: string;
 }
 
 export type TerminalClientMessage =
@@ -1466,7 +1638,7 @@ export function filterSakiMentionCandidates(
   return images.filter((attachment) => `${attachment.name} ${attachment.id ?? ""}`.toLowerCase().includes(needle));
 }
 
-export type SakiAgentActionStatus = "completed" | "failed" | "pending_approval" | "rejected" | "rolled_back";
+export type SakiAgentActionStatus = "completed" | "failed" | "pending_approval" | "pending_input" | "rejected" | "rolled_back";
 export type SakiAgentRiskLevel = "low" | "medium" | "high" | "critical";
 
 export interface SakiAgentActionApproval {
@@ -1488,6 +1660,9 @@ export interface SakiAgentAction {
   ok: boolean;
   status?: SakiAgentActionStatus;
   approval?: SakiAgentActionApproval;
+  question?: { text: string; options: string[] };
+  answer?: { selection?: string; customText?: string; skipped?: boolean };
+  todos?: Array<{ text: string; completed: boolean }>;
   attachments?: SakiInputAttachment[];
   createdAt: string;
 }

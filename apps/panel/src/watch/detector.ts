@@ -202,10 +202,10 @@ export async function evaluateCrash(input: {
   const overBudget = watchRunsInLastHour(input.instanceId) >= policy.maxRunsPerHour;
   return {
     shouldOpen: true,
-    shouldRun: false,
+    shouldRun: Boolean(policy.autoDiagnose && !overBudget),
     trigger,
     fingerprint,
-    reason: overBudget ? "rate limited" : "waiting for user confirmation",
+    reason: overBudget ? "rate limited" : policy.autoDiagnose ? "auto diagnose enabled" : "waiting for user confirmation",
     policy,
     suppressRestartUntil: null
   };

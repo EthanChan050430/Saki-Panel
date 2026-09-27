@@ -80,6 +80,7 @@ export function emitSakiWorkflow(events: SakiAgentRunEvents | undefined, update:
 }
 
 export function actionStatusLabel(action: SakiAgentAction): string {
+  if (action.status === "pending_input") return "pending_input";
   if (action.status === "pending_approval") return "pending_approval";
   if (action.status === "rolled_back") return "rolled_back";
   if (action.status === "rejected") return "rejected";
@@ -224,6 +225,7 @@ function toolOutcomeMessage(call: ParsedToolCall, action: SakiAgentAction): stri
   const toolName = call.name.toLowerCase();
   const pathArg = toolTargetPath(call);
   if (action.status === "pending_approval") return "\u8FD9\u4E00\u6B65\u98CE\u9669\u8F83\u9AD8\uFF0C\u6211\u5148\u7B49\u4F60\u786E\u8BA4\u3002";
+  if (action.status === "pending_input") return "我需要你回答一个问题，再继续执行。";
   if (!action.ok) return "\u8FD9\u6B21\u8C03\u7528\u5931\u8D25\u4E86\uFF0C\u6211\u4F1A\u6839\u636E\u9519\u8BEF\u4FE1\u606F\u8C03\u6574\u3002";
   if (toolName === "instancelogs") return "\u65E5\u5FD7\u8BFB\u5230\u4E86\u3002";
   if (toolName === "listfiles") return "\u76EE\u5F55\u770B\u5230\u4E86\u3002";
@@ -594,7 +596,7 @@ export function renderAgentScratchpad(entries: string[], modelId?: string): stri
 function isParallelizableReadOnlyCall(call: ParsedToolCall): boolean {
   if (Array.isArray(call.args)) return false;
   const toolName = normalizedAgentToolName(call.name);
-  return toolName !== "reportprogress" && toolName !== "respond" && isSakiReadOnlyAgentTool(toolName);
+  return toolName !== "reportprogress" && toolName !== "respond" && toolName !== "askuser" && toolName !== "managetodos" && isSakiReadOnlyAgentTool(toolName);
 }
 
 function billedAgentTurnTokens(modelId: string, prompt: string, turn: SakiModelToolTurn): number {
@@ -1020,9 +1022,11 @@ ${buildAgentWorkspacePrefix(runtime)}`;
       actionId: action.id,
       detail: action.ok && action.status !== "pending_approval" ? "" : action.observation.slice(0, 240)
     });
-    if (action.status === "pending_approval") {
-      const finalMessage = "Saki has prepared an action that needs your approval. Please review it in the action preview first.";
-      return finishAgentResponse("pending_approval", finalMessage);
+    if (action.status === "pending_approval" || action.status === "pending_input") {
+      const finalMessage = action.status === "pending_input"
+        ? "请在下方回答 Saki 的问题，或选择跳过。"
+        : "Saki has prepared an action that needs your approval. Please review it in the action preview first.";
+      return finishAgentResponse(action.status, finalMessage);
     }
     if (action.ok && fileEditTools.has(normalizedAgentToolName(call.name))) {
       const editedPath = toolTargetPath(call).replace(/\\/g, "/");
