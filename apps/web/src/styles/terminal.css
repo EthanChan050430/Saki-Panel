@@ -611,7 +611,7 @@
   align-items: center !important;
   justify-content: center !important;
   padding: 24px !important;
-  background: rgba(0, 0, 0, 0.5) !important;
+  background: rgba(0, 0, 0, 0.36) !important;
   backdrop-filter: blur(16px) saturate(180%) !important;
   -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
   animation: glassModalOverlayIn 0.22s ease-out forwards;
@@ -836,7 +836,7 @@
   place-items: center;
   padding: 16px;
   overflow: hidden;
-  background: linear-gradient(135deg, rgba(15, 23, 42, 0.5) 0%, rgba(17, 24, 39, 0.6) 100%);
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.32) 0%, rgba(17, 24, 39, 0.42) 100%);
   backdrop-filter: blur(8px);
   animation: glassModalOverlayIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
 }
@@ -2960,7 +2960,7 @@ input.terminal-cmd-input::placeholder {
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(15, 23, 42, 0.6);
+  background: rgba(15, 23, 42, 0.40);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }

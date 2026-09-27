@@ -962,7 +962,7 @@ export function SakiSweetMatchGame({ onClose, onFinish, onBackToPhone }: SakiSwe
   return (
     <div
       className={`saki-match-overlay ${isFeverMode ? "fever-active" : ""}`}
-      style={{ backgroundImage: `url("/assets/game/match/match_bg.jpg")` }}
+      style={{ backgroundImage: `url("/assets/phone/wallpaper.jpg")` }}
     >
       {!gameOver ? (
         <>

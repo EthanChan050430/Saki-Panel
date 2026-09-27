@@ -403,7 +403,7 @@ function AccessEmptyView({ user, onOpenAccount }: { user: CurrentUser; onOpenAcc
           src={sakiArtAssets.page404}
           alt="Access denied"
           className="saki-empty-illustration"
-          style={{ width: "136px", height: "136px" }}
+          style={{ width: "136px", height: "184px" }}
           draggable={false}
         />
       </div>

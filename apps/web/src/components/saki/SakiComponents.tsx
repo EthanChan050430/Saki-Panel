@@ -75,6 +75,16 @@ import {
   sakiPetClimbFrames,
   sakiPetDoctorFrames,
   sakiPetEatFrames,
+  sakiPetIdleFrames,
+  sakiPetLieFrames,
+  sakiPetPickupEnterFrames,
+  sakiPetPickupLoopFrames,
+  sakiPetPokeFrames,
+  sakiPetRollFrames,
+  sakiPetRunFrames,
+  sakiPetSitFrames,
+  sakiPetSleepFrames,
+  sakiPetToiletFrames,
   sakiPetWalkFrames,
   sakiPetSingingFrames,
   sakiSpeakingAssets,
@@ -82,6 +92,7 @@ import {
   sakiExpressionPlayOnce
 } from "../../constants.js";
 import { SakiSpriteCycle } from "./SakiSpriteCycle.js";
+import { SakiMeasuredSpriteCycle } from "./SakiMeasuredSpriteCycle.js";
 import { useSkinRevision } from "../../plugins/SkinLoader.js";
 import { compactContextText, formatBytes } from "../../utils/path.js";
 import { newClientId } from "../../utils/id.js";
@@ -633,6 +644,7 @@ type SakiPetPoseName =
   | "doctor"
   | "pickup"
   | "bath"
+  | "toilet"
   | "poke"
   | "yawn"
   | "shy"
@@ -640,6 +652,7 @@ type SakiPetPoseName =
   | "drink"
   | "blink"
   | "peek"
+  | "peekBlink"
   | "sing"
   | null;
 
@@ -659,6 +672,7 @@ function resolveSakiPetSprite({
   }
 
   const walkCycle = sakiPetWalkFrames;
+  const runCycle = sakiPetRunFrames;
   const climbCycle = sakiPetClimbFrames;
   const bathCycle = sakiPetBathFrames;
   const doctorCycle = sakiPetDoctorFrames;
@@ -670,8 +684,10 @@ function resolveSakiPetSprite({
       ? sakiArtAssets.petSleep
       : pose === "roll"
       ? sakiArtAssets.petRoll
-      : pose === "walk" || pose === "chase"
+      : pose === "walk"
       ? (walkCycle[walkFrame % walkCycle.length] ?? sakiArtAssets.petWalkF1)
+      : pose === "chase"
+      ? (runCycle[walkFrame % runCycle.length] ?? sakiArtAssets.petRun)
       : pose === "look"
       ? sakiArtAssets.petLook
       : pose === "lie"
@@ -692,6 +708,8 @@ function resolveSakiPetSprite({
       ? (doctorCycle[walkFrame % doctorCycle.length] ?? sakiArtAssets.petDoctor)
       : pose === "bath"
       ? (bathCycle[walkFrame % bathCycle.length] ?? sakiArtAssets.petBath)
+      : pose === "toilet"
+      ? (sakiPetToiletFrames[0] ?? sakiArtAssets.petIdle)
       : pose === "poke"
       ? sakiArtAssets.petPoke
       : pose === "yawn"
@@ -704,11 +722,30 @@ function resolveSakiPetSprite({
       ? sakiArtAssets.petDrink
       : pose === "peek"
       ? sakiArtAssets.tieEdge
+      : pose === "peekBlink"
+      ? sakiArtAssets.tieEdgeBlink
       : pose === "sing"
       ? sakiArtAssets.happy
       : sakiArtAssets.petIdle;
 
   return { kind: "single", src };
+}
+
+function SakiPickupAnimation() {
+  const [phase, setPhase] = useState<"enter" | "loop">("enter");
+  return (
+    <div className="saki-character-art compact is-pickup-cycle" aria-hidden="true">
+      <SakiSpriteCycle
+        key={phase}
+        frames={phase === "enter" ? sakiPetPickupEnterFrames : sakiPetPickupLoopFrames}
+        mode={phase === "enter" ? "once" : "loop"}
+        intervalMs={phase === "enter" ? 45 : 130}
+        compact
+        crossfade={false}
+        onComplete={phase === "enter" ? () => setPhase("loop") : undefined}
+      />
+    </div>
+  );
 }
 
 export function SakiCharacterArt({
@@ -717,17 +754,17 @@ export function SakiCharacterArt({
   fileDrop = false,
   edgeAttached = false,
   dragging = false,
-  draggingExpressionSrc = null,
   activityMood = null,
-  petPose = null
+  petPose = null,
+  onToiletFinished
 }: {
   mood?: SakiArtMood;
   compact?: boolean;
   fileDrop?: boolean;
   edgeAttached?: boolean;
   dragging?: boolean;
-  draggingExpressionSrc?: string | null;
   activityMood?: SakiActivityMood;
+  onToiletFinished?: () => void;
   petPose?:
     | "idle"
     | "walk"
@@ -745,6 +782,7 @@ export function SakiCharacterArt({
     | "doctor"
     | "pickup"
     | "bath"
+    | "toilet"
     | "poke"
     | "yawn"
     | "shy"
@@ -760,6 +798,49 @@ export function SakiCharacterArt({
   const [speakingSrc, setSpeakingSrc] = useState(() => pickSakiAsset(sakiSpeakingAssets));
   const [blinking, setBlinking] = useState(false);
   const [cycleFinished, setCycleFinished] = useState(false);
+  const [sleepPhase, setSleepPhase] = useState<"enter" | "rest" | "wake" | null>(
+    compact && petPose === "sleep" ? "enter" : null
+  );
+  const [sitPhase, setSitPhase] = useState<"enter" | "rest" | "exit" | null>(
+    compact && petPose === "sit" ? "enter" : null
+  );
+  const previousPetPose = React.useRef(petPose);
+  const sleepFrames = useMemo(() => ({
+    enter: sakiPetSleepFrames.slice(0, 16),
+    rest: sakiPetSleepFrames.slice(12, 16),
+    wake: sakiPetSleepFrames.slice(16)
+  }), [skinRevision]);
+  const sitFrames = useMemo(() => ({
+    enter: sakiPetSitFrames.slice(0, 8),
+    rest: sakiPetSitFrames.slice(7, 18),
+    exit: sakiPetSitFrames.slice(18)
+  }), [skinRevision]);
+
+  useEffect(() => {
+    const previous = previousPetPose.current;
+    previousPetPose.current = petPose;
+    if (!compact) {
+      setSleepPhase(null);
+    } else if (petPose === "sleep") {
+      if (previous !== "sleep") setSleepPhase("enter");
+      else setSleepPhase((phase) => phase ?? "enter");
+    } else if (previous === "sleep" && (!petPose || ["idle", "sit", "lie", "yawn"].includes(petPose))) {
+      setSleepPhase("wake");
+    } else if (previous !== petPose) {
+      setSleepPhase(null);
+    }
+
+    if (!compact) {
+      setSitPhase(null);
+    } else if (petPose === "sit") {
+      if (previous !== "sit") setSitPhase("enter");
+      else setSitPhase((phase) => phase ?? "enter");
+    } else if (previous === "sit" && (!petPose || ["idle", "lie", "sleep", "yawn"].includes(petPose))) {
+      setSitPhase("exit");
+    } else if (previous !== petPose) {
+      setSitPhase(null);
+    }
+  }, [compact, petPose]);
 
   // 皮肤切换会重建这些派生数组，需要重新挑选缓存的启动器/说话贴图
   useEffect(() => {
@@ -776,7 +857,8 @@ export function SakiCharacterArt({
   }, [compact]);
 
   useEffect(() => {
-    if (!compact || petPose) return;
+    setBlinking(false);
+    if (!compact || (petPose && petPose !== "peek")) return;
     let timeout = 0;
     let blinkOff = 0;
     const schedule = () => {
@@ -792,6 +874,12 @@ export function SakiCharacterArt({
       window.clearTimeout(blinkOff);
     };
   }, [compact, petPose]);
+
+  useEffect(() => {
+    if (!compact || !edgeAttached) return;
+    const image = new Image();
+    image.src = sakiArtAssets.tieEdgeBlink;
+  }, [compact, edgeAttached, skinRevision]);
 
   useEffect(() => {
     if (activityMood === "speaking") {
@@ -816,9 +904,7 @@ export function SakiCharacterArt({
   const activityExpressionSrc = activityMood === "speaking"
     ? speakingSrc
     : getSakiActivityExpressionSrc(activityMood);
-  const expressionSrc = dragging && draggingExpressionSrc
-    ? draggingExpressionSrc
-    : activityExpressionSrc
+  const expressionSrc = activityExpressionSrc
     ? activityExpressionSrc
     : fileDrop
     ? sakiArtAssets.files
@@ -829,13 +915,7 @@ export function SakiCharacterArt({
     : sakiArtAssets.normal;
 
   if (compact) {
-    if (dragging && draggingExpressionSrc) {
-      return (
-        <div className="saki-character-art compact" aria-hidden="true">
-          <img className="saki-character-image" src={draggingExpressionSrc} alt="" draggable={false} />
-        </div>
-      );
-    }
+    if (dragging) return <SakiPickupAnimation />;
 
     if (expressionAnim && expressionAnim.length > 1 && !(expressionPlayOnce && cycleFinished)) {
       return (
@@ -851,11 +931,97 @@ export function SakiCharacterArt({
       );
     }
 
+    const canWake = !petPose || ["idle", "sit", "lie", "yawn"].includes(petPose);
+    const visibleSleepPhase = petPose === "sleep"
+      ? sleepPhase ?? "enter"
+      : canWake && (sleepPhase === "wake" || previousPetPose.current === "sleep")
+      ? "wake"
+      : null;
+    const canFinishSit = !petPose || ["idle", "lie", "sleep", "yawn"].includes(petPose);
+    const visibleSitPhase = visibleSleepPhase === "wake"
+      ? null
+      : petPose === "sit"
+      ? sitPhase ?? "enter"
+      : canFinishSit && (sitPhase === "exit" || previousPetPose.current === "sit")
+      ? "exit"
+      : null;
+    if (visibleSitPhase) {
+      return (
+        <div className="saki-character-art compact is-sit-cycle" aria-hidden="true">
+          <SakiSpriteCycle
+            key={visibleSitPhase}
+            frames={sitFrames[visibleSitPhase]}
+            mode={visibleSitPhase === "rest" ? "pingpong" : "once"}
+            intervalMs={visibleSitPhase === "rest" ? 180 : 140}
+            compact
+            crossfade={false}
+            onComplete={visibleSitPhase === "enter"
+              ? () => setSitPhase("rest")
+              : visibleSitPhase === "exit"
+              ? () => setSitPhase(null)
+              : undefined}
+          />
+        </div>
+      );
+    }
+    if (visibleSleepPhase) {
+      return (
+        <div className={`saki-character-art compact is-sleep-cycle ${edgeAttached ? "edge-attached" : ""}`} aria-hidden="true">
+          <SakiSpriteCycle
+            key={visibleSleepPhase}
+            frames={sleepFrames[visibleSleepPhase]}
+            mode={visibleSleepPhase === "rest" ? "pingpong" : "once"}
+            intervalMs={visibleSleepPhase === "rest" ? 360 : 160}
+            compact
+            crossfade={false}
+            onComplete={visibleSleepPhase === "enter"
+              ? () => setSleepPhase("rest")
+              : visibleSleepPhase === "wake"
+              ? () => setSleepPhase(null)
+              : undefined}
+          />
+        </div>
+      );
+    }
+
+    if (petPose === "toilet") {
+      return <SakiMeasuredSpriteCycle frames={sakiPetToiletFrames} intervalMs={120} onFinished={onToiletFinished} />;
+    }
+
+    if ((!petPose || petPose === "idle") && !fileDrop && !dragging && !edgeAttached) {
+      return (
+        <div className="saki-character-art compact is-idle-cycle" aria-hidden="true">
+          <SakiSpriteCycle
+            frames={sakiPetIdleFrames}
+            mode="loop"
+            intervalMs={260}
+            compact
+            crossfade={false}
+          />
+          <img
+            className={`saki-character-image saki-character-image-idle-blink ${blinking ? "is-visible" : ""}`}
+            src={sakiPetIdleFrames[9] ?? sakiArtAssets.petBlink}
+            alt=""
+            draggable={false}
+          />
+          <img className="saki-character-image saki-character-image-hover" src={sakiArtAssets.launcherHover} alt="" draggable={false} />
+        </div>
+      );
+    }
+
     const petCycle =
-      petPose === "walk" || petPose === "chase"
+      petPose === "walk"
         ? { frames: sakiPetWalkFrames, mode: "pingpong" as const, ms: 260 }
+        : petPose === "chase"
+        ? { frames: sakiPetRunFrames, mode: "loop" as const, ms: 120 }
         : petPose === "climb"
         ? { frames: sakiPetClimbFrames, mode: "pingpong" as const, ms: 280 }
+        : petPose === "lie"
+        ? { frames: sakiPetLieFrames, mode: "pingpong" as const, ms: 220 }
+        : petPose === "roll"
+        ? { frames: sakiPetRollFrames, mode: "once" as const, ms: 95 }
+        : petPose === "poke"
+        ? { frames: sakiPetPokeFrames, mode: "once" as const, ms: 104 }
         : petPose === "bath"
         ? { frames: sakiPetBathFrames, mode: "once" as const, ms: 280 }
         : petPose === "doctor"
@@ -866,15 +1032,16 @@ export function SakiCharacterArt({
         ? { frames: sakiPetSingingFrames, mode: "pingpong" as const, ms: 320 }
         : null;
 
-    if (petCycle && !(petCycle.mode === "once" && cycleFinished)) {
+    if (petCycle) {
+      const cycleClass = petPose === "chase" ? "run" : petPose;
       return (
-        <div className={`saki-character-art compact ${edgeAttached ? "edge-attached" : ""}`} aria-hidden="true">
+        <div className={`saki-character-art compact is-${cycleClass}-cycle ${edgeAttached ? "edge-attached" : ""}`} aria-hidden="true">
           <SakiSpriteCycle
             frames={petCycle.frames}
             mode={petCycle.mode}
             intervalMs={petCycle.ms}
             compact
-            onComplete={petCycle.mode === "once" ? () => setCycleFinished(true) : undefined}
+            crossfade={petPose !== "walk" && petPose !== "chase" && petPose !== "lie" && petPose !== "roll" && petPose !== "poke" && petPose !== "bath"}
           />
         </div>
       );
@@ -886,7 +1053,9 @@ export function SakiCharacterArt({
         : dragging
         ? "pickup"
         : edgeAttached
-        ? "peek"
+        ? blinking
+          ? "peekBlink"
+          : "peek"
         : blinking && (!petPose || cycleFinished)
         ? "blink"
         : cycleFinished

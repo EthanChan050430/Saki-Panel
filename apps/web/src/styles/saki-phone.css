@@ -1393,7 +1393,7 @@
 .plant-modal-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(5, 10, 20, 0.78);
+  background: rgba(5, 10, 20, 0.52);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   display: flex;

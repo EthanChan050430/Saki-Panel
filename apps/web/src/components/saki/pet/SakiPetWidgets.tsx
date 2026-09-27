@@ -1,6 +1,24 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, ListMusic, Pause, Play, Plus, Repeat, Repeat1, SkipBack, SkipForward, Trash2, Upload, Volume2, X, Shirt, Sparkles } from "lucide-react";
+import {
+  Check,
+  ListMusic,
+  Pause,
+  Play,
+  Plus,
+  Repeat,
+  Repeat1,
+  SkipBack,
+  SkipForward,
+  Trash2,
+  Upload,
+  Volume1,
+  Volume2,
+  VolumeX,
+  X,
+  Shirt,
+  Sparkles
+} from "lucide-react";
 import type { SakiPetController, SakiPetNote, SakiPetSticker } from "./sakiPetState.js";
 import { weatherGlyph, weatherLabel } from "./sakiPetState.js";
 import { formatTrackTime, sakiMusicAccept } from "./sakiPetMusic.js";
@@ -34,10 +52,12 @@ function monthMatrix(ms: number) {
 
 export function SakiPetDesktopBits({
   pet,
-  language
+  language,
+  chatOpen
 }: {
   pet: SakiPetController;
   language?: string | undefined;
+  chatOpen?: boolean | undefined;
 }) {
   return (
     <>
@@ -56,8 +76,8 @@ export function SakiPetDesktopBits({
             document.body
           )
         : null}
-      {pet.music.playing || pet.music.current
-        ? createPortal(<SakiMusicBar pet={pet} isEn={language === "en-US"} />, document.body)
+      {pet.music.visible && (pet.music.playing || pet.music.current)
+        ? createPortal(<SakiMusicBar pet={pet} isEn={language === "en-US"} chatOpen={chatOpen} />, document.body)
         : null}
     </>
   );
@@ -519,10 +539,33 @@ function MusicPanel({ pet, isEn }: { pet: SakiPetController; isEn: boolean }) {
           event.target.value = "";
         }}
       />
-      <button type="button" className="saki-pet-primary" onClick={() => fileRef.current?.click()}>
-        <Upload size={13} />
-        {isEn ? "Add songs" : "添加歌曲"}
-      </button>
+      <div style={{ display: "flex", gap: "8px", width: "100%" }}>
+        <button type="button" className="saki-pet-primary" onClick={() => fileRef.current?.click()} style={{ flex: 1 }}>
+          <Upload size={13} />
+          {isEn ? "Add songs" : "添加歌曲"}
+        </button>
+        {pet.music.tracks.length > 0 ? (
+          <button
+            type="button"
+            className="saki-pet-primary"
+            style={{
+              flex: 1,
+              background: pet.music.visible ? "rgba(255, 117, 172, 0.15)" : undefined,
+              color: pet.music.visible ? "#ff75ac" : undefined
+            }}
+            onClick={() => {
+              if (pet.music.visible) {
+                pet.music.close();
+              } else {
+                pet.music.show();
+              }
+            }}
+          >
+            {pet.music.visible ? <X size={13} /> : <Play size={13} />}
+            {pet.music.visible ? (isEn ? "Hide bar" : "收起播放条") : (isEn ? "Show bar" : "打开播放条")}
+          </button>
+        ) : null}
+      </div>
       <ul className="saki-pet-check-list saki-pet-music-list">
         {pet.music.tracks.length === 0 ? <li className="empty">{isEn ? "Playlist is empty." : "播放列表还是空的～"}</li> : null}
         {pet.music.tracks.map((track) => (
@@ -541,19 +584,227 @@ function MusicPanel({ pet, isEn }: { pet: SakiPetController; isEn: boolean }) {
   );
 }
 
-function SakiMusicBar({ pet, isEn }: { pet: SakiPetController; isEn: boolean }) {
+function VerticalVolumeSlider({
+  volume,
+  onChange,
+  isEn
+}: {
+  volume: number;
+  onChange: (v: number) => void;
+  isEn: boolean;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const prevVolumeRef = useRef(volume > 0 ? volume : 0.8);
+
+  const updateFromPointer = useCallback(
+    (clientY: number) => {
+      if (!trackRef.current) return;
+      const rect = trackRef.current.getBoundingClientRect();
+      const clampedY = Math.max(rect.top, Math.min(rect.bottom, clientY));
+      const percentage = 1 - (clampedY - rect.top) / rect.height;
+      onChange(Math.max(0, Math.min(1, Math.round(percentage * 100) / 100)));
+    },
+    [onChange]
+  );
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    updateFromPointer(e.clientY);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDragging) return;
+    updateFromPointer(e.clientY);
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDragging) return;
+    setIsDragging(false);
+    try {
+      (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const delta = e.deltaY < 0 ? 0.05 : -0.05;
+    onChange(Math.max(0, Math.min(1, Math.round((volume + delta) * 100) / 100)));
+  };
+
+  const toggleMute = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (volume > 0) {
+      prevVolumeRef.current = volume;
+      onChange(0);
+    } else {
+      onChange(prevVolumeRef.current || 0.8);
+    }
+  };
+
+  const percent = Math.round(volume * 100);
+
+  return (
+    <div className="saki-pet-volume-popover" onWheel={handleWheel} onPointerDown={(e) => e.stopPropagation()}>
+      <span className="saki-pet-volume-percent">{percent}%</span>
+      <div
+        ref={trackRef}
+        className={`saki-pet-volume-vertical-track ${isDragging ? "dragging" : ""}`}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        role="slider"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+        aria-label={isEn ? "Volume" : "音量"}
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowUp" || e.key === "ArrowRight") {
+            e.preventDefault();
+            onChange(Math.min(1, Math.round((volume + 0.05) * 100) / 100));
+          } else if (e.key === "ArrowDown" || e.key === "ArrowLeft") {
+            e.preventDefault();
+            onChange(Math.max(0, Math.round((volume - 0.05) * 100) / 100));
+          }
+        }}
+      >
+        <div className="saki-pet-volume-vertical-fill" style={{ height: `${percent}%` }}>
+          <div className="saki-pet-volume-vertical-thumb" />
+        </div>
+      </div>
+      <button
+        type="button"
+        className="saki-pet-volume-mute-btn"
+        onClick={toggleMute}
+        title={volume === 0 ? (isEn ? "Unmute" : "取消静音") : isEn ? "Mute" : "静音"}
+        aria-label={volume === 0 ? (isEn ? "Unmute" : "取消静音") : isEn ? "Mute" : "静音"}
+      >
+        {volume === 0 ? <VolumeX size={12} /> : <Volume2 size={12} />}
+      </button>
+    </div>
+  );
+}
+
+function SakiMusicBar({
+  pet,
+  isEn,
+  chatOpen
+}: {
+  pet: SakiPetController;
+  isEn: boolean;
+  chatOpen?: boolean | undefined;
+}) {
   const music = pet.music;
+  const [isClosing, setIsClosing] = useState(false);
+  const [volOpen, setVolOpen] = useState(false);
+  const [composerOffset, setComposerOffset] = useState<number | null>(null);
+  const volWrapRef = useRef<HTMLDivElement>(null);
+
+  // Dynamically observe Saki composer / input box position & height so the player stays safely above it
+  useEffect(() => {
+    if (!chatOpen) {
+      setComposerOffset(null);
+      return;
+    }
+
+    const updateOffset = () => {
+      const composerEl = document.querySelector(".saki-composer");
+      if (!composerEl) {
+        setComposerOffset(148);
+        return;
+      }
+      const rect = composerEl.getBoundingClientRect();
+      const panelEl = composerEl.closest(".saki-panel") as HTMLElement | null;
+      let panelBottom = 24;
+      if (panelEl) {
+        const computed = window.getComputedStyle(panelEl);
+        panelBottom = parseFloat(computed.bottom) || 24;
+      }
+      const totalOffset = Math.round(rect.height + panelBottom + 12);
+      setComposerOffset(totalOffset);
+    };
+
+    updateOffset();
+    const composerEl = document.querySelector(".saki-composer");
+    let ro: ResizeObserver | null = null;
+    if (composerEl) {
+      ro = new ResizeObserver(updateOffset);
+      ro.observe(composerEl);
+    }
+    window.addEventListener("resize", updateOffset);
+
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", updateOffset);
+    };
+  }, [chatOpen]);
+
+  useEffect(() => {
+    if (!volOpen) return;
+    const handleClickOutside = (e: MouseEvent | PointerEvent) => {
+      if (volWrapRef.current && !volWrapRef.current.contains(e.target as Node)) {
+        setVolOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setVolOpen(false);
+    };
+    window.addEventListener("pointerdown", handleClickOutside);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handleClickOutside);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [volOpen]);
+
+  const handleClose = useCallback(() => {
+    if (isClosing) return;
+    setIsClosing(true);
+    setVolOpen(false);
+    if (music.playing) {
+      void music.togglePlay();
+    }
+    window.setTimeout(() => {
+      music.close();
+      setIsClosing(false);
+    }, 380);
+  }, [isClosing, music]);
+
   const title = music.current?.name ?? (isEn ? "No song" : "还没选歌");
   const duration = music.duration || 1;
+  const dynamicBottom = composerOffset !== null && chatOpen
+    ? `${composerOffset}px`
+    : chatOpen
+    ? "148px"
+    : undefined;
+
   return (
-    <div className="saki-pet-music-bar" onPointerDown={(event) => event.stopPropagation()}>
-      <button type="button" onClick={music.playPrev} aria-label={isEn ? "Previous" : "上一首"}>
+    <div
+      className={`saki-pet-music-bar ${chatOpen ? "chat-open" : ""} ${isClosing ? "is-closing" : ""}`}
+      style={dynamicBottom ? { bottom: dynamicBottom } : undefined}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <button type="button" onClick={music.playPrev} aria-label={isEn ? "Previous" : "上一首"} title={isEn ? "Previous" : "上一首"}>
         <SkipBack size={14} />
       </button>
-      <button type="button" className="saki-pet-music-play" onClick={() => void music.togglePlay()} aria-label={music.playing ? "暂停" : "播放"}>
+      <button
+        type="button"
+        className="saki-pet-music-play"
+        onClick={() => void music.togglePlay()}
+        aria-label={music.playing ? (isEn ? "Pause" : "暂停") : (isEn ? "Play" : "播放")}
+        title={music.playing ? (isEn ? "Pause" : "暂停") : (isEn ? "Play" : "播放")}
+      >
         {music.playing ? <Pause size={15} /> : <Play size={15} />}
       </button>
-      <button type="button" onClick={music.playNext} aria-label={isEn ? "Next" : "下一首"}>
+      <button type="button" onClick={music.playNext} aria-label={isEn ? "Next" : "下一首"} title={isEn ? "Next" : "下一首"}>
         <SkipForward size={14} />
       </button>
       <div className="saki-pet-music-meta">
@@ -570,27 +821,50 @@ function SakiMusicBar({ pet, isEn }: { pet: SakiPetController; isEn: boolean }) 
           {formatTrackTime(music.currentTime)} / {formatTrackTime(music.duration)}
         </span>
       </div>
-      <label className="saki-pet-music-vol">
-        <Volume2 size={13} />
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={music.volume}
-          onChange={(event) => music.setVolume(Number(event.target.value))}
-        />
-      </label>
+      <div className="saki-pet-music-vol-wrapper" ref={volWrapRef}>
+        <button
+          type="button"
+          className={`saki-pet-music-vol-btn ${volOpen ? "active" : ""}`}
+          onClick={() => setVolOpen((prev) => !prev)}
+          aria-label={isEn ? "Volume" : "音量"}
+          title={isEn ? `Volume: ${Math.round(music.volume * 100)}%` : `音量: ${Math.round(music.volume * 100)}%`}
+        >
+          {music.volume === 0 ? (
+            <VolumeX size={14} />
+          ) : music.volume < 0.5 ? (
+            <Volume1 size={14} />
+          ) : (
+            <Volume2 size={14} />
+          )}
+        </button>
+        {volOpen ? (
+          <VerticalVolumeSlider
+            volume={music.volume}
+            onChange={(v) => music.setVolume(v)}
+            isEn={isEn}
+          />
+        ) : null}
+      </div>
       <button
         type="button"
         className={music.loop !== "off" ? "active" : ""}
         onClick={() => music.setLoop(music.loop === "all" ? "one" : music.loop === "one" ? "off" : "all")}
         title={music.loop === "one" ? (isEn ? "Repeat one" : "单曲循环") : music.loop === "all" ? (isEn ? "Repeat all" : "列表循环") : isEn ? "No repeat" : "不循环"}
+        aria-label={music.loop === "one" ? (isEn ? "Repeat one" : "单曲循环") : music.loop === "all" ? (isEn ? "Repeat all" : "列表循环") : isEn ? "No repeat" : "不循环"}
       >
         {music.loop === "one" ? <Repeat1 size={14} /> : <Repeat size={14} />}
       </button>
-      <button type="button" onClick={() => pet.openWidget("music")} aria-label={isEn ? "Playlist" : "播放列表"}>
+      <button type="button" onClick={() => pet.openWidget("music")} aria-label={isEn ? "Playlist" : "播放列表"} title={isEn ? "Playlist" : "播放列表"}>
         <ListMusic size={14} />
+      </button>
+      <button
+        type="button"
+        className="saki-pet-music-close"
+        onClick={handleClose}
+        aria-label={isEn ? "Close" : "关闭"}
+        title={isEn ? "Close player" : "关闭播放栏"}
+      >
+        <X size={14} />
       </button>
     </div>
   );

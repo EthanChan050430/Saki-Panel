@@ -1,6 +1,6 @@
 {
   "name": "@webops/shared",
-  "version": "3.7.0",
+  "version": "4.0.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.mjs",

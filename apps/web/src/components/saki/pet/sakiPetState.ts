@@ -30,6 +30,7 @@ export type SakiPetBehavior =
   | "happy"
   | "eat"
   | "doctor"
+  | "toilet"
   | "pickup"
   | "bath"
   | "poke"
@@ -512,6 +513,16 @@ export function useSakiPet({
     [commitPosition, currentPosition, pickTarget, setPosition]
   );
 
+  const wakeUp = useCallback(() => {
+    if (behavior !== "sleep") return;
+    startBehavior("idle", 18000);
+  }, [behavior, startBehavior]);
+
+  const finishToilet = useCallback(() => {
+    if (behavior !== "toilet") return;
+    startBehavior("idle", 14000);
+  }, [behavior, startBehavior]);
+
   useEffect(() => {
     if (!enabled || chatOpen) return;
     let timer: number | null = null;
@@ -523,15 +534,19 @@ export function useSakiPet({
         return;
       }
       if (Date.now() >= behaviorUntilRef.current) {
-        const hour = new Date().getHours();
-        const roll = Math.random();
-        if (stats.hunger < 22 && roll < 0.45) startBehavior(Math.random() < 0.5 ? "sit" : "sleep");
-        else if ((hour >= 23 || hour < 6) && roll < 0.5) startBehavior("sleep");
-        else if (roll < 0.28) startBehavior("sit");
-        else if (roll < 0.4) startBehavior("lie");
-        else if (roll < 0.52) startBehavior("sleep");
-        else if (roll < 0.62) startBehavior("yawn", 2800);
-        else startBehavior("idle", 14000);
+        if (behavior === "toilet") {
+          startBehavior("idle", 14000);
+        } else {
+          const hour = new Date().getHours();
+          const roll = Math.random();
+          if (stats.hunger < 22 && roll < 0.45) startBehavior(Math.random() < 0.5 ? "sit" : "sleep");
+          else if ((hour >= 23 || hour < 6) && roll < 0.5) startBehavior("sleep");
+          else if (roll < 0.28) startBehavior("sit");
+          else if (roll < 0.4) startBehavior("lie");
+          else if (roll < 0.52) startBehavior("sleep");
+          else if (roll < 0.62) startBehavior("yawn", 2800);
+          else startBehavior("idle", 14000);
+        }
       }
       timer = window.setTimeout(fire, Math.max(0, behaviorUntilRef.current - Date.now()));
     };
@@ -539,10 +554,10 @@ export function useSakiPet({
     return () => {
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [chatOpen, dragging, edgeAttached, enabled, paused, startBehavior, stats.hunger]);
+  }, [behavior, chatOpen, dragging, edgeAttached, enabled, paused, startBehavior, stats.hunger]);
 
   const applyCare = useCallback(
-    (kind: "feed" | "pet" | "sleep" | "bath" | "doctor" | "play", amount = 0) => {
+    (kind: "feed" | "pet" | "sleep" | "bath" | "doctor" | "toilet" | "play", amount = 0) => {
       if (kind === "feed") {
         patchStats({ hunger: stats.hunger + Math.max(12, amount), mood: stats.mood + 8, health: stats.health + 2 });
         startBehavior("eat", 5600);
@@ -563,6 +578,9 @@ export function useSakiPet({
         patchStats({ health: 100, mood: stats.mood + 6 });
         playFx("sparkle");
         startBehavior("doctor", 5600);
+      } else if (kind === "toilet") {
+        patchStats({ mood: stats.mood + 4, health: stats.health + 2 });
+        startBehavior("toilet", 30000);
       } else {
         patchStats({ mood: stats.mood + 12 });
         startBehavior("roll", 2200);
@@ -705,6 +723,8 @@ export function useSakiPet({
     setChaseMouse,
     behavior,
     startBehavior,
+    wakeUp,
+    finishToilet,
     facing,
     lookDeg,
     fx,

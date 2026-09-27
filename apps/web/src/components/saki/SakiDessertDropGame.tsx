@@ -831,8 +831,18 @@ export function SakiDessertDropGame({ onClose, onFinish, onBackToPhone }: SakiDe
                     draggable={false}
                   />
                   <div className="character-sweets-float" aria-hidden="true">
-                    <img src="/assets/game/caomeidafu.webp" alt="" className="sweet-icon sweet-left w-5 h-5 object-contain" />
-                    <img src="/assets/game/donut.webp" alt="" className="sweet-icon sweet-right w-5 h-5 object-contain" />
+                    <img
+                      src="/assets/game/caomeidafu.webp"
+                      alt=""
+                      className="sweet-icon sweet-left"
+                      style={{ width: "22px", height: "22px", maxWidth: "22px", maxHeight: "22px", objectFit: "contain" }}
+                    />
+                    <img
+                      src="/assets/game/donut.webp"
+                      alt=""
+                      className="sweet-icon sweet-right"
+                      style={{ width: "22px", height: "22px", maxWidth: "22px", maxHeight: "22px", objectFit: "contain" }}
+                    />
                     <Sparkles size={16} className="sweet-icon sweet-spark text-amber-300" />
                   </div>
                 </div>

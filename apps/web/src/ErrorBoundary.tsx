@@ -49,7 +49,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
           <img
             src="/assets/expression/daemon_offline.webp"
             alt="Error"
-            style={{ width: "96px", height: "96px", objectFit: "contain", marginBottom: "4px" }}
+            style={{ width: "96px", height: "132px", objectFit: "contain", marginBottom: "4px" }}
             draggable={false}
           />
           <h3 style={{ margin: 0, fontSize: "16px", color: "var(--text-main, #1e293b)" }}>组件出现异常</h3>

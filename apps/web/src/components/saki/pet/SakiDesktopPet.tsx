@@ -5,6 +5,7 @@ import {
   Camera,
   ClipboardList,
   Clock,
+  DoorClosed,
   Heart,
   MessageSquare,
   Moon,
@@ -314,10 +315,13 @@ export function SakiDesktopPet({
               }}
             />
             <TrayChip
-              icon={<PawPrint size={11} />}
-              label={t("saki.pet.skins")}
-              active={pet.widget === "skins"}
-              onClick={() => toggleWidget(pet, "skins")}
+              icon={<DoorClosed size={11} />}
+              label={t("saki.pet.toilet")}
+              onClick={() => {
+                pet.applyCare("toilet");
+                onIntimacy?.(2);
+                pet.showBubble(t("saki.pet.toiletBubble"));
+              }}
             />
           </div>
         ) : null}

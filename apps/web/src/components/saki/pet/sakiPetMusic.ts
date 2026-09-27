@@ -128,6 +128,7 @@ export function useSakiPetMusic() {
   const [tracks, setTracks] = useState<SakiMusicTrack[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [visible, setVisible] = useState(false);
   const [loop, setLoop] = useState<SakiMusicLoop>("all");
   const [volume, setVolume] = useState(0.8);
   const [currentTime, setCurrentTime] = useState(0);
@@ -176,6 +177,7 @@ export function useSakiPetMusic() {
         if (autoplay) {
           await audio.play();
           setPlaying(true);
+          setVisible(true);
         } else {
           audio.pause();
           setPlaying(false);
@@ -199,7 +201,10 @@ export function useSakiPetMusic() {
       if (fromEnded && loopMode === "one" && currentIdRef.current) {
         const audio = getAudio();
         audio.currentTime = 0;
-        void audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+        void audio.play().then(() => {
+          setPlaying(true);
+          setVisible(true);
+        }).catch(() => setPlaying(false));
         return;
       }
       let nextIndex = index + dir;
@@ -295,7 +300,11 @@ export function useSakiPetMusic() {
         return next;
       });
       persistMeta();
-      if (!currentIdRef.current && added[0]) await loadTrack(added[0].id, true);
+      if (!currentIdRef.current && added[0]) {
+        await loadTrack(added[0].id, true);
+      } else {
+        setVisible(true);
+      }
       return added.length;
     },
     [loadTrack, persistMeta]
@@ -316,6 +325,7 @@ export function useSakiPetMusic() {
           currentIdRef.current = null;
           setCurrentTime(0);
           setDuration(0);
+          setVisible(false);
         }
       }
       persistMeta();
@@ -334,6 +344,7 @@ export function useSakiPetMusic() {
       try {
         await audio.play();
         setPlaying(true);
+        setVisible(true);
       } catch {
         setPlaying(false);
       }
@@ -378,6 +389,29 @@ export function useSakiPetMusic() {
     [loadTrack]
   );
 
+  const close = useCallback(() => {
+    const audio = getAudio();
+    audio.pause();
+    setPlaying(false);
+    setVisible(false);
+  }, [getAudio]);
+
+  const stop = useCallback(() => {
+    const audio = getAudio();
+    audio.pause();
+    audio.currentTime = 0;
+    setCurrentTime(0);
+    setPlaying(false);
+    setVisible(false);
+  }, [getAudio]);
+
+  const show = useCallback(() => {
+    setVisible(true);
+    if (!currentIdRef.current && tracksRef.current[0]) {
+      void loadTrackRef.current(tracksRef.current[0].id, false);
+    }
+  }, []);
+
   const current = tracks.find((item) => item.id === currentId) ?? null;
 
   return {
@@ -385,6 +419,7 @@ export function useSakiPetMusic() {
     current,
     currentId,
     playing,
+    visible,
     loop,
     volume,
     currentTime,
@@ -397,7 +432,11 @@ export function useSakiPetMusic() {
     playPrev: () => playNext(-1, false),
     seek,
     setVolume: setVolumeSafe,
-    setLoop: setLoopSafe
+    setLoop: setLoopSafe,
+    setVisible,
+    close,
+    stop,
+    show
   };
 }
 

@@ -26,6 +26,7 @@
   --surface-border-light: rgba(203, 213, 225, 0.5);
   --app-background-image: url('/assets/background.webp');
   --mobile-background-image: url('/assets/background_mobile.webp');
+  --workspace-background-wash: rgba(251, 249, 253, 0.28);
   --login-cover-image: url('/assets/cover.webp');
   --sidebar-accent: #ff75ac;
   --sidebar-accent-bg: rgba(255, 117, 172, 0.12);
@@ -112,6 +113,7 @@
   --surface-bg-medium: rgba(36, 37, 46, 0.65);
   --surface-bg-light: rgba(36, 37, 46, 0.45);
   --surface-bg-faint: rgba(36, 37, 46, 0.28);
+  --workspace-background-wash: rgba(9, 12, 23, 0.32);
   --surface-border: rgba(255, 255, 255, 0.1);
   --surface-border-subtle: rgba(255, 255, 255, 0.08);
   --surface-border-light: rgba(255, 255, 255, 0.05);
@@ -598,9 +600,9 @@
 
 [data-theme="dark"] .metric-detail-backdrop {
   background:
-    radial-gradient(circle at 12% 8%, rgba(255, 117, 172, 0.18), transparent 36%),
-    radial-gradient(circle at 88% 92%, rgba(37, 99, 235, 0.12), transparent 32%),
-    rgba(2, 6, 23, 0.62);
+    radial-gradient(circle at 12% 8%, rgba(255, 117, 172, 0.14), transparent 36%),
+    radial-gradient(circle at 88% 92%, rgba(37, 99, 235, 0.10), transparent 32%),
+    rgba(2, 6, 23, 0.42);
 }
 
 [data-theme="dark"] .metric-detail-modal {
@@ -1340,7 +1342,7 @@
 }
 
 [data-theme="dark"] .modal-backdrop {
-  background: linear-gradient(135deg, rgba(0, 0, 0, 0.5) 0%, rgba(0, 0, 0, 0.6) 100%);
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.32) 0%, rgba(0, 0, 0, 0.42) 100%);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
@@ -1433,15 +1435,15 @@
 
 [data-theme="dark"] .account-backdrop {
   background:
-    radial-gradient(circle at 34% 20%, rgba(255, 117, 172, 0.18), transparent 30%),
-    radial-gradient(circle at 68% 78%, rgba(255, 117, 172, 0.16), transparent 34%),
-    rgba(0, 0, 0, 0.5);
+    radial-gradient(circle at 34% 20%, rgba(255, 117, 172, 0.14), transparent 30%),
+    radial-gradient(circle at 68% 78%, rgba(255, 117, 172, 0.12), transparent 34%),
+    rgba(0, 0, 0, 0.35);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
 
 [data-theme="dark"] .file-conflict-backdrop {
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.35);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
@@ -1505,8 +1507,8 @@
 
 [data-theme="dark"] .audit-detail-backdrop {
   background:
-    radial-gradient(circle at 24% 20%, rgba(255, 117, 172, 0.18), transparent 32%),
-    rgba(0, 0, 0, 0.5);
+    radial-gradient(circle at 24% 20%, rgba(255, 117, 172, 0.14), transparent 32%),
+    rgba(0, 0, 0, 0.35);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
@@ -8047,5 +8049,33 @@ table th {
 
 [data-theme="dark"] .plugin-header-primary-btn {
   border-radius: 10px !important;
+}
+
+body:has(.app-shell) {
+  background-image: linear-gradient(var(--workspace-background-wash), var(--workspace-background-wash)), var(--app-background-image) !important;
+}
+
+@media (max-width: 768px) {
+  body:has(.app-shell) {
+    background-image: linear-gradient(var(--workspace-background-wash), var(--workspace-background-wash)), var(--mobile-background-image) !important;
+  }
+}
+
+body.has-desktop-video-bg:has(.app-shell),
+body.has-mobile-video-bg:has(.app-shell) {
+  background-image: none !important;
+}
+
+@media (max-width: 768px) {
+  body.has-desktop-video-bg:not(.has-mobile-video-bg):has(.app-shell) {
+    background-image: linear-gradient(var(--workspace-background-wash), var(--workspace-background-wash)), var(--mobile-background-image) !important;
+  }
+}
+
+.app-bg-video-container::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--workspace-background-wash);
 }
 

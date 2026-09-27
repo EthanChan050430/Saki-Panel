@@ -434,7 +434,7 @@
   padding: 32px 28px !important;
   margin: 0 !important;
   z-index: 25000 !important;
-  background: rgba(15, 23, 42, 0.56) !important;
+  background: rgba(15, 23, 42, 0.38) !important;
   backdrop-filter: blur(16px) saturate(180%) !important;
   -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
   display: flex !important;
@@ -447,7 +447,7 @@
 }
 
 [data-theme="dark"] .modal-fullscreen-backdrop {
-  background: rgba(5, 8, 16, 0.72) !important;
+  background: rgba(5, 8, 16, 0.48) !important;
 }
 
 .modal-fullscreen-panel,

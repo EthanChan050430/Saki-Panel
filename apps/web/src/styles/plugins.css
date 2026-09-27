@@ -1297,7 +1297,7 @@
   position: fixed;
   inset: 0;
   z-index: 100000;
-  background: rgba(8, 10, 15, 0.88);
+  background: rgba(8, 10, 15, 0.55);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   display: flex;

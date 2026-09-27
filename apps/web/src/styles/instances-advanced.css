@@ -4710,7 +4710,7 @@ button,
     justify-content: stretch !important;
     overflow: hidden !important;
     z-index: 1300 !important;
-    background: rgba(0, 0, 0, 0.65) !important;
+    background: rgba(0, 0, 0, 0.40) !important;
   }
 
   .modal-backdrop > .modal-panel,

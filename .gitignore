@@ -85,6 +85,10 @@ temp_verify.ps1
 _new_db_styles.css
 *.traineddata
 scratch/
+work/
+pic_tmp/
+__pycache__/
+*.pyc
 .tmp-*/
 bin/
 dist-package/

@@ -109,27 +109,135 @@
   z-index: 2;
 }
 
+.saki-pet-wake-button {
+  position: absolute;
+  top: -8px;
+  right: -6px;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  transition: transform 160ms ease;
+}
+
+.saki-pet-wake-button img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.saki-pet-wake-button:hover {
+  transform: scale(1.08);
+}
+
+.saki-pet-wake-button:active {
+  transform: scale(0.94);
+}
+
+.saki-pet-wake-button:focus-visible {
+  outline: 2px solid #d9468b;
+  outline-offset: 3px;
+}
+
+.saki-pet-stage.is-touch .saki-pet-wake-button {
+  width: 48px;
+  height: 48px;
+}
+
 .saki-pet-stage .saki-character-art.compact {
   transform: none;
   transform-origin: center bottom;
 }
 
-.saki-pet-stage.pet-bath .saki-character-art.compact .saki-character-image {
-  transform: scale(1.1);
+.saki-pet-stage .saki-character-art.is-idle-cycle,
+.saki-pet-stage .saki-character-art.is-bath-cycle,
+.saki-pet-stage .saki-character-art.is-poke-cycle,
+.saki-pet-stage .saki-character-art.is-pickup-cycle,
+.saki-pet-stage .saki-character-art.is-sit-cycle {
+  --saki-frame-scale: 1.13;
+  --saki-frame-offset: 7px;
+}
+
+.saki-pet-stage .saki-character-art.is-run-cycle {
+  --saki-frame-scale: 1.3;
+}
+
+.saki-pet-stage .saki-character-art.is-lie-cycle,
+.saki-pet-stage .saki-character-art.is-sleep-cycle {
+  --saki-frame-scale: 1.9;
+}
+
+.saki-pet-stage .saki-character-art.is-sleep-cycle {
+  --saki-frame-offset: 53px;
+}
+
+.saki-pet-stage .saki-character-art.is-roll-cycle {
+  --saki-frame-scale: 1.07;
+}
+
+.saki-pet-stage .saki-character-art.compact .saki-sprite-cycle,
+.saki-pet-stage .saki-character-art.is-idle-cycle .saki-character-image-idle-blink {
+  transform: translateY(var(--saki-frame-offset, 0px)) scale(var(--saki-frame-scale, 1));
   transform-origin: center bottom;
 }
 
-.saki-pet-stage.pet-roll .saki-character-art.compact .saki-character-image {
-  transform: scale(1.22);
-  transform-origin: center bottom;
+.saki-character-art.is-idle-cycle .saki-sprite-cycle {
+  transition: opacity var(--duration-fast) var(--ease-smooth);
+}
+
+.saki-character-art.compact .saki-character-image-idle-blink {
+  opacity: 0;
+  transition: none;
+}
+
+.saki-character-art.compact .saki-character-image-idle-blink.is-visible {
+  opacity: 1;
+}
+
+.saki-launcher:hover .saki-character-art.is-idle-cycle .saki-sprite-cycle,
+.saki-launcher:hover .saki-character-art.is-idle-cycle .saki-character-image-idle-blink {
+  opacity: 0;
 }
 
 .saki-pet-stage.pet-walk .saki-character-art.compact {
   animation: saki-pet-bob 0.42s ease-in-out infinite;
 }
 
-.saki-pet-stage.pet-roll .saki-character-art.compact {
-  animation: saki-pet-spin 0.7s ease-in-out;
+.saki-pet-stage.pet-walk .saki-sprite-layer,
+.saki-pet-stage .saki-character-art.is-run-cycle .saki-sprite-layer {
+  left: 50%;
+  right: auto;
+  width: auto;
+  height: 100%;
+  aspect-ratio: 432 / 686;
+  object-fit: fill;
+  translate: -50% 0;
+}
+
+.saki-pet-stage .saki-character-art.is-run-cycle .saki-sprite-layer {
+  aspect-ratio: 720 / 1280;
+  translate: -50% 14px;
+}
+
+.saki-pet-stage .saki-character-art.is-lie-cycle .saki-sprite-layer {
+  translate: 0 14px;
+}
+
+.saki-pet-stage .saki-character-art.is-roll-cycle .saki-sprite-layer {
+  left: 50%;
+  right: auto;
+  width: auto;
+  height: 100%;
+  aspect-ratio: 1112 / 834;
+  object-fit: fill;
+  translate: -50% 0;
 }
 
 .saki-pet-stage.pet-sleep .saki-character-image {
@@ -139,12 +247,6 @@
 @keyframes saki-pet-bob {
   0%, 100% { translate: 0 0; }
   50% { translate: 0 -5px; }
-}
-
-@keyframes saki-pet-spin {
-  0% { rotate: 0deg; }
-  40% { rotate: 28deg; }
-  100% { rotate: 0deg; }
 }
 
 .saki-pet-chrome {
@@ -873,18 +975,34 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px;
-  border-radius: 12px;
+  padding: 7px 8px;
+  border-radius: 14px;
   border: 1px solid rgba(226, 232, 240, 0.9);
-  background: #fff;
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   text-align: left;
   cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.saki-pet-feed-item:hover:not(.disabled) {
+  border-color: rgba(255, 117, 172, 0.45);
+  background: rgba(255, 241, 246, 0.9);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(255, 117, 172, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+.saki-pet-feed-item:active:not(.disabled) {
+  transform: translateY(0);
 }
 
 .saki-pet-feed-item img {
   width: 36px;
   height: 36px;
   object-fit: contain;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
 }
 
 .saki-pet-feed-item span {
@@ -1238,18 +1356,116 @@
   left: 50%;
   bottom: 22px;
   transform: translateX(-50%);
+  transform-origin: center center;
   z-index: 140;
   display: flex;
   align-items: center;
   gap: 6px;
   width: min(560px, calc(100vw - 24px));
-  padding: 10px 12px;
+  height: 48px;
+  box-sizing: border-box;
+  padding: 8px 12px;
   border-radius: 22px;
   background: var(--glass-bg, rgba(255, 255, 255, 0.65));
   border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.7));
   box-shadow: var(--glass-shadow, 0 10px 30px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.95));
   backdrop-filter: blur(22px) saturate(180%);
   -webkit-backdrop-filter: blur(22px) saturate(180%);
+  transition: bottom 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: sakiMusicBarOpen 0.38s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.saki-pet-music-bar.chat-open {
+  bottom: 148px;
+}
+
+.saki-pet-music-bar > * {
+  animation: sakiMusicBarContentEnter 0.38s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes sakiMusicBarContentEnter {
+  0% {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  35% {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes sakiMusicBarOpen {
+  0% {
+    transform: translateX(-50%) scaleX(0) scaleY(0.04);
+    opacity: 0;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 0 0 transparent;
+  }
+  38% {
+    transform: translateX(-50%) scaleX(0.24) scaleY(0.1);
+    opacity: 0.95;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 0 16px rgba(255, 117, 172, 0.65), 0 2px 8px rgba(0, 0, 0, 0.12);
+  }
+  100% {
+    transform: translateX(-50%) scale(1);
+    height: 48px;
+    opacity: 1;
+    padding: 8px 12px;
+    border-radius: 22px;
+    background: var(--glass-bg, rgba(255, 255, 255, 0.65));
+    box-shadow: var(--glass-shadow, 0 10px 30px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.95));
+  }
+}
+
+.saki-pet-music-bar.is-closing {
+  animation: sakiMusicBarClose 0.38s cubic-bezier(0.25, 1, 0.3, 1) forwards !important;
+  pointer-events: none !important;
+  overflow: hidden !important;
+}
+
+.saki-pet-music-bar.is-closing > * {
+  opacity: 0 !important;
+  transform: scale(0.85) !important;
+  transition: opacity 0.1s ease-out, transform 0.1s ease-out !important;
+  pointer-events: none !important;
+}
+
+@keyframes sakiMusicBarClose {
+  0% {
+    transform: translateX(-50%) scale(1);
+    opacity: 1;
+    border-radius: 22px;
+    background: var(--glass-bg, rgba(255, 255, 255, 0.65));
+    box-shadow: var(--glass-shadow, 0 10px 30px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.95));
+  }
+  42% {
+    transform: translateX(-50%) scaleX(0.24) scaleY(0.1);
+    opacity: 0.95;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 0 18px rgba(255, 117, 172, 0.7), 0 2px 8px rgba(0, 0, 0, 0.12);
+  }
+  75% {
+    transform: translateX(-50%) scaleX(0.08) scaleY(0.08);
+    opacity: 0.7;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 0 10px rgba(255, 117, 172, 0.4);
+  }
+  100% {
+    transform: translateX(-50%) scaleX(0) scaleY(0.04);
+    opacity: 0;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 0 0 transparent;
+  }
 }
 
 .saki-pet-music-bar button {
@@ -1271,6 +1487,17 @@
   color: #ff75ac;
   background: rgba(255, 117, 172, 0.16);
   border-color: rgba(255, 117, 172, 0.28);
+}
+
+.saki-pet-music-bar button.saki-pet-music-close {
+  color: #94a3b8;
+  margin-left: 2px;
+}
+
+.saki-pet-music-bar button.saki-pet-music-close:hover {
+  color: #e11d48;
+  background: rgba(255, 228, 230, 0.85);
+  border-color: rgba(251, 113, 133, 0.4);
 }
 
 .saki-pet-music-play {
@@ -1309,8 +1536,7 @@
   color: var(--text-secondary, #86868b);
 }
 
-.saki-pet-music-meta input[type="range"],
-.saki-pet-music-vol input[type="range"] {
+.saki-pet-music-meta input[type="range"] {
   width: 100%;
   height: 4px;
   margin: 0;
@@ -1320,8 +1546,7 @@
   outline: none;
 }
 
-.saki-pet-music-meta input[type="range"]::-webkit-slider-thumb,
-.saki-pet-music-vol input[type="range"]::-webkit-slider-thumb {
+.saki-pet-music-meta input[type="range"]::-webkit-slider-thumb {
   appearance: none;
   width: 12px;
   height: 12px;
@@ -1332,12 +1557,121 @@
   cursor: pointer;
 }
 
-.saki-pet-music-vol {
+/* Vertical Volume Popover */
+.saki-pet-music-vol-wrapper {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
-  width: 92px;
-  color: #94a3b8;
+}
+
+.saki-pet-volume-popover {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 38px;
+  padding: 8px 6px;
+  border-radius: 18px;
+  background: var(--glass-bg, rgba(255, 255, 255, 0.78));
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.8));
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 150;
+  user-select: none;
+  animation: sakiVolumePopEnter 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes sakiVolumePopEnter {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px) scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+.saki-pet-volume-percent {
+  font-size: 10px;
+  font-weight: 700;
+  color: #db2777;
+  line-height: 1;
+  letter-spacing: -0.2px;
+  text-align: center;
+}
+
+.saki-pet-volume-vertical-track {
+  position: relative;
+  width: 6px;
+  height: 96px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.25);
+  cursor: pointer;
+  touch-action: none;
+  outline: none;
+  transition: background 0.15s ease;
+}
+
+.saki-pet-volume-vertical-track:hover,
+.saki-pet-volume-vertical-track.dragging {
+  background: rgba(148, 163, 184, 0.38);
+}
+
+.saki-pet-volume-vertical-fill {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ff8fbf, #ff75ac);
+  box-shadow: 0 0 8px rgba(255, 117, 172, 0.5);
+  transition: height 0.05s linear;
+}
+
+.saki-pet-volume-vertical-thumb {
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1.5px solid #ff75ac;
+  box-shadow: 0 2px 6px rgba(255, 117, 172, 0.4);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.saki-pet-volume-vertical-track:hover .saki-pet-volume-vertical-thumb,
+.saki-pet-volume-vertical-track.dragging .saki-pet-volume-vertical-thumb {
+  transform: translateX(-50%) scale(1.18);
+  box-shadow: 0 3px 10px rgba(255, 117, 172, 0.6);
+}
+
+.saki-pet-volume-mute-btn {
+  width: 24px !important;
+  height: 24px !important;
+  border-radius: 8px !important;
+  border: 1px solid rgba(255, 255, 255, 0.6) !important;
+  background: rgba(255, 255, 255, 0.5) !important;
+  color: #64748b !important;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0 !important;
+  box-shadow: none !important;
+}
+
+.saki-pet-volume-mute-btn:hover {
+  color: #ff75ac !important;
+  background: rgba(255, 117, 172, 0.18) !important;
+  border-color: rgba(255, 117, 172, 0.3) !important;
 }
 
 .saki-pet-music-list {
@@ -1426,6 +1760,12 @@
   color: #cbd5e1;
 }
 
+[data-theme="dark"] .saki-pet-music-bar button.saki-pet-music-close:hover {
+  color: #fda4af;
+  background: rgba(225, 29, 72, 0.25);
+  border-color: rgba(251, 113, 133, 0.35);
+}
+
 [data-theme="dark"] .saki-pet-music-meta strong {
   color: #f8fafc;
 }
@@ -1441,9 +1781,29 @@
   color: #94a3b8;
 }
 
-[data-theme="dark"] .saki-pet-music-remove:hover {
-  color: #fb7185;
-  background: rgba(244, 63, 94, 0.16);
+[data-theme="dark"] .saki-pet-volume-popover {
+  background: rgba(15, 23, 42, 0.85);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .saki-pet-volume-percent {
+  color: #f472b6;
+}
+
+[data-theme="dark"] .saki-pet-volume-vertical-track {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+[data-theme="dark"] .saki-pet-volume-vertical-thumb {
+  background: #fff;
+  border-color: #f472b6;
+}
+
+[data-theme="dark"] .saki-pet-volume-mute-btn {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  color: #cbd5e1 !important;
 }
 
 /* 深色模式透明液态玻璃 — 统一玻璃底色/边框/内高光与纯白高对比度文字图标 */
@@ -1590,10 +1950,54 @@
 }
 
 [data-theme="dark"] .saki-pet-widget-card header strong,
-[data-theme="dark"] .saki-pet-feed-item b,
 [data-theme="dark"] .saki-pet-clock-row {
   color: #ffffff !important;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+}
+
+/* 喂食列表深色模式适配 */
+[data-theme="dark"] .saki-pet-feed-item {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-top-color: rgba(255, 255, 255, 0.22);
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+}
+
+[data-theme="dark"] .saki-pet-feed-item:hover:not(.disabled) {
+  background: rgba(255, 117, 172, 0.16);
+  border-color: rgba(255, 117, 172, 0.38);
+  border-top-color: rgba(255, 182, 212, 0.5);
+  box-shadow: 0 6px 20px rgba(255, 117, 172, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  transform: translateY(-1px);
+}
+
+[data-theme="dark"] .saki-pet-feed-item:active:not(.disabled) {
+  transform: translateY(0);
+}
+
+[data-theme="dark"] .saki-pet-feed-item b {
+  color: #f8fafc !important;
+  font-weight: 650;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+}
+
+[data-theme="dark"] .saki-pet-feed-item small {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .saki-pet-feed-item em {
+  color: #f472b6;
+  text-shadow: 0 0 10px rgba(244, 114, 182, 0.4);
+}
+
+[data-theme="dark"] .saki-pet-feed-item.disabled {
+  opacity: 0.35;
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.06);
+  box-shadow: none;
 }
 
 [data-theme="dark"] .saki-pet-skin-item {

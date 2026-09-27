@@ -2416,7 +2416,7 @@
     justify-content: stretch !important;
     overflow: hidden !important;
     z-index: 2000 !important;
-    background: rgba(0, 0, 0, 0.75) !important;
+    background: rgba(0, 0, 0, 0.48) !important;
     backdrop-filter: blur(16px) !important;
     -webkit-backdrop-filter: blur(16px) !important;
   }
@@ -2958,7 +2958,7 @@
     display: flex !important;
     align-items: flex-end !important;
     justify-content: stretch !important;
-    background: rgba(0, 0, 0, 0.7) !important;
+    background: rgba(0, 0, 0, 0.45) !important;
     backdrop-filter: blur(12px) !important;
     -webkit-backdrop-filter: blur(12px) !important;
     padding: 0 !important;

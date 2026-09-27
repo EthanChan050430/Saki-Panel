@@ -1081,7 +1081,7 @@
 
 .incident-empty-saki {
   width: 80px;
-  height: 80px;
+  height: 112px;
   object-fit: contain;
   filter: drop-shadow(0 6px 14px rgba(255, 117, 172, 0.2));
   animation: saki-empty-float 3s ease-in-out infinite alternate;

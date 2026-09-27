@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 
-export type SpritePlayMode = "once" | "pingpong";
+export type SpritePlayMode = "once" | "pingpong" | "loop";
 
 export function useSpritePlayhead(
   count: number,
@@ -30,6 +30,7 @@ export function useSpritePlayhead(
           if (current >= count - 1) return current;
           return current + 1;
         }
+        if (mode === "loop") return (current + 1) % count;
         const next = current + dirRef.current;
         if (next >= count - 1) {
           dirRef.current = -1;
@@ -70,12 +71,14 @@ export function SakiSpriteCycle({
   mode,
   intervalMs,
   compact = false,
+  crossfade = true,
   onComplete
 }: {
   frames: readonly string[];
   mode: SpritePlayMode;
   intervalMs: number;
   compact?: boolean | undefined;
+  crossfade?: boolean;
   onComplete?: (() => void) | undefined;
 }) {
   const index = useSpritePlayhead(frames.length, mode, intervalMs, frames.join("|"), onComplete);
@@ -89,12 +92,13 @@ export function SakiSpriteCycle({
 
   useEffect(() => {
     if (index === shown) return;
-    const previous = frames[shown];
+    const previous = crossfade ? frames[shown] : null;
     setOutgoing(previous ?? null);
     setShown(index);
+    if (!previous) return;
     const timer = window.setTimeout(() => setOutgoing(null), 340);
     return () => window.clearTimeout(timer);
-  }, [index, frames, shown]);
+  }, [index, frames, shown, crossfade]);
 
   const current = frames[shown] ?? frames[0];
   if (!current) return null;

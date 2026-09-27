@@ -1956,7 +1956,7 @@
 
 .saki-empty-illustration {
   width: 128px;
-  height: 128px;
+  height: 176px;
   object-fit: contain;
   filter: drop-shadow(0 10px 22px rgba(255, 117, 172, 0.15));
   user-select: none;
@@ -1966,7 +1966,7 @@
 
 .saki-empty-state.compact .saki-empty-illustration {
   width: 76px;
-  height: 76px;
+  height: 108px;
   filter: drop-shadow(0 6px 14px rgba(255, 117, 172, 0.12));
 }
 
@@ -3535,7 +3535,11 @@ body.saki-selection-capture-active .saki-launcher {
 
 .character-sweets-float .sweet-icon {
   position: absolute;
-  font-size: 14px;
+  width: 22px;
+  height: 22px;
+  max-width: 22px;
+  max-height: 22px;
+  object-fit: contain;
   filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.3));
 }
 
@@ -3554,6 +3558,8 @@ body.saki-selection-capture-active .saki-launcher {
 .character-sweets-float .sweet-spark {
   right: 0px;
   bottom: 0px;
+  width: 16px;
+  height: 16px;
   animation: sakiRankStarTwinkle 1.6s ease-in-out infinite alternate;
 }
 

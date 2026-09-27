@@ -481,7 +481,6 @@ export function SakiFloatingChat({
       }
     };
   }, [onLauncherDraggingChange]);
-  const [draggingExpression, setDraggingExpression] = useState<string | null>(null);
   const [storedConversations, setStoredConversations] = useState<StoredSakiConversation[]>(() => readSakiConversations());
   const [activeConversationId, setActiveConversationId] = useState(() => newClientId());
   const activeConversationIdRef = useRef(activeConversationId);
@@ -1767,7 +1766,6 @@ export function SakiFloatingChat({
       if (distance <= (drag.slop ?? 3)) return;
       drag.moved = true;
       pet.dismissMenu();
-      setDraggingExpression(Math.random() > 0.5 ? sakiArtAssets.pickup1 : sakiArtAssets.pickup2);
       setLauncherDragging(true);
       onLauncherDraggingChange?.(true);
       const stage = petStageRef.current ?? (sizeElement as HTMLElement | null);
@@ -1826,7 +1824,6 @@ export function SakiFloatingChat({
       launcherDragRef.current = null;
       setLauncherDragging(false);
       onLauncherDraggingChange?.(false);
-      setDraggingExpression(null);
       suppressLauncherClickRef.current = true;
       globalThis.setTimeout(() => {
         suppressLauncherClickRef.current = false;
@@ -1872,7 +1869,6 @@ export function SakiFloatingChat({
     launcherDragRef.current = null;
     setLauncherDragging(false);
     onLauncherDraggingChange?.(false);
-    setDraggingExpression(null);
   }
 
   function handleLauncherPointerDown(event: React.PointerEvent<HTMLButtonElement>) {
@@ -1978,7 +1974,6 @@ export function SakiFloatingChat({
       moved: true,
       slop: 12
     };
-    setDraggingExpression(Math.random() > 0.5 ? sakiArtAssets.pickup1 : sakiArtAssets.pickup2);
     setLauncherDragging(true);
     onLauncherDraggingChange?.(true);
 
@@ -3979,7 +3974,6 @@ export function SakiFloatingChat({
         fileDragActive={fileDragActive}
         artMood={artMood}
         activityMood={effectiveActivityMood}
-        draggingExpression={draggingExpression}
         pet={pet}
         language={language}
         intimacyLevel={getFavorabilityLevelInfo(sakiFavorabilityExp).level}

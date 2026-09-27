@@ -2609,7 +2609,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(15, 15, 20, 0.55);
+  background: rgba(15, 15, 20, 0.38);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   padding: 16px;
@@ -3320,7 +3320,7 @@ tbody tr:hover {
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
-  background: rgba(12, 14, 20, 0.65) !important;
+  background: rgba(12, 14, 20, 0.45) !important;
   backdrop-filter: blur(28px) !important;
   -webkit-backdrop-filter: blur(28px) !important;
   padding: 24px !important;

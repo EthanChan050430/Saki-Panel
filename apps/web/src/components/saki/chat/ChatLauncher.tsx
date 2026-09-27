@@ -3,6 +3,7 @@ import { SakiCharacterArt, type SakiActivityMood, type SakiArtMood } from "../Sa
 import { SakiDesktopPet } from "../pet/SakiDesktopPet.js";
 import { SakiPetDesktopBits } from "../pet/SakiPetWidgets.js";
 import { isSakiPetTouchUi, type SakiPetController } from "../pet/sakiPetState.js";
+import { panelT } from "../../../i18n/translations.js";
 
 function usePetTouchUi() {
   const [touchUi, setTouchUi] = useState(() => isSakiPetTouchUi());
@@ -37,7 +38,6 @@ export interface ChatLauncherProps {
   fileDragActive: boolean;
   artMood: SakiArtMood;
   activityMood?: SakiActivityMood;
-  draggingExpression?: string | null | undefined;
   pet: SakiPetController;
   language?: string | undefined;
   intimacyLevel: number;
@@ -72,7 +72,6 @@ export function ChatLauncher({
   fileDragActive,
   artMood,
   activityMood = null,
-  draggingExpression,
   pet,
   language,
   intimacyLevel,
@@ -111,7 +110,7 @@ export function ChatLauncher({
   }, [sakiLieMode, touchUi, menuOpen, open, pet.dismissMenu, petStageRef]);
 
   if (sakiLieMode) {
-    return <SakiPetDesktopBits pet={pet} language={language} />;
+    return <SakiPetDesktopBits pet={pet} language={language} chatOpen={open} />;
   }
 
   const petPose = launcherDragging
@@ -185,12 +184,28 @@ export function ChatLauncher({
           fileDrop={fileDragActive}
           edgeAttached={launcherEdgeAttached && !launcherDragging}
           dragging={launcherDragging}
-          draggingExpressionSrc={draggingExpression ?? null}
           activityMood={activityMood}
           petPose={petPose}
+          onToiletFinished={pet.finishToilet}
         />
       </button>
-      <SakiPetDesktopBits pet={pet} language={language} />
+      {!open && !launcherDragging && !launcherEdgeAttached && !pet.music.playing && pet.behavior === "sleep" ? (
+        <button
+          className="saki-pet-wake-button"
+          type="button"
+          title={panelT(language || "zh-CN", "saki.pet.wake")}
+          aria-label={panelT(language || "zh-CN", "saki.pet.wake")}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            pet.wakeUp();
+            pet.dismissMenu();
+          }}
+        >
+          <img src="/assets/pet/wake_alarm.png" alt="" draggable={false} />
+        </button>
+      ) : null}
+      <SakiPetDesktopBits pet={pet} language={language} chatOpen={open} />
       {!open ? (
         <SakiDesktopPet
           pet={pet}
