@@ -2680,7 +2680,7 @@ export function SakiPlantSlayerGame({
 
           ctx.save();
           ctx.translate(fx, fy);
-          
+
           // 外发光环
           ctx.beginPath();
           ctx.arc(0, 0, 11, 0, Math.PI * 2);
