@@ -9,6 +9,7 @@
 Manage Minecraft, Steam, Docker, and ordinary processes from one web console. Saki uses live logs, files, and node metrics to help investigate incidents and can act after authorization.
 
 [Screenshots](#screenshots) · [Quick start](#quick-start) · [Download a release](https://github.com/EthanChan050430/Saki-Panel/releases/latest) · [简体中文](README.zh-CN.md)
+
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![check](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml/badge.svg)](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml)
 [![Release](https://img.shields.io/github/v/release/EthanChan050430/Saki-Panel)](https://github.com/EthanChan050430/Saki-Panel/releases/latest)
