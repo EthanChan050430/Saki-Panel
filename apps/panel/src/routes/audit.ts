@@ -125,10 +125,10 @@ function buildCategoryFilter(category?: AuditFocusCategory): Prisma.OperationLog
   return null;
 }
 
-function buildAuditWhere(query: AuditLogQueryParams): {
+async function buildAuditWhere(query: AuditLogQueryParams): Promise<{
   tableWhere: Prisma.OperationLogWhereInput;
   rangeWhere: Prisma.OperationLogWhereInput;
-} {
+}> {
   const andConditions: Prisma.OperationLogWhereInput[] = [];
   const rangeAndConditions: Prisma.OperationLogWhereInput[] = [];
 
@@ -155,17 +155,42 @@ function buildAuditWhere(query: AuditLogQueryParams): {
   if (query.actor?.trim()) {
     const actorTrim = query.actor.trim();
     if (actorTrim.toLowerCase() === "system" || actorTrim === "系统") {
-      const cond = { userId: null };
+      const cond: Prisma.OperationLogWhereInput = { userId: null };
       andConditions.push(cond);
       rangeAndConditions.push(cond);
     } else {
-      const cond: Prisma.OperationLogWhereInput = {
-        OR: [
-          { userId: { contains: actorTrim } },
-          { user: { username: { contains: actorTrim } } },
-          { user: { displayName: { contains: actorTrim } } }
-        ]
-      };
+      const matchingUsers = await prisma.user.findMany({
+        where: {
+          OR: [
+            { id: { contains: actorTrim } },
+            { username: { contains: actorTrim } },
+            { displayName: { contains: actorTrim } }
+          ]
+        },
+        select: { id: true, username: true }
+      });
+      const userIds = matchingUsers.map((u) => u.id);
+      const usernames = matchingUsers.map((u) => u.username).filter(Boolean);
+
+      const orList: Prisma.OperationLogWhereInput[] = [
+        { userId: { contains: actorTrim } },
+        { user: { username: { contains: actorTrim } } },
+        { user: { displayName: { contains: actorTrim } } }
+      ];
+
+      if (userIds.length > 0) {
+        orList.push({ userId: { in: userIds } });
+      }
+
+      for (const uname of new Set([actorTrim, ...usernames])) {
+        orList.push({
+          userId: null,
+          action: { startsWith: "auth." },
+          payload: { contains: `"username":${JSON.stringify(uname)}` }
+        });
+      }
+
+      const cond: Prisma.OperationLogWhereInput = { OR: orList };
       andConditions.push(cond);
       rangeAndConditions.push(cond);
     }
@@ -209,8 +234,21 @@ function buildAuditWhere(query: AuditLogQueryParams): {
 
   if (query.keyword?.trim()) {
     const kw = query.keyword.trim();
+    const matchingUsers = await prisma.user.findMany({
+      where: {
+        OR: [
+          { id: { contains: kw } },
+          { username: { contains: kw } },
+          { displayName: { contains: kw } }
+        ]
+      },
+      select: { id: true }
+    });
+    const userIds = matchingUsers.map((u) => u.id);
+
     const cond: Prisma.OperationLogWhereInput = {
       OR: [
+        ...(userIds.length > 0 ? [{ userId: { in: userIds } }] : []),
         { action: { contains: kw } },
         { resourceType: { contains: kw } },
         { resourceId: { contains: kw } },
@@ -467,7 +505,7 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
     const limit = positiveInt(query.limit, 20, 100);
     const skip = (page - 1) * limit;
 
-    const { tableWhere, rangeWhere } = buildAuditWhere(query);
+    const { tableWhere, rangeWhere } = await buildAuditWhere(query);
     const orderBy = buildOrderBy(query.sortBy, query.sortOrder);
 
     const [total, logs, summary, retention, sampleResourceTypes, sampleActions, allUsers] = await Promise.all([
@@ -510,7 +548,7 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/audit/export", { preHandler: requirePermission("audit.view") }, async (request, reply) => {
     const query = request.query as AuditLogQueryParams & { format?: "csv" | "json" };
     const format = query.format === "json" ? "json" : "csv";
-    const { tableWhere } = buildAuditWhere(query);
+    const { tableWhere } = await buildAuditWhere(query);
     const orderBy = buildOrderBy(query.sortBy, query.sortOrder);
 
     const logs = await prisma.operationLog.findMany({
@@ -798,7 +836,27 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
     const andConditions: Prisma.SakiConversationWhereInput[] = [];
 
     if (query.userId?.trim()) {
-      andConditions.push({ userId: query.userId.trim() });
+      const userVal = query.userId.trim();
+      const matchingUsers = await prisma.user.findMany({
+        where: {
+          OR: [
+            { id: { contains: userVal } },
+            { username: { contains: userVal } },
+            { displayName: { contains: userVal } }
+          ]
+        },
+        select: { id: true }
+      });
+      const userIds = matchingUsers.map((u) => u.id);
+
+      andConditions.push({
+        OR: [
+          ...(userIds.length > 0 ? [{ userId: { in: userIds } }] : []),
+          { userId: userVal },
+          { user: { username: { contains: userVal } } },
+          { user: { displayName: { contains: userVal } } }
+        ]
+      });
     }
 
     if (query.instanceId?.trim()) {
@@ -836,7 +894,7 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
 
     const where: Prisma.SakiConversationWhereInput = andConditions.length > 0 ? { AND: andConditions } : {};
 
-    const [total, rows] = await Promise.all([
+    const [total, rows, allUsers] = await Promise.all([
       prisma.sakiConversation.count({ where }),
       prisma.sakiConversation.findMany({
         where,
@@ -853,6 +911,10 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
             }
           }
         }
+      }),
+      prisma.user.findMany({
+        select: { id: true, username: true, displayName: true, avatarDataUrl: true },
+        orderBy: { username: "asc" }
       })
     ]);
 
@@ -903,7 +965,10 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
       total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit) || 1
+      totalPages: Math.ceil(total / limit) || 1,
+      facets: {
+        users: allUsers
+      }
     };
   });
 

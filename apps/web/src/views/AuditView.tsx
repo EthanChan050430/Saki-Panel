@@ -66,6 +66,8 @@ import { api, ApiError } from "../api.js";
 import { PageErrorToast } from "../components/common/CommonUI.js";
 import { SakiEmptyState } from "../components/saki/SakiEmptyState.js";
 import { FilePreviewModal } from "../components/common/FilePreviewModal.js";
+import { AuditDiffLens } from "../components/audit/AuditDiffLens.js";
+import { firstAuditText } from "../components/audit/auditDiff.js";
 import { formatBytes, formatDate } from "../utils/path.js";
 
 const auditActionLabels: Record<string, string> = {
@@ -365,6 +367,21 @@ function renderAuditPayloadDetails(
           </div>
         )}
 
+        {parsed.args && ["writefile", "editlines", "replaceinfile"].includes(parsed.tool) && firstAuditText(parsed.args.targetContent, parsed.args.oldContent, parsed.args.replacementContent, parsed.args.newContent, parsed.args.content) !== undefined && (
+          <div className="tool-section">
+            <div className="tool-section-head">
+              <span className="section-label">代码变动透镜 (Code Diff Lens)</span>
+            </div>
+            <AuditDiffLens
+              originalText={firstAuditText(parsed.args.targetContent, parsed.args.oldContent) ?? ""}
+              modifiedText={firstAuditText(parsed.args.replacementContent, parsed.args.newContent, parsed.args.content, parsed.args.code) ?? ""}
+              filePath={firstAuditText(parsed.args.filePath, parsed.args.path, parsed.args.file)}
+              title={`变动透镜: ${parsed.tool}`}
+              action={parsed.tool}
+            />
+          </div>
+        )}
+
         {parsed.observation && (
           <div className="tool-section">
             <div className="tool-section-head">
@@ -474,6 +491,20 @@ function renderAuditPayloadDetails(
               </div>
             )}
           </div>
+
+          {(typeof parsed.content === "string" || typeof parsed.diff === "string") && (
+            <div className="file-diff-section" style={{ marginTop: 10 }}>
+              {typeof parsed.content === "string" ? (
+              <AuditDiffLens
+                originalText={firstAuditText(parsed.oldContent) ?? ""}
+                modifiedText={parsed.content}
+                filePath={firstAuditText(filePath)}
+                title={`变动透镜: ${filePath || opLabel}`}
+                action={log.action}
+              />
+              ) : <pre className="args-pre">{parsed.diff}</pre>}
+            </div>
+          )}
 
           {hasPreview && (
             <div className="file-action-buttons">
@@ -715,6 +746,10 @@ export function AuditView({
       setSakiConversations(res.data);
       setSakiConvTotal(res.total);
       setSakiConvTotalPages(res.totalPages);
+      if (res.facets?.users) {
+        const fetchedUsers = res.facets.users;
+        setFacets((prev) => ({ ...prev, users: fetchedUsers }));
+      }
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         onLogout();
@@ -958,6 +993,16 @@ export function AuditView({
     const q = sakiConvUserSearch.toLowerCase().trim();
     return list.filter((u) => u.username.toLowerCase().includes(q) || u.displayName.toLowerCase().includes(q));
   }, [facets.users, sakiConvUserSearch]);
+
+  const selectedActorUser = useMemo(() => {
+    if (!filterActor || filterActor === "system") return null;
+    return (facets.users || []).find((u) => u.username === filterActor || u.id === filterActor);
+  }, [filterActor, facets.users]);
+
+  const selectedSakiConvUser = useMemo(() => {
+    if (!sakiConvUser) return null;
+    return (facets.users || []).find((u) => u.username === sakiConvUser || u.id === sakiConvUser);
+  }, [sakiConvUser, facets.users]);
 
   const allPageSelected = logs.length > 0 && logs.every((l) => selectedLogIds.includes(l.id));
 
@@ -1297,138 +1342,146 @@ export function AuditView({
             </div>
 
             <div className="audit-main-bar">
-              <div className="audit-search-field">
-                <Search size={14} className="search-icon" />
-                <input
-                  type="text"
-                  placeholder="搜索操作者、IP、资源、Saki对话、动作或关键词..."
-                  value={filterKeyword}
-                  onChange={(e) => {
-                    setFilterKeyword(e.target.value);
-                    setPage(1);
-                  }}
-                />
-                {filterKeyword && (
-                  <button type="button" className="clear-btn" onClick={() => setFilterKeyword("")}>
-                    <X size={13} />
-                  </button>
-                )}
-              </div>
-
-              <div className="user-filter-wrapper" ref={userDropdownRef}>
-                <button
-                  type="button"
-                  className={`small-button user-filter-btn ${filterActor ? "has-user" : "secondary"}`}
-                  onClick={() => setUserDropdownOpen((prev) => !prev)}
-                >
-                  <Users size={13} />
-                  <span className="user-filter-label">
-                    {filterActor ? (filterActor === "system" ? "系统操作" : filterActor) : "操作者筛选"}
-                  </span>
-                  {filterActor ? (
-                    <span
-                      className="clear-user-x"
-                      title="清除用户筛选"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setFilterActor("");
-                        setPage(1);
-                      }}
-                    >
-                      <X size={12} />
-                    </span>
-                  ) : (
-                    <ChevronDown size={12} />
+              <div className="audit-search-row">
+                <div className="audit-search-field">
+                  <Search size={14} className="search-icon" />
+                  <input
+                    type="text"
+                    placeholder="搜索操作者、IP、资源、Saki对话、动作或关键词..."
+                    value={filterKeyword}
+                    onChange={(e) => {
+                      setFilterKeyword(e.target.value);
+                      setPage(1);
+                    }}
+                  />
+                  {filterKeyword && (
+                    <button type="button" className="clear-btn" onClick={() => setFilterKeyword("")}>
+                      <X size={13} />
+                    </button>
                   )}
-                </button>
+                </div>
 
-                {userDropdownOpen && (
-                  <div className="user-filter-popover">
-                    <div className="user-popover-search">
-                      <Search size={12} />
-                      <input
-                        type="text"
-                        placeholder="搜索用户名或昵称..."
-                        value={userDropdownSearch}
-                        onChange={(e) => setUserDropdownSearch(e.target.value)}
-                        autoFocus
-                      />
-                    </div>
-
-                    <div className="user-popover-list">
-                      <button
-                        type="button"
-                        className={`user-option-item ${!filterActor ? "selected" : ""}`}
-                        onClick={() => {
+                <div className="user-filter-wrapper" ref={userDropdownRef}>
+                  <button
+                    type="button"
+                    className={`small-button user-filter-btn ${filterActor ? "has-user" : "secondary"}`}
+                    onClick={() => setUserDropdownOpen((prev) => !prev)}
+                  >
+                    <Users size={13} />
+                    <span className="user-filter-label">
+                      {filterActor
+                        ? filterActor === "system"
+                          ? "系统操作"
+                          : selectedActorUser
+                          ? selectedActorUser.displayName
+                          : filterActor
+                        : "操作者筛选"}
+                    </span>
+                    {filterActor ? (
+                      <span
+                        className="clear-user-x"
+                        title="清除用户筛选"
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setFilterActor("");
-                          setUserDropdownOpen(false);
                           setPage(1);
                         }}
                       >
-                        <div className="user-option-avatar all-users-icon">
-                          <Users size={12} />
-                        </div>
-                        <div className="user-option-info">
-                          <span className="user-option-name">全部操作者</span>
-                          <span className="user-option-sub">不限用户</span>
-                        </div>
-                        {!filterActor && <Check size={13} className="option-check" />}
-                      </button>
+                        <X size={12} />
+                      </span>
+                    ) : (
+                      <ChevronDown size={12} />
+                    )}
+                  </button>
 
-                      <button
-                        type="button"
-                        className={`user-option-item ${filterActor === "system" ? "selected" : ""}`}
-                        onClick={() => {
-                          setFilterActor("system");
-                          setUserDropdownOpen(false);
-                          setPage(1);
-                        }}
-                      >
-                        <div className="user-option-avatar system-icon">
-                          <Server size={12} />
-                        </div>
-                        <div className="user-option-info">
-                          <span className="user-option-name">系统内部操作</span>
-                          <span className="user-option-sub">system / 定时任务</span>
-                        </div>
-                        {filterActor === "system" && <Check size={13} className="option-check" />}
-                      </button>
+                  {userDropdownOpen && (
+                    <div className="user-filter-popover">
+                      <div className="user-popover-search">
+                        <Search size={12} />
+                        <input
+                          type="text"
+                          placeholder="搜索用户名或昵称..."
+                          value={userDropdownSearch}
+                          onChange={(e) => setUserDropdownSearch(e.target.value)}
+                          autoFocus
+                        />
+                      </div>
 
-                      {filteredUsers.length === 0 && (
-                        <div className="user-popover-empty">未匹配到用户</div>
-                      )}
+                      <div className="user-popover-list">
+                        <button
+                          type="button"
+                          className={`user-option-item ${!filterActor ? "selected" : ""}`}
+                          onClick={() => {
+                            setFilterActor("");
+                            setUserDropdownOpen(false);
+                            setPage(1);
+                          }}
+                        >
+                          <div className="user-option-avatar all-users-icon">
+                            <Users size={12} />
+                          </div>
+                          <div className="user-option-info">
+                            <span className="user-option-name">全部操作者</span>
+                            <span className="user-option-sub">不限用户</span>
+                          </div>
+                          {!filterActor && <Check size={13} className="option-check" />}
+                        </button>
 
-                      {filteredUsers.map((u) => {
-                        const isSelected = filterActor === u.username;
-                        return (
-                          <button
-                            key={u.id}
-                            type="button"
-                            className={`user-option-item ${isSelected ? "selected" : ""}`}
-                            onClick={() => {
-                              setFilterActor(u.username);
-                              setUserDropdownOpen(false);
-                              setPage(1);
-                            }}
-                          >
-                            <div className="user-option-avatar">
-                              {u.avatarDataUrl ? (
-                                <img src={u.avatarDataUrl} alt={u.username} />
-                              ) : (
-                                <span>{u.displayName?.[0] || u.username[0] || "U"}</span>
-                              )}
-                            </div>
-                            <div className="user-option-info">
-                              <span className="user-option-name">{u.displayName}</span>
-                              <span className="user-option-sub">@{u.username}</span>
-                            </div>
-                            {isSelected && <Check size={13} className="option-check" />}
-                          </button>
-                        );
-                      })}
+                        <button
+                          type="button"
+                          className={`user-option-item ${filterActor === "system" ? "selected" : ""}`}
+                          onClick={() => {
+                            setFilterActor("system");
+                            setUserDropdownOpen(false);
+                            setPage(1);
+                          }}
+                        >
+                          <div className="user-option-avatar system-icon">
+                            <Server size={12} />
+                          </div>
+                          <div className="user-option-info">
+                            <span className="user-option-name">系统内部操作</span>
+                            <span className="user-option-sub">system / 定时任务</span>
+                          </div>
+                          {filterActor === "system" && <Check size={13} className="option-check" />}
+                        </button>
+
+                        {filteredUsers.length === 0 && (
+                          <div className="user-popover-empty">未匹配到用户</div>
+                        )}
+
+                        {filteredUsers.map((u) => {
+                          const isSelected = filterActor === u.username || filterActor === u.id;
+                          return (
+                            <button
+                              key={u.id}
+                              type="button"
+                              className={`user-option-item ${isSelected ? "selected" : ""}`}
+                              onClick={() => {
+                                setFilterActor(u.username);
+                                setUserDropdownOpen(false);
+                                setPage(1);
+                              }}
+                            >
+                              <div className="user-option-avatar">
+                                {u.avatarDataUrl ? (
+                                  <img src={u.avatarDataUrl} alt={u.username} />
+                                ) : (
+                                  <span>{u.displayName?.[0] || u.username[0] || "U"}</span>
+                                )}
+                              </div>
+                              <div className="user-option-info">
+                                <span className="user-option-name">{u.displayName}</span>
+                                <span className="user-option-sub">@{u.username}</span>
+                              </div>
+                              {isSelected && <Check size={13} className="option-check" />}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
 
               <div className="audit-time-pills">
@@ -1907,115 +1960,121 @@ export function AuditView({
         {activeTab === "saki_conversations" && isSuperAdmin && (
           <div className="audit-saki-conversations-view">
             <div className="saki-conv-toolbar">
-              <div className="audit-search-field">
-                <Search size={14} className="search-icon" />
-                <input
-                  type="text"
-                  placeholder="搜索会话标题、消息文本、用户、环境..."
-                  value={sakiConvKeyword}
-                  onChange={(e) => {
-                    setSakiConvKeyword(e.target.value);
-                    setSakiConvPage(1);
-                  }}
-                />
-                {sakiConvKeyword && (
-                  <button type="button" className="clear-btn" onClick={() => setSakiConvKeyword("")}>
-                    <X size={13} />
-                  </button>
-                )}
-              </div>
-
-              <div className="user-filter-wrapper" ref={sakiUserDropdownRef}>
-                <button
-                  type="button"
-                  className={`small-button user-filter-btn ${sakiConvUser ? "has-user" : "secondary"}`}
-                  onClick={() => setSakiConvUserDropdownOpen((prev) => !prev)}
-                >
-                  <Users size={13} />
-                  <span className="user-filter-label">
-                    {sakiConvUser ? `用户: ${sakiConvUser}` : "全部用户"}
-                  </span>
-                  {sakiConvUser ? (
-                    <span
-                      className="clear-user-x"
-                      title="清除用户筛选"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSakiConvUser("");
-                        setSakiConvPage(1);
-                      }}
-                    >
-                      <X size={12} />
-                    </span>
-                  ) : (
-                    <ChevronDown size={12} />
+              <div className="audit-search-row">
+                <div className="audit-search-field">
+                  <Search size={14} className="search-icon" />
+                  <input
+                    type="text"
+                    placeholder="搜索会话标题、消息文本、用户、环境..."
+                    value={sakiConvKeyword}
+                    onChange={(e) => {
+                      setSakiConvKeyword(e.target.value);
+                      setSakiConvPage(1);
+                    }}
+                  />
+                  {sakiConvKeyword && (
+                    <button type="button" className="clear-btn" onClick={() => setSakiConvKeyword("")}>
+                      <X size={13} />
+                    </button>
                   )}
-                </button>
+                </div>
 
-                {sakiConvUserDropdownOpen && (
-                  <div className="user-filter-popover">
-                    <div className="user-popover-search">
-                      <Search size={12} />
-                      <input
-                        type="text"
-                        placeholder="搜索用户名或昵称..."
-                        value={sakiConvUserSearch}
-                        onChange={(e) => setSakiConvUserSearch(e.target.value)}
-                        autoFocus
-                      />
-                    </div>
-
-                    <div className="user-popover-list">
-                      <button
-                        type="button"
-                        className={`user-option-item ${!sakiConvUser ? "selected" : ""}`}
-                        onClick={() => {
+                <div className="user-filter-wrapper" ref={sakiUserDropdownRef}>
+                  <button
+                    type="button"
+                    className={`small-button user-filter-btn ${sakiConvUser ? "has-user" : "secondary"}`}
+                    onClick={() => setSakiConvUserDropdownOpen((prev) => !prev)}
+                  >
+                    <Users size={13} />
+                    <span className="user-filter-label">
+                      {sakiConvUser
+                        ? selectedSakiConvUser
+                          ? `用户: ${selectedSakiConvUser.displayName}`
+                          : `用户: ${sakiConvUser}`
+                        : "全部用户"}
+                    </span>
+                    {sakiConvUser ? (
+                      <span
+                        className="clear-user-x"
+                        title="清除用户筛选"
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setSakiConvUser("");
-                          setSakiConvUserDropdownOpen(false);
                           setSakiConvPage(1);
                         }}
                       >
-                        <div className="user-option-avatar all-users-icon">
-                          <Users size={12} />
-                        </div>
-                        <div className="user-option-info">
-                          <span className="user-option-name">全部用户对话</span>
-                          <span className="user-option-sub">跨所有用户</span>
-                        </div>
-                        {!sakiConvUser && <Check size={13} className="option-check" />}
-                      </button>
+                        <X size={12} />
+                      </span>
+                    ) : (
+                      <ChevronDown size={12} />
+                    )}
+                  </button>
 
-                      {filteredSakiUsers.map((u) => {
-                        const isSelected = sakiConvUser === u.username;
-                        return (
-                          <button
-                            key={u.id}
-                            type="button"
-                            className={`user-option-item ${isSelected ? "selected" : ""}`}
-                            onClick={() => {
-                              setSakiConvUser(u.username);
-                              setSakiConvUserDropdownOpen(false);
-                              setSakiConvPage(1);
-                            }}
-                          >
-                            <div className="user-option-avatar">
-                              {u.avatarDataUrl ? (
-                                <img src={u.avatarDataUrl} alt={u.username} />
-                              ) : (
-                                <span>{u.displayName?.[0] || u.username[0] || "U"}</span>
-                              )}
-                            </div>
-                            <div className="user-option-info">
-                              <span className="user-option-name">{u.displayName}</span>
-                              <span className="user-option-sub">@{u.username}</span>
-                            </div>
-                            {isSelected && <Check size={13} className="option-check" />}
-                          </button>
-                        );
-                      })}
+                  {sakiConvUserDropdownOpen && (
+                    <div className="user-filter-popover">
+                      <div className="user-popover-search">
+                        <Search size={12} />
+                        <input
+                          type="text"
+                          placeholder="搜索用户名或昵称..."
+                          value={sakiConvUserSearch}
+                          onChange={(e) => setSakiConvUserSearch(e.target.value)}
+                          autoFocus
+                        />
+                      </div>
+
+                      <div className="user-popover-list">
+                        <button
+                          type="button"
+                          className={`user-option-item ${!sakiConvUser ? "selected" : ""}`}
+                          onClick={() => {
+                            setSakiConvUser("");
+                            setSakiConvUserDropdownOpen(false);
+                            setSakiConvPage(1);
+                          }}
+                        >
+                          <div className="user-option-avatar all-users-icon">
+                            <Users size={12} />
+                          </div>
+                          <div className="user-option-info">
+                            <span className="user-option-name">全部用户对话</span>
+                            <span className="user-option-sub">跨所有用户</span>
+                          </div>
+                          {!sakiConvUser && <Check size={13} className="option-check" />}
+                        </button>
+
+                        {filteredSakiUsers.map((u) => {
+                          const isSelected = sakiConvUser === u.username || sakiConvUser === u.id;
+                          return (
+                            <button
+                              key={u.id}
+                              type="button"
+                              className={`user-option-item ${isSelected ? "selected" : ""}`}
+                              onClick={() => {
+                                setSakiConvUser(u.username);
+                                setSakiConvUserDropdownOpen(false);
+                                setSakiConvPage(1);
+                              }}
+                            >
+                              <div className="user-option-avatar">
+                                {u.avatarDataUrl ? (
+                                  <img src={u.avatarDataUrl} alt={u.username} />
+                                ) : (
+                                  <span>{u.displayName?.[0] || u.username[0] || "U"}</span>
+                                )}
+                              </div>
+                              <div className="user-option-info">
+                                <span className="user-option-name">{u.displayName}</span>
+                                <span className="user-option-sub">@{u.username}</span>
+                              </div>
+                              {isSelected && <Check size={13} className="option-check" />}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
 
               <div className="audit-time-pills">

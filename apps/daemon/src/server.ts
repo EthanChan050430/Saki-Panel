@@ -7,6 +7,7 @@ import { authenticatePanelRequest } from "./daemon-auth.js";
 import { DaemonError, isDaemonError } from "./errors.js";
 import { applyRestartLeases, instanceManager } from "./instance-manager.js";
 import { registerFileRoutes } from "./routes/files.js";
+import { registerGitRoutes } from "./routes/git.js";
 import { registerInstanceRoutes } from "./routes/instances.js";
 import { registerTerminalRoutes } from "./routes/terminal.js";
 import { registerDatabaseRoutes } from "./routes/databases.js";
@@ -69,6 +70,7 @@ export async function createDaemonServer() {
 
   await registerInstanceRoutes(app);
   await registerFileRoutes(app);
+  await registerGitRoutes(app);
   await registerTerminalRoutes(app);
   await registerDatabaseRoutes(app);
   await registerProgressRoutes(app);

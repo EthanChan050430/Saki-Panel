@@ -39,3 +39,5 @@ if (!existsSync(typesDir)) {
 const dtsFile = path.join(typesDir, "index.d.ts");
 const rootDtsFile = path.join(distDir, "index.d.ts");
 safeCopy(dtsFile, rootDtsFile);
+// 根声明文件使用同目录的 Git 类型。
+safeCopy(path.join(typesDir, "git.d.ts"), path.join(distDir, "git.d.ts"));

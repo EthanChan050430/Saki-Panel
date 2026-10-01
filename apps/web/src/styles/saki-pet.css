@@ -65,25 +65,28 @@
 
 .saki-pet-stage.edge-right .saki-character-image-edge {
   transform: scaleX(-1);
+  transform-origin: center center;
 }
 
 .saki-pet-stage.edge-left .saki-character-image-edge {
   transform: none;
+  transform-origin: center center;
 }
 
-.saki-pet-stage.edge-right .saki-pet-chrome {
+.saki-pet-stage.edge-right .saki-pet-chrome,
+.saki-pet-stage.edge-right .saki-pet-arc-wrapper {
   left: auto;
-  right: 0;
+  right: calc(100% + 8px);
   margin-left: 0;
-  width: min(196px, calc(100vw - 16px));
-  align-items: flex-end;
+  margin-right: 0;
 }
 
-.saki-pet-stage.edge-left .saki-pet-chrome {
-  left: 0;
+.saki-pet-stage.edge-left .saki-pet-chrome,
+.saki-pet-stage.edge-left .saki-pet-arc-wrapper {
+  left: calc(100% + 8px);
+  right: auto;
   margin-left: 0;
-  width: min(196px, calc(100vw - 16px));
-  align-items: flex-start;
+  margin-right: 0;
 }
 
 .saki-pet-stage.edge-right .saki-pet-bubble {
@@ -99,14 +102,21 @@
 }
 
 .saki-pet-stage .saki-launcher {
-  position: relative;
-  left: auto;
-  right: auto;
-  top: auto;
-  bottom: auto;
-  width: 100%;
-  height: 100%;
-  z-index: 2;
+  position: relative !important;
+  left: 0 !important;
+  right: auto !important;
+  top: 0 !important;
+  bottom: auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+  transform: none !important;
+  z-index: 2 !important;
 }
 
 .saki-pet-wake-button {
@@ -247,6 +257,585 @@
 @keyframes saki-pet-bob {
   0%, 100% { translate: 0 0; }
   50% { translate: 0 -5px; }
+}
+
+
+
+
+.saki-pet-agent-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.saki-pet-agent-layer.is-active {
+  z-index: 22;
+}
+
+
+.saki-pet-arc-wrapper {
+  position: absolute;
+  top: 32%;
+  transform: translateY(-50%) scale(0.70);
+  pointer-events: none;
+  opacity: 0;
+  transition:
+    transform 0.22s cubic-bezier(0.32, 0, 0.67, 0),
+    opacity 0.18s cubic-bezier(0.32, 0, 0.67, 0);
+  z-index: 11;
+}
+
+
+.saki-pet-arc-wrapper.side-right {
+  left: 100%;
+  margin-left: 14px;
+  transform-origin: left center;
+}
+
+
+.saki-pet-arc-wrapper.side-left {
+  right: 100%;
+  margin-right: 14px;
+  transform-origin: right center;
+}
+
+.saki-pet-arc-wrapper.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%) scale(1);
+  transition:
+    transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+
+.saki-pet-arc-dock {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+}
+
+
+.saki-pet-arc-track-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+  opacity: 0.45;
+  transition: opacity 0.28s ease;
+}
+
+.saki-pet-arc-wrapper:not(.is-open) .saki-pet-arc-track-svg {
+  opacity: 0;
+}
+
+.saki-pet-arc-track-path {
+  fill: none;
+  stroke: rgba(255, 117, 172, 0.45);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-dasharray: 2 4;
+}
+
+[data-backdrop="dark"] .saki-pet-arc-track-path,
+[data-theme="dark"] .saki-pet-arc-track-path {
+  stroke: rgba(255, 180, 215, 0.35);
+}
+
+
+.saki-pet-arc-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.75) !important;
+  border-top-color: rgba(255, 255, 255, 0.95) !important;
+  border-bottom-color: rgba(203, 213, 225, 0.55) !important;
+  background: rgba(255, 255, 255, 0.60) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.92),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.30),
+    0 8px 20px rgba(15, 23, 42, 0.12) !important;
+  backdrop-filter: blur(24px) saturate(190%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(190%) contrast(1.05) !important;
+  cursor: pointer;
+  outline: none;
+  transition:
+    transform 0.24s cubic-bezier(0.34, 1.56, 0.64, 1),
+    background 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.24s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+
+.saki-pet-arc-wrapper.side-right .saki-pet-arc-btn.companion {
+  transform: translateX(3px);
+}
+.saki-pet-arc-wrapper.side-right .saki-pet-arc-btn.chat {
+  transform: translateX(16px);
+  width: 46px;
+  height: 46px;
+  border-radius: 15px;
+}
+.saki-pet-arc-wrapper.side-right .saki-pet-arc-btn.tools {
+  transform: translateX(6px);
+}
+
+
+.saki-pet-arc-wrapper.side-left .saki-pet-arc-btn.companion {
+  transform: translateX(-3px);
+}
+.saki-pet-arc-wrapper.side-left .saki-pet-arc-btn.chat {
+  transform: translateX(-16px);
+  width: 46px;
+  height: 46px;
+  border-radius: 15px;
+}
+.saki-pet-arc-wrapper.side-left .saki-pet-arc-btn.tools {
+  transform: translateX(-6px);
+}
+
+
+.saki-pet-arc-wrapper.is-open.side-right .saki-pet-arc-btn.companion {
+  animation: saki-arc-btn-in-right-companion 0.34s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+  animation-delay: 0ms;
+}
+.saki-pet-arc-wrapper.is-open.side-right .saki-pet-arc-btn.chat {
+  animation: saki-arc-btn-in-right-chat 0.38s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+  animation-delay: 35ms;
+}
+.saki-pet-arc-wrapper.is-open.side-right .saki-pet-arc-btn.tools {
+  animation: saki-arc-btn-in-right-tools 0.40s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+  animation-delay: 70ms;
+}
+
+.saki-pet-arc-wrapper.is-open.side-left .saki-pet-arc-btn.companion {
+  animation: saki-arc-btn-in-left-companion 0.34s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+  animation-delay: 0ms;
+}
+.saki-pet-arc-wrapper.is-open.side-left .saki-pet-arc-btn.chat {
+  animation: saki-arc-btn-in-left-chat 0.38s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+  animation-delay: 35ms;
+}
+.saki-pet-arc-wrapper.is-open.side-left .saki-pet-arc-btn.tools {
+  animation: saki-arc-btn-in-left-tools 0.40s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+  animation-delay: 70ms;
+}
+
+@keyframes saki-arc-btn-in-right-companion {
+  0% { opacity: 0; transform: translateX(0px) scale(0.3); }
+  100% { opacity: 1; transform: translateX(3px) scale(1); }
+}
+@keyframes saki-arc-btn-in-right-chat {
+  0% { opacity: 0; transform: translateX(0px) scale(0.3); }
+  100% { opacity: 1; transform: translateX(16px) scale(1); }
+}
+@keyframes saki-arc-btn-in-right-tools {
+  0% { opacity: 0; transform: translateX(0px) scale(0.3); }
+  100% { opacity: 1; transform: translateX(6px) scale(1); }
+}
+
+@keyframes saki-arc-btn-in-left-companion {
+  0% { opacity: 0; transform: translateX(0px) scale(0.3); }
+  100% { opacity: 1; transform: translateX(-3px) scale(1); }
+}
+@keyframes saki-arc-btn-in-left-chat {
+  0% { opacity: 0; transform: translateX(0px) scale(0.3); }
+  100% { opacity: 1; transform: translateX(-16px) scale(1); }
+}
+@keyframes saki-arc-btn-in-left-tools {
+  0% { opacity: 0; transform: translateX(0px) scale(0.3); }
+  100% { opacity: 1; transform: translateX(-6px) scale(1); }
+}
+
+
+.saki-pet-arc-wrapper.side-right .saki-pet-arc-btn.companion:hover {
+  transform: translateX(3px) scale(1.10);
+}
+.saki-pet-arc-wrapper.side-right .saki-pet-arc-btn.chat:hover {
+  transform: translateX(16px) scale(1.10);
+}
+.saki-pet-arc-wrapper.side-right .saki-pet-arc-btn.tools:hover {
+  transform: translateX(6px) scale(1.10);
+}
+
+.saki-pet-arc-wrapper.side-left .saki-pet-arc-btn.companion:hover {
+  transform: translateX(-3px) scale(1.10);
+}
+.saki-pet-arc-wrapper.side-left .saki-pet-arc-btn.chat:hover {
+  transform: translateX(-16px) scale(1.10);
+}
+.saki-pet-arc-wrapper.side-left .saki-pet-arc-btn.tools:hover {
+  transform: translateX(-6px) scale(1.10);
+}
+
+.saki-pet-arc-btn:active {
+  transform: scale(0.92) !important;
+}
+
+
+.saki-pet-arc-btn-icon {
+  display: grid;
+  place-items: center;
+  color: #1e293b;
+  transition: color 0.16s ease, transform 0.16s ease;
+}
+
+.saki-pet-arc-btn.companion .saki-pet-arc-btn-icon {
+  color: #db2777;
+}
+
+.saki-pet-arc-btn.chat {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 230, 240, 0.75) 0%,
+    rgba(255, 185, 215, 0.55) 100%
+  ) !important;
+  border-color: rgba(255, 182, 217, 0.85) !important;
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.95),
+    0 8px 24px rgba(255, 117, 172, 0.32) !important;
+}
+
+.saki-pet-arc-btn.chat .saki-pet-arc-btn-icon {
+  color: #be123c;
+}
+
+.saki-pet-arc-btn.tools .saki-pet-arc-btn-icon {
+  color: #7c3aed;
+}
+
+
+.saki-pet-arc-btn.active {
+  background: rgba(255, 117, 172, 0.28) !important;
+  border-color: rgba(255, 117, 172, 0.85) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.85),
+    0 0 16px rgba(255, 117, 172, 0.45) !important;
+}
+
+.saki-pet-arc-btn.tools.active {
+  background: rgba(139, 92, 246, 0.28) !important;
+  border-color: rgba(139, 92, 246, 0.85) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.85),
+    0 0 16px rgba(139, 92, 246, 0.45) !important;
+}
+
+
+[data-backdrop="dark"] .saki-pet-arc-btn,
+[data-theme="dark"] .saki-pet-arc-btn {
+  background: rgba(26, 26, 34, 0.72) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-top-color: rgba(255, 255, 255, 0.35) !important;
+  border-bottom-color: rgba(0, 0, 0, 0.50) !important;
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.22),
+    0 10px 24px rgba(0, 0, 0, 0.48) !important;
+}
+
+[data-backdrop="dark"] .saki-pet-arc-btn.chat,
+[data-theme="dark"] .saki-pet-arc-btn.chat {
+  background: linear-gradient(
+    135deg,
+    rgba(219, 39, 119, 0.45) 0%,
+    rgba(159, 18, 57, 0.40) 100%
+  ) !important;
+  border-color: rgba(255, 117, 172, 0.45) !important;
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.35),
+    0 10px 28px rgba(255, 64, 136, 0.35) !important;
+}
+
+[data-backdrop="dark"] .saki-pet-arc-btn.chat .saki-pet-arc-btn-icon,
+[data-theme="dark"] .saki-pet-arc-btn.chat .saki-pet-arc-btn-icon {
+  color: #ff94c2;
+}
+
+[data-backdrop="dark"] .saki-pet-arc-btn.companion .saki-pet-arc-btn-icon,
+[data-theme="dark"] .saki-pet-arc-btn.companion .saki-pet-arc-btn-icon {
+  color: #f472b6;
+}
+
+[data-backdrop="dark"] .saki-pet-arc-btn.tools .saki-pet-arc-btn-icon,
+[data-theme="dark"] .saki-pet-arc-btn.tools .saki-pet-arc-btn-icon {
+  color: #a78bfa;
+}
+
+
+.saki-pet-arc-btn-tooltip {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%) scale(0.9);
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.90);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.16s ease, transform 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 25;
+}
+
+.saki-pet-arc-wrapper.side-right .saki-pet-arc-btn-tooltip {
+  left: calc(100% + 8px);
+}
+
+.saki-pet-arc-wrapper.side-left .saki-pet-arc-btn-tooltip {
+  right: calc(100% + 8px);
+}
+
+.saki-pet-arc-btn:hover .saki-pet-arc-btn-tooltip {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+}
+
+
+.saki-pet-sub-arc-wrapper {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: auto;
+  z-index: 18;
+  user-select: none;
+}
+
+.saki-pet-sub-arc-wrapper.is-entering {
+  animation: saki-sub-arc-fade-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.saki-pet-sub-arc-wrapper.is-closing {
+  animation: saki-sub-arc-fade-out 0.22s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  pointer-events: none;
+}
+
+@keyframes saki-sub-arc-fade-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-50%) scale(0.85);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(-50%) scale(1);
+  }
+}
+
+@keyframes saki-sub-arc-fade-out {
+  0% {
+    opacity: 1;
+    transform: translateY(-50%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-50%) scale(0.82);
+  }
+}
+
+.saki-pet-sub-arc-wrapper.side-right {
+  left: calc(100% + 10px);
+  transform-origin: left center;
+}
+
+.saki-pet-sub-arc-wrapper.side-left {
+  right: calc(100% + 10px);
+  transform-origin: right center;
+}
+
+.saki-pet-sub-arc-dock {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 4px;
+}
+
+
+.saki-pet-sub-arc-track-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+  opacity: 0.40;
+}
+
+
+.saki-pet-sub-arc-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.78) !important;
+  border-top-color: rgba(255, 255, 255, 0.98) !important;
+  border-bottom-color: rgba(203, 213, 225, 0.50) !important;
+  background: rgba(255, 255, 255, 0.70) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.95),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.35),
+    0 8px 22px rgba(15, 23, 42, 0.12) !important;
+  backdrop-filter: blur(28px) saturate(190%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(190%) contrast(1.05) !important;
+  cursor: pointer;
+  outline: none;
+  transform: translateX(var(--arc-x, 0px));
+  transition:
+    transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1),
+    background 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.saki-pet-sub-arc-wrapper.is-entering .saki-pet-sub-arc-btn {
+  animation: saki-sub-arc-btn-pop 0.32s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+}
+
+.saki-pet-sub-arc-wrapper.is-closing .saki-pet-sub-arc-btn {
+  animation: saki-sub-arc-btn-shrink 0.18s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@keyframes saki-sub-arc-btn-pop {
+  0% {
+    opacity: 0;
+    transform: translateX(0) scale(0.3);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(var(--arc-x, 0px)) scale(1);
+  }
+}
+
+@keyframes saki-sub-arc-btn-shrink {
+  0% {
+    opacity: 1;
+    transform: translateX(var(--arc-x, 0px)) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(0px) scale(0.2);
+  }
+}
+
+.saki-pet-sub-arc-btn:hover {
+  background: rgba(255, 255, 255, 0.94) !important;
+  border-color: rgba(255, 117, 172, 0.65) !important;
+  transform: translateX(var(--arc-x, 0px)) scale(1.15) !important;
+  box-shadow:
+    inset 0 1px 1.5px #ffffff,
+    0 10px 26px rgba(255, 117, 172, 0.28),
+    0 4px 12px rgba(15, 23, 42, 0.10) !important;
+  z-index: 25;
+}
+
+.saki-pet-sub-arc-btn:active {
+  transform: translateX(var(--arc-x, 0px)) scale(0.90) !important;
+}
+
+.saki-pet-sub-arc-btn.active {
+  background: rgba(255, 117, 172, 0.26) !important;
+  border-color: rgba(255, 117, 172, 0.85) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.90),
+    0 0 18px rgba(255, 117, 172, 0.42) !important;
+}
+
+
+[data-backdrop="dark"] .saki-pet-sub-arc-btn,
+[data-theme="dark"] .saki-pet-sub-arc-btn {
+  background: rgba(26, 26, 36, 0.78) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-top-color: rgba(255, 255, 255, 0.35) !important;
+  border-bottom-color: rgba(0, 0, 0, 0.50) !important;
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.22),
+    0 10px 24px rgba(0, 0, 0, 0.50) !important;
+}
+
+[data-backdrop="dark"] .saki-pet-sub-arc-btn:hover,
+[data-theme="dark"] .saki-pet-sub-arc-btn:hover {
+  background: rgba(36, 36, 48, 0.92) !important;
+  border-color: rgba(255, 117, 172, 0.48) !important;
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.32),
+    0 12px 28px rgba(0, 0, 0, 0.60),
+    0 0 16px rgba(255, 117, 172, 0.30) !important;
+}
+
+.saki-pet-sub-arc-btn-icon {
+  display: grid;
+  place-items: center;
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.12));
+}
+
+.saki-pet-sub-arc-btn:hover .saki-pet-sub-arc-btn-icon {
+  transform: scale(1.15);
+}
+
+
+.saki-pet-sub-arc-btn-tooltip {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%) scale(0.92);
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.16s ease, transform 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 35;
+}
+
+.saki-pet-sub-arc-wrapper.side-right .saki-pet-sub-arc-btn-tooltip {
+  left: calc(100% + 8px);
+}
+
+.saki-pet-sub-arc-wrapper.side-left .saki-pet-sub-arc-btn-tooltip {
+  right: calc(100% + 8px);
+}
+
+.saki-pet-sub-arc-btn:hover .saki-pet-sub-arc-btn-tooltip {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+}
+
+
+.saki-pet-widget-card.side-right {
+  left: calc(100% + 14px);
+  right: auto;
+}
+
+.saki-pet-widget-card.side-left {
+  right: calc(100% + 14px);
+  left: auto;
 }
 
 .saki-pet-chrome {
@@ -704,34 +1293,57 @@
 .saki-pet-bubble {
   position: absolute;
   left: 50%;
-  bottom: calc(100% + 8px);
+  bottom: calc(100% + 14px);
   transform: translateX(-50%);
   width: max-content;
-  max-width: min(220px, 70vw);
-  padding: 7px 10px;
+  max-width: min(280px, 82vw);
+  padding: 8px 12px;
   border-radius: 12px 12px 12px 4px;
-  background: rgba(255, 255, 255, 0.65) !important;
-  border: 1px solid rgba(255, 255, 255, 0.85) !important;
-  border-top-color: rgba(255, 255, 255, 0.95) !important;
+  background: rgba(255, 255, 255, 0.85) !important;
+  border: 1px solid rgba(255, 255, 255, 0.9) !important;
+  border-top-color: rgba(255, 255, 255, 0.98) !important;
   border-bottom-color: rgba(203, 213, 225, 0.60) !important;
   color: #0f172a !important;
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.85);
   font-size: 12px;
-  font-weight: 700;
-  line-height: 1.4;
+  font-weight: 600;
+  line-height: 1.45;
   box-shadow:
     inset 0 1px 1.5px rgba(255, 255, 255, 0.90),
     inset 0 0 0 1px rgba(255, 255, 255, 0.30),
     0 10px 24px rgba(15, 23, 42, 0.14) !important;
-  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
-  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
-  z-index: 6;
-  pointer-events: none;
+  backdrop-filter: blur(20px) saturate(180%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) contrast(1.05) !important;
+  z-index: 40 !important;
+  pointer-events: auto;
+  cursor: pointer;
+  user-select: none;
   white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
   text-align: left;
-  transition: background 180ms ease, border-color 180ms ease, color 180ms ease;
+  transform-origin: bottom center;
+  animation: saki-bubble-pop-in 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 180ms ease, box-shadow 180ms ease, background 180ms ease;
+}
+
+@keyframes saki-bubble-pop-in {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px) scale(0.65);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+.saki-pet-bubble:hover {
+  transform: translateX(-50%) translateY(-2px);
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.95),
+    0 12px 28px rgba(255, 117, 172, 0.25),
+    0 0 0 1px rgba(255, 117, 172, 0.3) !important;
 }
 
 [data-backdrop="dark"] .saki-pet-bubble,
@@ -750,7 +1362,7 @@
 
 .saki-pet-bubble.is-below {
   bottom: auto;
-  top: calc(100% + 8px);
+  top: calc(100% + 14px);
   border-radius: 4px 12px 12px 12px;
 }
 
@@ -829,30 +1441,105 @@
 .saki-pet-widget-card {
   position: absolute;
   top: 8px;
-  width: 248px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.16) !important;
-  border: 1px solid rgba(255, 255, 255, 0.38) !important;
-  border-top-color: rgba(255, 255, 255, 0.60) !important;
-  border-bottom-color: rgba(255, 255, 255, 0.18) !important;
+  width: 254px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82) !important;
+  border: 1px solid rgba(255, 255, 255, 0.85) !important;
+  border-top-color: rgba(255, 255, 255, 0.98) !important;
+  border-bottom-color: rgba(203, 213, 225, 0.45) !important;
   box-shadow:
-    inset 0 1px 1.5px rgba(255, 255, 255, 0.40),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
-    0 18px 40px rgba(15, 23, 42, 0.14) !important;
-  backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
-  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(1.05) !important;
-  z-index: 7;
+    inset 0 1px 2px rgba(255, 255, 255, 0.95),
+    0 16px 40px rgba(15, 23, 42, 0.16),
+    0 2px 8px rgba(255, 117, 172, 0.12) !important;
+  backdrop-filter: blur(28px) saturate(190%) contrast(1.05) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(190%) contrast(1.05) !important;
+  z-index: 50 !important;
   overflow: hidden;
+  user-select: none;
+  pointer-events: auto !important;
+  touch-action: auto !important;
+}
+
+.saki-pet-widget-card button,
+.saki-pet-widget-card input,
+.saki-pet-widget-card textarea,
+.saki-pet-widget-card select,
+.saki-pet-widget-card form,
+.saki-pet-widget-card .saki-pet-feed-item,
+.saki-pet-widget-card .saki-pet-feed-list,
+.saki-pet-widget-card .saki-pet-widget-body {
+  pointer-events: auto !important;
+  touch-action: auto !important;
+}
+
+.saki-pet-widget-card.is-entering {
+  animation: saki-widget-card-enter 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.saki-pet-widget-card.is-closing {
+  animation: saki-widget-card-exit 0.22s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  pointer-events: none !important;
+}
+
+@keyframes saki-widget-card-enter {
+  0% {
+    opacity: 0;
+    transform: scale(0.85) translateY(-8px);
+    filter: blur(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: blur(0px);
+  }
+}
+
+@keyframes saki-widget-card-exit {
+  0% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: blur(0px);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.85) translateY(-6px);
+    filter: blur(4px);
+  }
 }
 
 .saki-pet-widget-card.edge-right {
   right: calc(100% + 12px);
   left: auto;
+  transform-origin: right top;
 }
 
 .saki-pet-widget-card.edge-left {
   left: calc(100% + 12px);
   right: auto;
+  transform-origin: left top;
+}
+
+.saki-pet-widget-card.side-right {
+  left: calc(100% + 14px);
+  right: auto;
+  transform-origin: left top;
+}
+
+.saki-pet-widget-card.side-left {
+  right: calc(100% + 14px);
+  left: auto;
+  transform-origin: right top;
+}
+
+[data-theme="dark"] .saki-pet-widget-card,
+[data-backdrop="dark"] .saki-pet-widget-card {
+  background: rgba(24, 24, 32, 0.84) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  border-top-color: rgba(255, 255, 255, 0.35) !important;
+  border-bottom-color: rgba(0, 0, 0, 0.50) !important;
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.22),
+    0 16px 44px rgba(0, 0, 0, 0.55) !important;
 }
 
 .saki-pet-widget-card header {
@@ -995,7 +1682,7 @@
 }
 
 .saki-pet-feed-item:active:not(.disabled) {
-  transform: translateY(0);
+  transform: scale(0.97);
 }
 
 .saki-pet-feed-item img {

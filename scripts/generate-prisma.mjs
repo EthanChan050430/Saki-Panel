@@ -94,6 +94,21 @@ child.on("close", async (code) => {
 
 async function validateGeneratedClient() {
   const generatedTypesPath = path.join(rootDir, "node_modules", ".prisma", "client", "index.d.ts");
+  const defaultJsPath = path.join(rootDir, "node_modules", ".prisma", "client", "default.js");
+
+  try {
+    const defaultJs = await readFile(defaultJsPath, "utf8");
+    if (defaultJs.includes("did not initialize yet")) {
+      console.error(
+        `Prisma Client at ${defaultJsPath} is in an uninitialized stub state (possibly due to locked Windows DLLs during a previous run). Please stop running node/panel processes and run 'npx prisma generate'.`
+      );
+      process.exit(1);
+    }
+  } catch (err) {
+    console.error(`Could not read generated Prisma client at ${defaultJsPath}:`, err);
+    process.exit(1);
+  }
+
   let generatedTypes = "";
   try {
     generatedTypes = await readFile(generatedTypesPath, "utf8");

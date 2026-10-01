@@ -2285,28 +2285,24 @@ body.saki-selection-capture-active .saki-launcher {
 }
 
 .saki-panel.hidden {
-  opacity: 1;
-  transform: none;
-  pointer-events: none;
-  transition:
-    width var(--duration-slow) var(--ease-out-expo),
-    height var(--duration-slow) var(--ease-out-expo),
-    transform var(--duration-slow) var(--ease-out-expo),
-    opacity var(--duration-slow) var(--ease-out-expo),
-    bottom var(--duration-slow) var(--ease-out-expo);
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transform: none !important;
 }
 
-/* Exit choreography: everything around the glass input box fades out first,
-   then the input box squashes into a home-indicator style line and vanishes. */
 .saki-panel.hidden .saki-messages-container,
 .saki-panel.hidden .saki-composer-expand-hint,
 .saki-panel.hidden .saki-composer-notice-toast,
 .saki-panel.hidden .saki-mini-chat-wrapper,
 .saki-panel.hidden .saki-drop-overlay,
 .saki-panel.hidden .saki-input-stack > *:not(.saki-input-container) {
-  animation: none;
-  opacity: 0;
-  transition: opacity 0.16s ease-out;
+  display: none !important;
+  animation: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 
 .saki-panel.hidden .saki-input-container.saki-composer-glass {
@@ -4510,12 +4506,15 @@ body.saki-selection-capture-active .saki-launcher {
 }
 
 .saki-character-art.compact .saki-character-image-edge {
-  object-position: center;
+  object-fit: contain;
+  object-position: left center;
   filter: drop-shadow(0 10px 16px rgba(21, 32, 43, 0.2));
 }
 
-.saki-launcher.edge-right .saki-character-image-edge {
+.saki-launcher.edge-right .saki-character-image-edge,
+.saki-pet-stage.edge-right .saki-character-image-edge {
   transform: scaleX(-1);
+  transform-origin: center center;
 }
 
 

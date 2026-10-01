@@ -1,10 +1,11 @@
-import React, { memo, useRef, useState } from "react";
+import React, { memo, useEffect, useRef, useState } from "react";
 import {
   Clock,
   Image as ImageIcon,
   Moon,
   Paintbrush,
   RotateCcw,
+  Sparkles,
   Sun,
   Upload,
   Video
@@ -13,6 +14,13 @@ import type { PanelAppearanceSettings } from "@webops/shared";
 import type { PanelTextKey } from "../../i18n/index.js";
 import { defaultPanelAppearance } from "../../constants.js";
 import { isVideoSource } from "../../utils/appearance.js";
+import {
+  DEFAULT_SAKI_PET_SCALE,
+  MAX_SAKI_PET_SCALE,
+  MIN_SAKI_PET_SCALE,
+  readSakiPetScale,
+  writeSakiPetScale
+} from "../../components/saki/pet/sakiPetState.js";
 
 export interface SettingsAppearanceTabProps {
   isActive: boolean;
@@ -39,6 +47,23 @@ export const SettingsAppearanceTab = memo(function SettingsAppearanceTab({
   t
 }: SettingsAppearanceTabProps) {
   const [bgThemeTab, setBgThemeTab] = useState<"light" | "dark" | "all">("light");
+  const [petScale, setPetScale] = useState(() => readSakiPetScale());
+
+  useEffect(() => {
+    const onScaleChanged = (e: Event) => {
+      const custom = e as CustomEvent<number>;
+      if (typeof custom.detail === "number" && Number.isFinite(custom.detail)) {
+        setPetScale(custom.detail);
+      }
+    };
+    window.addEventListener("saki:set_pet_scale", onScaleChanged);
+    return () => window.removeEventListener("saki:set_pet_scale", onScaleChanged);
+  }, []);
+
+  const handlePetScaleChange = (nextScale: number) => {
+    const val = writeSakiPetScale(nextScale);
+    setPetScale(val);
+  };
 
   const appLogoInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarLogoInputRef = useRef<HTMLInputElement | null>(null);
@@ -707,6 +732,54 @@ export const SettingsAppearanceTab = memo(function SettingsAppearanceTab({
                 </div>
               </>
             )}
+          </div>
+        </div>
+
+        <div className="settings-switch-card" style={{ cursor: "default" }}>
+          <div className="settings-switch-info">
+            <div className="settings-switch-title">
+              <Sparkles size={18} className="settings-switch-icon" style={{ color: "#ff75ac" }} />
+              <strong>Saki 悬浮桌宠体型大小</strong>
+              <span className="settings-scale-badge">
+                {Math.round(petScale * 100)}% ({petScale.toFixed(2)}x)
+              </span>
+            </div>
+            <span>调节桌面右下角悬浮桌宠 Saki 的显示比例（70% ~ 160%）。已锁定默认大小并禁用鼠标滚轮/手势缩放，防止日常误触。</span>
+          </div>
+
+          <div
+            className="settings-scale-slider-controls"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <input
+              type="range"
+              className="settings-scale-slider"
+              min={MIN_SAKI_PET_SCALE}
+              max={MAX_SAKI_PET_SCALE}
+              step={0.05}
+              value={petScale}
+              onChange={(e) => handlePetScaleChange(parseFloat(e.target.value))}
+              title={`当前桌宠缩放：${Math.round(petScale * 100)}%`}
+            />
+
+            {petScale !== DEFAULT_SAKI_PET_SCALE ? (
+              <button
+                className="ghost-button mini reset-btn"
+                type="button"
+                onClick={() => handlePetScaleChange(DEFAULT_SAKI_PET_SCALE)}
+                title="恢复默认大小 (100%)"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: "4px 8px",
+                  fontSize: "0.78rem"
+                }}
+              >
+                <RotateCcw size={13} />
+                <span>恢复默认</span>
+              </button>
+            ) : null}
           </div>
         </div>
 

@@ -170,6 +170,7 @@ import {
   userDisplayLabel
 } from "../../components/common/CommonUI.js";
 import { LiquidGlassContainer } from "../../components/common/LiquidGlass.js";
+import { SparklineRibbon } from "../../components/common/SparklineRibbon.js";
 import { SakiEmptyState } from "../../components/saki/SakiEmptyState.js";
 import {
   TerminalAutocompleteState,
@@ -276,16 +277,20 @@ export function InstancesView({
   const [historyMenuPos, setHistoryMenuPos] = useState<{ left: number; bottom: number } | null>(null);
   const historyBtnRef = useRef<HTMLButtonElement | null>(null);
 
-  const toggleHistoryMenu = useCallback((e?: React.MouseEvent) => {
+  const toggleHistoryMenu = useCallback((e?: React.MouseEvent | React.TouchEvent | React.PointerEvent) => {
     e?.preventDefault();
     e?.stopPropagation();
     setShowHistoryMenu((prev) => {
       const next = !prev;
       if (next && historyBtnRef.current) {
         const rect = historyBtnRef.current.getBoundingClientRect();
+        const isMobile = window.innerWidth <= 768;
+        const popoverWidth = Math.min(340, window.innerWidth - 24);
         setHistoryMenuPos({
-          left: Math.max(12, Math.min(window.innerWidth - 352, rect.left - 6)),
-          bottom: Math.max(12, window.innerHeight - rect.top + 10),
+          left: isMobile
+            ? Math.max(12, Math.round((window.innerWidth - popoverWidth) / 2))
+            : Math.max(12, Math.min(window.innerWidth - 352, rect.left - 6)),
+          bottom: Math.max(12, window.innerHeight - rect.top + 8),
         });
       }
       return next;
@@ -294,20 +299,20 @@ export function InstancesView({
 
   useEffect(() => {
     if (!showHistoryMenu) return;
-    const handlePointerDown = (event: MouseEvent | PointerEvent) => {
+    const handlePointerDown = (event: MouseEvent | PointerEvent | TouchEvent) => {
       const target = event.target as HTMLElement | null;
       if (!target) return;
       if (
-        target.closest(".terminal-history-btn") ||
-        target.closest(".terminal-history-wrap") ||
-        target.closest(".terminal-history-popover")
+        (target as Element).closest?.(".terminal-history-btn") ||
+        (target as Element).closest?.(".terminal-history-wrap") ||
+        (target as Element).closest?.(".terminal-history-popover")
       ) {
         return;
       }
       setShowHistoryMenu(false);
     };
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, [showHistoryMenu]);
 
   const [error, setError] = useState("");
@@ -2700,6 +2705,17 @@ export function InstancesView({
                       </span>
                     ) : null}
                   </div>
+
+                  {instance.status === "RUNNING" && (
+                    <div className="instance-card-ribbon-strip">
+                      <SparklineRibbon
+                        height={18}
+                        color="var(--primary, #ff75ac)"
+                        glowColor="rgba(255, 117, 172, 0.4)"
+                        animated
+                      />
+                    </div>
+                  )}
 
                   <div className="instance-card-footer">
                     <button

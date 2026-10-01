@@ -1,5 +1,7 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import type { SakiAgentPermissionMode, SakiChatMode, SakiModelOption } from "@webops/shared";
 import { SakiCharacterArt, type SakiActivityMood, type SakiArtMood } from "../SakiComponents.js";
+import { SakiCapsuleHUD, type SakiCapsuleTaskInfo } from "../SakiCapsuleHUD.js";
 import { SakiDesktopPet } from "../pet/SakiDesktopPet.js";
 import { SakiPetDesktopBits } from "../pet/SakiPetWidgets.js";
 import { isSakiPetTouchUi, type SakiPetController } from "../pet/sakiPetState.js";
@@ -21,15 +23,12 @@ function usePetTouchUi() {
   return touchUi;
 }
 
-function pinchDistance(a: React.Touch, b: React.Touch) {
-  return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-}
 
 export interface ChatLauncherProps {
   open: boolean;
   sakiLieMode: boolean;
   launcherRef: React.RefObject<HTMLButtonElement | null>;
-  petStageRef?: React.RefObject<HTMLDivElement | null>;
+  petStageRef?: React.RefObject<HTMLDivElement | null> | undefined;
   launcherDragging: boolean;
   launcherEdgeAttached: boolean;
   launcherEdge: string;
@@ -38,6 +37,16 @@ export interface ChatLauncherProps {
   fileDragActive: boolean;
   artMood: SakiArtMood;
   activityMood?: SakiActivityMood;
+  isBusy?: boolean | undefined;
+  activeTask?: SakiCapsuleTaskInfo | null | undefined;
+  onSendPrompt?: ((prompt: string) => void) | undefined;
+  sakiMode?: SakiChatMode | undefined;
+  onSakiModeChange?: ((mode: SakiChatMode) => void) | undefined;
+  permissionMode?: SakiAgentPermissionMode | undefined;
+  onPermissionModeChange?: ((perm: SakiAgentPermissionMode) => void) | undefined;
+  currentModelId?: string | undefined;
+  availableModels?: SakiModelOption[] | undefined;
+  onModelChange?: ((modelId: string) => void) | undefined;
   pet: SakiPetController;
   language?: string | undefined;
   intimacyLevel: number;
@@ -72,6 +81,16 @@ export function ChatLauncher({
   fileDragActive,
   artMood,
   activityMood = null,
+  isBusy = false,
+  activeTask = null,
+  onSendPrompt,
+  sakiMode,
+  onSakiModeChange,
+  permissionMode,
+  onPermissionModeChange,
+  currentModelId,
+  availableModels,
+  onModelChange,
   pet,
   language,
   intimacyLevel,
@@ -93,7 +112,6 @@ export function ChatLauncher({
   onDrop
 }: ChatLauncherProps) {
   const touchUi = usePetTouchUi();
-  const pinchRef = useRef<{ distance: number; scale: number } | null>(null);
   const menuOpen = pet.hovered || pet.widget !== null || pet.group !== "none";
 
   useEffect(() => {
@@ -133,33 +151,6 @@ export function ChatLauncher({
       }}
       onMouseEnter={touchUi ? undefined : () => pet.setHover(true)}
       onMouseLeave={touchUi ? undefined : () => pet.setHover(false)}
-      onWheel={(event) => {
-        if (event.cancelable) event.preventDefault();
-        pet.onWheelScale(event.deltaY);
-      }}
-      onTouchStart={(event) => {
-        if (event.touches.length === 2) {
-          event.preventDefault();
-          pinchRef.current = {
-            distance: pinchDistance(event.touches[0]!, event.touches[1]!),
-            scale: pet.scale
-          };
-        }
-      }}
-      onTouchMove={(event) => {
-        const pinch = pinchRef.current;
-        if (!pinch || event.touches.length !== 2) return;
-        event.preventDefault();
-        const distance = pinchDistance(event.touches[0]!, event.touches[1]!);
-        if (pinch.distance <= 0) return;
-        pet.setScale(pinch.scale * (distance / pinch.distance));
-      }}
-      onTouchEnd={(event) => {
-        if (event.touches.length < 2) pinchRef.current = null;
-      }}
-      onTouchCancel={() => {
-        pinchRef.current = null;
-      }}
     >
       <button
         ref={launcherRef}
@@ -189,6 +180,31 @@ export function ChatLauncher({
           onToiletFinished={pet.finishToilet}
         />
       </button>
+      {!open && !launcherDragging && !launcherEdgeAttached && (
+        <SakiCapsuleHUD
+          isBusy={isBusy}
+          activeTask={activeTask}
+          onClick={() => onOpenChat()}
+          onSendPrompt={onSendPrompt}
+          sakiMode={sakiMode}
+          onSakiModeChange={onSakiModeChange}
+          permissionMode={permissionMode}
+          onPermissionModeChange={onPermissionModeChange}
+          currentModelId={currentModelId}
+          availableModels={availableModels}
+          onModelChange={onModelChange}
+          pet={pet}
+          stageHovered={pet.hovered}
+          language={language}
+          intimacyLevel={intimacyLevel}
+          intimacyTitle={intimacyTitle}
+          onOpenFeed={() => {
+            if (pet.widget === "feed") pet.closeWidget();
+            else pet.openWidget("feed");
+          }}
+          onIntimacy={onIntimacy}
+        />
+      )}
       {!open && !launcherDragging && !launcherEdgeAttached && !pet.music.playing && pet.behavior === "sleep" ? (
         <button
           className="saki-pet-wake-button"

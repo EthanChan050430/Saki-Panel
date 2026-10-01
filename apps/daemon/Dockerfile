@@ -10,6 +10,7 @@ RUN npm run build -w @webops/shared && npm run build -w @webops/daemon
 FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production
+RUN apk add --no-cache git
 COPY package.json package-lock.json ./
 COPY packages ./packages
 COPY apps/daemon/package.json ./apps/daemon/package.json

@@ -38,6 +38,7 @@ import {
   emptyTerminalInputDraft,
   readTerminalInputHistory
 } from "./terminalHistory.js";
+import { SmartLogCollapser } from "./SmartLogCollapser.js";
 
 export function isTerminalIssue(line: InstanceLogLine): boolean {
   return (
@@ -693,6 +694,7 @@ export function WebTerminal({
   const [copyToast, setCopyToast] = useState("");
   const [showLogExtractModal, setShowLogExtractModal] = useState(false);
   const [extractedLogContent, setExtractedLogContent] = useState("");
+  const [extractViewMode, setExtractViewMode] = useState<"smart" | "raw">("smart");
 
   const copyTextToClipboard = async (text: string, successMsg = "已复制到剪贴板") => {
     if (!text) return;
@@ -1667,7 +1669,25 @@ export function WebTerminal({
             <div className="terminal-extract-header">
               <div className="terminal-extract-title">
                 <FileText size={16} />
-                <span>终端文本查看与复制</span>
+                <span>终端日志与智能研判</span>
+              </div>
+              <div className="terminal-extract-mode-toggle">
+                <button
+                  type="button"
+                  className={`extract-mode-btn ${extractViewMode === "smart" ? "active" : ""}`}
+                  onClick={() => setExtractViewMode("smart")}
+                >
+                  <Sparkles size={12} />
+                  智能折叠
+                </button>
+                <button
+                  type="button"
+                  className={`extract-mode-btn ${extractViewMode === "raw" ? "active" : ""}`}
+                  onClick={() => setExtractViewMode("raw")}
+                >
+                  <FileText size={12} />
+                  纯文本
+                </button>
               </div>
               <button
                 type="button"
@@ -1678,12 +1698,16 @@ export function WebTerminal({
               </button>
             </div>
             <div className="terminal-extract-body">
-              <textarea
-                className="terminal-extract-textarea"
-                readOnly
-                value={extractedLogContent || "终端暂无输出内容"}
-                onClick={(e) => (e.target as HTMLTextAreaElement).select()}
-              />
+              {extractViewMode === "smart" ? (
+                <SmartLogCollapser logs={extractedLogContent || "终端暂无输出内容"} onAskSaki={onAskSaki} />
+              ) : (
+                <textarea
+                  className="terminal-extract-textarea"
+                  readOnly
+                  value={extractedLogContent || "终端暂无输出内容"}
+                  onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+                />
+              )}
             </div>
             <div className="terminal-extract-footer">
               <span className="terminal-extract-count">共 {extractedLogContent.length} 字符</span>

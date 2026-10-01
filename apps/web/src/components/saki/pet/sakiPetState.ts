@@ -102,8 +102,41 @@ export interface SakiPetWeather {
 }
 
 const STORAGE_KEY = "webops.saki.desktopPet.v1";
-const MIN_SCALE = 0.72;
-const MAX_SCALE = 1.65;
+export const DEFAULT_SAKI_PET_SCALE = 1;
+export const MIN_SAKI_PET_SCALE = 0.7;
+export const MAX_SAKI_PET_SCALE = 1.6;
+const MIN_SCALE = MIN_SAKI_PET_SCALE;
+const MAX_SCALE = MAX_SAKI_PET_SCALE;
+
+export function readSakiPetScale(): number {
+  try {
+    const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
+    if (!raw) return DEFAULT_SAKI_PET_SCALE;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.scale === "number" && Number.isFinite(parsed.scale)) {
+      return Math.min(MAX_SAKI_PET_SCALE, Math.max(MIN_SAKI_PET_SCALE, parsed.scale));
+    }
+  } catch {}
+  return DEFAULT_SAKI_PET_SCALE;
+}
+
+export function writeSakiPetScale(scale: number): number {
+  const clamped = Number.isFinite(scale)
+    ? Math.min(MAX_SAKI_PET_SCALE, Math.max(MIN_SAKI_PET_SCALE, Math.round(scale * 100) / 100))
+    : DEFAULT_SAKI_PET_SCALE;
+  try {
+    const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
+    let parsed: Record<string, unknown> = {};
+    try {
+      const saved = raw ? JSON.parse(raw) : null;
+      if (saved && typeof saved === "object" && !Array.isArray(saved)) parsed = saved;
+    } catch {}
+    parsed.scale = clamped;
+    globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(parsed));
+  } catch {}
+  window.dispatchEvent(new CustomEvent("saki:set_pet_scale", { detail: clamped }));
+  return clamped;
+}
 
 export function clampPetStat(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
@@ -202,7 +235,7 @@ export function useSakiPet({
   const saved = useRef(readPersist()).current;
   const [stats, setStats] = useState<SakiPetStats>(() => decayStats(saved.stats ?? defaultStats()));
   const [skin, setSkinState] = useState<SakiPetSkinId>("saki");
-  const [scale, setScaleState] = useState(() => Math.min(MAX_SCALE, Math.max(MIN_SCALE, saved.scale ?? 1)));
+  const [scale, setScaleState] = useState(readSakiPetScale);
   const [chaseMouse, setChaseMouseState] = useState(false);
   const [todos, setTodos] = useState<SakiPetTodo[]>(() => saved.todos ?? []);
   const [events, setEvents] = useState<SakiPetEvent[]>(() => saved.events ?? []);
@@ -295,6 +328,18 @@ export function useSakiPet({
     setScaleState(next);
     persist({ scale: next });
   }, [persist]);
+
+  useEffect(() => {
+    const handlePetScaleEvent = (e: Event) => {
+      const custom = e as CustomEvent<number>;
+      if (typeof custom.detail === "number" && Number.isFinite(custom.detail)) {
+        setScaleState(Math.min(MAX_SAKI_PET_SCALE, Math.max(MIN_SAKI_PET_SCALE, custom.detail)));
+        if (pendingPersistRef.current.scale !== undefined) pendingPersistRef.current.scale = custom.detail;
+      }
+    };
+    window.addEventListener("saki:set_pet_scale", handlePetScaleEvent);
+    return () => window.removeEventListener("saki:set_pet_scale", handlePetScaleEvent);
+  }, []);
 
   const setChaseMouse = useCallback((value: boolean) => {
     setChaseMouseState(value);

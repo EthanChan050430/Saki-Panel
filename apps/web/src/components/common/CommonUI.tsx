@@ -27,27 +27,44 @@ import type {
 import { panelT, type PanelTextKey } from "../../i18n/index.js";
 import { sakiArtAssets } from "../../constants.js";
 import { roleNamesDisplay } from "../../utils/role.js";
-
 function MetricTile({
   icon,
   label,
   value,
   tone,
-  onClick
+  onClick,
+  gaugeValue
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
   tone: "teal" | "amber" | "blue" | "gray";
   onClick?: () => void;
+  gaugeValue?: number | undefined;
 }) {
+  let statusTone = "is-normal";
+  let numVal: number | null = typeof gaugeValue === "number" ? gaugeValue : null;
+  if (numVal === null) {
+    const match = value.match(/(\d+(?:\.\d+)?)%/);
+    if (match && match[1]) {
+      numVal = parseFloat(match[1]);
+    }
+  }
+  if (numVal !== null && Number.isFinite(numVal)) {
+    if (numVal >= 85) {
+      statusTone = "is-danger";
+    } else if (numVal >= 70) {
+      statusTone = "is-warning";
+    }
+  }
+
   const className = `metric-tile metric-${tone}${onClick ? " is-clickable" : ""}`;
   const body = (
     <>
       <div className="metric-icon">{icon}</div>
-      <div>
+      <div className="metric-text-group">
         <span>{label}</span>
-        <strong>{value}</strong>
+        <strong className={`metric-val ${statusTone}`}>{value}</strong>
       </div>
       {onClick ? <Maximize2 className="metric-tile-expand" size={14} aria-hidden="true" /> : null}
     </>

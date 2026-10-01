@@ -200,8 +200,12 @@ export function MetricDetailModal({
             </div>
           </div>
           <div className="metric-detail-header-value">
-            <strong>{kind === "nodes" ? `${onlineCount}/${nodes.length}` : formatNumber(typeof currentValue === "number" ? currentValue : 0)}</strong>
-            <span>{kind === "nodes" ? t("metric.detail.onlineTotal") : t("metric.detail.clusterAvg")}</span>
+            <div>
+              <strong className={`metric-val ${kind !== "nodes" && typeof currentValue === "number" ? (currentValue >= 85 ? "is-danger" : currentValue >= 70 ? "is-warning" : "is-normal") : ""}`}>
+                {kind === "nodes" ? `${onlineCount}/${nodes.length}` : formatNumber(typeof currentValue === "number" ? currentValue : 0)}
+              </strong>
+              <span>{kind === "nodes" ? t("metric.detail.onlineTotal") : t("metric.detail.clusterAvg")}</span>
+            </div>
           </div>
           <button className="icon-button mini metric-detail-close" type="button" title={t("common.close")} onClick={onClose}>
             <X size={16} />

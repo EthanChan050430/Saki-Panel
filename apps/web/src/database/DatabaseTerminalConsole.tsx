@@ -51,16 +51,20 @@ export function DatabaseTerminalConsole({
   const [historyPos, setHistoryPos] = useState<{ left: number; bottom: number } | null>(null);
   const historyBtnRef = useRef<HTMLButtonElement | null>(null);
 
-  const toggleHistory = useCallback((e?: React.MouseEvent) => {
+  const toggleHistory = useCallback((e?: React.MouseEvent | React.TouchEvent | React.PointerEvent) => {
     e?.preventDefault();
     e?.stopPropagation();
     setShowHistory((prev) => {
       const next = !prev;
       if (next && historyBtnRef.current) {
         const rect = historyBtnRef.current.getBoundingClientRect();
+        const isMobile = window.innerWidth <= 768;
+        const popoverWidth = Math.min(340, window.innerWidth - 24);
         setHistoryPos({
-          left: Math.max(12, Math.min(window.innerWidth - 352, rect.left - 6)),
-          bottom: Math.max(12, window.innerHeight - rect.top + 10),
+          left: isMobile
+            ? Math.max(12, Math.round((window.innerWidth - popoverWidth) / 2))
+            : Math.max(12, Math.min(window.innerWidth - 352, rect.left - 6)),
+          bottom: Math.max(12, window.innerHeight - rect.top + 8),
         });
       }
       return next;
@@ -69,20 +73,20 @@ export function DatabaseTerminalConsole({
 
   useEffect(() => {
     if (!showHistory) return;
-    const handlePointerDown = (event: MouseEvent | PointerEvent) => {
+    const handlePointerDown = (event: MouseEvent | PointerEvent | TouchEvent) => {
       const target = event.target as HTMLElement | null;
       if (!target) return;
       if (
-        target.closest(".terminal-history-btn") ||
-        target.closest(".terminal-history-wrap") ||
-        target.closest(".terminal-history-popover")
+        (target as Element).closest?.(".terminal-history-btn") ||
+        (target as Element).closest?.(".terminal-history-wrap") ||
+        (target as Element).closest?.(".terminal-history-popover")
       ) {
         return;
       }
       setShowHistory(false);
     };
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, [showHistory]);
 
   const execute = useCallback(async (queryToRun?: string) => {

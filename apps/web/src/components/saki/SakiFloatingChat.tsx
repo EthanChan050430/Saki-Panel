@@ -455,13 +455,19 @@ export function SakiFloatingChat({
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [launcherPosition, setLauncherPosition] = useState<SakiLauncherPosition>(() => {
     const raw = readSakiLauncherPosition();
-    if (raw) return clampSakiLauncherPosition(raw, null, "expanded");
+    if (raw) {
+      const attached = sakiLauncherAttachedEdgeForPosition(raw, 1);
+      return attached
+        ? snapSakiLauncherPositionToEdge(raw, attached, 1)
+        : clampSakiLauncherPosition(raw, null, "expanded", 1);
+    }
     const vw = globalThis.innerWidth || 1200;
     const vh = globalThis.innerHeight || 800;
-    return {
-      x: Math.max(12, vw - sakiLauncherExpandedSize.width - 24),
-      y: Math.max(12, vh - sakiLauncherExpandedSize.height - 24)
-    };
+    return snapSakiLauncherPositionToEdge(
+      { x: vw - sakiLauncherAttachedSize.width, y: Math.max(12, vh - 220) },
+      "right",
+      1
+    );
   });
   const [launcherDragging, setLauncherDragging] = useState(false);
 
@@ -1846,7 +1852,7 @@ export function SakiFloatingChat({
         "dragging",
         scale
       );
-      const snapEdge = sakiLauncherSnapEdgeForPosition(dragPosition, scale);
+      const snapEdge = sakiLauncherSnapEdgeForPosition(dragPosition, scale) || dragPosition.edge || null;
       const nextPosition = snapEdge ? snapSakiLauncherPositionToEdge(dragPosition, snapEdge, scale) : dragPosition;
 
       if (stage) {
@@ -1874,11 +1880,12 @@ export function SakiFloatingChat({
   function handleLauncherPointerDown(event: React.PointerEvent<HTMLButtonElement>) {
     if (event.button !== 0) return;
     const stage = petStageRef.current;
-    const rect = (stage ?? event.currentTarget).getBoundingClientRect();
     const pointerId = event.pointerId;
+    const scale = pet.scale || 1;
+    const baseWidth = sakiLauncherExpandedSize.width;
 
-    const offsetX = event.clientX - rect.left;
-    const offsetY = event.clientY - rect.top;
+    const offsetX = (baseWidth * scale) / 2;
+    const offsetY = 20 * scale;
 
     launcherDragRef.current = {
       pointerId,
@@ -1941,7 +1948,7 @@ export function SakiFloatingChat({
     const baseWidth = sakiLauncherExpandedSize.width;
     const baseHeight = sakiLauncherExpandedSize.height;
     const offsetX = (baseWidth * scale) / 2;
-    const offsetY = Math.min(36, (baseHeight * scale) / 3);
+    const offsetY = 20 * scale;
 
     const desiredVisualLeft = request.clientX - offsetX;
     const desiredVisualTop = request.clientY - offsetY;
@@ -3974,6 +3981,19 @@ export function SakiFloatingChat({
         fileDragActive={fileDragActive}
         artMood={artMood}
         activityMood={effectiveActivityMood}
+        isBusy={isAgentBusy}
+        activeTask={isAgentBusy ? { message: videoBubbleText || undefined } : null}
+        onSendPrompt={(prompt) => {
+          setOpen(true);
+          void submit(undefined, { message: prompt, attachments: [] });
+        }}
+        sakiMode={mode}
+        onSakiModeChange={selectSakiMode}
+        permissionMode={permissionMode}
+        onPermissionModeChange={setPermissionMode}
+        currentModelId={currentModelId}
+        availableModels={availableModels}
+        onModelChange={(modelId) => { void selectModel(modelId); }}
         pet={pet}
         language={language}
         intimacyLevel={getFavorabilityLevelInfo(sakiFavorabilityExp).level}

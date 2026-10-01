@@ -109,6 +109,7 @@ import { AccessEmptyView } from "./components/common/CommonUI.js";
 import { ThemeMorphIcon } from "./components/common/ThemeMorphIcon.js";
 import { PointsUsageModal } from "./PointsUsageModal.js";
 import { TopbarServerTimeBadge, ServerTimeModal } from "./components/common/ServerTimeModal.js";
+import { SpotlightCommandPalette } from "./components/common/SpotlightCommandPalette.js";
 import { SakiFloatingChat } from "./components/saki/SakiFloatingChat.js";
 import { type SakiPullDragRequest } from "./components/saki/SakiComponents.js";
 import { coerceSakiMode } from "./components/saki/sakiChatHelpers.js";
@@ -187,6 +188,18 @@ export function Workspace({
   const [sakiWakeCount, setSakiWakeCount] = useState(0);
   const [pointsUsageOpen, setPointsUsageOpen] = useState(false);
   const [serverTimeModalOpen, setServerTimeModalOpen] = useState(false);
+  const [spotlightOpen, setSpotlightOpen] = useState(false);
+
+  useEffect(() => {
+    function handleGlobalKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSpotlightOpen((prev) => !prev);
+      }
+    }
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, []);
   const [sakiLauncherDragging, setSakiLauncherDragging] = useState(false);
   const [sakiPullDrag, setSakiPullDrag] = useState<SakiPullDragRequest | null>(null);
   const [sakiLieHolding, setSakiLieHolding] = useState(false);
@@ -808,6 +821,15 @@ export function Workspace({
                 </h1>
               </div>
               <div className="topbar-actions">
+                <button
+                  className="topbar-spotlight-btn"
+                  type="button"
+                  onClick={() => setSpotlightOpen(true)}
+                  title="打开全局指令盘 (Ctrl+K / ⌘K)"
+                  aria-label="打开全局指令盘 (Ctrl+K / ⌘K)"
+                >
+                  <Search size={14} />
+                </button>
                 {hasAnyAccessibleView && appearance.showServerTime !== false ? (
                   <TopbarServerTimeBadge onOpenModal={() => setServerTimeModalOpen(true)} />
                 ) : null}
@@ -1041,6 +1063,22 @@ export function Workspace({
         open={serverTimeModalOpen}
         onClose={() => setServerTimeModalOpen(false)}
         onOpenSettings={() => selectView("settings")}
+      />
+      <SpotlightCommandPalette
+        open={spotlightOpen}
+        onClose={() => setSpotlightOpen(false)}
+        currentRoute={effectiveView}
+        availableViews={availableViews}
+        onNavigate={(view) => selectView(view as ViewMode)}
+        instances={instancesCacheRef.current}
+        onSelectInstance={(id) => {
+          setSelectedInstanceId(id);
+          selectView("instances", id);
+        }}
+        onAskSaki={canUseSaki ? openSaki : undefined}
+        darkMode={darkMode}
+        onToggleDarkMode={onToggleDarkMode}
+        currentUser={user}
       />
     </>
   );

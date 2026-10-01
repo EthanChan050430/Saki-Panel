@@ -14,6 +14,7 @@ import { registerAuthRoutes } from "./routes/auth.js";
 import { registerDaemonRoutes } from "./routes/daemon.js";
 import { registerDashboardRoutes } from "./routes/dashboard.js";
 import { registerFileRoutes } from "./routes/files.js";
+import { registerGitRoutes } from "./routes/git.js";
 import { registerInstanceRoutes } from "./routes/instances.js";
 import { registerNodeRoutes } from "./routes/nodes.js";
 import { registerTaskRoutes } from "./routes/tasks.js";
@@ -90,6 +91,7 @@ export async function createPanelServer() {
   await registerNodeRoutes(app);
   await registerInstanceRoutes(app);
   await registerFileRoutes(app);
+  await registerGitRoutes(app);
   await registerTaskRoutes(app);
   await registerTemplateRoutes(app);
   await registerAuditRoutes(app);

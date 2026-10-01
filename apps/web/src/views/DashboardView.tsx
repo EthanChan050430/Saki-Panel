@@ -248,6 +248,7 @@ export function DashboardView({
           icon={<Cpu size={22} />}
           label="CPU"
           value={formatMetricValue(resources.cpuUsage)}
+          gaugeValue={resources.cpuUsage}
           tone="blue"
           onClick={() => setMetricDetail("cpu")}
         />
@@ -255,6 +256,7 @@ export function DashboardView({
           icon={<MemoryStick size={22} />}
           label="内存"
           value={formatMetricValue(resources.memoryUsage)}
+          gaugeValue={resources.memoryUsage}
           tone="amber"
           onClick={() => setMetricDetail("memory")}
         />
@@ -262,6 +264,7 @@ export function DashboardView({
           icon={<HardDrive size={22} />}
           label="磁盘"
           value={formatMetricValue(resources.diskUsage)}
+          gaugeValue={resources.diskUsage}
           tone="gray"
           onClick={() => setMetricDetail("disk")}
         />

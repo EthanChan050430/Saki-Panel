@@ -365,24 +365,24 @@
     grid-column: 2;
   }
 
-  .saki-launcher {
+  .saki-launcher:not(.saki-pet-stage *) {
     right: 8px;
     bottom: max(8px, env(safe-area-inset-bottom));
     width: 68px;
     height: 92px;
   }
 
-  .saki-panel:not(.fullscreen) {
+  .saki-panel:not(.fullscreen):not(.hidden) {
     left: 6px !important;
     right: 6px !important;
     max-width: calc(100dvw - 12px);
   }
 
-  .saki-panel.fullscreen,
-  .saki-panel.fullscreen.expanded,
-  .saki-panel.fullscreen.collapsed,
-  .saki-panel.fullscreen.mobile-tab-video,
-  .saki-panel.fullscreen.mobile-tab-chat {
+  .saki-panel.fullscreen:not(.hidden),
+  .saki-panel.fullscreen.expanded:not(.hidden),
+  .saki-panel.fullscreen.collapsed:not(.hidden),
+  .saki-panel.fullscreen.mobile-tab-video:not(.hidden),
+  .saki-panel.fullscreen.mobile-tab-chat:not(.hidden) {
     position: fixed !important;
     inset: 0 !important;
     top: 0 !important;
@@ -401,6 +401,13 @@
     border-radius: 0 !important;
     box-shadow: none !important;
     transform: none !important;
+  }
+
+  .saki-panel.hidden {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
   }
 
   .saki-panel.fullscreen .saki-header {
@@ -508,7 +515,7 @@
     padding-bottom: max(132px, calc(env(safe-area-inset-bottom) + 122px));
   }
 
-  .saki-launcher {
+  .saki-launcher:not(.saki-pet-stage *) {
     right: 8px !important;
     bottom: max(8px, env(safe-area-inset-bottom)) !important;
     width: 84px !important;
@@ -522,6 +529,20 @@
     opacity: 1;
     filter: drop-shadow(0 14px 22px rgba(15, 23, 42, 0.2));
     box-shadow: none !important;
+  }
+
+  .saki-pet-stage .saki-launcher {
+    position: relative !important;
+    left: 0 !important;
+    right: auto !important;
+    top: 0 !important;
+    bottom: auto !important;
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    transform: none !important;
+    box-sizing: border-box !important;
   }
 
   .saki-launcher-glow {
@@ -546,7 +567,7 @@
 }
 
 @media (max-width: 640px) {
-  .saki-launcher {
+  .saki-launcher:not(.saki-pet-stage *) {
     width: 78px !important;
     height: 106px !important;
   }

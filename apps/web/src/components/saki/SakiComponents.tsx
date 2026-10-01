@@ -308,7 +308,7 @@ export interface SakiPullDragRequest {
 
 export const sakiLauncherPositionKey = "webops.saki.launcherPosition";
 export const sakiLauncherEdgePadding = 12;
-export const sakiLauncherEdgeSnapDistance = 20;
+export const sakiLauncherEdgeSnapDistance = 48;
 export const sakiLauncherExpandedSize = { width: 86, height: 118 };
 export const sakiLauncherAttachedSize = { width: 58, height: 92 };
 export const sakiConversationStorageKey = "webops.saki.conversations.v1";
@@ -446,6 +446,8 @@ export function sakiLauncherSize(element: HTMLElement | null, mode: SakiLauncher
   const base =
     mode === "attached"
       ? sakiLauncherAttachedSize
+      : mode === "dragging"
+      ? sakiLauncherExpandedSize
       : (element && element.offsetWidth && element.offsetHeight)
       ? { width: element.offsetWidth, height: element.offsetHeight }
       : sakiLauncherExpandedSize;
@@ -490,8 +492,8 @@ export function clampSakiLauncherPosition(
   const clampedY = Math.round(clampedVisualTop - baseHeight * (1 - s));
 
   const attachedWidth = sakiLauncherAttachedSize.width * s;
-  const isLeft = clampedVisualLeft <= 4;
-  const isRight = viewportWidth - (clampedVisualLeft + (mode === "attached" ? attachedWidth : visualWidth)) <= 6;
+  const isLeft = clampedVisualLeft <= sakiLauncherEdgeSnapDistance;
+  const isRight = viewportWidth - (clampedVisualLeft + (mode === "attached" ? attachedWidth : visualWidth)) <= sakiLauncherEdgeSnapDistance;
   const edge = isLeft ? "left" : isRight ? "right" : undefined;
 
   return {
@@ -523,14 +525,23 @@ export function sakiLauncherSnapEdgeForPosition(position: SakiLauncherPosition, 
 }
 
 export function sakiLauncherAttachedEdgeForPosition(position: SakiLauncherPosition, scale = 1): SakiLauncherEdge | null {
+  if (position.edge === "left" || position.edge === "right") return position.edge;
   const s = Math.max(0.1, Number.isFinite(scale) ? scale : 1);
   const baseWidth = sakiLauncherExpandedSize.width;
   const visualLeft = position.x + (baseWidth / 2) * (1 - s);
+  const visualWidth = baseWidth * s;
   const attachedWidth = sakiLauncherAttachedSize.width * s;
   const viewportWidth = globalThis.innerWidth || attachedWidth + sakiLauncherEdgePadding * 2;
   const rightEdgeVisualLeft = Math.max(0, viewportWidth - attachedWidth);
-  if (visualLeft <= 4) return "left";
-  if (Math.abs(visualLeft - rightEdgeVisualLeft) <= 6 || viewportWidth - visualLeft <= attachedWidth + 6) return "right";
+  const rightGap = viewportWidth - (visualLeft + visualWidth);
+  if (visualLeft <= sakiLauncherEdgeSnapDistance) return "left";
+  if (
+    rightGap <= sakiLauncherEdgeSnapDistance ||
+    Math.abs(visualLeft - rightEdgeVisualLeft) <= sakiLauncherEdgeSnapDistance ||
+    viewportWidth - visualLeft <= attachedWidth + sakiLauncherEdgeSnapDistance
+  ) {
+    return "right";
+  }
   return null;
 }
 
@@ -540,9 +551,9 @@ export function snapSakiLauncherPositionToEdge(
   scale = 1
 ): SakiLauncherPosition {
   const s = Math.max(0.1, Number.isFinite(scale) ? scale : 1);
-  const baseWidth = sakiLauncherExpandedSize.width;
   const baseHeight = sakiLauncherExpandedSize.height;
-  const attachedWidth = sakiLauncherAttachedSize.width * s;
+  const attachedBaseWidth = sakiLauncherAttachedSize.width;
+  const attachedWidth = attachedBaseWidth * s;
   const attachedHeight = sakiLauncherAttachedSize.height * s;
   const viewportWidth = globalThis.innerWidth || attachedWidth + sakiLauncherEdgePadding * 2;
   const viewportHeight = globalThis.innerHeight || attachedHeight + sakiLauncherEdgePadding * 2;
@@ -554,7 +565,7 @@ export function snapSakiLauncherPositionToEdge(
   const clampedY = Math.round(clampedVisualTop - baseHeight * (1 - s));
 
   const visualLeft = edge === "left" ? 0 : Math.max(0, viewportWidth - attachedWidth);
-  const clampedX = Math.round(visualLeft - (baseWidth / 2) * (1 - s));
+  const clampedX = Math.round(visualLeft - (attachedBaseWidth / 2) * (1 - s));
 
   return {
     x: clampedX,

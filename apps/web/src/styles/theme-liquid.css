@@ -1664,7 +1664,7 @@
   background: var(--btn-ghost-hover);
 }
 
-[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not(.terminal-cmd-input):not(.mobile-capsule-input),
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not(.terminal-cmd-input):not(.mobile-capsule-input):not(.capsule-text-input-field),
 [data-theme="dark"] select,
 [data-theme="dark"] textarea {
   background: rgba(255, 255, 255, 0.06) !important;
@@ -1676,7 +1676,7 @@
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2) !important;
 }
 
-[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not(.terminal-cmd-input):not(.mobile-capsule-input):focus,
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not(.terminal-cmd-input):not(.mobile-capsule-input):not(.capsule-text-input-field):focus,
 [data-theme="dark"] select:focus,
 [data-theme="dark"] textarea:focus {
   outline: none !important;
@@ -4303,6 +4303,15 @@
   box-shadow:
     0 2px 6px rgba(0, 0, 0, 0.35),
     0 0 1px rgba(0, 0, 0, 0.25) !important;
+}
+
+[data-theme="dark"] .settings-scale-slider {
+  background: rgba(255, 255, 255, 0.16) !important;
+}
+
+[data-theme="dark"] .settings-scale-badge {
+  background: rgba(255, 117, 172, 0.22) !important;
+  color: #ff94c2 !important;
 }
 
 /* Visual Asset Cards */
@@ -7514,7 +7523,7 @@ input.mobile-capsule-input,
   color: var(--primary) !important;
 }
 
-input:not([type="checkbox"]):not([type="radio"]):not(.terminal-cmd-input):not(.mobile-capsule-input),
+input:not([type="checkbox"]):not([type="radio"]):not(.terminal-cmd-input):not(.mobile-capsule-input):not(.capsule-text-input-field),
 select,
 textarea {
   background: rgba(255, 255, 255, 0.6) !important;
@@ -7522,7 +7531,7 @@ textarea {
   border-color: var(--glass-border) !important;
 }
 
-input:not([type="checkbox"]):not([type="radio"]):not(.terminal-cmd-input):not(.mobile-capsule-input):focus,
+input:not([type="checkbox"]):not([type="radio"]):not(.terminal-cmd-input):not(.mobile-capsule-input):not(.capsule-text-input-field):focus,
 select:focus,
 textarea:focus {
   outline: 2px solid rgba(255, 117, 172, 0.3) !important;

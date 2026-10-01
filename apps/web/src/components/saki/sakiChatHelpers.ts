@@ -532,4 +532,119 @@ export function formatSakiModelMultiplier(value: number): string {
   return `${Number.isInteger(rounded) ? rounded.toFixed(1) : rounded}x`;
 }
 
+export function getSakiAffectionQuote(level: number, language?: string): string {
+  const lang = (language || "zh-CN") as PanelLanguage;
+  const isEn = lang === "en-US";
+  const isTw = lang === "zh-TW";
+
+  if (isEn) {
+    if (level <= 1) {
+      const quotes = [
+        "I'm so happy whenever I'm with you! ✨",
+        "Pats on the head! Saki will always do her best for you~ (ง •_•)ง",
+        "Let's make today awesome together! (◕ᴗ◕✿)",
+        "Having you by my side makes Saki feel safe and happy~"
+      ];
+      return quotes[Math.floor(Math.random() * quotes.length)]!;
+    }
+    if (level === 2) {
+      const quotes = [
+        "I love your headpats, they feel so warm~ 💖",
+        "Seeing you always brightens up my whole day! ✨",
+        "With your encouragement, Saki is full of energy! (๑•̀ㅂ•́)و",
+        "Ehehe~ Rubbing my cheek against your hand~"
+      ];
+      return quotes[Math.floor(Math.random() * quotes.length)]!;
+    }
+    if (level === 3) {
+      const quotes = [
+        "Your touch is so gentle... I want to stay with you forever! 💕",
+        "My heart is fluttering... Saki loves you the most! ✨",
+        "No matter how busy it gets, I'll always be right here cheering for you~ (*╹▽╹*)",
+        "Ehehe, Saki's thoughts are filled with you every day~ 💖"
+      ];
+      return quotes[Math.floor(Math.random() * quotes.length)]!;
+    }
+    const quotes = [
+      "You mean the whole world to Saki, Master! 💖",
+      "Meeting you is the most wonderful miracle in the whole universe! ✨",
+      "Saki will always hold your hand tightly wherever we go~ 💕",
+      "When you pet me like this, Saki feels like the happiest girl in the world~ (*´∀`*)"
+    ];
+    return quotes[Math.floor(Math.random() * quotes.length)]!;
+  }
+
+  if (isTw) {
+    if (level <= 1) {
+      const quotes = [
+        "能和主人在一起，Saki 每天都超級開心～✨",
+        "摸摸頭～Saki 會加倍努力成為你的得力小幫手！(ง •_•)ง",
+        "嘿嘿～今天也要和 Saki 一起元氣滿滿呀！(◕ᴗ◕✿)",
+        "有主人在身邊，Saki 覺得特別安心呢～"
+      ];
+      return quotes[Math.floor(Math.random() * quotes.length)]!;
+    }
+    if (level === 2) {
+      const quotes = [
+        "最喜歡被主人摸摸頭了，心裡暖呼呼的～💖",
+        "每次見到主人，Saki 頭頂都會悄悄冒粉色小愛心～✨",
+        "有主人的鼓勵，Saki 感覺渾身充滿了乾勁！(๑•̀ㅂ•́)و",
+        "嗚哇～被主人摸得好舒服，蹭蹭你的手手～"
+      ];
+      return quotes[Math.floor(Math.random() * quotes.length)]!;
+    }
+    if (level === 3) {
+      const quotes = [
+        "主人的手好溫柔呀～好想一直黏在主人身邊！💕",
+        "心跳撲通撲通的……Saki 最最喜歡主人啦！✨",
+        "不管有多忙，Saki 都會一直在這裡乖乖陪著你哦～(*╹▽╹*)",
+        "嘿嘿，Saki 的小腦袋裡裝的滿滿都是主人呢～💖"
+      ];
+      return quotes[Math.floor(Math.random() * quotes.length)]!;
+    }
+    const quotes = [
+      "最最喜歡主人了！Saki 永遠是你的專屬小棉襖～💖",
+      "能遇到主人，是 Saki 整個宇宙裡最最幸運的事！✨",
+      "無論去哪裡，Saki 都要緊緊牽著你的手不放開～💕",
+      "嗚……被主人摸摸的時候，Saki 感覺自己是世界上最幸福的！(*´∀`*)"
+    ];
+    return quotes[Math.floor(Math.random() * quotes.length)]!;
+  }
+
+  if (level <= 1) {
+    const quotes = [
+      "能和主人在一起，Saki 每天都超级开心～✨",
+      "摸摸头～Saki 会加倍努力成为你的得力小帮手！(ง •_•)ง",
+      "嘿嘿～今天也要和 Saki 一起元气满满呀！(◕ᴗ◕✿)",
+      "有主人在身边，Saki 觉得特别安心呢～"
+    ];
+    return quotes[Math.floor(Math.random() * quotes.length)]!;
+  }
+  if (level === 2) {
+    const quotes = [
+      "最喜欢被主人摸摸头了，心里暖呼呼的～💖",
+      "每次见到主人，Saki 头顶都会悄悄冒粉色小爱心～✨",
+      "有主人的鼓励，Saki 感觉浑身充满了干劲！(๑•̀ㅂ•́)و",
+      "呜哇～被主人摸得好舒服，蹭蹭你的手手～"
+    ];
+    return quotes[Math.floor(Math.random() * quotes.length)]!;
+  }
+  if (level === 3) {
+    const quotes = [
+      "主人的手好温柔呀～好想一直粘在主人身边！💕",
+      "心跳扑通扑通的……Saki 最最喜欢主人啦！✨",
+      "不管有多忙，Saki 都会一直在这里乖乖陪着你哦～(*╹▽╹*)",
+      "嘿嘿，Saki 的小脑袋里装的满满都是主人呢～💖"
+    ];
+    return quotes[Math.floor(Math.random() * quotes.length)]!;
+  }
+  const quotes = [
+    "最最喜欢主人了！Saki 永远是你的专属小棉袄～💖",
+    "能遇到主人，是 Saki 整个宇宙里最最幸运的事！✨",
+    "无论去哪里，Saki 都要紧紧牵着你的手不放开～💕",
+    "呜……被主人摸摸的时候，Saki 感觉自己是世界上最幸福的！(*´∀`*)"
+  ];
+  return quotes[Math.floor(Math.random() * quotes.length)]!;
+}
+
 

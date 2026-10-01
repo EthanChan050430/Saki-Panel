@@ -19,7 +19,7 @@ import {
   Shirt,
   Sparkles
 } from "lucide-react";
-import type { SakiPetController, SakiPetNote, SakiPetSticker } from "./sakiPetState.js";
+import type { SakiPetController, SakiPetNote, SakiPetSticker, SakiPetWidget } from "./sakiPetState.js";
 import { weatherGlyph, weatherLabel } from "./sakiPetState.js";
 import { formatTrackTime, sakiMusicAccept } from "./sakiPetMusic.js";
 import { usePlugins } from "../../../plugins/PluginContext.js";
@@ -169,7 +169,8 @@ export function SakiPetWidgetCard({
   foods,
   canAfford,
   onFeed,
-  onCaptureSticker
+  onCaptureSticker,
+  side = "right"
 }: {
   pet: SakiPetController;
   language?: string | undefined;
@@ -179,43 +180,94 @@ export function SakiPetWidgetCard({
   canAfford: (cost: number) => boolean;
   onFeed: (foodId: string) => void;
   onCaptureSticker: () => void;
+  side?: "left" | "right" | undefined;
 }) {
-  if (!pet.widget) return null;
+  const [activeWidget, setActiveWidget] = useState<SakiPetWidget>(pet.widget);
+  const [isClosing, setIsClosing] = useState(false);
+  const closeTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (pet.widget) {
+      if (closeTimerRef.current !== null) {
+        window.clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+      setActiveWidget(pet.widget);
+      setIsClosing(false);
+    } else if (activeWidget) {
+      setIsClosing(true);
+      closeTimerRef.current = window.setTimeout(() => {
+        setActiveWidget(null);
+        setIsClosing(false);
+      }, 230);
+    }
+    return () => {
+      if (closeTimerRef.current !== null) {
+        window.clearTimeout(closeTimerRef.current);
+      }
+    };
+  }, [pet.widget, activeWidget]);
+
+  const handleClose = useCallback(() => {
+    setIsClosing(true);
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+    }
+    closeTimerRef.current = window.setTimeout(() => {
+      pet.closeWidget();
+      setActiveWidget(null);
+      setIsClosing(false);
+    }, 220);
+  }, [pet]);
+
+  if (!activeWidget) return null;
   const isEn = language === "en-US";
   return (
-    <div className={`saki-pet-widget-card edge-${edge} ${below ? "is-below" : ""}`} onPointerDown={(event) => event.stopPropagation()}>
+    <div
+      className={`saki-pet-widget-card edge-${edge} side-${side} ${below ? "is-below" : ""} ${isClosing ? "is-closing" : "is-entering"}`}
+      onPointerDown={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+    >
       <header>
         <strong>
-          {pet.widget === "feed"
+          {activeWidget === "feed"
             ? isEn ? "Feed Saki" : "喂食"
-            : pet.widget === "todo"
+            : activeWidget === "todo"
             ? isEn ? "Todos" : "待办清单"
-            : pet.widget === "schedule"
+            : activeWidget === "schedule"
             ? isEn ? "Reminders" : "日程提醒"
-            : pet.widget === "pomodoro"
+            : activeWidget === "pomodoro"
             ? isEn ? "Pomodoro" : "番茄钟"
-            : pet.widget === "notes"
+            : activeWidget === "notes"
             ? isEn ? "Sticky notes" : "便签"
-            : pet.widget === "sticker"
+            : activeWidget === "sticker"
             ? isEn ? "Screenshot stickers" : "截图贴图"
-            : pet.widget === "skins"
+            : activeWidget === "skins"
             ? isEn ? "Outfits" : "换装"
-            : pet.widget === "music"
+            : activeWidget === "music"
             ? isEn ? "Sing" : "唱歌"
             : isEn ? "Calendar" : "日历"}
         </strong>
-        <button type="button" onClick={pet.closeWidget} aria-label="关闭">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleClose();
+          }}
+          aria-label="关闭"
+        >
           <X size={14} />
         </button>
       </header>
-      {pet.widget === "feed" ? (
+      {activeWidget === "feed" ? (
         <FeedPanel foods={foods} canAfford={canAfford} onFeed={onFeed} isEn={isEn} />
       ) : null}
-      {pet.widget === "todo" ? <TodoPanel pet={pet} isEn={isEn} /> : null}
-      {pet.widget === "schedule" ? <SchedulePanel pet={pet} isEn={isEn} /> : null}
-      {pet.widget === "pomodoro" ? <PomodoroPanel pet={pet} isEn={isEn} /> : null}
-      {pet.widget === "notes" ? <NotesPanel pet={pet} isEn={isEn} /> : null}
-      {pet.widget === "sticker" ? (
+      {activeWidget === "todo" ? <TodoPanel pet={pet} isEn={isEn} /> : null}
+      {activeWidget === "schedule" ? <SchedulePanel pet={pet} isEn={isEn} /> : null}
+      {activeWidget === "pomodoro" ? <PomodoroPanel pet={pet} isEn={isEn} /> : null}
+      {activeWidget === "notes" ? <NotesPanel pet={pet} isEn={isEn} /> : null}
+      {activeWidget === "sticker" ? (
         <div className="saki-pet-widget-body">
           <p className="saki-pet-widget-hint">{isEn ? "Capture the screen, then stick it on the desktop." : "截取画面后贴在桌面上，可拖动。"}</p>
           <button type="button" className="saki-pet-primary" onClick={onCaptureSticker}>
@@ -223,9 +275,9 @@ export function SakiPetWidgetCard({
           </button>
         </div>
       ) : null}
-      {pet.widget === "calendar" ? <CalendarPanel pet={pet} language={language} /> : null}
-      {pet.widget === "skins" ? <SkinsPanel pet={pet} isEn={isEn} /> : null}
-      {pet.widget === "music" ? <MusicPanel pet={pet} isEn={isEn} /> : null}
+      {activeWidget === "calendar" ? <CalendarPanel pet={pet} language={language} /> : null}
+      {activeWidget === "skins" ? <SkinsPanel pet={pet} isEn={isEn} /> : null}
+      {activeWidget === "music" ? <MusicPanel pet={pet} isEn={isEn} /> : null}
     </div>
   );
 }
@@ -251,7 +303,10 @@ function FeedPanel({
             type="button"
             className={`saki-pet-feed-item ${ok ? "" : "disabled"}`}
             disabled={!ok}
-            onClick={() => onFeed(food.id)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onFeed(food.id);
+            }}
           >
             <img src={food.image} alt="" />
             <span>

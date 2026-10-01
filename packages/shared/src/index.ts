@@ -1326,6 +1326,9 @@ export interface SakiAuditConversationListResponse {
   page: number;
   limit: number;
   totalPages: number;
+  facets?: {
+    users?: Array<{ id: string; username: string; displayName: string; avatarDataUrl?: string | null }>;
+  };
 }
 
 export interface AuditRetentionPolicy {
@@ -2708,3 +2711,4 @@ export interface ActivateOperationPackResponse {
   executed: false;
 }
 
+export * from "./git.js";

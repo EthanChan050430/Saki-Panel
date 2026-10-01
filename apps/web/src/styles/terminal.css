@@ -1579,6 +1579,8 @@
   filter: drop-shadow(0 1px 3px rgba(255, 45, 122, 0.45)) !important;
   cursor: pointer !important;
   pointer-events: auto !important;
+  touch-action: manipulation !important;
+  -webkit-tap-highlight-color: transparent !important;
   transition: all 0.18s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
   flex-shrink: 0 !important;
   z-index: 21 !important;
@@ -1623,8 +1625,9 @@
 
 .terminal-history-popover {
   position: fixed !important;
-  width: 340px !important;
-  max-height: 280px !important;
+  width: min(340px, calc(100vw - 24px)) !important;
+  max-width: calc(100vw - 24px) !important;
+  max-height: min(280px, calc(100vh - 120px)) !important;
   border-radius: 16px !important;
   z-index: 99999 !important;
   display: flex !important;
@@ -1855,53 +1858,70 @@ input.terminal-cmd-input::placeholder {
   border-radius: 50% !important;
   display: grid !important;
   place-items: center !important;
-  background: linear-gradient(135deg, rgba(255, 117, 172, 0.95), rgba(255, 91, 154, 0.95)) !important;
-  backdrop-filter: blur(20px) !important;
-  -webkit-backdrop-filter: blur(20px) !important;
-  border: 1px solid rgba(255, 255, 255, 0.5) !important;
+  background: linear-gradient(135deg, rgba(255, 117, 172, 0.9), rgba(255, 90, 150, 0.9)) !important;
+  backdrop-filter: blur(14px) saturate(150%) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(150%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.45) !important;
   color: #ffffff !important;
-  box-shadow: 0 6px 20px rgba(255, 117, 172, 0.38), inset 0 1.5px 1px rgba(255, 255, 255, 0.75) !important;
+  box-shadow: 0 2px 8px rgba(255, 117, 172, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.5) !important;
   cursor: pointer !important;
-  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  transition: background 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease, opacity 0.2s ease !important;
   flex-shrink: 0 !important;
   margin-left: 2px !important;
 }
 
+.terminal-send-btn svg {
+  transition: transform 0.2s ease !important;
+}
+
 .terminal-send-btn:hover:not(:disabled) {
-  transform: translateY(-2px) scale(1.08) !important;
-  box-shadow: 0 12px 32px rgba(255, 117, 172, 0.6), inset 0 1.5px 1px rgba(255, 255, 255, 0.9) !important;
-  background: linear-gradient(135deg, #ff85b7, #ff4c92) !important;
+  transform: none !important;
+  background: linear-gradient(135deg, rgba(255, 105, 165, 0.96), rgba(255, 75, 142, 0.96)) !important;
+  border-color: rgba(255, 255, 255, 0.65) !important;
+  box-shadow: 0 4px 12px rgba(255, 117, 172, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.65) !important;
+}
+
+.terminal-send-btn:hover:not(:disabled) svg {
+  transform: translateX(1px) !important;
 }
 
 .terminal-send-btn:active:not(:disabled) {
-  transform: translateY(0) scale(0.95) !important;
+  transform: none !important;
+  background: linear-gradient(135deg, rgba(240, 95, 155, 0.98), rgba(235, 70, 135, 0.98)) !important;
+  box-shadow: 0 1px 4px rgba(255, 117, 172, 0.25), inset 0 1px 2px rgba(0, 0, 0, 0.1) !important;
 }
 
 .terminal-send-btn:disabled {
   cursor: not-allowed !important;
   transform: none !important;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.8) !important;
-  background: rgba(255, 255, 255, 0.38) !important;
-  backdrop-filter: blur(24px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.6) !important;
-  color: #86868b !important;
-  opacity: 0.9 !important;
+  box-shadow: none !important;
+  background: rgba(0, 0, 0, 0.04) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  border: 1px solid rgba(0, 0, 0, 0.06) !important;
+  color: #94a3b8 !important;
+  opacity: 0.7 !important;
 }
 
 [data-theme="dark"] .terminal-send-btn {
-  background: linear-gradient(135deg, #ff75ac, #ff5b9a) !important;
-  border: 1px solid rgba(255, 255, 255, 0.3) !important;
-  box-shadow: 0 8px 28px rgba(255, 117, 172, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.5) !important;
+  background: linear-gradient(135deg, rgba(255, 117, 172, 0.85), rgba(244, 63, 142, 0.85)) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
+}
+
+[data-theme="dark"] .terminal-send-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(255, 130, 180, 0.92), rgba(255, 75, 150, 0.92)) !important;
+  border-color: rgba(255, 255, 255, 0.35) !important;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.45) !important;
 }
 
 [data-theme="dark"] .terminal-send-btn:disabled {
-  background: rgba(255, 255, 255, 0.06) !important;
-  backdrop-filter: blur(24px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.12) !important;
-  color: #636366 !important;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  color: #64748b !important;
+  box-shadow: none !important;
 }
 
 .terminal-error,

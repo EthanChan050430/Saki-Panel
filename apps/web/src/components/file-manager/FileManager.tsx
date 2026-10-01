@@ -28,6 +28,7 @@ import {
   FolderOpen,
   FolderPlus,
   FolderTree,
+  GitBranch,
   HardDrive,
   History,
   Image as ImageIcon,
@@ -91,6 +92,7 @@ import { FileConflictModal } from "./FileConflictModal.js";
 import { ArchiveConflictModal } from "./ArchiveConflictModal.js";
 import { CodeEditorPanel } from "./CodeEditorPanel.js";
 import { MtActionSheet } from "./MtActionSheet.js";
+import { GitManager } from "./GitManager.js";
 
 
 const sakiInstanceFileDragMime = "application/x-webops-instance-file";
@@ -115,6 +117,10 @@ export function FileManager({
   onOpenFileRequestConsumed?: () => void;
 }) {
   const instanceId = instance?.id ?? null;
+  const [gitOpen, setGitOpen] = useState(false);
+  const [gitVisited, setGitVisited] = useState(false);
+  const [gitExcludedPaths, setGitExcludedPaths] = useState<string[]>([]);
+  useEffect(() => { setGitOpen(false); setGitVisited(false); setGitExcludedPaths([]); }, [instanceId]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const codeEditorRef = useRef<CodeEditorHandle | null>(null);
@@ -991,7 +997,7 @@ export function FileManager({
         return;
       }
 
-      if (!instanceId || editorPath) return;
+      if (!instanceId || editorPath || (event.target instanceof Element && event.target.closest(".git-manager, .file-manager-mode-bar"))) return;
 
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -1159,6 +1165,7 @@ export function FileManager({
   useEffect(() => {
     if (!mobileBrowserOpen && !mobileEditorOpen && !findVisible) return;
     const handleGlobalKeyDown = (event: KeyboardEvent) => {
+      if (event.target instanceof Element && event.target.closest(".git-manager, .file-manager-mode-bar")) return;
       if (event.key !== "Escape" || fileConflictPrompt || extractConflictPrompt) return;
       if (findVisible) {
         event.preventDefault();
@@ -1299,6 +1306,7 @@ export function FileManager({
   }
 
   function handleFileManagerKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.target instanceof Element && event.target.closest(".git-manager, .file-manager-mode-bar")) return;
     if (event.key === "Escape") {
       if (findVisible) {
         event.preventDefault();
@@ -1526,6 +1534,7 @@ export function FileManager({
   useEffect(() => {
     if (!openFileRequest?.path || !instanceId) return;
     if (openFileRequest.instanceId && openFileRequest.instanceId !== instanceId) return;
+    setGitOpen(false);
     const normalized = openFileRequest.path.replace(/\\/g, "/").replace(/^\.\//, "");
     pendingRevealLineRef.current = openFileRequest.line ?? null;
     void loadDirectory(parentFilePath(normalized));
@@ -2833,6 +2842,7 @@ export function FileManager({
     <div
       className={[
         "file-manager",
+        gitOpen ? "git-open" : "",
         editorPath ? "editor-open" : "",
         isMobileFileLayout() && mobileBrowserOpen ? "mobile-browser-open" : "",
         isMobileFileLayout() && mobileEditorOpen ? "mobile-editor-open" : ""
@@ -2855,8 +2865,26 @@ export function FileManager({
         </div>
       ) : null}
       <div className="file-manager-modal-chrome">
+        <div className="file-manager-mode-bar">
+          <div role="group" aria-label="文件管理功能">
+            <button type="button" className={!gitOpen ? "active" : ""} aria-pressed={!gitOpen} onClick={() => setGitOpen(false)}><FolderOpen size={15} />文件</button>
+            <button type="button" className={gitOpen ? "active" : ""} aria-pressed={gitOpen} onClick={() => { setGitVisited(true); setGitOpen(true); }}><GitBranch size={15} />Git</button>
+          </div>
+          {!gitOpen && (selectedPaths.size > 0 || mobileSelectedPaths.size > 0 || selectedPath) ? <button type="button" className="file-git-exclude-shortcut" onClick={() => {
+            const paths = isMobileFileLayout() && mobileSelectedPaths.size ? [...mobileSelectedPaths] : selectedPaths.size ? [...selectedPaths] : selectedPath ? [selectedPath] : [];
+            setGitExcludedPaths(paths.filter((entry) => entry !== ".gitignore" && !entry.split("/").includes(".git")));
+            setGitVisited(true); setGitOpen(true);
+          }}>将所选排除 Git</button> : <span className="file-mode-instance-name">{instance.name}</span>}
+          {onClose && <button type="button" className="file-mode-close" aria-label="关闭文件管理" onClick={onClose}><X size={16} /></button>}
+        </div>
+        {gitVisited && <div className="file-git-pane" hidden={!gitOpen}><GitManager key={instance.id} active={gitOpen} token={token} instanceId={instance.id} initialExcludedPaths={gitExcludedPaths} onFilesChanged={() => {
+          void loadDirectory(currentPath);
+          void loadTreeDirectory("");
+          void loadPaneDirectory("left", leftPath, false);
+          void loadPaneDirectory("right", rightPath, false);
+        }} /></div>}
         {/* Mobile Fullscreen Editor Modal (Mobile only) */}
-        {isMobileFileLayout() && mobileEditorOpen && editorPath ? renderEditorPanel() : null}
+        {!gitOpen && isMobileFileLayout() && mobileEditorOpen && editorPath ? renderEditorPanel() : null}
 
         {/* MT Manager Action Bottom Sheet */}
         {mobileActionEntry ? (
@@ -3636,7 +3664,7 @@ export function FileManager({
             <X size={15} />
           </button>
         </div>
-        {isMobileFileLayout() && mobileEditorOpen ? (
+        {!gitOpen && isMobileFileLayout() && mobileEditorOpen ? (
           <div className="mobile-file-editor-scrim" role="presentation" onPointerDown={closeMobileEditorModal} />
         ) : null}
         {uploadProgress ? (

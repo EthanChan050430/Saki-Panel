@@ -1,4 +1,10 @@
 import type {
+  InstanceGitStatus,
+  InstanceGitHistory,
+  InstanceGitDiff,
+  InstanceGitDraft,
+  InstanceGitCommitRequest,
+  InstanceGitIgnoreRequest,
   CurrentUser,
   DashboardOverview,
   ArchiveInstancePathsResponse,
@@ -714,6 +720,27 @@ function triggerBlobDownload(blob: Blob, fileName: string) {
 }
 
 export const api = {
+  instanceGitStatus(token: string, id: string) {
+    return requestJson<InstanceGitStatus>(`/api/instances/${id}/git/status`, {}, token);
+  },
+  instanceGitHistory(token: string, id: string, offset = 0) {
+    return requestJson<InstanceGitHistory>(pathWithQuery(`/api/instances/${id}/git/history`, { offset: String(offset), limit: "40" }), {}, token);
+  },
+  instanceGitDiff(token: string, id: string, selection: { paths: string[] } | { hash: string }) {
+    return requestJson<InstanceGitDiff>(pathWithQuery(`/api/instances/${id}/git/diff`, "hash" in selection ? { hash: selection.hash } : { paths: JSON.stringify(selection.paths) }), {}, token);
+  },
+  initInstanceGit(token: string, id: string) {
+    return requestJson<InstanceGitStatus>(`/api/instances/${id}/git/init`, { method: "POST", body: "{}" }, token);
+  },
+  saveInstanceGitIgnore(token: string, id: string, input: InstanceGitIgnoreRequest) {
+    return requestJson<InstanceGitStatus>(`/api/instances/${id}/git/ignore`, { method: "POST", body: JSON.stringify(input) }, token);
+  },
+  commitInstanceGit(token: string, id: string, input: InstanceGitCommitRequest) {
+    return requestJson<{ hash: string }>(`/api/instances/${id}/git/commit`, { method: "POST", body: JSON.stringify(input) }, token);
+  },
+  draftInstanceGit(token: string, id: string, paths: string[]) {
+    return requestJson<InstanceGitDraft>(`/api/instances/${id}/git/draft`, { method: "POST", body: JSON.stringify({ paths }) }, token);
+  },
   login(input: LoginRequest) {
     return requestJson<LoginResponse>("/api/auth/login", {
       method: "POST",
