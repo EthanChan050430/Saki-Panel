@@ -1,11 +1,12 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import type { SakiChatRequest, SakiConfigResponse } from "@webops/shared";
-import type { ParsedToolCall } from "./types.js";
+import type { ParsedToolCall, SakiAssistantState } from "./types.js";
 import { imageAttachments, trimString } from "./types.js";
 import type { DirectChatMessage, DirectProviderMessage } from "./prompt.js";
 import { buildDirectMessages, buildDirectSystemPrompt, buildStaticAgentSystemPrompt } from "./prompt.js";
-import { sakiModelProfile } from "./model-profile.js";
+import { sakiModelProfile, xmlToolFormatReminder } from "./model-profile.js";
+import { advertisedSakiToolSchemas } from "./tools.js";
 import {
   withAnthropicImageInputs,
   withOllamaImageInputs,
@@ -18,6 +19,7 @@ export interface SakiAgentTurnMessage {
   toolCalls?: ParsedToolCall[];
   toolCallId?: string;
   name?: string;
+  assistantState?: SakiAssistantState;
 }
 
 export interface SakiAgentTurnConversation {
@@ -85,8 +87,10 @@ export function toOpenAiMessages(conversation: SakiAgentTurnConversation): Direc
         tool_calls: turn.toolCalls.map((call) => ({
           id: ensureToolCallId(call),
           type: "function",
-          function: { name: call.name, arguments: jsonArgs(call) }
-        }))
+          function: { name: call.name, arguments: jsonArgs(call) },
+          ...(call.extraContent ? { extra_content: call.extraContent } : {})
+        })),
+        ...(turn.assistantState?.reasoningContent !== undefined ? { reasoning_content: turn.assistantState.reasoningContent } : {})
       });
       continue;
     }
@@ -97,7 +101,11 @@ export function toOpenAiMessages(conversation: SakiAgentTurnConversation): Direc
         continue;
       }
     }
-    messages.push({ role: turn.role, content: turn.content });
+    messages.push({
+      role: turn.role,
+      content: turn.content,
+      ...(turn.role === "assistant" && turn.assistantState?.reasoningContent !== undefined ? { reasoning_content: turn.assistantState.reasoningContent } : {})
+    });
   }
   return messages;
 }
@@ -119,7 +127,7 @@ export function toAnthropicMessages(conversation: SakiAgentTurnConversation): Di
       continue;
     }
     if (turn.role === "assistant") {
-      const blocks: unknown[] = [];
+      const blocks: unknown[] = [...(turn.assistantState?.thinkingBlocks ?? [])];
       if (turn.content.trim()) blocks.push({ type: "text", text: turn.content });
       for (const call of turn.toolCalls ?? []) {
         blocks.push({
@@ -139,6 +147,29 @@ export function toAnthropicMessages(conversation: SakiAgentTurnConversation): Di
         content: turn.content
       }
     ]);
+  }
+  return messages;
+}
+
+export function toOllamaMessages(conversation: SakiAgentTurnConversation): DirectProviderMessage[] {
+  const messages: DirectProviderMessage[] = [];
+  if (conversation.systemPrompt.trim()) messages.push({ role: "system", content: conversation.systemPrompt });
+  for (const turn of conversation.messages) {
+    if (turn.role === "tool") {
+      messages.push({ role: "tool", content: turn.content, ...(turn.name ? { tool_name: turn.name } : {}) });
+    } else {
+      messages.push({
+        role: turn.role,
+        content: turn.content,
+        ...(turn.role === "assistant" && turn.assistantState?.reasoningContent !== undefined ? { thinking: turn.assistantState.reasoningContent } : {}),
+        ...(turn.toolCalls?.length ? {
+          tool_calls: turn.toolCalls.map((call, index) => ({
+            type: "function",
+            function: { index, name: call.name, arguments: Array.isArray(call.args) ? {} : call.args ?? {} }
+          }))
+        } : {})
+      });
+    }
   }
   return messages;
 }
@@ -254,7 +285,7 @@ export function buildOllamaAgentMessages(
 ): DirectProviderMessage[] {
   const conversation = currentAgentTurnConversation();
   if (conversation?.messages.length) {
-    return attachOllamaImages(toOpenAiMessages(conversation), input);
+    return attachOllamaImages(toOllamaMessages(conversation), input);
   }
   return withOllamaImageInputs(buildDirectMessages(input, prompt, buildDirectSystemPrompt(config)), input);
 }
@@ -265,13 +296,17 @@ export function buildPromptFallbackMessages(
   config: SakiConfigResponse
 ): DirectChatMessage[] {
   const conversation = currentAgentTurnConversation();
+  const toolInstructions = `Native function calling is unavailable for this request. Saki Panel can still execute the tools below when you output XML tool calls. Do not claim tools are unavailable just because native function calling is disabled.
+${xmlToolFormatReminder()}
+Available Saki tools (names, descriptions and JSON parameter schemas; only use these tools):
+${JSON.stringify(advertisedSakiToolSchemas().map(({ name, description, parameters }) => ({ name, description, parameters })))}`;
   if (conversation?.messages.length) {
     return [
-      { role: "system", content: conversation.systemPrompt },
+      { role: "system", content: `${conversation.systemPrompt}\n\n${toolInstructions}` },
       { role: "user", content: serializeTurnMessagesForPrompt({ systemPrompt: "", messages: conversation.messages }) }
     ];
   }
-  return buildDirectMessages(input, prompt, buildDirectSystemPrompt(config));
+  return buildDirectMessages(input, prompt, `${buildDirectSystemPrompt(config)}\n\n${toolInstructions}`);
 }
 
 export function compactAgentTurnMessages(messages: SakiAgentTurnMessage[], maxChars = 60000): SakiAgentTurnMessage[] {

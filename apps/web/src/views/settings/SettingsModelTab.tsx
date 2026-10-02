@@ -49,7 +49,7 @@ import type {
   SakiModelOption,
   SakiProviderConfig
 } from "@webops/shared";
-import { sakiModelSelectionKey } from "@webops/shared";
+import { sakiModelSelectionKey, sakiNvidiaDefaultModel } from "@webops/shared";
 import type { PanelTextKey } from "../../i18n/index.js";
 import {
   antigravityModeOf,
@@ -323,7 +323,7 @@ export const SettingsModelTab = memo(function SettingsModelTab({
     };
   };
 
-  // Master-Detail Catalog Definition for all 14 providers
+  // Master-Detail Catalog Definition for model providers
   const allProvidersList = useMemo(() => [
     // 1. Official
     {
@@ -387,6 +387,16 @@ export const SettingsModelTab = memo(function SettingsModelTab({
       iconBg: "#10a37f",
       iconColor: "#ffffff",
       desc: providerDescriptions.openai
+    },
+    {
+      id: "nvidia",
+      name: "NVIDIA",
+      category: "cloud",
+      tag: "NVIDIA NIM / API Catalog",
+      iconType: "cpu",
+      iconBg: "#76b900",
+      iconColor: "#ffffff",
+      desc: providerDescriptions.nvidia
     },
     {
       id: "gemini",
@@ -1139,7 +1149,7 @@ export const SettingsModelTab = memo(function SettingsModelTab({
                       type={isKeyShown ? "text" : "password"}
                       value={pConfig.apiKey ?? ""}
                       onChange={(e) => updateSpecificProviderConfig(pid, { apiKey: e.target.value })}
-                      placeholder="sk-..."
+                      placeholder={pid === "nvidia" ? "nvapi-..." : "sk-..."}
                     />
                     <button
                       type="button"
@@ -1199,7 +1209,7 @@ export const SettingsModelTab = memo(function SettingsModelTab({
                     className="settings-input"
                     value={pConfig.model ?? ""}
                     onChange={(e) => updateSpecificProviderConfig(pid, { model: e.target.value })}
-                    placeholder={pid === "ollama" ? "llama3" : "例如 deepseek-chat, gpt-4o 等"}
+                    placeholder={pid === "ollama" ? "llama3" : pid === "nvidia" ? sakiNvidiaDefaultModel : "例如 deepseek-chat, gpt-4o 等"}
                   />
                   {providerModels.length > 0 ? (
                     <button

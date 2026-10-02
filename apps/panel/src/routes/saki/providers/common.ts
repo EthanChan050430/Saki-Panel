@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { SakiChatRequest, SakiConfigResponse, SakiModelOption } from "@webops/shared";
+import { sakiNvidiaDefaultModel } from "@webops/shared";
 import type { SakiModelToolTurn } from "../types.js";
 import {
   compactDebugText,
@@ -170,9 +171,16 @@ export function openAiCompatibleChatBody(
   body: Record<string, unknown>,
   preferredTemperature: number
 ): Record<string, unknown> {
-  const withThinking = { ...body, ...nativeThinkingChatExtras(provider, model) };
+  // These sampling and reasoning defaults belong to this Nemotron model,
+  // rather than every model hosted by NVIDIA's OpenAI-compatible API.
+  const isNvidiaNemotron = provider === "nvidia" && model.trim().toLowerCase() === sakiNvidiaDefaultModel;
+  const withThinking = {
+    ...(isNvidiaNemotron ? { max_tokens: 65536, reasoning_budget: 16384, top_p: 0.95 } : {}),
+    ...body,
+    ...nativeThinkingChatExtras(provider, model)
+  };
   if (!shouldSendCustomTemperature(provider, baseUrl, model)) return withThinking;
-  return { ...withThinking, temperature: preferredTemperature };
+  return { ...withThinking, temperature: isNvidiaNemotron ? 0.6 : preferredTemperature };
 }
 
 export function withoutTemperature(body: Record<string, unknown>): Record<string, unknown> {
@@ -186,13 +194,14 @@ export function withoutNativeThinking(body: Record<string, unknown>): Record<str
   delete next.enable_thinking;
   delete next.thinking;
   delete next.reasoning_effort;
+  delete next.reasoning_budget;
   delete next.reasoning;
   return next;
 }
 
 export function isThinkingRequestError(error: unknown): boolean {
   const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
-  return /enable_thinking|reasoning_effort|\bthinking\b/.test(message) && /unsupported|unknown|invalid|unrecognized|not\s+support|unexpected/.test(message);
+  return /enable_thinking|reasoning_effort|reasoning_budget|\bthinking\b/.test(message) && /unsupported|unknown|invalid|unrecognized|not\s+support|unexpected/.test(message);
 }
 
 export function isContextOverflowError(error: unknown): boolean {

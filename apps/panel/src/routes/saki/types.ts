@@ -19,7 +19,7 @@ import type {
   SakiWorkspaceContext,
   UpdateScheduledTaskRequest
 } from "@webops/shared";
-import { parseSakiModelSelection, sakiAttachmentMentionToken, sakiListedModelSupportsVision } from "@webops/shared";
+import { parseSakiModelSelection, sakiAttachmentMentionToken, sakiListedModelSupportsVision, sakiNvidiaBaseUrl, sakiNvidiaDefaultModel } from "@webops/shared";
 export type { SakiSkillSummary } from "@webops/shared";
 import type { SakiSkillSummary } from "@webops/shared";
 import type { FastifyRequest } from "fastify";
@@ -603,12 +603,18 @@ export interface SakiToolSchema {
   aliases?: string[];
 }
 
+export interface SakiAssistantState {
+  reasoningContent?: string;
+  thinkingBlocks?: Record<string, unknown>[];
+}
+
 export interface SakiModelToolTurn {
   content: string;
   toolCalls: ParsedToolCall[];
   forwardedDeltaText?: boolean;
   forwardedDeltaContent?: string;
   usageTokens?: number;
+  assistantState?: SakiAssistantState;
 }
 
 export interface ParsedToolCall {
@@ -616,6 +622,7 @@ export interface ParsedToolCall {
   name: string;
   rawArgs?: string;
   args: any;
+  extraContent?: Record<string, unknown>;
 }
 
 export interface SakiAgentRuntime {
@@ -1006,6 +1013,7 @@ export interface CopilotDeviceLoginSession {
 
 export const providerDefaults: Record<string, { label: string; baseUrl: string }> = {
   openai: { label: "OpenAI", baseUrl: "https://api.openai.com/v1" },
+  nvidia: { label: "NVIDIA", baseUrl: sakiNvidiaBaseUrl },
   deepseek: { label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1" },
   zhipu: { label: "Zhipu GLM", baseUrl: "https://open.bigmodel.cn/api/paas/v4" },
   gemini: { label: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai" },
@@ -1603,7 +1611,7 @@ export function defaultProviderConfig(provider: string): SakiProviderConfig {
   }
   return {
     enabled: false,
-    model: "",
+    model: providerId === "nvidia" ? sakiNvidiaDefaultModel : "",
     baseUrl: providerDefaults[providerId]?.baseUrl ?? "",
     apiKey: ""
   };

@@ -158,14 +158,17 @@ export function extractOpenAiChatTurn(payload: unknown, prompt = ""): SakiModelT
   }
   const turn: SakiModelToolTurn = {
     content,
-    toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content)
+    toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content),
+    ...(typeof message?.reasoning_content === "string" ? { assistantState: { reasoningContent: message.reasoning_content } } : {})
   };
   return withTurnUsage(turn, prompt, payload, true);
 }
 
 export function isToolCallingUnsupportedError(error: unknown): boolean {
+  if (error instanceof RouteError && error.statusCode !== 400 && error.statusCode !== 422) return false;
   const message = error instanceof Error ? error.message.toLowerCase() : "";
-  return /tools?|tool_choice|function.?call|unsupported parameter|unknown parameter|unrecognized/.test(message);
+  return /\btools?\b|tool_choice|function[_. -]?call(?:ing)?/.test(message) &&
+    /unsupported|not[ _-]+support|does(?:n['’]t| not) support|cannot support|not available|disabled|not allowed|not implemented|(?:unknown|unrecognized|unexpected) (?:request )?(?:parameter|argument|field)|invalid.{0,30}tool_choice/.test(message);
 }
 
 export async function fetchOpenAiModelCatalog(provider: string, config: SakiConfigResponse): Promise<SakiModelOption[]> {

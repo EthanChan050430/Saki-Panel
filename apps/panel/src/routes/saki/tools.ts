@@ -514,7 +514,8 @@ export function normalizeStructuredToolCall(raw: unknown): ParsedToolCall {
     }
   }
   const id = trimString(item.id);
-  return { ...(id ? { id } : {}), name: schema.name, args };
+  const extraContent = objectValue(item.extra_content);
+  return { ...(id ? { id } : {}), name: schema.name, args, ...(extraContent ? { extraContent } : {}) };
 }
 
 export function shorthandPrimaryArgumentKey(toolName: string): string | null {

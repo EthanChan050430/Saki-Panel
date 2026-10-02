@@ -1575,9 +1575,13 @@ export function sakiAttachmentsForMessage(
   return attachments.filter((attachment) => !isSakiImageAttachment(attachment) || mentionedKeys.has(attachment.id ?? attachment.name));
 }
 
+export const sakiNvidiaBaseUrl = "https://integrate.api.nvidia.com/v1";
+export const sakiNvidiaDefaultModel = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning";
+
 export function sakiModelSupportsVision(modelId: string, provider?: string): boolean {
   const haystack = `${provider ?? ""} ${modelId}`.toLowerCase();
   if (!modelId.trim()) return false;
+  if (modelId.trim().toLowerCase() === sakiNvidiaDefaultModel) return true;
   if (/(gpt-3\.5|o1-mini|o1-preview|text-embedding|whisper|\btts\b|[-_/]voice\b)/i.test(haystack)) return false;
   if (/(deepseek-(chat|reasoner|coder|v3)|deepseek-r1)/i.test(haystack) && !/(vl|vision|janus)/i.test(haystack)) {
     return false;

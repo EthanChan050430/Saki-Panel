@@ -33,6 +33,7 @@ import {
 } from "./openai.js";
 import {
   callAnthropicAgentTurn,
+  callAnthropicAgentTurnWithFallback,
   callAnthropicAgentTurnStream,
   callAnthropicAgentTurnStreamWithFallback,
   callAnthropicModel,
@@ -167,7 +168,7 @@ export async function callConfiguredAgentTurnUnfiltered(
     } else if (provider === "lmstudio") {
       turn = { ...(await callOpenAiCompatibleAgentTurnWithFallback("lmstudio", config, runtime.input, prompt)), forwardedDeltaText: false };
     } else if (provider === "anthropic") {
-      turn = { ...(await callAnthropicAgentTurn(config, runtime.input, prompt)), forwardedDeltaText: false };
+      turn = { ...(await callAnthropicAgentTurnWithFallback(config, runtime.input, prompt)), forwardedDeltaText: false };
     } else if (provider === "copilot") {
       turn = { ...(await callCopilotSdkAgentTurn(config, runtime.input, prompt)), forwardedDeltaText: false };
     } else if (provider === "antigravity") {

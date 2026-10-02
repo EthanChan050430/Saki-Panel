@@ -111,8 +111,11 @@ export interface DirectProviderMessage {
   content: unknown;
   images?: string[] | undefined;
   tool_call_id?: string | undefined;
+  tool_name?: string | undefined;
   name?: string | undefined;
   tool_calls?: unknown[] | undefined;
+  reasoning_content?: string | undefined;
+  thinking?: string | undefined;
 }
 
 export function buildDirectMessages(input: SakiChatRequest, prompt: string, systemPrompt?: string): DirectChatMessage[] {

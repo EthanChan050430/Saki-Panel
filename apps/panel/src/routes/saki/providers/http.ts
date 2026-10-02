@@ -28,7 +28,44 @@ import {
 } from "./common.js";
 
 function bodyHasNativeThinking(body: Record<string, unknown>): boolean {
-  return "enable_thinking" in body || "thinking" in body || "reasoning_effort" in body || "reasoning" in body;
+  return "enable_thinking" in body || "thinking" in body || "reasoning_effort" in body || "reasoning_budget" in body || "reasoning" in body;
+}
+
+async function requestWithCompatibleParameters<T>(
+  provider: string,
+  baseUrl: string,
+  model: string,
+  body: Record<string, unknown>,
+  request: (payload: Record<string, unknown>) => Promise<T>
+): Promise<T> {
+  let compatibleBody = body;
+  // A gateway may reject several optional parameters in succession. Each
+  // retry removes an actual field, so this loop is bounded by the field count.
+  while (true) {
+    try {
+      return await request(compatibleBody);
+    } catch (error) {
+      if (error instanceof RouteError && error.statusCode !== 400 && error.statusCode !== 422) throw error;
+      if ("stream_options" in compatibleBody && /stream_options|include_usage/i.test(error instanceof Error ? error.message : String(error))) {
+        const withoutUsage = { ...compatibleBody };
+        delete withoutUsage.stream_options;
+        compatibleBody = withoutUsage;
+        continue;
+      }
+      if (bodyHasNativeThinking(compatibleBody) && isThinkingRequestError(error)) {
+        logSakiModelEvent("thinking.retry", { provider, model, url: safeModelLogUrl(`${baseUrl}/chat/completions`), retry: "without-thinking" });
+        compatibleBody = withoutNativeThinking(compatibleBody);
+        continue;
+      }
+      if ("temperature" in compatibleBody && isTemperatureRequestError(error)) {
+        defaultTemperatureOnlyModelKeys.add(modelTemperatureKey(provider, baseUrl, model));
+        logSakiModelEvent("temperature.retry", { provider, model, url: safeModelLogUrl(`${baseUrl}/chat/completions`), retry: "without-temperature" });
+        compatibleBody = withoutTemperature(compatibleBody);
+        continue;
+      }
+      throw error;
+    }
+  }
 }
 
 export async function doRequestJsonPayload(url: string, options: RequestInit, timeoutMs: number, requestId: string): Promise<unknown> {
@@ -243,34 +280,13 @@ export async function requestOpenAiCompatibleJsonPayload(
       url,
       {
         method: "POST",
-        headers,
+        headers: { accept: "application/json", ...headers },
         body: JSON.stringify(payload)
       },
       timeoutMs
     );
 
-  try {
-    return await request(body);
-  } catch (error) {
-    if (bodyHasNativeThinking(body) && isThinkingRequestError(error)) {
-      logSakiModelEvent("thinking.retry", {
-        provider,
-        model,
-        url: safeModelLogUrl(url),
-        retry: "without-thinking"
-      });
-      return request(withoutNativeThinking(body));
-    }
-    if (!("temperature" in body) || !isTemperatureRequestError(error)) throw error;
-    defaultTemperatureOnlyModelKeys.add(modelTemperatureKey(provider, baseUrl, model));
-    logSakiModelEvent("temperature.retry", {
-      provider,
-      model,
-      url: safeModelLogUrl(url),
-      retry: "without-temperature"
-    });
-    return request(withoutTemperature(body));
-  }
+  return requestWithCompatibleParameters(provider, baseUrl, model, body, request);
 }
 
 export async function requestOpenAiCompatibleStreamingPayload<T>(
@@ -288,40 +304,14 @@ export async function requestOpenAiCompatibleStreamingPayload<T>(
       url,
       {
         method: "POST",
-        headers,
+        headers: { accept: "text/event-stream", ...headers },
         body: JSON.stringify(payload)
       },
       timeoutMs,
       consume
     );
 
-  try {
-    return await request(body);
-  } catch (error) {
-    if ("stream_options" in body && /stream_options|include_usage/i.test(error instanceof Error ? error.message : String(error))) {
-      const withoutUsage = { ...body };
-      delete withoutUsage.stream_options;
-      return request(withoutUsage);
-    }
-    if (bodyHasNativeThinking(body) && isThinkingRequestError(error)) {
-      logSakiModelEvent("thinking.retry", {
-        provider,
-        model,
-        url: safeModelLogUrl(url),
-        retry: "without-thinking"
-      });
-      return request(withoutNativeThinking(body));
-    }
-    if (!("temperature" in body) || !isTemperatureRequestError(error)) throw error;
-    defaultTemperatureOnlyModelKeys.add(modelTemperatureKey(provider, baseUrl, model));
-    logSakiModelEvent("temperature.retry", {
-      provider,
-      model,
-      url: safeModelLogUrl(url),
-      retry: "without-temperature"
-    });
-    return request(withoutTemperature(body));
-  }
+  return requestWithCompatibleParameters(provider, baseUrl, model, body, request);
 }
 
 export async function readUtf8Stream(response: Response, onChunk: (chunk: string) => void): Promise<void> {

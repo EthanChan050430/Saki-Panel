@@ -1278,7 +1278,8 @@ IMPORTANT: ${sakiFileToolGuidance}\nPrevious output:\n${turn.content.slice(0, 12
     turnMessages.push({
       role: "assistant",
       content: narration,
-      toolCalls
+      toolCalls,
+      ...(turn.assistantState ? { assistantState: turn.assistantState } : {})
     });
     rebuildCurrentPrompt();
 

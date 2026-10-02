@@ -13,6 +13,8 @@ import {
   resolveSakiImageSize,
   sakiImageGenPreset,
   sakiImageGenProviderPresets,
+  sakiNvidiaBaseUrl,
+  sakiNvidiaDefaultModel,
   sanitizeSakiImageGenConfig
 } from "@webops/shared";
 import { defaultPanelAppearance, defaultSakiRequestTimeoutMs } from "../../constants.js";
@@ -42,6 +44,7 @@ export const emptySakiConfig: SakiConfigResponse = {
 };
 
 export const providerBaseUrlDefaults: Record<string, string> = {
+  nvidia: sakiNvidiaBaseUrl,
   openai: "https://api.openai.com/v1",
   deepseek: "https://api.deepseek.com/v1",
   zhipu: "https://open.bigmodel.cn/api/paas/v4",
@@ -66,6 +69,7 @@ export const modelProviderOptions = [
   { value: "copilot", label: "GitHub Copilot" },
   { value: "antigravity", label: "Antigravity CLI" },
   { value: "openai", label: "OpenAI Compatible" },
+  { value: "nvidia", label: "NVIDIA" },
   { value: "deepseek", label: "DeepSeek" },
   { value: "zhipu", label: "Zhipu" },
   { value: "gemini", label: "Gemini" },
@@ -113,7 +117,7 @@ export function defaultProviderConfig(provider: string): SakiProviderConfig {
   }
   return {
     enabled: false,
-    model: "",
+    model: provider === "nvidia" ? sakiNvidiaDefaultModel : "",
     baseUrl: providerBaseUrlDefaults[provider] ?? "",
     apiKey: ""
   };
@@ -135,6 +139,7 @@ export function getEnabledProviders(form: SakiConfigResponse): string[] {
 }
 
 export const providerDescriptions: Record<string, string> = {
+  nvidia: "NVIDIA API Catalog / NIM，支持 Nemotron 等模型",
   copilot: "GitHub 官方模型网络，支持 GPT-4o、Claude 3.5 Sonnet、o3-mini 等",
   antigravity: "Google 官方 OAuth 授权直连或本地代理网关，支持 Gemini 3.8 Flash / 2.5 Pro",
   deepseek: "DeepSeek 官方开放平台，高性价比推理 DeepSeek-V3 / R1",
