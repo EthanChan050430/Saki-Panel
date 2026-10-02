@@ -20,6 +20,7 @@ import {
 import {
   activeSakiMentionQuery,
   isSakiImageAttachment,
+  sakiModelMatchesSelection,
   type SakiAgentPermissionMode,
   type SakiChatMode,
   type SakiInputAttachment,
@@ -565,16 +566,16 @@ export const SakiComposer = React.memo(function SakiComposer({
                   className="saki-model-btn saki-chip-interactive"
                   type="button"
                   onClick={onToggleModelDropdown}
-                  title={currentModelName || availableModels.find((m) => m.id === currentModelId)?.label || currentModelId}
+                  title={currentModelName || availableModels.find((m) => sakiModelMatchesSelection(m, currentModelId))?.label || currentModelId}
                 >
                   <Zap size={12} className="model-zap-spark" />
                   <span className="saki-model-full-name">
-                    {currentModelName || availableModels.find((m) => m.id === currentModelId)?.label || currentModelId}
+                    {currentModelName || availableModels.find((m) => sakiModelMatchesSelection(m, currentModelId))?.label || currentModelId}
                   </span>
                   <span className="saki-model-short-name">
                     {(() => {
                       const raw =
-                        currentModelName || availableModels.find((m) => m.id === currentModelId)?.label || currentModelId;
+                        currentModelName || availableModels.find((m) => sakiModelMatchesSelection(m, currentModelId))?.label || currentModelId;
                       const seg = raw.split(/[/:]/).pop() || raw;
                       return seg.split(/[-\s]/).slice(0, 2).join("-");
                     })()}

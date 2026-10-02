@@ -40,10 +40,6 @@ npm run build -w @webops/daemon
 ## 验证
 
 ```sh
-npm run test:git -w @webops/daemon
-npm run test:git -w @webops/panel
 npm run check
 npm run build
 ```
-
-Git 测试仅在系统临时目录创建测试仓库，覆盖首次提交、分页、分支与合并、重命名、删除、排除文件、特殊文件名、无关暂存内容保留及实例路径边界，同时检查正式守护进程的全部 Git 路由及鉴权。

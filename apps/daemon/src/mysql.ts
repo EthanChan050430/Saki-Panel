@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
 import mysql, { type RowDataPacket, type ResultSetHeader, type FieldPacket } from "mysql2/promise";
 import { PoolCache } from "./pool-cache.js";
-import { escapeDefaultValue, escapeSqlType } from "./sql-utils.js";
+import { escapeDefaultValue, escapeSqlType, escapeSqlComment, escapeSqlString } from "./sql-utils.js";
+import { isReadOnlyDatabaseCommand } from "@webops/shared";
 import type {
   DatabaseColumnInfo,
   DatabaseCreateTableRequest,
@@ -25,6 +26,7 @@ export interface MySQLConnectionConfig {
   database: string;
 }
 type PoolInstance = ReturnType<typeof mysql.createPool>;
+type MySQLParam = string | number | boolean | Date | null;
 
 const poolCache = new PoolCache<PoolInstance>();
 
@@ -242,7 +244,7 @@ function escapeColumn(name: string): string {
   return `\`${name.replace(/`/g, "``")}\``;
 }
 
-function toMySQLValue(val: unknown): unknown {
+function toMySQLValue(val: unknown): MySQLParam {
   if (val === null || val === undefined) return null;
   if (val instanceof Date) return val;
   if (typeof val === "string") return val;
@@ -251,7 +253,7 @@ function toMySQLValue(val: unknown): unknown {
 }
 export async function listTables(cfg: MySQLConnectionConfig): Promise<DatabaseTableSummary[]> {
   return withPool(cfg, async (pool) => {
-    const [tables] = await pool.query<RowDataPacket[]>(
+    const [tables] = await pool.execute<RowDataPacket[]>(
       `SELECT TABLE_NAME, TABLE_TYPE, TABLE_ROWS
        FROM INFORMATION_SCHEMA.TABLES
        WHERE TABLE_SCHEMA = ?
@@ -266,7 +268,7 @@ export async function listTables(cfg: MySQLConnectionConfig): Promise<DatabaseTa
       const tableType = (t.TABLE_TYPE === "BASE TABLE" ? "table" : "view") as "table" | "view";
 
       // Get column count
-      const [cols] = await pool.query<RowDataPacket[]>(
+      const [cols] = await pool.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS cnt FROM INFORMATION_SCHEMA.COLUMNS
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`,
         [cfg.database, tableName]
@@ -299,7 +301,7 @@ export async function listTables(cfg: MySQLConnectionConfig): Promise<DatabaseTa
 }
 export async function getTableSchema(cfg: MySQLConnectionConfig, tableName: string): Promise<DatabaseTableSchema> {
   return withPool(cfg, async (pool) => {
-    const [cols] = await pool.query<RowDataPacket[]>(
+    const [cols] = await pool.execute<RowDataPacket[]>(
       `SELECT
          COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT,
          COLUMN_KEY, EXTRA, COLUMN_TYPE, CHARACTER_MAXIMUM_LENGTH
@@ -319,7 +321,7 @@ export async function getTableSchema(cfg: MySQLConnectionConfig, tableName: stri
     }));
 
     const primaryKeys = columns.filter((c) => c.primaryKey).map((c) => c.name);
-    const [indexes] = await pool.query<RowDataPacket[]>(
+    const [indexes] = await pool.execute<RowDataPacket[]>(
       `SELECT INDEX_NAME, NON_UNIQUE, COLUMN_NAME, SEQ_IN_INDEX
        FROM INFORMATION_SCHEMA.STATISTICS
        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
@@ -340,7 +342,7 @@ export async function getTableSchema(cfg: MySQLConnectionConfig, tableName: stri
       }
       indexMap.get(idxName)!.columns.push(idx.COLUMN_NAME as string);
     }
-    const [fkRows] = await pool.query<RowDataPacket[]>(
+    const [fkRows] = await pool.execute<RowDataPacket[]>(
       `SELECT
          kcu.COLUMN_NAME, kcu.REFERENCED_TABLE_NAME, kcu.REFERENCED_COLUMN_NAME
        FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
@@ -383,12 +385,13 @@ export async function queryRows(
 ): Promise<DatabaseRowsResponse> {
   return withPool(cfg, async (pool) => {
     const tableName = req.tableName;
-    const page = Math.max(1, req.page ?? 1);
-    const pageSize = Math.max(1, Math.min(req.pageSize ?? 50, 500));
+    const page = Number.isSafeInteger(req.page) && req.page! > 0 ? req.page! : 1;
+    const pageSize = Number.isSafeInteger(req.pageSize) && req.pageSize! > 0 ? Math.min(req.pageSize!, 500) : 50;
     const offset = (page - 1) * pageSize;
+    if (!Number.isSafeInteger(offset)) throw new Error("Page offset is too large");
 
     // Get column info first
-    const [colRows] = await pool.query<RowDataPacket[]>(
+    const [colRows] = await pool.execute<RowDataPacket[]>(
       `SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY, EXTRA
        FROM INFORMATION_SCHEMA.COLUMNS
        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
@@ -407,7 +410,7 @@ export async function queryRows(
 
     // Build WHERE clause
     const whereClauses: string[] = [];
-    const params: unknown[] = [];
+    const params: MySQLParam[] = [];
 
     if (req.filterColumn && req.filterValue !== undefined && req.filterValue !== "") {
       const filterCol = columns.find((c) => c.name === req.filterColumn);
@@ -429,7 +432,7 @@ export async function queryRows(
     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
     // Count total
-    const [countRes] = await pool.query<RowDataPacket[]>(
+    const [countRes] = await pool.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM ${escapeTable(tableName)} ${whereSql}`,
       params
     );
@@ -451,9 +454,11 @@ export async function queryRows(
     }
 
     // Query rows
-    const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT * FROM ${escapeTable(tableName)} ${whereSql} ${orderSql} LIMIT ? OFFSET ?`,
-      [...params, pageSize, offset]
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      // mysql2 sends numeric binds as DOUBLE, which MySQL rejects in LIMIT.
+      // Both interpolated values are validated integers, never request text.
+      `SELECT * FROM ${escapeTable(tableName)} ${whereSql} ${orderSql} LIMIT ${pageSize} OFFSET ${offset}`,
+      params
     );
 
     return {
@@ -484,7 +489,7 @@ export async function insertRow(
     const placeholders = keys.map(() => "?").join(", ");
     const values = keys.map((k) => toMySQLValue(row[k]));
 
-    const [result] = await pool.query<ResultSetHeader>(
+    const [result] = await pool.execute<ResultSetHeader>(
       `INSERT INTO ${escapeTable(tableName)} (${cols}) VALUES (${placeholders})`,
       values
     );
@@ -521,7 +526,7 @@ export async function updateRow(
       ...pkKeys.map((k) => toMySQLValue(primaryKeys[k]))
     ];
 
-    const [result] = await pool.query<ResultSetHeader>(
+    const [result] = await pool.execute<ResultSetHeader>(
       `UPDATE ${escapeTable(tableName)} SET ${setClauses} WHERE ${whereClauses} LIMIT 1`,
       sqlParams
     );
@@ -546,7 +551,7 @@ export async function deleteRow(
     const whereClauses = pkKeys.map((k) => `${escapeColumn(k)} = ?`).join(" AND ");
     const params = pkKeys.map((k) => toMySQLValue(primaryKeys[k]));
 
-    const [result] = await pool.query<ResultSetHeader>(
+    const [result] = await pool.execute<ResultSetHeader>(
       `DELETE FROM ${escapeTable(tableName)} WHERE ${whereClauses} LIMIT 1`,
       params
     );
@@ -604,16 +609,20 @@ export async function truncateTable(cfg: MySQLConnectionConfig, tableName: strin
 export async function executeQuery(
   cfg: MySQLConnectionConfig,
   sql: string,
-  maxRows: number
+  maxRows: number,
+  readOnly = false
 ): Promise<DatabaseQueryResult> {
+  if (readOnly && !isReadOnlyDatabaseCommand(sql, "mysql")) throw new Error("Read-only query required");
   return withPool(cfg, async (pool) => {
     const startTime = performance.now();
-
-    const isSelectLike = /^\s*(SELECT|SHOW|DESCRIBE|DESC|EXPLAIN|WITH)\b/i.test(sql);
+    const connection = readOnly ? await pool.getConnection() : null;
+    const executor = connection ?? pool;
 
     try {
-      if (isSelectLike) {
-        const [rows, fields] = await pool.query<RowDataPacket[]>(sql);
+      if (connection) await connection.query("START TRANSACTION READ ONLY");
+      const [result, fields] = await executor.query<RowDataPacket[] | ResultSetHeader>(sql);
+      if (Array.isArray(result)) {
+        const rows = result;
         const duration = Math.round((performance.now() - startTime) * 100) / 100;
         const totalRows = rows.length;
         const limitedRows = rows.slice(0, maxRows);
@@ -629,7 +638,6 @@ export async function executeQuery(
           affectedRows: 0
         };
       } else {
-        const [result] = await pool.query<ResultSetHeader>(sql);
         const duration = Math.round((performance.now() - startTime) * 100) / 100;
 
         return {
@@ -650,6 +658,12 @@ export async function executeQuery(
         executionTimeMs: duration,
         error: errorMsg
       };
+    } finally {
+      if (connection) {
+        try { await connection.rollback(); }
+        catch { connection.destroy(); }
+        finally { connection.release(); }
+      }
     }
   });
 }
@@ -661,12 +675,12 @@ export async function exportTable(
   return withPool(cfg, async (pool) => {
     if (!tableName) {
       // Export whole database
-      const [tables] = await pool.query<RowDataPacket[]>(
+      const [tables] = await pool.execute<RowDataPacket[]>(
         `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'`,
         [cfg.database]
       );
 
-      let sqlDump = `-- MySQL Database Export\n-- Database: ${cfg.database}\n-- Generated at: ${new Date().toISOString()}\n\n`;
+      let sqlDump = `-- MySQL Database Export\n-- Database: ${escapeSqlComment(cfg.database)}\n-- Generated at: ${new Date().toISOString()}\n\n`;
 
       for (const t of tables) {
         const tName = t.TABLE_NAME as string;
@@ -685,7 +699,7 @@ export async function exportTable(
             if (v === null || v === undefined) return "NULL";
             if (typeof v === "number") return String(v);
             if (v instanceof Date) return `'${v.toISOString().replace("T", " ").slice(0, 19)}'`;
-            return `'${String(v).replace(/'/g, "''")}'`;
+            return escapeSqlString(String(v), "mysql");
           });
           sqlDump += `INSERT INTO ${escapeTable(tName)} (${cols.map((c) => escapeColumn(c)).join(", ")}) VALUES (${vals.join(", ")});\n`;
         }
@@ -715,7 +729,7 @@ export async function exportTable(
     }
 
     if (format === "sql") {
-      let dump = `-- Table export: ${tableName}\n-- Database: ${cfg.database}\n-- Date: ${new Date().toISOString()}\n\n`;
+      let dump = `-- Table export: ${escapeSqlComment(tableName)}\n-- Database: ${escapeSqlComment(cfg.database)}\n-- Date: ${new Date().toISOString()}\n\n`;
       for (const r of rows) {
         const cols = Object.keys(r);
         const vals = cols.map((c) => {
@@ -723,20 +737,20 @@ export async function exportTable(
           if (v === null || v === undefined) return "NULL";
           if (typeof v === "number") return String(v);
           if (v instanceof Date) return `'${v.toISOString().replace("T", " ").slice(0, 19)}'`;
-          return `'${String(v).replace(/'/g, "''")}'`;
+          return escapeSqlString(String(v), "mysql");
         });
         dump += `INSERT INTO ${escapeTable(tableName)} (${cols.map((c) => escapeColumn(c)).join(", ")}) VALUES (${vals.join(", ")});\n`;
       }
       return {
         ok: true,
-        fileName: `${tableName}_${Date.now()}.json`,
+        fileName: `${tableName}_${Date.now()}.sql`,
         contentType: "application/sql",
         content: dump,
         totalRows: count
       };
     }
     if (rows.length === 0) {
-      const [colRows] = await pool.query<RowDataPacket[]>(
+      const [colRows] = await pool.execute<RowDataPacket[]>(
         `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION`,
         [cfg.database, tableName]
@@ -846,8 +860,8 @@ export async function importTable(
       if (keys.length === 0) continue;
       const cols = keys.map((k) => escapeColumn(k)).join(", ");
       const placeholders = keys.map(() => "?").join(", ");
-      const vals: unknown[] = keys.map((k) => toMySQLValue(row[k]));
-      await pool.query(
+      const vals: MySQLParam[] = keys.map((k) => toMySQLValue(row[k]));
+      await pool.execute(
         `INSERT INTO ${escapeTable(tableName)} (${cols}) VALUES (${placeholders})`,
         vals
       );

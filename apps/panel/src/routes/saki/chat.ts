@@ -5,6 +5,7 @@ import type {
   SakiConfigResponse,
   SakiModelListResponse,
   SakiModelOption,
+  SakiProviderConfig,
   SakiSkillSummary,
   SakiWorkspaceContext,
   UpdateSakiConfigRequest
@@ -231,8 +232,52 @@ function mapSakiModel(raw: unknown): SakiModelOption | null {
   };
 }
 
+async function fetchCatalogForProvider(
+  providerId: string,
+  config: SakiConfigResponse,
+  warnings: SakiModelListResponse["warnings"]
+): Promise<SakiModelOption[]> {
+  try {
+    if (providerId === "ollama") {
+      return await fetchOllamaModelCatalog(config);
+    } else if (providerId === "lmstudio") {
+      return await fetchLmStudioModelCatalog(config);
+    } else if (providerId === "anthropic") {
+      return await fetchAnthropicModelCatalog(config);
+    } else if (providerId === "copilot") {
+      return await fetchCopilotModelCatalog(config);
+    } else if (providerId === "antigravity") {
+      return await fetchAntigravityModelCatalog(config, warnings);
+    } else {
+      return await fetchOpenAiModelCatalog(providerId, config);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    warnings.push({ provider: providerId, message });
+    return [];
+  }
+}
+
 export async function detectSakiModels(input: UpdateSakiConfigRequest = {}): Promise<SakiModelListResponse> {
   const current = await readEffectiveSakiConfig();
+  const providerConfigs: Record<string, SakiProviderConfig> = {
+    ...(current.providerConfigs || {})
+  };
+  if (input.providerConfigs && typeof input.providerConfigs === "object") {
+    for (const [k, v] of Object.entries(input.providerConfigs)) {
+      const pid = normalizeProviderId(k);
+      providerConfigs[pid] = {
+        ...(providerConfigs[pid] || {}),
+        ...v
+      };
+    }
+  }
+
+  const customModelNames: Record<string, string> = {
+    ...(current.customModelNames || {}),
+    ...(input.customModelNames || {})
+  };
+
   const effective: SakiConfigResponse = {
     ...current,
     provider: input.provider !== undefined ? normalizeProviderId(input.provider) : current.provider,
@@ -240,32 +285,86 @@ export async function detectSakiModels(input: UpdateSakiConfigRequest = {}): Pro
     ollamaUrl: input.ollamaUrl !== undefined ? trimString(input.ollamaUrl) || current.ollamaUrl : current.ollamaUrl,
     baseUrl: input.baseUrl !== undefined ? trimString(input.baseUrl) : current.baseUrl,
     apiKey: input.apiKey !== undefined ? trimString(input.apiKey) : current.apiKey,
+    providerConfigs,
+    customModelNames,
     searchEnabled: input.searchEnabled !== undefined ? Boolean(input.searchEnabled) : current.searchEnabled,
     mcpEnabled: input.mcpEnabled !== undefined ? Boolean(input.mcpEnabled) : current.mcpEnabled
   };
-  const providerId = normalizeProviderId(effective.provider);
-  const warnings: SakiModelListResponse["warnings"] = [];
-  let models: SakiModelOption[] = [];
 
-  if (providerId === "ollama") {
-    models = await fetchOllamaModelCatalog(effective);
-  } else if (providerId === "lmstudio") {
-    models = await fetchLmStudioModelCatalog(effective);
-  } else if (providerId === "anthropic") {
-    models = await fetchAnthropicModelCatalog(effective);
-  } else if (providerId === "copilot") {
-    models = await fetchCopilotModelCatalog(effective);
-  } else if (providerId === "antigravity") {
-    models = await fetchAntigravityModelCatalog(effective, warnings);
-  } else {
-    models = await fetchOpenAiModelCatalog(providerId, effective);
+  const warnings: SakiModelListResponse["warnings"] = [];
+
+  const enabledProviders = Object.keys(providerConfigs).filter((p) => {
+    return providerConfigs[p]?.enabled === true;
+  });
+  const uniqueEnabled = Array.from(new Set(enabledProviders));
+
+  if (uniqueEnabled.length === 0) {
+    return {
+      provider: effective.provider,
+      models: [],
+      warnings: [],
+      message: "未开启任何模型服务商，请在设置中开启服务商开关。"
+    };
   }
 
+  const results = await Promise.allSettled(
+    uniqueEnabled.map(async (p) => {
+      const pConfig = providerConfigs[p] ?? {};
+      const singleConfig: SakiConfigResponse = {
+        ...effective,
+        provider: p,
+        model: pConfig.model || "",
+        ollamaUrl: pConfig.ollamaUrl || (p === "lmstudio" ? "http://localhost:1234" : "http://localhost:11434"),
+        baseUrl: pConfig.baseUrl || "",
+        apiKey: pConfig.apiKey || "",
+        providerConfigs: {
+          ...effective.providerConfigs,
+          [p]: pConfig
+        }
+      };
+      return {
+        provider: p,
+        models: await fetchCatalogForProvider(p, singleConfig, warnings)
+      };
+    })
+  );
+
+  const allModels: SakiModelOption[] = [];
+  for (const res of results) {
+    if (res.status === "fulfilled") {
+      allModels.push(...res.value.models);
+    }
+  }
+
+  const idCount = new Map<string, number>();
+  for (const m of allModels) {
+    idCount.set(m.id, (idCount.get(m.id) ?? 0) + 1);
+  }
+
+  const processedModels: SakiModelOption[] = allModels.map((m) => {
+    const isConflict = (idCount.get(m.id) ?? 0) > 1;
+    const defaultName = isConflict ? `${m.id}-${m.provider}` : (m.name || m.id);
+    const defaultLabel = isConflict ? `${m.id}-${m.provider}` : (m.label || m.id);
+
+    const customName =
+      customModelNames[`${m.provider}:${m.id}`] ??
+      customModelNames[defaultName] ??
+      customModelNames[m.id];
+
+    return {
+      ...m,
+      name: customName || defaultName,
+      label: customName || defaultLabel,
+      customName: customName || undefined,
+      isConflict
+    };
+  });
+
   return {
-    provider: providerId,
-    models,
+    provider: effective.provider,
+    models: processedModels,
     warnings,
-    message: models.length > 0 ? `已成功同步 ${models.length} 个最新模型。` : "未能检测到该服务商的可用模型。"
+    message: processedModels.length > 0 ? `已成功同步 ${processedModels.length} 个最新模型。` : "未能检测到可用模型。"
   };
 }
 
@@ -279,7 +378,10 @@ export async function prepareSakiChatInvocation(
   }
 
   const requestedModel = sanitizeRequestedSakiModel(body.model);
-  const config = withRequestedSakiModel(await readEffectiveSakiConfig(), { model: requestedModel || null });
+  const config = withRequestedSakiModel(await readEffectiveSakiConfig(), {
+    model: requestedModel || null,
+    provider: body.provider || null
+  });
   const attachments = await hydrateSakiAttachmentsForModel(
     sanitizeSakiInputAttachments(body.attachments),
     message,
@@ -298,7 +400,7 @@ export async function prepareSakiChatInvocation(
     agentPermissionMode: normalizeSakiAgentPermissionMode(body.agentPermissionMode),
     selectedSkillIds: Array.isArray(body.selectedSkillIds) ? body.selectedSkillIds.map(trimString).filter(Boolean) : [],
     attachments,
-    ...(requestedModel ? { model: requestedModel } : {})
+    ...(requestedModel || trimString(body.provider) ? { model: config.model, provider: config.provider } : {})
   };
   requireSakiModePermission(request.user.permissions, input.mode ?? "chat");
   const auditSearchContext = input.auditSearch

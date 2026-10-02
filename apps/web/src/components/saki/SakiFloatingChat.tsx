@@ -137,7 +137,10 @@ import {
   filterSakiMentionCandidates,
   insertSakiMention,
   isSakiImageAttachment,
+  parseSakiModelSelection,
   sakiListedModelSupportsVision,
+  sakiModelMatchesSelection,
+  sakiModelSelectionKey,
   sakiModelSupportsVision
 } from "@webops/shared";
 import type {
@@ -946,7 +949,7 @@ export function SakiFloatingChat({
     let currentModel = "";
     try {
       const config = await api.sakiConfig(token);
-      currentModel = config.model;
+      currentModel = config.model ? sakiModelSelectionKey({ id: config.model, provider: config.provider }) : "";
       setModelPointsMultipliers(config.modelPointsMultipliers || {});
       onCurrentModelIdChange(currentModel);
       const result = await api.sakiModels(token, {
@@ -958,15 +961,15 @@ export function SakiFloatingChat({
         providerConfigs: config.providerConfigs
       });
       onAvailableModelsChange(result.models);
-      const current = result.models.find((m) => m.id === currentModel);
+      const current = result.models.find((m) => sakiModelMatchesSelection(m, currentModel));
       if (current) {
         onCurrentModelNameChange(current.label || current.name || current.id);
       } else if (currentModel) {
-        onCurrentModelNameChange(currentModel);
+        onCurrentModelNameChange(config.model);
       }
     } catch {
       if (currentModel) {
-        onCurrentModelNameChange(currentModel);
+        onCurrentModelNameChange(parseSakiModelSelection(currentModel).model);
       }
     }
   }, [token, onCurrentModelIdChange, onCurrentModelNameChange, onAvailableModelsChange]);
@@ -1031,10 +1034,10 @@ export function SakiFloatingChat({
     textarea.style.height = `${Math.max(nextHeight, 38)}px`;
   }, [draft]);
 
-  const currentListedModel = availableModels.find((model) => model.id === currentModelId);
+  const currentListedModel = availableModels.find((model) => sakiModelMatchesSelection(model, currentModelId));
   const currentModelSupportsVision = currentListedModel
     ? sakiListedModelSupportsVision(currentListedModel)
-    : sakiModelSupportsVision(currentModelId);
+    : sakiModelSupportsVision(parseSakiModelSelection(currentModelId).model, parseSakiModelSelection(currentModelId).provider);
   const mentionCandidates = useMemo(() => {
     const active = activeSakiMentionQuery(draft, mentionCaret);
     if (!active || mentionDismissedStart === active.start) return [];
@@ -1401,14 +1404,18 @@ export function SakiFloatingChat({
 
   async function selectModel(modelId: string) {
     onCurrentModelIdChange(modelId);
-    const found = availableModels.find((m) => m.id === modelId);
+    const found = availableModels.find((m) => sakiModelMatchesSelection(m, modelId));
     if (found) {
       onCurrentModelNameChange(found.label || found.name || found.id);
     } else {
-      onCurrentModelNameChange(modelId);
+      onCurrentModelNameChange(parseSakiModelSelection(modelId).model);
     }
     try {
-      await api.updateSakiConfig(token, { model: modelId });
+      const selection = parseSakiModelSelection(modelId, found?.provider);
+      await api.updateSakiConfig(token, {
+        model: selection.model,
+        ...(selection.provider ? { provider: selection.provider } : {})
+      });
     } catch {}
   }
 
@@ -3276,7 +3283,7 @@ export function SakiFloatingChat({
       ...(requestMode === "agent" ? { agentPermissionMode: permissionMode } : {}),
       selectedSkillIds,
       attachments: submittedAttachments,
-      ...(currentModelId.trim() ? { model: currentModelId.trim() } : {})
+      ...(currentModelId.trim() ? parseSakiModelSelection(currentModelId) : {})
     };
     if (requestMode === "agent") {
       window.dispatchEvent(new CustomEvent("saki:active_task_updated"));

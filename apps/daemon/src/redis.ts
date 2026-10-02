@@ -1,3 +1,4 @@
+import { isReadOnlyDatabaseCommand } from "@webops/shared";
 import IORedis, { type Redis as RedisClient } from "ioredis";
 const RedisClass: any = (IORedis as any).default || IORedis;
 
@@ -384,7 +385,8 @@ function parseCommandLine(cmd: string): string[] {
   return parts;
 }
 
-export async function executeCommand(cfg: RedisConnectionConfig, commandLine: string, _maxRows = 500): Promise<DatabaseQueryResult> {
+export async function executeCommand(cfg: RedisConnectionConfig, commandLine: string, _maxRows = 500, readOnly = false): Promise<DatabaseQueryResult> {
+  if (readOnly && !isReadOnlyDatabaseCommand(commandLine, "redis")) throw new Error("Read-only command required");
   const client = getClient(cfg);
   const trimmed = commandLine.trim();
   if (!trimmed) throw new Error("Redis command is required");

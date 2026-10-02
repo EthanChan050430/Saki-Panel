@@ -14,6 +14,8 @@ import {
 import { LiquidGlassContainer } from "../../common/LiquidGlass.js";
 import {
   sakiListedModelSupportsVision,
+  sakiModelMatchesSelection,
+  sakiModelSelectionKey,
   type SakiAgentPermissionMode,
   type SakiModelOption
 } from "@webops/shared";
@@ -236,11 +238,11 @@ export const SakiChatDropdowns = React.memo(function SakiChatDropdowns({
                       : formatSakiModelMultiplier(multiplier);
                   return (
                     <button
-                      key={model.id}
-                      className={`saki-model-option ${model.id === currentModelId ? "active" : ""}`}
+                      key={sakiModelSelectionKey(model)}
+                      className={`saki-model-option ${sakiModelMatchesSelection(model, currentModelId) ? "active" : ""}`}
                       type="button"
                       onClick={() => {
-                        onSelectModel(model.id);
+                        onSelectModel(sakiModelSelectionKey(model));
                       }}
                     >
                       <span className="saki-model-option-name">{model.label || model.id}</span>

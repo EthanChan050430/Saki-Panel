@@ -22,6 +22,7 @@ import { buildDirectMessages, buildDirectSystemPrompt } from "../prompt.js";
 import { currentAgentTurnConversation, serializeTurnMessagesForPrompt } from "../agent-messages.js";
 import { withTurnUsage } from "./common.js";
 import { parseToolCallsFromText, requireChatModel } from "./catalog.js";
+import { resolveCopilotCliPath } from "./copilot-runtime.js";
 
 export let copilotClient: CopilotClient | null = null;
 export let copilotClientPromise: Promise<CopilotClient> | null = null;
@@ -76,11 +77,11 @@ export const denyCopilotToolUse: PermissionHandler = () => ({
 
 export function copilotErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error || "");
+  if (/copilot.*not.*found|could not find @github\/copilot|cli.*not.*found/i.test(message)) {
+    return `GitHub Copilot CLI 运行时未找到。请在运行面板的目录执行 npm ci，确认 @github/copilot 及其平台依赖已安装；如使用自定义 CLI，请检查 COPILOT_CLI_PATH。详细原因：${message}`;
+  }
   if (/auth|login|token|credential|not authenticated/i.test(message)) {
     return "GitHub Token \u672A\u901A\u8FC7 Copilot \u8BA4\u8BC1\u3002\u8BF7\u786E\u8BA4\u5B83\u662F Fine-grained PAT\u3001Permissions \u4E2D\u5DF2\u6DFB\u52A0 Copilot Requests\u3001\u8BE5\u8D26\u53F7\u6709\u6709\u6548 Copilot \u8BB8\u53EF\uFF0C\u4E14\u7EC4\u7EC7/\u4F01\u4E1A\u6CA1\u6709\u7981\u7528 Copilot CLI/SDK\u3002";
-  }
-  if (/copilot.*not.*found|could not find @github\/copilot|cli.*not.*found/i.test(message)) {
-    return "GitHub Copilot SDK \u8FD0\u884C\u65F6\u4E0D\u53EF\u7528\uFF0C\u8BF7\u786E\u8BA4 @github/copilot-sdk \u4F9D\u8D56\u5DF2\u5B89\u88C5\u3002";
   }
   return message || "GitHub Copilot \u6682\u65F6\u4E0D\u53EF\u7528\u3002";
 }
@@ -131,23 +132,25 @@ export async function getCopilotClient(gitHubToken: string): Promise<CopilotClie
   if (!copilotClientPromise) {
     copilotClientPromiseTokenFingerprint = fingerprint;
     copilotClientPromise = (async () => {
-      const client = new CopilotClient({
-        logLevel: "error",
-        sessionIdleTimeoutSeconds: 90,
-        gitHubToken: token,
-        useLoggedInUser: false,
-        env: {
-          ...process.env,
-          COPILOT_GITHUB_TOKEN: token
-        }
-      });
+      let client: CopilotClient | null = null;
       try {
+        client = new CopilotClient({
+          cliPath: resolveCopilotCliPath(),
+          logLevel: "error",
+          sessionIdleTimeoutSeconds: 90,
+          gitHubToken: token,
+          useLoggedInUser: false,
+          env: {
+            ...process.env,
+            COPILOT_GITHUB_TOKEN: token
+          }
+        });
         await client.start();
         copilotClient = client;
         copilotClientTokenFingerprint = fingerprint;
         return client;
       } catch (error) {
-        await client.forceStop().catch(() => undefined);
+        await client?.forceStop().catch(() => undefined);
         throw new RouteError(copilotErrorMessage(error), 503);
       }
     })().finally(() => {

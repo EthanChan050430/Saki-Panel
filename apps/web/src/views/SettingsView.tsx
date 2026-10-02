@@ -45,12 +45,15 @@ import {
   antigravityModeOf,
   emptySakiConfig,
   formatSessionTimeoutMinutes,
+  getEnabledProviders,
   localProviderUrlDefaults,
-  needsCloudApiFields,
   parseSessionTimeoutMinutesDraft,
   providerBaseUrlDefaults,
   providerConfigFromForm,
   registrationIdentityOptions,
+  sakiModelCatalogSignature,
+  selectSakiModel,
+  updateSakiProviderConfig,
   type AntigravityMode,
   SettingsAppearanceTab,
   SettingsFeaturesTab,
@@ -97,6 +100,8 @@ export function SettingsView({
   const [saving, setSaving] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [detectingModels, setDetectingModels] = useState(false);
+  const modelDetectionVersion = useRef(0);
+  const modelCatalogSignature = sakiModelCatalogSignature(form);
   const [copilotAuthStatus, setCopilotAuthStatus] = useState<SakiCopilotAuthStatusResponse | null>(null);
   const [copilotLoginState, setCopilotLoginState] = useState<SakiCopilotLoginResponse | null>(null);
   const [copilotBusy, setCopilotBusy] = useState<"status" | "login" | null>(null);
@@ -157,20 +162,67 @@ export function SettingsView({
     []
   );
 
+  const enabledProviderSet = useMemo(() => {
+    return new Set(getEnabledProviders(form));
+  }, [form.providerConfigs, form.provider]);
+
   const combinedModelKeys = useMemo(() => {
-    const keys = new Set<string>();
-    if (form.model?.trim()) keys.add(form.model.trim());
-    for (const m of defaultKnownModels) keys.add(m.id);
-    for (const m of modelOptions) {
-      if (m.id?.trim()) keys.add(m.id.trim());
+    if (enabledProviderSet.size === 0) {
+      return [];
     }
+    const keys = new Set<string>();
+
+    for (const m of modelOptions) {
+      if (m.id?.trim() && enabledProviderSet.has(m.provider)) {
+        keys.add(m.id.trim());
+      }
+    }
+
+    if (form.model?.trim() && enabledProviderSet.has(form.provider)) {
+      keys.add(form.model.trim());
+    }
+
     if (form.modelPointsMultipliers) {
       for (const k of Object.keys(form.modelPointsMultipliers)) {
-        if (k.trim()) keys.add(k.trim());
+        const trimmed = k.trim();
+        if (!trimmed) continue;
+        if (trimmed.includes("::") || trimmed.includes(":")) {
+          const [p] = trimmed.split(/::|:/);
+          if (p && enabledProviderSet.has(p)) {
+            keys.add(trimmed);
+          }
+        } else {
+          const matchedModel = modelOptions.find((m) => m.id === trimmed);
+          if (matchedModel) {
+            if (enabledProviderSet.has(matchedModel.provider)) {
+              keys.add(trimmed);
+            }
+          } else {
+            let matchedProvider: string | null = null;
+            for (const p of Object.keys(form.providerConfigs || {})) {
+              if (trimmed.endsWith(`-${p}`)) {
+                matchedProvider = p;
+                break;
+              }
+            }
+            if (matchedProvider) {
+              if (enabledProviderSet.has(matchedProvider)) {
+                keys.add(trimmed);
+              }
+            } else {
+              const isConfiguredInEnabled = Array.from(enabledProviderSet).some(
+                (p) => form.providerConfigs?.[p]?.model === trimmed
+              );
+              if (isConfiguredInEnabled) {
+                keys.add(trimmed);
+              }
+            }
+          }
+        }
       }
     }
     return Array.from(keys);
-  }, [defaultKnownModels, form.model, form.modelPointsMultipliers, modelOptions]);
+  }, [enabledProviderSet, form.model, form.modelPointsMultipliers, form.provider, form.providerConfigs, modelOptions]);
 
   const handleSetModelMultiplier = useCallback((modelKey: string, value: number) => {
     const safeRate = Math.max(0, Math.round(value * 100) / 100);
@@ -247,6 +299,7 @@ export function SettingsView({
     if (patch.baseUrl !== undefined) nextConfig.baseUrl = patch.baseUrl;
     if (patch.apiKey !== undefined) nextConfig.apiKey = patch.apiKey;
     if (patch.mode !== undefined) nextConfig.mode = patch.mode;
+    if (patch.enabled !== undefined) nextConfig.enabled = patch.enabled;
 
     const next: SakiConfigResponse = {
       ...current,
@@ -266,6 +319,48 @@ export function SettingsView({
     setModelOptions([]);
     setForm((current) => withActiveProviderConfig(current, patch));
   }
+
+  const updateSpecificProviderConfig = useCallback((provider: string, patch: Partial<SakiProviderConfig>) => {
+    setForm((current) => updateSakiProviderConfig(current, provider, patch));
+  }, []);
+
+  const handleToggleProviderEnabled = useCallback((provider: string, enabled: boolean) => {
+    updateSpecificProviderConfig(provider, { enabled });
+  }, [updateSpecificProviderConfig]);
+
+  const handleSetCustomModelName = useCallback((modelKey: string, customName: string) => {
+    const trimmedKey = modelKey.trim();
+    const trimmedVal = customName.trim();
+    if (!trimmedKey) return;
+    setForm((current) => {
+      const next = { ...(current.customModelNames || {}) };
+      if (trimmedVal) {
+        next[trimmedKey] = trimmedVal;
+      } else {
+        delete next[trimmedKey];
+      }
+      return {
+        ...current,
+        customModelNames: next
+      };
+    });
+  }, []);
+
+  const handleResetCustomModelName = useCallback((modelKey: string) => {
+    const trimmedKey = modelKey.trim();
+    setForm((current) => {
+      const next = { ...(current.customModelNames || {}) };
+      delete next[trimmedKey];
+      return {
+        ...current,
+        customModelNames: next
+      };
+    });
+  }, []);
+
+  const handleSelectActiveModel = useCallback((modelId: string, providerId?: string) => {
+    setForm((current) => selectSakiModel(current, modelId, providerId));
+  }, []);
 
   function currentSakiConfigPayload(): UpdateSakiConfigRequest {
     const activeConfig = providerConfigFromForm(form, form.provider);
@@ -305,6 +400,7 @@ export function SettingsView({
       baseUrl: topLevelBaseUrl,
       apiKey: topLevelApiKey,
       providerConfigs,
+      customModelNames: form.customModelNames || {},
       modelPointsMultipliers: form.modelPointsMultipliers || {},
       searchEnabled: form.searchEnabled,
       mcpEnabled: form.mcpEnabled,
@@ -322,19 +418,11 @@ export function SettingsView({
       setNotice("检测到 Gemini API Key（AIzaSy...），已自动切换为「官方直连」模式，该 Key 只会发往 Google 官方端点。");
       setForm((current) => {
         const existing = providerConfigFromForm(current, "antigravity");
-        return {
-          ...current,
-          apiKey: value,
-          baseUrl: "",
-          providerConfigs: {
-            ...current.providerConfigs,
-            antigravity: { ...existing, mode: "direct", apiKey: value, baseUrl: "" }
-          }
-        };
+        return updateSakiProviderConfig(current, "antigravity", { ...existing, mode: "direct", apiKey: value, baseUrl: "" });
       });
       return;
     }
-    updateActiveProviderConfig({ apiKey: value });
+    updateSpecificProviderConfig("antigravity", { apiKey: value });
   }
 
   function switchAntigravityMode(mode: AntigravityMode) {
@@ -349,15 +437,7 @@ export function SettingsView({
       if (mode === "proxy" && !(nextConfig.baseUrl ?? "").trim()) {
         nextConfig.baseUrl = providerBaseUrlDefaults.antigravity ?? "http://localhost:8080/v1";
       }
-      return {
-        ...current,
-        providerConfigs: {
-          ...current.providerConfigs,
-          antigravity: nextConfig
-        },
-        baseUrl: nextConfig.baseUrl ?? "",
-        apiKey: ""
-      };
+      return updateSakiProviderConfig(current, "antigravity", nextConfig);
     });
   }
 
@@ -691,18 +771,13 @@ export function SettingsView({
   }
 
   async function detectModels(silent = false) {
-    const provider = form.provider;
-    if (needsCloudApiFields(provider) && (!form.baseUrl.trim() || !form.apiKey.trim())) {
+    const version = ++modelDetectionVersion.current;
+    const enabled = getEnabledProviders(form);
+    if (enabled.length === 0) {
+      setModelOptions([]);
+      setDetectingModels(false);
       if (!silent) {
-        setNotice("");
-        setError("请先填写模型 API Base URL 和 API Key。");
-      }
-      return;
-    }
-    if (provider === "ollama" && !form.ollamaUrl.trim()) {
-      if (!silent) {
-        setNotice("");
-        setError("请先填写 Ollama URL。");
+        setNotice("尚未开启任何模型服务商。请在下方开启想要使用的服务商开关。");
       }
       return;
     }
@@ -714,18 +789,12 @@ export function SettingsView({
     }
     try {
       const result = await api.sakiModels(token, currentSakiConfigPayload());
+      if (version !== modelDetectionVersion.current) return;
       setModelOptions(result.models);
-      if (result.models.length > 0) {
-        setForm((current) => {
-          const currentInSynced = result.models.some((model) => model.id === current.model);
-          const nextModel = currentInSynced ? current.model : (result.models[0]?.id ?? current.model);
-          return withActiveProviderConfig(current, { model: nextModel });
-        });
-      }
       if (!silent) {
         const hasWarnings = Boolean(result.warnings && result.warnings.length > 0);
         if (hasWarnings) {
-          setError(result.warnings.join("\n\n"));
+          setError(result.warnings.map((warning) => `${warning.provider}: ${warning.message}`).join("\n\n"));
         }
         setNotice(
           hasWarnings
@@ -736,37 +805,38 @@ export function SettingsView({
         );
       }
     } catch (err) {
-      if (!silent) {
+      if (!silent && version === modelDetectionVersion.current) {
         setError(err instanceof Error ? err.message : "模型 API 检测失败");
       }
     } finally {
-      setDetectingModels(false);
+      if (version === modelDetectionVersion.current) setDetectingModels(false);
     }
   }
 
   useEffect(() => {
     if (loading) return;
-    const provider = form.provider;
-    if (needsCloudApiFields(provider) && (!form.baseUrl.trim() || !form.apiKey.trim())) return;
-    if (provider === "ollama" && !form.ollamaUrl.trim()) return;
+    setDetectingModels(false);
     const timer = window.setTimeout(() => {
       void detectModels(true);
     }, 900);
-    return () => window.clearTimeout(timer);
-  }, [form.apiKey, form.baseUrl, form.ollamaUrl, form.provider, loading]);
+    return () => {
+      window.clearTimeout(timer);
+      modelDetectionVersion.current++;
+    };
+  }, [modelCatalogSignature, loading, token]);
 
   useEffect(() => {
-    if (loading || form.provider !== "copilot") return;
+    if (loading) return;
     void refreshCopilotAuthStatus(true);
-  }, [form.provider, loading, refreshCopilotAuthStatus]);
+  }, [loading, refreshCopilotAuthStatus]);
 
   useEffect(() => {
-    if (loading || form.provider !== "antigravity") return;
+    if (loading) return;
     void refreshAntigravityStatus(true);
-  }, [form.provider, loading, refreshAntigravityStatus]);
+  }, [loading, refreshAntigravityStatus]);
 
   useEffect(() => {
-    if (form.provider !== "copilot" || copilotLoginState?.status !== "running") return;
+    if (copilotLoginState?.status !== "running") return;
     const timer = window.setInterval(() => {
       void (async () => {
         try {
@@ -787,7 +857,7 @@ export function SettingsView({
       })();
     }, 3000);
     return () => window.clearInterval(timer);
-  }, [copilotLoginState?.status, form.provider, onLogout, token]);
+  }, [copilotLoginState?.status, onLogout, token]);
 
   async function saveSettings(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -906,6 +976,11 @@ export function SettingsView({
                   form={form}
                   changeProvider={changeProvider}
                   updateActiveProviderConfig={updateActiveProviderConfig}
+                  updateSpecificProviderConfig={updateSpecificProviderConfig}
+                  onToggleProviderEnabled={handleToggleProviderEnabled}
+                  onSetCustomModelName={handleSetCustomModelName}
+                  onResetCustomModelName={handleResetCustomModelName}
+                  onSelectActiveModel={handleSelectActiveModel}
                   modelOptions={modelOptions}
                   detectingModels={detectingModels}
                   loading={loading}

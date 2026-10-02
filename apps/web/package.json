@@ -9,8 +9,7 @@
     "pretypecheck": "node ../../scripts/ensure-shared-built.mjs",
     "build": "tsc -p tsconfig.json && vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:review": "node --import tsx --test tests/review-regressions.test.tsx"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.1",

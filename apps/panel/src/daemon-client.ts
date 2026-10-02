@@ -1146,7 +1146,7 @@ export function truncateDaemonDatabaseTable(node: DaemonNodeCredentials, payload
   );
 }
 
-export function executeDaemonDatabaseQuery(node: DaemonNodeCredentials, payload: DaemonDatabaseConnPayload & { sql: string; maxRows?: number | undefined }) {
+export function executeDaemonDatabaseQuery(node: DaemonNodeCredentials, payload: DaemonDatabaseConnPayload & { sql: string; maxRows?: number | undefined; readOnly?: boolean }) {
   return requestDaemon<{ ok: boolean; result: DatabaseQueryResult }>(
     node,
     "/api/databases/query",

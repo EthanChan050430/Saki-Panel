@@ -81,7 +81,8 @@ export function escapeDefaultValue(raw: unknown, sqlType: string, dialect: "mysq
         "JSON defaults must be valid JSON literals or safe expressions."
       );
     }
-    return dialect === "mysql" ? `CAST(${escapeSqlString(str)} AS JSON)` : `'${escapeSqlString(str)}'::json`;
+    const literal = escapeSqlString(str, dialect);
+    return dialect === "mysql" ? `(CAST(${literal} AS JSON))` : dialect === "postgres" ? `${literal}::json` : literal;
   }
 
   // String/text/blob fallback.
@@ -89,11 +90,18 @@ export function escapeDefaultValue(raw: unknown, sqlType: string, dialect: "mysq
   const trimmed = str.trim();
   // Allow a handful of whitelisted zero-arg SQL functions.
   if (isAllowedFunction(trimmed)) return trimmed;
-  return escapeSqlString(str);
+  return escapeSqlString(str, dialect);
 }
 
-function escapeSqlString(value: string): string {
+export function escapeSqlString(value: string, dialect: "mysql" | "postgres" | "sqlite"): string {
+  // Hex literals cannot be terminated by data and do not depend on sql_mode.
+  if (dialect === "mysql") return `_utf8mb4 X'${Buffer.from(value, "utf8").toString("hex")}'`;
+  if (dialect === "postgres") return `E'${value.replace(/\\/g, "\\\\").replace(/'/g, "''")}'`;
   return `'${value.replace(/'/g, "''")}'`;
+}
+
+export function escapeSqlComment(value: string): string {
+  return value.replace(/[\r\n\u2028\u2029\0]/g, " ");
 }
 
 // Structured CREATE TABLE APIs interpolate the column type into DDL.

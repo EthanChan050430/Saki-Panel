@@ -22,6 +22,7 @@ import type {
   DiscoveredDatabase,
   UpdateDatabaseVisualizerRequest
 } from "@webops/shared";
+import { isReadOnlyDatabaseCommand } from "@webops/shared";
 import type { Prisma } from "@prisma/client";
 import { loadCurrentUser, requirePermission } from "../auth.js";
 import { canAccessNode, nodeVisibilityWhere } from "../node-access.js";
@@ -117,67 +118,8 @@ async function safeDaemonCall<T>(
   }
 }
 
-const MUTATING_SQL =
-  /\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|REPLACE|GRANT|REVOKE|RENAME|ATTACH|DETACH|CALL|LOAD|COPY|MERGE|UPSERT|VACUUM|REINDEX|HANDLER|LOCK|UNLOCK|INTO\s+OUTFILE|INTO\s+DUMPFILE|LOAD_FILE)\b/i;
-
-function stripSqlCommentsAndLiterals(sql: string): string {
-  let out = "";
-  let i = 0;
-  while (i < sql.length) {
-    const c = sql[i];
-    const n = sql[i + 1];
-    if (c === "/" && n === "*") {
-      const end = sql.indexOf("*/", i + 2);
-      i = end === -1 ? sql.length : end + 2;
-      out += " ";
-      continue;
-    }
-    if ((c === "-" && n === "-") || c === "#") {
-      const end = sql.indexOf("\n", i + 1);
-      i = end === -1 ? sql.length : end;
-      out += " ";
-      continue;
-    }
-    if (c === "'" || c === '"') {
-      const quote = c;
-      i += 1;
-      while (i < sql.length) {
-        if (sql[i] === "\\" ) {
-          i += 2;
-          continue;
-        }
-        if (sql[i] === quote) {
-          if (sql[i + 1] === quote) {
-            i += 2;
-            continue;
-          }
-          i += 1;
-          break;
-        }
-        i += 1;
-      }
-      out += " '' ";
-      continue;
-    }
-    out += c;
-    i += 1;
-  }
-  return out;
-}
-
-function isReadOnlySql(sql: string): boolean {
-  const stripped = stripSqlCommentsAndLiterals(sql).trim();
-  if (!stripped) return true;
-  const parts = stripped.split(";").map((part) => part.trim()).filter(Boolean);
-  return parts.every((part) => {
-    if (!/^(SELECT|SHOW|DESCRIBE|DESC|EXPLAIN|WITH|PRAGMA|VALUES)\b/i.test(part)) {
-      return false;
-    }
-    if (/^PRAGMA\b/i.test(part) && /=/.test(part)) {
-      return false;
-    }
-    return !MUTATING_SQL.test(part);
-  });
+function pickDatabaseFields<T extends object, K extends keyof T>(body: T, fields: readonly K[]): Pick<T, K> {
+  return Object.fromEntries(fields.filter(key => Object.hasOwn(body, key)).map(key => [key, body[key]])) as Pick<T, K>;
 }
 
 const dbVisualizersFile = path.resolve(process.cwd(), "data", "panel", "database-visualizers.json");
@@ -627,7 +569,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     const { inst, creds } = await loadInstanceAndNode(id, request.user.sub);
     return safeDaemonCall(reply, () => queryDaemonDatabaseTableRows(creds, {
       ...buildConnectionPayload(inst),
-      ...body
+      ...pickDatabaseFields(body, ["tableName", "page", "pageSize", "filterColumn", "filterValue", "search", "sortBy", "sortOrder"])
     }));
   });
   app.post("/api/databases/:id/tables/insert", { preHandler: requirePermission("instance.update") }, async (request, reply) => {
@@ -640,7 +582,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     }
     const result = await safeDaemonCall(reply, () => insertDaemonDatabaseTableRow(creds, {
       ...buildConnectionPayload(inst),
-      ...body
+      ...pickDatabaseFields(body, ["tableName", "row"])
     }));
     if (result) {
       await writeAuditLog({
@@ -665,7 +607,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     }
     const result = await safeDaemonCall(reply, () => updateDaemonDatabaseTableRow(creds, {
       ...buildConnectionPayload(inst),
-      ...body
+      ...pickDatabaseFields(body, ["tableName", "primaryKeys", "values"])
     }));
     if (result) {
       await writeAuditLog({
@@ -690,7 +632,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     }
     const result = await safeDaemonCall(reply, () => deleteDaemonDatabaseTableRow(creds, {
       ...buildConnectionPayload(inst),
-      ...body
+      ...pickDatabaseFields(body, ["tableName", "primaryKeys"])
     }));
     if (result) {
       await writeAuditLog({
@@ -715,7 +657,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     }
     const result = await safeDaemonCall(reply, () => createDaemonDatabaseTable(creds, {
       ...buildConnectionPayload(inst),
-      ...body
+      ...pickDatabaseFields(body, ["tableName", "columns"])
     }));
     if (result) {
       await writeAuditLog({
@@ -764,7 +706,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     }
     const result = await safeDaemonCall(reply, () => truncateDaemonDatabaseTable(creds, {
       ...buildConnectionPayload(inst),
-      ...body
+      tableName: body.tableName
     }));
     if (result) {
       await writeAuditLog({
@@ -782,14 +724,15 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     const { id } = request.params as { id: string };
     const body = request.body as { sql: string; maxRows?: number };
     const { inst, creds } = await loadInstanceAndNode(id, request.user.sub);
-    if (inst.config.isReadOnly && !isReadOnlySql(body.sql ?? "")) {
+    if (inst.config.isReadOnly && !isReadOnlyDatabaseCommand(body.sql ?? "", inst.engine)) {
       reply.code(403).send({ message: "只读模式下不允许执行写操作" });
       return;
     }
     const result = await safeDaemonCall(reply, () => executeDaemonDatabaseQuery(creds, {
       ...buildConnectionPayload(inst),
       sql: body.sql,
-      maxRows: body.maxRows
+      maxRows: body.maxRows,
+      readOnly: Boolean(inst.config.isReadOnly)
     }));
     if (result) {
       await writeAuditLog({
@@ -810,7 +753,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     const { inst, creds } = await loadInstanceAndNode(id, request.user.sub);
     return safeDaemonCall(reply, () => exportDaemonDatabaseData(creds, {
       ...buildConnectionPayload(inst),
-      ...body
+      ...pickDatabaseFields(body, ["tableName", "format"])
     }));
   });
   app.post("/api/databases/:id/import", { preHandler: requirePermission("instance.update") }, async (request, reply) => {
@@ -823,7 +766,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     }
     return safeDaemonCall(reply, () => importDaemonDatabaseData(creds, {
       ...buildConnectionPayload(inst),
-      ...body
+      ...pickDatabaseFields(body, ["tableName", "format", "content", "mode"])
     }));
   });
   app.post("/api/databases/test-connection", { preHandler: requirePermission("instance.view") }, async (request, reply) => {

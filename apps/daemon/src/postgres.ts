@@ -1,7 +1,8 @@
 import pg from "pg";
 const { Pool } = pg;
 import { PoolCache } from "./pool-cache.js";
-import { escapeDefaultValue, escapeSqlType } from "./sql-utils.js";
+import { escapeDefaultValue, escapeSqlType, escapeSqlComment, escapeSqlString } from "./sql-utils.js";
+import { isReadOnlyDatabaseCommand } from "@webops/shared";
 import { DaemonErrorCode, throwDaemonError } from "./errors.js";
 import type {
   DatabaseColumnInfo,
@@ -431,12 +432,16 @@ export async function truncateTable(cfg: PostgreSQLConnectionConfig, tableName: 
     client.release();
   }
 }
-export async function executeQuery(cfg: PostgreSQLConnectionConfig, sql: string, maxRows = 500): Promise<DatabaseQueryResult> {
+export async function executeQuery(cfg: PostgreSQLConnectionConfig, sql: string, maxRows = 500, readOnly = false): Promise<DatabaseQueryResult> {
+  if (readOnly && !isReadOnlyDatabaseCommand(sql, "postgresql")) throw new Error("Read-only query required");
   const pool = getPool(cfg);
   const client = await pool.connect();
   const start = performance.now();
+  let discardClient = false;
   try {
-    const res = await client.query(sql);
+    if (readOnly) await client.query("BEGIN READ ONLY");
+    const readOnlyQuery: pg.QueryConfig & { queryMode: "extended" } = { text: sql, queryMode: "extended" };
+    const res = readOnly ? await client.query(readOnlyQuery) : await client.query(sql);
     const duration = Math.round((performance.now() - start) * 100) / 100;
 
     if (Array.isArray(res)) {
@@ -473,7 +478,11 @@ export async function executeQuery(cfg: PostgreSQLConnectionConfig, sql: string,
       error: err instanceof Error ? err.message : "PostgreSQL 执行失败"
     };
   } finally {
-    client.release();
+    if (readOnly) {
+      try { await client.query("ROLLBACK"); }
+      catch { discardClient = true; }
+    }
+    client.release(discardClient);
   }
 }
 export async function exportTable(
@@ -502,7 +511,7 @@ export async function exportTable(
               const v = r[c];
               if (v === null || v === undefined) return "NULL";
               if (typeof v === "number" || typeof v === "boolean") return String(v);
-              return `'${String(v).replace(/'/g, "''")}'`;
+              return escapeSqlString(String(v), "postgres");
             });
             sqlDump += `INSERT INTO ${escapeIdentifier(tName)} (${cols.map(escapeIdentifier).join(", ")}) VALUES (${vals.join(", ")});\n`;
           }
@@ -533,7 +542,7 @@ export async function exportTable(
     }
 
     if (format === "sql") {
-      let dump = `-- PostgreSQL Table Export: ${tableName}\n-- Date: ${new Date().toISOString()}\n\n`;
+      let dump = `-- PostgreSQL Table Export: ${escapeSqlComment(tableName)}\n-- Date: ${new Date().toISOString()}\n\n`;
       if (rows.length > 0) {
         const cols = Object.keys(rows[0]!);
         for (const r of rows) {
@@ -541,7 +550,7 @@ export async function exportTable(
             const v = r[c];
             if (v === null || v === undefined) return "NULL";
             if (typeof v === "number" || typeof v === "boolean") return String(v);
-            return `'${String(v).replace(/'/g, "''")}'`;
+            return escapeSqlString(String(v), "postgres");
           });
           dump += `INSERT INTO ${escapeIdentifier(tableName)} (${cols.map(escapeIdentifier).join(", ")}) VALUES (${vals.join(", ")});\n`;
         }

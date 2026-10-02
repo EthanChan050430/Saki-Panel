@@ -35,6 +35,7 @@ import type {
   SakiChatMode,
   SakiModelOption
 } from "@webops/shared";
+import { sakiModelMatchesSelection, sakiModelSelectionKey } from "@webops/shared";
 import type { BrowserSpeechRecognition } from "../../types/app.js";
 import { getSakiAffectionQuote, getSpeechRecognitionConstructor } from "./sakiChatHelpers.js";
 import type { SakiPetController } from "./pet/sakiPetState.js";
@@ -763,15 +764,15 @@ export function SakiCapsuleHUD({
                 <div className="popover-model-list">
                   {effectiveModels.map((m) => {
                     const isSelected =
-                      m.id === currentModelId || (!currentModelId && m.id === "auto");
+                      sakiModelMatchesSelection(m, currentModelId) || (!currentModelId && m.id === "auto");
                     return (
                       <button
-                        key={m.id}
+                        key={sakiModelSelectionKey(m)}
                         type="button"
                         disabled={!onModelChange}
                         className={`popover-model-item ${isSelected ? "selected" : ""}`}
                         onClick={() => {
-                          onModelChange?.(m.id);
+                          onModelChange?.(sakiModelSelectionKey(m));
                           setMenuOpen(false);
                         }}
                       >

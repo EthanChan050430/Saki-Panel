@@ -9,6 +9,7 @@ import type {
 } from "@webops/shared";
 import {
   defaultSakiImageGenConfig,
+  parseSakiModelSelection,
   resolveSakiImageSize,
   sakiImageGenPreset,
   sakiImageGenProviderPresets,
@@ -98,22 +99,57 @@ export function antigravityModeOf(config?: SakiProviderConfig): AntigravityMode 
 export function defaultProviderConfig(provider: string): SakiProviderConfig {
   if (provider === "ollama") {
     return {
+      enabled: false,
       model: "llama3",
       ollamaUrl: localProviderUrlDefaults.ollama
     };
   }
   if (provider === "lmstudio") {
     return {
+      enabled: false,
       model: "",
       ollamaUrl: localProviderUrlDefaults.lmstudio
     };
   }
   return {
+    enabled: false,
     model: "",
     baseUrl: providerBaseUrlDefaults[provider] ?? "",
     apiKey: ""
   };
 }
+
+export function isProviderEnabled(form: SakiConfigResponse, providerId: string): boolean {
+  return form.providerConfigs?.[providerId]?.enabled === true;
+}
+
+export function getEnabledProviders(form: SakiConfigResponse): string[] {
+  const list: string[] = [];
+  const configs = form.providerConfigs || {};
+  for (const [p, cfg] of Object.entries(configs)) {
+    if (cfg?.enabled === true) {
+      list.push(p);
+    }
+  }
+  return Array.from(new Set(list));
+}
+
+export const providerDescriptions: Record<string, string> = {
+  copilot: "GitHub 官方模型网络，支持 GPT-4o、Claude 3.5 Sonnet、o3-mini 等",
+  antigravity: "Google 官方 OAuth 授权直连或本地代理网关，支持 Gemini 3.8 Flash / 2.5 Pro",
+  deepseek: "DeepSeek 官方开放平台，高性价比推理 DeepSeek-V3 / R1",
+  openai: "OpenAI 官方或任意兼容 OpenAI 接口规范的第三方聚合网关",
+  anthropic: "Anthropic 官方 API，支持 Claude 3.7 / 3.5 系列",
+  gemini: "Google AI Studio 官方 Gemini API 直连通道",
+  ollama: "本地运行的 Ollama 开源模型服务（默认 http://localhost:11434）",
+  lmstudio: "本地运行的 LM Studio 实例服务（默认 http://localhost:1234）",
+  zhipu: "智谱 GLM-4 开放平台",
+  minimax: "MiniMax 开放平台大模型",
+  moonshot: "Moonshot Kimi 长上下文大模型",
+  tongyi: "阿里云百炼 / 通义千问平台",
+  doubao: "字节跳动火山引擎豆包大模型平台",
+  custom: "自定义 OpenAI 协议模型服务"
+};
 
 export const imageGenProtocolOptions: Array<{ value: SakiImageGenProtocol; label: string }> = [
   { value: "openai-images", label: "OpenAI Images (/images/generations)" },
@@ -198,6 +234,60 @@ export function providerConfigFromForm(form: SakiConfigResponse, provider: strin
     ...defaultProviderConfig(provider),
     ...(form.providerConfigs?.[provider] ?? {})
   };
+}
+
+export function updateSakiProviderConfig(
+  form: SakiConfigResponse,
+  provider: string,
+  patch: Partial<SakiProviderConfig>
+): SakiConfigResponse {
+  const next = {
+    ...form,
+    providerConfigs: {
+      ...form.providerConfigs,
+      [provider]: { ...providerConfigFromForm(form, provider), ...patch }
+    }
+  };
+  if (provider === form.provider) {
+    if (patch.model !== undefined) next.model = patch.model;
+    if (patch.ollamaUrl !== undefined) next.ollamaUrl = patch.ollamaUrl;
+    if (patch.baseUrl !== undefined) next.baseUrl = patch.baseUrl;
+    if (patch.apiKey !== undefined) next.apiKey = patch.apiKey;
+  }
+  return next;
+}
+
+export function selectSakiModel(form: SakiConfigResponse, value: string, provider?: string): SakiConfigResponse {
+  const selection = parseSakiModelSelection(value, provider);
+  const nextProvider = selection.provider || form.provider;
+  const targetConfig = providerConfigFromForm(form, nextProvider);
+  return {
+    ...form,
+    provider: nextProvider,
+    model: selection.model,
+    ollamaUrl: targetConfig.ollamaUrl || "",
+    baseUrl: targetConfig.baseUrl || "",
+    apiKey: targetConfig.apiKey || "",
+    providerConfigs: {
+      ...form.providerConfigs,
+      [nextProvider]: { ...targetConfig, model: selection.model }
+    }
+  };
+}
+
+/** Only connection changes require a new catalog; model selection and aliases do not. */
+export function sakiModelCatalogSignature(form: SakiConfigResponse): string {
+  return JSON.stringify(Object.keys(form.providerConfigs).sort().map((provider) => {
+    const config = providerConfigFromForm(form, provider);
+    return {
+      provider,
+      enabled: config.enabled === true,
+      baseUrl: config.baseUrl || "",
+      ollamaUrl: config.ollamaUrl || "",
+      apiKey: config.apiKey || "",
+      mode: provider === "antigravity" ? antigravityModeOf(config) : ""
+    };
+  }));
 }
 
 export interface SakiSkillDraft {

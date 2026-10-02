@@ -9,7 +9,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Coins,
+  Copy,
   Cpu,
+  Edit3,
   ExternalLink,
   Eye,
   EyeOff,
@@ -18,15 +20,19 @@ import {
   ImagePlus,
   Info,
   KeyRound,
+  Layers,
   Loader2,
   LogIn,
   LogOut,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Server,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
+  Tag,
   UserCheck,
   UserRound,
   UserX,
@@ -43,21 +49,25 @@ import type {
   SakiModelOption,
   SakiProviderConfig
 } from "@webops/shared";
+import { sakiModelSelectionKey } from "@webops/shared";
 import type { PanelTextKey } from "../../i18n/index.js";
 import {
   antigravityModeOf,
-  isLocalProvider,
-  modelProviderOptions,
-  needsCloudApiFields,
   applyImageGenProvider,
-  withImageGenSizeDefaults,
-  imageGenAspectRatioOptions,
+  getEnabledProviders,
   imageGenFromForm,
   imageGenNeedsApiKey,
   imageGenProtocolOptions,
   imageGenQualityOptions,
+  imageGenAspectRatioOptions,
+  isLocalProvider,
+  isProviderEnabled,
+  modelProviderOptions,
+  needsCloudApiFields,
   providerBaseUrlDefaults,
+  providerDescriptions,
   sakiImageGenProviderPresets,
+  withImageGenSizeDefaults,
   type AntigravityMode
 } from "./settingsHelpers.js";
 
@@ -66,6 +76,11 @@ export interface SettingsModelTabProps {
   form: SakiConfigResponse;
   changeProvider: (provider: string) => void;
   updateActiveProviderConfig: (patch: Partial<SakiProviderConfig>) => void;
+  updateSpecificProviderConfig: (provider: string, patch: Partial<SakiProviderConfig>) => void;
+  onToggleProviderEnabled: (provider: string, enabled: boolean) => void;
+  onSetCustomModelName: (modelKey: string, customName: string) => void;
+  onResetCustomModelName: (modelKey: string) => void;
+  onSelectActiveModel: (modelId: string, providerId?: string) => void;
   modelOptions: SakiModelOption[];
   detectingModels: boolean;
   loading: boolean;
@@ -121,6 +136,11 @@ export const SettingsModelTab = memo(function SettingsModelTab({
   form,
   changeProvider,
   updateActiveProviderConfig,
+  updateSpecificProviderConfig,
+  onToggleProviderEnabled,
+  onSetCustomModelName,
+  onResetCustomModelName,
+  onSelectActiveModel,
   modelOptions,
   detectingModels,
   loading,
@@ -170,10 +190,59 @@ export const SettingsModelTab = memo(function SettingsModelTab({
   const [multipliersPage, setMultipliersPage] = useState(1);
   const [multipliersFilter, setMultipliersFilter] = useState("");
   const [showImageApiKey, setShowImageApiKey] = useState(false);
+  const [customNamesOpen, setCustomNamesOpen] = useState(false);
+  const [customNameInputs, setCustomNameInputs] = useState<Record<string, string>>({});
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [selectedProviderId, setSelectedProviderId] = useState<string>("copilot");
+  const [providerSearch, setProviderSearch] = useState<string>("");
+  const [showProviderKeys, setShowProviderKeys] = useState<Record<string, boolean>>({});
+  const [customModelInputProviders, setCustomModelInputProviders] = useState<Record<string, boolean>>({});
+
+  const toggleProviderCustomModel = (pid: string) => {
+    setCustomModelInputProviders((prev) => ({
+      ...prev,
+      [pid]: !prev[pid]
+    }));
+  };
+
   const MULTIPLIERS_PER_PAGE = 8;
   const imageGen = imageGenFromForm(form);
   const imageGenPreset = sakiImageGenProviderPresets.find((preset) => preset.id === imageGen.provider);
 
+  // Enabled providers list
+  const enabledProviders = useMemo(() => getEnabledProviders(form), [form]);
+
+  // Provider labels map
+  const providerLabelMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const opt of modelProviderOptions) {
+      map[opt.value] = opt.label;
+    }
+    return map;
+  }, []);
+
+  // Filter model options by enabled providers
+  const enabledModelOptions = useMemo(() => {
+    return modelOptions.filter((m) => enabledProviders.includes(m.provider));
+  }, [modelOptions, enabledProviders]);
+
+  // Group models by provider for optgroup
+  const modelsByProvider = useMemo(() => {
+    const map = new Map<string, SakiModelOption[]>();
+    for (const model of enabledModelOptions) {
+      const list = map.get(model.provider) ?? [];
+      list.push(model);
+      map.set(model.provider, list);
+    }
+    return map;
+  }, [enabledModelOptions]);
+
+  // Find currently selected model item
+  const currentActiveModelItem = useMemo(() => {
+    return enabledModelOptions.find((m) => m.id === form.model && m.provider === form.provider);
+  }, [enabledModelOptions, form.model, form.provider]);
+
+  // Multiplier filtering: ONLY SHOW MODELS OF ENABLED PROVIDERS
   const filteredMultipliers = useMemo(() => {
     if (!multipliersFilter.trim()) return combinedModelKeys;
     const q = multipliersFilter.trim().toLowerCase();
@@ -187,6 +256,994 @@ export const SettingsModelTab = memo(function SettingsModelTab({
     const start = (safeMultipliersPage - 1) * MULTIPLIERS_PER_PAGE;
     return filteredMultipliers.slice(start, start + MULTIPLIERS_PER_PAGE);
   }, [filteredMultipliers, safeMultipliersPage]);
+
+  // Copy code helper
+  const handleCopyDeviceCode = (code: string) => {
+    if (!code) return;
+    void navigator.clipboard.writeText(code);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 2000);
+  };
+
+  const toggleShowProviderKey = (providerId: string) => {
+    setShowProviderKeys((prev) => ({
+      ...prev,
+      [providerId]: !prev[providerId]
+    }));
+  };
+
+  // Antigravity mode calculation
+  const antigravityMode = antigravityModeOf(form.providerConfigs?.antigravity);
+  const isDirectMode = antigravityMode === "direct";
+  const isAntigravityReady = isDirectMode
+    ? Boolean(form.providerConfigs.antigravity?.apiKey?.trim() || (antigravityStatus?.available && antigravityStatus?.authenticated))
+    : Boolean(
+        antigravityStatus?.isEndpointReachable ||
+        (antigravityStatus?.available && antigravityStatus?.authenticated)
+      );
+  const isPendingProxy = Boolean(!isDirectMode && antigravityStatus?.authenticated && !isAntigravityReady);
+
+  // Resolved display name for any model key
+  const resolveModelDisplayName = (key: string): { displayName: string; baseId: string; providerName: string; isConflict: boolean } => {
+    let baseId = key;
+    let providerId = "";
+    const separator = key.indexOf(":");
+    if (separator > 0 && Object.hasOwn(form.providerConfigs, key.slice(0, separator))) {
+      providerId = key.slice(0, separator);
+      baseId = key.slice(separator + (key[separator + 1] === ":" ? 2 : 1));
+    } else {
+      for (const p of Object.keys(form.providerConfigs || {})) {
+        if (key.endsWith(`-${p}`)) {
+          providerId = p;
+          baseId = key.slice(0, -(p.length + 1));
+          break;
+        }
+      }
+    }
+
+    const matched = enabledModelOptions.find((m) => (m.id === baseId || m.id === key) && (!providerId || m.provider === providerId));
+    if (matched) {
+      baseId = matched.id;
+      providerId = matched.provider;
+    }
+
+    const providerName = providerLabelMap[providerId] || providerId || (enabledProviders[0] || form.provider);
+    const isConflict = matched?.isConflict ?? false;
+    const defaultName = isConflict ? `${baseId}-${providerId || form.provider}` : (matched?.name || baseId);
+    const custom =
+      form.customModelNames?.[`${providerId}:${baseId}`] ??
+      form.customModelNames?.[defaultName] ??
+      form.customModelNames?.[baseId];
+
+    return {
+      displayName: custom || defaultName,
+      baseId,
+      providerName,
+      isConflict
+    };
+  };
+
+  // Master-Detail Catalog Definition for all 14 providers
+  const allProvidersList = useMemo(() => [
+    // 1. Official
+    {
+      id: "copilot",
+      name: "GitHub Copilot",
+      category: "official",
+      tag: "官方 CLI / SDK",
+      iconType: "github",
+      iconBg: "#181717",
+      iconColor: "#ffffff",
+      desc: providerDescriptions.copilot
+    },
+    {
+      id: "antigravity",
+      name: "Google Antigravity CLI",
+      category: "official",
+      tag: "官方直连 / 反代网关",
+      iconType: "antigravity",
+      iconBg: "linear-gradient(135deg, #ff75ac, #a855f7)",
+      iconColor: "#ffffff",
+      desc: providerDescriptions.antigravity
+    },
+    // 2. Local
+    {
+      id: "ollama",
+      name: "Ollama",
+      category: "local",
+      tag: "本地开源服务",
+      iconType: "server",
+      iconBg: "#334155",
+      iconColor: "#f8fafc",
+      desc: providerDescriptions.ollama
+    },
+    {
+      id: "lmstudio",
+      name: "LM Studio",
+      category: "local",
+      tag: "本地 API 实例",
+      iconType: "cpu",
+      iconBg: "#4f46e5",
+      iconColor: "#ffffff",
+      desc: providerDescriptions.lmstudio
+    },
+    // 3. Mainstream Cloud
+    {
+      id: "deepseek",
+      name: "DeepSeek",
+      category: "cloud",
+      tag: "高性价比推理",
+      iconType: "globe",
+      iconBg: "#0284c7",
+      iconColor: "#ffffff",
+      desc: providerDescriptions.deepseek
+    },
+    {
+      id: "openai",
+      name: "OpenAI Compatible",
+      category: "cloud",
+      tag: "标准 API 规范",
+      iconType: "sparkles",
+      iconBg: "#10a37f",
+      iconColor: "#ffffff",
+      desc: providerDescriptions.openai
+    },
+    {
+      id: "gemini",
+      name: "Google Gemini",
+      category: "cloud",
+      tag: "Google AI Studio",
+      iconType: "antigravity",
+      iconBg: "#3b82f6",
+      iconColor: "#ffffff",
+      desc: providerDescriptions.gemini
+    },
+    {
+      id: "anthropic",
+      name: "Anthropic",
+      category: "cloud",
+      tag: "Claude 官方 API",
+      iconType: "globe",
+      iconBg: "#c2410c",
+      iconColor: "#ffffff",
+      desc: providerDescriptions.anthropic
+    },
+    {
+      id: "moonshot",
+      name: "Moonshot (Kimi)",
+      category: "cloud",
+      tag: "长上下文模型",
+      iconType: "globe",
+      iconBg: "#7c3aed",
+      iconColor: "#ffffff",
+      desc: providerDescriptions.moonshot
+    },
+    {
+      id: "zhipu",
+      name: "智谱 GLM",
+      category: "cloud",
+      tag: "GLM-4 开放平台",
+      iconType: "cpu",
+      iconBg: "#0891b2",
+      iconColor: "#ffffff",
+      desc: providerDescriptions.zhipu
+    },
+    {
+      id: "tongyi",
+      name: "通义千问",
+      category: "cloud",
+      tag: "阿里百炼平台",
+      iconType: "globe",
+      iconBg: "#ea580c",
+      iconColor: "#ffffff",
+      desc: providerDescriptions.tongyi
+    },
+    {
+      id: "doubao",
+      name: "字节豆包",
+      category: "cloud",
+      tag: "火山引擎 API",
+      iconType: "globe",
+      iconBg: "#0369a1",
+      iconColor: "#ffffff",
+      desc: providerDescriptions.doubao
+    },
+    {
+      id: "minimax",
+      name: "MiniMax",
+      category: "cloud",
+      tag: "开放平台大模型",
+      iconType: "globe",
+      iconBg: "#e11d48",
+      iconColor: "#ffffff",
+      desc: providerDescriptions.minimax
+    },
+    // 4. Custom
+    {
+      id: "custom",
+      name: "自定义兼容服务商",
+      category: "custom",
+      tag: "OpenAI 规范协议",
+      iconType: "sliders",
+      iconBg: "#64748b",
+      iconColor: "#ffffff",
+      desc: providerDescriptions.custom
+    }
+  ], []);
+
+  const providerCategories = useMemo(() => [
+    { key: "official", label: "官方接入 / SDK" },
+    { key: "local", label: "本地部署 / 推理" },
+    { key: "cloud", label: "主流云端平台" },
+    { key: "custom", label: "自定义扩展" }
+  ], []);
+
+  const filteredSidebarProviders = useMemo(() => {
+    if (!providerSearch.trim()) return allProvidersList;
+    const q = providerSearch.trim().toLowerCase();
+    return allProvidersList.filter((p) =>
+      p.name.toLowerCase().includes(q) ||
+      p.id.toLowerCase().includes(q) ||
+      p.tag.toLowerCase().includes(q) ||
+      Boolean(providerLabelMap[p.id]?.toLowerCase().includes(q))
+    );
+  }, [allProvidersList, providerSearch, providerLabelMap]);
+
+  const renderProviderIcon = (iconType: string, size = 18) => {
+    switch (iconType) {
+      case "github":
+        return <Github size={size} />;
+      case "antigravity":
+        return <Zap size={size} />;
+      case "server":
+        return <Server size={size} />;
+      case "cpu":
+        return <Cpu size={size} />;
+      case "sparkles":
+        return <Sparkles size={size} />;
+      case "sliders":
+        return <SlidersHorizontal size={size} />;
+      case "globe":
+      default:
+        return <Globe size={size} />;
+    }
+  };
+
+  const activeProviderMeta = useMemo(() => {
+    const found = allProvidersList.find((p) => p.id === selectedProviderId);
+    if (found) return found;
+    return allProvidersList[0] ?? {
+      id: "copilot",
+      name: "GitHub Copilot",
+      category: "official",
+      tag: "官方 CLI / SDK",
+      iconType: "github",
+      iconBg: "#181717",
+      iconColor: "#ffffff",
+      desc: providerDescriptions.copilot
+    };
+  }, [allProvidersList, selectedProviderId]);
+
+  const isCurrentSelectedEnabled = isProviderEnabled(form, activeProviderMeta.id);
+
+  const renderCopilotDetail = () => {
+    const isAuth = Boolean(copilotAuthStatus?.authenticated);
+    const copilotModels = enabledModelOptions.filter((m) => m.provider === "copilot");
+    const isCustomInput = Boolean(customModelInputProviders.copilot);
+    const pConfig = form.providerConfigs?.copilot ?? {};
+
+    return (
+      <div className="copilot-clean-panel" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {/* Authentication Card */}
+        <div className="providers-ios-group-card">
+          <div className="providers-ios-group-title">
+            <ShieldCheck size={14} style={{ color: "var(--primary, #ff75ac)" }} />
+            <span>账号认证与授权状态</span>
+          </div>
+
+          <div className="copilot-account-row">
+            <div className="copilot-account-info">
+              <div className="copilot-avatar-box">
+                {copilotAuthStatus?.login ? copilotAuthStatus.login.slice(0, 2).toUpperCase() : <Github size={16} />}
+              </div>
+              <div className="copilot-account-text">
+                <span className="copilot-account-name">
+                  {isAuth ? `@${copilotAuthStatus?.login}` : "尚未绑定 GitHub 账号"}
+                </span>
+                <span className="copilot-account-sub">
+                  {isAuth
+                    ? `认证类型: ${copilotAuthStatus?.authType || "OAuth App"} · 服务在线`
+                    : copilotAuthStatus?.message || "点击右侧登录按钮以绑定账号"}
+                </span>
+              </div>
+            </div>
+
+            <div className="copilot-action-group">
+              <button
+                className="ghost-button"
+                disabled={copilotBusy === "status" || loading}
+                type="button"
+                onClick={() => void refreshCopilotAuthStatus(false)}
+              >
+                <RefreshCw size={13} className={copilotBusy === "status" ? "animate-spin" : ""} />
+                <span>{copilotBusy === "status" ? "检查中" : "检查状态"}</span>
+              </button>
+
+              <button
+                className="primary-button"
+                disabled={copilotBusy === "login" || loading}
+                type="button"
+                onClick={() => void startCopilotLoginFromSettings()}
+              >
+                <LogIn size={13} />
+                <span>{copilotBusy === "login" ? "连接中..." : isAuth ? "重新登录" : "登录 GitHub"}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Clean Device Activation Box */}
+          {copilotLoginState?.userCode || copilotLoginState?.verificationUri ? (
+            <div className="copilot-device-card">
+              <div className="copilot-device-header">
+                <KeyRound size={15} />
+                <span>GitHub 设备激活授权</span>
+              </div>
+              <span style={{ fontSize: 12.5, color: "var(--text-dark, #1d1d1f)" }}>
+                {copilotLoginState.message || "请复制下方的设备授权码，前往 GitHub 验证页同意授权："}
+              </span>
+              <div className="copilot-code-row">
+                {copilotLoginState.userCode ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span className="copilot-code-pill">{copilotLoginState.userCode}</span>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      style={{ padding: "6px 10px", fontSize: 12 }}
+                      onClick={() => handleCopyDeviceCode(copilotLoginState.userCode!)}
+                    >
+                      {copiedCode ? <Check size={13} /> : <Copy size={13} />}
+                      <span>{copiedCode ? "已复制" : "复制"}</span>
+                    </button>
+                  </div>
+                ) : null}
+
+                {copilotLoginState.verificationUri ? (
+                  <a
+                    href={copilotLoginState.verificationUri}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="primary-button"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, textDecoration: "none" }}
+                  >
+                    <span>前往 GitHub 设备验证页</span>
+                    <ExternalLink size={13} />
+                  </a>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Model Invocation Card */}
+        <div className="providers-ios-group-card">
+          <div className="providers-ios-group-title">
+            <Cpu size={14} style={{ color: "var(--primary, #ff75ac)" }} />
+            <span>模型调用与默认分配</span>
+          </div>
+
+          <div className="settings-form-row" style={{ margin: 0 }}>
+            <label className="settings-field" style={{ flex: 1 }}>
+              <span className="settings-field-label">默认调用模型 (可选)</span>
+              {copilotModels.length > 0 && !isCustomInput ? (
+                <div className="settings-input-with-action">
+                  <select
+                    className="settings-select"
+                    value={pConfig.model || ""}
+                    onChange={(e) => updateSpecificProviderConfig("copilot", { model: e.target.value })}
+                  >
+                    <option value="">跟随全局默认 / 自动推荐</option>
+                    {copilotModels.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label} {m.supportsVision ? "👁️" : ""}
+                      </option>
+                    ))}
+                    {pConfig.model && !copilotModels.some((m) => m.id === pConfig.model) ? (
+                      <option value={pConfig.model}>{pConfig.model} (自定义)</option>
+                    ) : null}
+                  </select>
+                  <button
+                    type="button"
+                    className="settings-inline-action-btn"
+                    onClick={() => toggleProviderCustomModel("copilot")}
+                    title="手动输入未列出的模型 ID"
+                    style={{ fontSize: 11, padding: "0 8px", whiteSpace: "nowrap" }}
+                  >
+                    手动输入
+                  </button>
+                </div>
+              ) : (
+                <div className="settings-input-with-action">
+                  <input
+                    className="settings-input"
+                    value={pConfig.model ?? ""}
+                    onChange={(e) => updateSpecificProviderConfig("copilot", { model: e.target.value })}
+                    placeholder="例如 claude-3.5-sonnet, gpt-4o 等"
+                  />
+                  {copilotModels.length > 0 ? (
+                    <button
+                      type="button"
+                      className="settings-inline-action-btn"
+                      onClick={() => toggleProviderCustomModel("copilot")}
+                      title="从已同步的模型列表中选择"
+                      style={{ fontSize: 11, padding: "0 8px", whiteSpace: "nowrap" }}
+                    >
+                      下拉选择
+                    </button>
+                  ) : null}
+                </div>
+              )}
+            </label>
+          </div>
+
+          {/* Synced Models Preview */}
+          {copilotModels.length > 0 ? (
+            <div className="providers-ios-models-preview">
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary, #86868b)" }}>
+                <Sparkles size={13} style={{ color: "var(--primary, #ff75ac)" }} />
+                <span>已同步可用模型 ({copilotModels.length})：</span>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                {copilotModels.map((m) => (
+                  <span
+                    key={m.id}
+                    className="provider-tag"
+                    style={{ cursor: "pointer" }}
+                    title={`点击设为默认：${m.id}`}
+                    onClick={() => updateSpecificProviderConfig("copilot", { model: m.id })}
+                  >
+                    {m.label} {m.supportsVision ? "👁️" : ""}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : isCurrentSelectedEnabled ? (
+            <div style={{ fontSize: 12, color: "var(--text-secondary, #86868b)" }}>
+              尚未同步 Copilot 模型。请在授权完成后点击顶部“同步全部模型”。
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+
+  const renderAntigravityDetail = () => {
+    const antigravityModels = enabledModelOptions.filter((m) => m.provider === "antigravity");
+    const isCustomInput = Boolean(customModelInputProviders.antigravity);
+    const pConfig = form.providerConfigs?.antigravity ?? {};
+
+    return (
+      <div className="antigravity-clean-deck" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {/* Connection Mode & Credentials Card */}
+        <div className="providers-ios-group-card">
+          <div className="providers-ios-group-title">
+            <Zap size={14} style={{ color: "var(--primary, #ff75ac)" }} />
+            <span>接入模式与认证凭据</span>
+          </div>
+
+          {/* Mode Segmented Controls */}
+          <div className="segmented-control">
+            <button
+              type="button"
+              className={`segmented-btn ${isDirectMode ? "active" : ""}`}
+              onClick={() => switchAntigravityMode("direct")}
+            >
+              官方直连 (Gemini API Key · 免反代)
+            </button>
+            <button
+              type="button"
+              className={`segmented-btn ${!isDirectMode ? "active" : ""}`}
+              onClick={() => switchAntigravityMode("proxy")}
+            >
+              本地反代网关 (Google OAuth / Proxy)
+            </button>
+          </div>
+
+          {/* Direct Mode Configuration */}
+          {isDirectMode ? (
+            <div className="settings-form-row" style={{ margin: 0 }}>
+              <label className="settings-field" style={{ flex: 1 }}>
+                <span className="settings-field-label">Gemini API Key</span>
+                <div className="settings-input-with-action">
+                  <input
+                    className="settings-input"
+                    type={showApiKey ? "text" : "password"}
+                    value={pConfig.apiKey ?? ""}
+                    onChange={(event) => handleAntigravityApiKeyInput(event.target.value)}
+                    placeholder="AIzaSy..."
+                  />
+                  <button
+                    type="button"
+                    className="settings-inline-action-btn icon-only"
+                    onClick={() => setShowApiKey((s) => !s)}
+                    title={showApiKey ? "隐藏 API Key" : "显示 API Key"}
+                  >
+                    {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+                <span className="settings-field-hint" style={{ marginTop: 4 }}>
+                  直连 Google 官方端点，极速响应，无需服务器反代进程。可前往{" "}
+                  <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer">
+                    Google AI Studio
+                  </a>{" "}
+                  免费申请（以 <code>AIzaSy</code> 开头）。
+                </span>
+              </label>
+            </div>
+          ) : (
+            /* Reverse Proxy & OAuth Mode */
+            <>
+              <div className="copilot-account-row">
+                <div className="copilot-account-info">
+                  <div className="copilot-avatar-box" style={{ background: "linear-gradient(135deg, var(--primary, #ff75ac), #a855f7)" }}>
+                    {antigravityStatus?.authenticated ? <UserCheck size={16} /> : <UserX size={16} />}
+                  </div>
+                  <div className="copilot-account-text">
+                    <span className="copilot-account-name">
+                      {antigravityStatus?.authenticated
+                        ? antigravityStatus.accountEmail || "已连接官方 OAuth 凭据"
+                        : "未登录 Google 账号"}
+                    </span>
+                    <span className="copilot-account-sub">
+                      {antigravityStatus?.authenticated
+                        ? "OAuth 2.0 凭据已持久化就绪，反代请求将通过此账号认证调用。"
+                        : "未检测到已授权的 Google 账号。请点击右侧“登录 Google 账号”进行授权。"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="copilot-action-group">
+                  <button
+                    className="ghost-button"
+                    disabled={antigravityBusy || Boolean(antigravityActionBusy) || loading}
+                    type="button"
+                    onClick={() => void refreshAntigravityStatus(false)}
+                  >
+                    <RefreshCw size={13} className={antigravityBusy ? "animate-spin" : ""} />
+                    <span>{antigravityBusy ? "检测中..." : "刷新状态"}</span>
+                  </button>
+
+                  {antigravityStatus?.authenticated || antigravityStatus?.accountEmail ? (
+                    <button
+                      className="danger-button"
+                      disabled={loading || Boolean(antigravityActionBusy)}
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm(`确定要退出 Google 账号 (${antigravityStatus?.accountEmail || "当前账号"}) 吗？`)) {
+                          void handleAntigravityLogout();
+                        }
+                      }}
+                    >
+                      {antigravityActionBusy === "logout" ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <LogOut size={13} />
+                      )}
+                      <span>退出账号</span>
+                    </button>
+                  ) : (
+                    <button
+                      className="primary-button"
+                      disabled={loading || Boolean(antigravityActionBusy)}
+                      type="button"
+                      onClick={() => void startAntigravityOAuthFlow()}
+                    >
+                      {antigravityActionBusy === "oauth-init" ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <LogIn size={13} />
+                      )}
+                      <span>登录 Google 账号</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Multi-Accounts bar */}
+              {antigravityStatus?.accounts && antigravityStatus.accounts.length > 1 ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12 }}>
+                  <span style={{ color: "var(--text-muted)" }}>关联账号 ({antigravityStatus.accounts.length}):</span>
+                  {antigravityStatus.accounts.map((acc) => {
+                    const isCurrent = acc.isActive || acc.email === antigravityStatus.accountEmail;
+                    return (
+                      <button
+                        key={acc.email}
+                        type="button"
+                        className={`model-sync-btn ${isCurrent ? "active-model" : ""}`}
+                        style={{
+                          fontSize: 11.5,
+                          padding: "3px 8px",
+                          borderColor: isCurrent ? "var(--primary, #ff75ac)" : undefined,
+                          background: isCurrent ? "rgba(255, 117, 172, 0.12)" : undefined
+                        }}
+                        onClick={() => {
+                          if (!isCurrent && !antigravityActionBusy) {
+                            void handleAntigravitySwitchAccount(acc.email);
+                          }
+                        }}
+                      >
+                        <span>{acc.email}</span>
+                        {isCurrent ? <span style={{ color: "var(--primary, #ff75ac)", fontWeight: 700 }}>✓</span> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+
+              {/* Usage Metrics Strip */}
+              {antigravityStatus?.usage ? (
+                <div className="antigravity-metrics-row">
+                  <div className="antigravity-metric-cell">
+                    <span className="metric-label">今日 Tokens 消耗</span>
+                    <span className="metric-value accent">
+                      {(antigravityStatus.usage.todayTokensUsed ?? 0).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="antigravity-metric-cell">
+                    <span className="metric-label">历史总计消耗</span>
+                    <span className="metric-value">
+                      {(antigravityStatus.usage.totalTokensUsed ?? 0).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="antigravity-metric-cell">
+                    <span className="metric-label">反代配额与连通性</span>
+                    <span className="metric-value">
+                      {antigravityStatus.usage.proxyQuotaRemaining !== undefined
+                        ? typeof antigravityStatus.usage.proxyQuotaRemaining === "number"
+                          ? antigravityStatus.usage.proxyQuotaRemaining.toLocaleString()
+                          : antigravityStatus.usage.proxyQuotaRemaining
+                        : isAntigravityReady
+                        ? "在线就绪"
+                        : "离线 (8080)"}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Collapsible Advanced Reverse Proxy Configuration */}
+              <div style={{ borderTop: "1px solid rgba(255, 255, 255, 0.55)", paddingTop: 10 }}>
+                <button
+                  type="button"
+                  className="advanced-toggle-button"
+                  style={{ padding: "4px 0", background: "none", border: "none" }}
+                  onClick={() => setAntigravityLoginModalOpen((prev) => !prev)}
+                >
+                  <div className="toggle-label-wrap">
+                    <SlidersHorizontal size={13} />
+                    <span style={{ fontSize: 12.5, fontWeight: 600 }}>反代端点与高级凭据设置</span>
+                  </div>
+                  <ChevronDown
+                    size={14}
+                    style={{ transform: antigravityLoginModalOpen ? "rotate(180deg)" : "none" }}
+                  />
+                </button>
+
+                {antigravityLoginModalOpen ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 12 }}>
+                    <div className="settings-form-row" style={{ margin: 0 }}>
+                      <label className="settings-field">
+                        <span className="settings-field-label">反代网关 Base URL</span>
+                        <input
+                          className="settings-input"
+                          value={pConfig.baseUrl ?? ""}
+                          onChange={(e) => updateSpecificProviderConfig("antigravity", { baseUrl: e.target.value })}
+                          placeholder="http://localhost:8080/v1"
+                        />
+                      </label>
+
+                      <label className="settings-field">
+                        <span className="settings-field-label">反代 Bearer Token (可选)</span>
+                        <input
+                          className="settings-input"
+                          type={showApiKey ? "text" : "password"}
+                          value={pConfig.apiKey ?? ""}
+                          onChange={(e) => handleAntigravityApiKeyInput(e.target.value)}
+                          placeholder="留空则优先使用 Google OAuth 凭据"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="manual-token-card">
+                      <div className="manual-token-header">
+                        <KeyRound size={13} />
+                        <span style={{ fontSize: 12, fontWeight: 600 }}>导入 Google OAuth 访问令牌 (Ya29)</span>
+                      </div>
+                      <textarea
+                        className="settings-input antigravity-token-textarea"
+                        rows={2}
+                        placeholder="粘贴 Google OAuth 访问令牌 (ya29...) 或凭据 JSON"
+                        value={antigravityTokenInput}
+                        onChange={(e) => setAntigravityTokenInput(e.target.value)}
+                        disabled={Boolean(antigravityActionBusy)}
+                      />
+                      <div className="manual-token-actions-row">
+                        <input
+                          type="text"
+                          className="settings-input manual-email-input"
+                          placeholder="账号邮箱备注（可选）"
+                          value={antigravityEmailInput}
+                          onChange={(e) => setAntigravityEmailInput(e.target.value)}
+                          disabled={Boolean(antigravityActionBusy)}
+                        />
+                        <button
+                          type="button"
+                          className="primary-button compact-btn"
+                          disabled={!antigravityTokenInput.trim() || Boolean(antigravityActionBusy)}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            void handleAntigravityLoginSubmit();
+                          }}
+                        >
+                          <Check size={12} />
+                          <span>导入保存</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Model Invocation Card */}
+        <div className="providers-ios-group-card">
+          <div className="providers-ios-group-title">
+            <Cpu size={14} style={{ color: "var(--primary, #ff75ac)" }} />
+            <span>模型调用与默认分配</span>
+          </div>
+
+          <div className="settings-form-row" style={{ margin: 0 }}>
+            <label className="settings-field" style={{ flex: 1 }}>
+              <span className="settings-field-label">默认调用模型 (可选)</span>
+              {antigravityModels.length > 0 && !isCustomInput ? (
+                <div className="settings-input-with-action">
+                  <select
+                    className="settings-select"
+                    value={pConfig.model || ""}
+                    onChange={(e) => updateSpecificProviderConfig("antigravity", { model: e.target.value })}
+                  >
+                    <option value="">跟随全局默认 / 自动推荐</option>
+                    {antigravityModels.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label} {m.supportsVision ? "👁️" : ""}
+                      </option>
+                    ))}
+                    {pConfig.model && !antigravityModels.some((m) => m.id === pConfig.model) ? (
+                      <option value={pConfig.model}>{pConfig.model} (自定义)</option>
+                    ) : null}
+                  </select>
+                  <button
+                    type="button"
+                    className="settings-inline-action-btn"
+                    onClick={() => toggleProviderCustomModel("antigravity")}
+                    title="手动输入未列出的模型 ID"
+                    style={{ fontSize: 11, padding: "0 8px", whiteSpace: "nowrap" }}
+                  >
+                    手动输入
+                  </button>
+                </div>
+              ) : (
+                <div className="settings-input-with-action">
+                  <input
+                    className="settings-input"
+                    value={pConfig.model ?? ""}
+                    onChange={(e) => updateSpecificProviderConfig("antigravity", { model: e.target.value })}
+                    placeholder="例如 gemini-3.8-flash, gemini-2.5-pro 等"
+                  />
+                  {antigravityModels.length > 0 ? (
+                    <button
+                      type="button"
+                      className="settings-inline-action-btn"
+                      onClick={() => toggleProviderCustomModel("antigravity")}
+                      title="从已同步的模型列表中选择"
+                      style={{ fontSize: 11, padding: "0 8px", whiteSpace: "nowrap" }}
+                    >
+                      下拉选择
+                    </button>
+                  ) : null}
+                </div>
+              )}
+            </label>
+          </div>
+
+          {/* Synced Models Preview */}
+          {antigravityModels.length > 0 ? (
+            <div className="providers-ios-models-preview">
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary, #86868b)" }}>
+                <Sparkles size={13} style={{ color: "var(--primary, #ff75ac)" }} />
+                <span>已同步可用模型 ({antigravityModels.length})：</span>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                {antigravityModels.map((m) => (
+                  <span
+                    key={m.id}
+                    className="provider-tag"
+                    style={{ cursor: "pointer" }}
+                    title={`点击设为默认：${m.id}`}
+                    onClick={() => updateSpecificProviderConfig("antigravity", { model: m.id })}
+                  >
+                    {m.label} {m.supportsVision ? "👁️" : ""}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : isCurrentSelectedEnabled ? (
+            <div style={{ fontSize: 12, color: "var(--text-secondary, #86868b)" }}>
+              尚未同步 Antigravity 模型。请在授权完成后点击顶部“同步全部模型”。
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+
+  const renderGenericProviderDetail = (pid: string) => {
+    const isLocal = isLocalProvider(pid);
+    const pConfig = form.providerConfigs?.[pid] ?? {};
+    const isKeyShown = Boolean(showProviderKeys[pid]);
+    const providerModels = enabledModelOptions.filter((m) => m.provider === pid);
+    const isCustomInput = Boolean(customModelInputProviders[pid]);
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {/* Connection & Credentials Card */}
+        <div className="providers-ios-group-card">
+          <div className="providers-ios-group-title">
+            <Globe size={14} style={{ color: "var(--primary, #ff75ac)" }} />
+            <span>连接地址与访问凭据</span>
+          </div>
+
+          <div className="settings-form-row" style={{ margin: 0 }}>
+            {isLocal ? (
+              <label className="settings-field" style={{ flex: 1 }}>
+                <span className="settings-field-label">
+                  {pid === "lmstudio" ? "LM Studio URL" : "Ollama 服务地址"}
+                </span>
+                <input
+                  className="settings-input"
+                  value={pConfig.ollamaUrl ?? (pid === "lmstudio" ? "http://localhost:1234" : "http://localhost:11434")}
+                  onChange={(e) => updateSpecificProviderConfig(pid, { ollamaUrl: e.target.value })}
+                  placeholder={pid === "lmstudio" ? "http://localhost:1234" : "http://localhost:11434"}
+                />
+              </label>
+            ) : (
+              <>
+                <label className="settings-field" style={{ flex: 1 }}>
+                  <span className="settings-field-label">API Base URL</span>
+                  <input
+                    className="settings-input"
+                    value={pConfig.baseUrl ?? providerBaseUrlDefaults[pid] ?? ""}
+                    onChange={(e) => updateSpecificProviderConfig(pid, { baseUrl: e.target.value })}
+                    placeholder={providerBaseUrlDefaults[pid] || "https://api.example.com/v1"}
+                  />
+                </label>
+
+                <label className="settings-field" style={{ flex: 1 }}>
+                  <span className="settings-field-label">API Key</span>
+                  <div className="settings-input-with-action">
+                    <input
+                      className="settings-input"
+                      type={isKeyShown ? "text" : "password"}
+                      value={pConfig.apiKey ?? ""}
+                      onChange={(e) => updateSpecificProviderConfig(pid, { apiKey: e.target.value })}
+                      placeholder="sk-..."
+                    />
+                    <button
+                      type="button"
+                      className="settings-inline-action-btn icon-only"
+                      onClick={() => toggleShowProviderKey(pid)}
+                      title={isKeyShown ? "隐藏 API Key" : "显示 API Key"}
+                    >
+                      {isKeyShown ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                </label>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Model Invocation Card */}
+        <div className="providers-ios-group-card">
+          <div className="providers-ios-group-title">
+            <Cpu size={14} style={{ color: "var(--primary, #ff75ac)" }} />
+            <span>模型调用与默认分配</span>
+          </div>
+
+          <div className="settings-form-row" style={{ margin: 0 }}>
+            <label className="settings-field" style={{ flex: 1 }}>
+              <span className="settings-field-label">默认调用模型 (可选)</span>
+              {providerModels.length > 0 && !isCustomInput ? (
+                <div className="settings-input-with-action">
+                  <select
+                    className="settings-select"
+                    value={pConfig.model || ""}
+                    onChange={(e) => updateSpecificProviderConfig(pid, { model: e.target.value })}
+                  >
+                    <option value="">跟随全局默认 / 自动推荐</option>
+                    {providerModels.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label} {m.supportsVision ? "👁️" : ""}
+                      </option>
+                    ))}
+                    {pConfig.model && !providerModels.some((m) => m.id === pConfig.model) ? (
+                      <option value={pConfig.model}>{pConfig.model} (自定义)</option>
+                    ) : null}
+                  </select>
+                  <button
+                    type="button"
+                    className="settings-inline-action-btn"
+                    onClick={() => toggleProviderCustomModel(pid)}
+                    title="手动输入未列出的模型 ID"
+                    style={{ fontSize: 11, padding: "0 8px", whiteSpace: "nowrap" }}
+                  >
+                    手动输入
+                  </button>
+                </div>
+              ) : (
+                <div className="settings-input-with-action">
+                  <input
+                    className="settings-input"
+                    value={pConfig.model ?? ""}
+                    onChange={(e) => updateSpecificProviderConfig(pid, { model: e.target.value })}
+                    placeholder={pid === "ollama" ? "llama3" : "例如 deepseek-chat, gpt-4o 等"}
+                  />
+                  {providerModels.length > 0 ? (
+                    <button
+                      type="button"
+                      className="settings-inline-action-btn"
+                      onClick={() => toggleProviderCustomModel(pid)}
+                      title="从已同步的模型列表中选择"
+                      style={{ fontSize: 11, padding: "0 8px", whiteSpace: "nowrap" }}
+                    >
+                      下拉选择
+                    </button>
+                  ) : null}
+                </div>
+              )}
+            </label>
+          </div>
+
+          {/* Synced Models Preview */}
+          {providerModels.length > 0 ? (
+            <div className="providers-ios-models-preview">
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary, #86868b)" }}>
+                <Sparkles size={13} style={{ color: "var(--primary, #ff75ac)" }} />
+                <span>已同步可用模型 ({providerModels.length})：</span>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                {providerModels.map((m) => (
+                  <span
+                    key={m.id}
+                    className="provider-tag"
+                    style={{ cursor: "pointer" }}
+                    title={`点击设为默认：${m.id}`}
+                    onClick={() => updateSpecificProviderConfig(pid, { model: m.id })}
+                  >
+                    {m.label} {m.supportsVision ? "👁️" : ""}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : isCurrentSelectedEnabled ? (
+            <div style={{ fontSize: 12, color: "var(--text-secondary, #86868b)" }}>
+              未发现或尚未同步此服务商的模型。点击上方“同步全部模型”重新拉取。
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div
@@ -202,883 +1259,496 @@ export const SettingsModelTab = memo(function SettingsModelTab({
           <span>{t("settings.model.detail")}</span>
         </div>
       </div>
-      <div className="settings-group-content">
-        <div className="settings-form-row">
-          <label className="settings-field">
-            <span className="settings-field-label">服务商 (Provider)</span>
-            <select
-              className="settings-select"
-              value={form.provider}
-              onChange={(event) => changeProvider(event.target.value)}
-            >
-              {modelProviderOptions.map((option) => (
-                <option value={option.value} key={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
 
-          <label className="settings-field">
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 4
-              }}
-            >
-              <span className="settings-field-label" style={{ marginBottom: 0 }}>
-                模型名称 (Model)
-              </span>
-              {modelOptions.length > 0 ? (
-                <button
-                  type="button"
-                  className="settings-text-btn"
-                  style={{
-                    fontSize: 12,
-                    background: "none",
-                    border: "none",
-                    color: "var(--accent-color, #3b82f6)",
-                    cursor: "pointer",
-                    padding: "0 2px"
-                  }}
-                  onClick={() => setCustomModelMode((prev) => !prev)}
-                >
-                  {customModelMode ? "从可用列表选择" : "手动输入自定义 ID"}
-                </button>
-              ) : null}
-            </div>
-            {modelOptions.length > 0 && !customModelMode ? (
-              <div className="settings-input-with-action">
-                <select
-                  className="settings-select"
-                  value={form.model}
-                  onChange={(event) => updateActiveProviderConfig({ model: event.target.value })}
-                  required
-                >
-                  {modelOptions.map((model) => (
-                    <option value={model.id} key={`${model.provider}:${model.id}`}>
-                      {model.label}
-                    </option>
-                  ))}
-                  {form.model && !modelOptions.some((m) => m.id === form.model) ? (
-                    <option value={form.model}>{form.model} (当前/自定义)</option>
-                  ) : null}
-                </select>
-                <button
-                  type="button"
-                  className="settings-inline-action-btn"
-                  disabled={detectingModels || loading}
-                  onClick={() => void detectModels(false)}
-                  title="直接从当前服务同步实时可用模型列表"
-                >
-                  <RefreshCw size={14} className={detectingModels ? "animate-spin" : ""} />
-                  <span>{detectingModels ? "同步中" : "同步模型"}</span>
-                </button>
+      <div className="settings-group-content ai-models-container">
+        {/* ==================================================================
+            1. Active Model Overview & Global Routing Hero Card
+            ================================================================== */}
+        <div className="active-model-hero-card">
+          <div className="active-model-hero-top">
+            <div className="active-model-status-group">
+              <div className="active-model-indicator" title="当前激活并生效的模型">
+                <CheckCircle2 size={20} />
               </div>
-            ) : (
-              <div className="settings-input-with-action">
-                <input
-                  className="settings-input"
-                  value={form.model}
-                  onChange={(event) => updateActiveProviderConfig({ model: event.target.value })}
-                  placeholder={
-                    form.provider === "ollama" ? "llama3" : "例如 gemini-3.8-flash、gemini-2.5-pro 等"
-                  }
-                  required
-                />
-                <button
-                  type="button"
-                  className="settings-inline-action-btn"
-                  disabled={detectingModels || loading}
-                  onClick={() => void detectModels(false)}
-                  title="检测当前服务商可用模型"
-                >
-                  <RefreshCw size={14} className={detectingModels ? "animate-spin" : ""} />
-                  <span>{detectingModels ? "检测中" : "检测"}</span>
-                </button>
-              </div>
-            )}
-          </label>
-        </div>
-
-        {isLocalProvider(form.provider) ? (
-          <label className="settings-field">
-            <span className="settings-field-label">
-              {form.provider === "lmstudio" ? "LM Studio URL" : "Ollama 服务地址"}
-            </span>
-            <input
-              className="settings-input"
-              value={form.ollamaUrl}
-              onChange={(event) => {
-                updateActiveProviderConfig({ ollamaUrl: event.target.value });
-              }}
-              placeholder={form.provider === "lmstudio" ? "http://localhost:1234" : "http://localhost:11434"}
-            />
-            <span className="settings-field-hint">本地运行的模型服务 HTTP 监听地址</span>
-          </label>
-        ) : null}
-
-        {needsCloudApiFields(form.provider) ? (
-          <div className="settings-form-row">
-            <label className="settings-field">
-              <span className="settings-field-label">API Base URL</span>
-              <input
-                className="settings-input"
-                value={form.baseUrl}
-                onChange={(event) => {
-                  updateActiveProviderConfig({ baseUrl: event.target.value });
-                }}
-                placeholder={providerBaseUrlDefaults[form.provider] || "https://api.example.com/v1"}
-              />
-            </label>
-
-            <label className="settings-field">
-              <span className="settings-field-label">API Key</span>
-              <div className="settings-input-with-action">
-                <input
-                  className="settings-input"
-                  type={showApiKey ? "text" : "password"}
-                  value={form.apiKey}
-                  onChange={(event) => {
-                    updateActiveProviderConfig({ apiKey: event.target.value });
-                  }}
-                  placeholder="sk-..."
-                />
-                <button
-                  type="button"
-                  className="settings-inline-action-btn icon-only"
-                  onClick={() => setShowApiKey((s) => !s)}
-                  title={showApiKey ? "隐藏 API Key" : "显示 API Key"}
-                >
-                  {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
-                </button>
-              </div>
-            </label>
-          </div>
-        ) : null}
-
-        {form.provider === "copilot" ? (
-          <div className="copilot-auth-panel wide-field">
-            <div className="copilot-auth-status">
-              <div className={`copilot-auth-badge ${copilotAuthStatus?.authenticated ? "authenticated" : "pending"}`}>
-                {copilotAuthStatus?.authenticated ? <CheckCircle2 size={18} /> : <Github size={18} />}
-                <span>{copilotAuthStatus?.authenticated ? "已授权连接" : "未授权"}</span>
-              </div>
-              <div className="copilot-auth-copy">
-                <strong>GitHub Copilot 认证状态</strong>
-                <span>
-                  {copilotAuthStatus?.authenticated
-                    ? `当前绑定账号：${copilotAuthStatus.login || "已登录"}${copilotAuthStatus.authType ? ` (${copilotAuthStatus.authType})` : ""}`
-                    : copilotAuthStatus?.message || "点击下方登录获取授权码以绑定 GitHub 账号。"}
-                </span>
-              </div>
-            </div>
-            <div className="copilot-auth-actions">
-              <button
-                className="ghost-button"
-                disabled={copilotBusy === "status" || loading}
-                type="button"
-                onClick={() => void refreshCopilotAuthStatus(false)}
-              >
-                <RefreshCw size={15} />
-                <span>{copilotBusy === "status" ? "检查中" : "检查状态"}</span>
-              </button>
-              <button
-                className="primary-button"
-                disabled={copilotBusy === "login" || loading}
-                type="button"
-                onClick={() => void startCopilotLoginFromSettings()}
-              >
-                <LogIn size={15} />
-                <span>{copilotBusy === "login" ? "连接中..." : "登录 GitHub"}</span>
-              </button>
-            </div>
-            {copilotLoginState?.message ? (
-              <div className="copilot-login-progress">
-                <div>
-                  <KeyRound size={16} />
-                  <span>{copilotLoginState.message}</span>
-                </div>
-                {copilotLoginState.userCode || copilotLoginState.verificationUri ? (
-                  <div className="copilot-device-row">
-                    {copilotLoginState.userCode ? <code>{copilotLoginState.userCode}</code> : null}
-                    {copilotLoginState.verificationUri ? (
-                      <a href={copilotLoginState.verificationUri} target="_blank" rel="noopener noreferrer">
-                        前往 GitHub 设备验证页 <ArrowRight size={14} />
-                      </a>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
-        {form.provider === "antigravity" ? (() => {
-          const antigravityMode = antigravityModeOf(form.providerConfigs?.antigravity);
-          const isDirectMode = antigravityMode === "direct";
-          const isAntigravityReady = isDirectMode
-            ? Boolean(form.apiKey.trim() || (antigravityStatus?.available && antigravityStatus?.authenticated))
-            : Boolean(
-                antigravityStatus?.isEndpointReachable ||
-                (antigravityStatus?.available && antigravityStatus?.authenticated)
-              );
-          const isPendingProxy = Boolean(
-            !isDirectMode && antigravityStatus?.authenticated && !isAntigravityReady
-          );
-
-          return (
-            <div className="antigravity-dashboard-card wide-field">
-              {/* Header: Brand Identity & Status Badge */}
-              <div className="antigravity-hero-header">
-                <div className="antigravity-brand-info">
-                  <div className="antigravity-brand-icon">
-                    <Zap size={20} />
-                  </div>
-                  <div>
-                    <div className="antigravity-brand-title">
-                      <strong>Google Antigravity CLI</strong>
-                      <span className="antigravity-version-pill">Official OAuth 2.0</span>
-                    </div>
-                    <span className="antigravity-brand-subtitle">
-                      基于 Google 官方 OAuth 授权直连 Gemini 3.8 / 2.5 系列模型或接入本地代理网关
-                    </span>
-                  </div>
-                </div>
-
-                <div className={`antigravity-status-pill ${isAntigravityReady ? "online" : (isPendingProxy ? "warning" : "offline")}`}>
-                  <span className="status-dot" />
+              <div className="active-model-details">
+                <div className="active-model-meta-row">
+                  <span>当前默认模型</span>
+                  <span>·</span>
                   <span>
-                    {isAntigravityReady
-                      ? (isDirectMode ? "官方直连已就绪" : "反代服务已就绪")
-                      : (isPendingProxy ? "已登录 · 待启动反代" : "尚未连接")}
+                    已开启 <strong>{enabledProviders.length}</strong> 个服务商，共{" "}
+                    <strong>{enabledModelOptions.length}</strong> 个可用模型
                   </span>
                 </div>
-              </div>
-
-              {/* Hero Account Bar */}
-              <div className="antigravity-account-hero">
-                <div className="antigravity-account-visual">
-                  <div className={`antigravity-avatar-circle ${antigravityStatus?.authenticated ? "active" : ""}`}>
-                    {antigravityStatus?.authenticated ? (
-                      <UserCheck size={22} className="avatar-icon-success" />
-                    ) : (
-                      <UserX size={22} className="avatar-icon-muted" />
-                    )}
-                  </div>
-                  <div className="antigravity-account-details">
-                    <div className="antigravity-account-row">
-                      <span className="antigravity-account-caption">
-                        {antigravityStatus?.authenticated ? "当前登录 Google 账号" : "账号登录状态"}
+                <div className="active-model-title-row">
+                  <span className="active-model-title">
+                    {enabledProviders.length === 0
+                      ? "未开启任何服务商"
+                      : (form.model ? resolveModelDisplayName(`${form.provider}:${form.model}`).displayName : "未选择模型")}
+                  </span>
+                  {enabledProviders.length > 0 ? (
+                    <>
+                      <span className="active-model-badge">
+                        {providerLabelMap[currentActiveModelItem?.provider || form.provider] || form.provider}
                       </span>
-                      {antigravityStatus?.authenticated ? (
-                        <span className="antigravity-badge-verified">
-                          <ShieldCheck size={12} />
-                          已验证
-                        </span>
+                      {currentActiveModelItem?.supportsVision ? (
+                        <span className="active-model-badge vision">支持视觉 / Vision</span>
                       ) : null}
-                    </div>
-
-                    <div className="antigravity-account-primary">
-                      {antigravityStatus?.authenticated ? (
-                        <span className="account-email-text">
-                          {antigravityStatus.accountEmail || "已连接官方 / 本地凭据"}
-                        </span>
-                      ) : (
-                        <span className="account-email-text unauthenticated">未登录 Google 账号</span>
-                      )}
-                    </div>
-
-                    <p className="antigravity-account-desc">
-                      {antigravityStatus?.message || (
-                        antigravityStatus?.authenticated
-                          ? "OAuth 2.0 凭据已持久化就绪，所有对话与智能体任务将通过此账号认证调用。"
-                          : "未检测到已授权的 Google 账号。请点击右侧“登录 Google 账号”进行官方授权。"
-                      )}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Main Action Buttons */}
-                <div className="antigravity-hero-actions">
-                  <button
-                    className="ghost-button antigravity-btn"
-                    disabled={detectingModels || loading}
-                    type="button"
-                    onClick={() => void detectModels(false)}
-                    title="直接从反代服务或 Google API 实时拉取同步最新模型列表"
-                  >
-                    <RefreshCw size={14} className={detectingModels ? "animate-spin" : ""} />
-                    <span>{detectingModels ? "正在同步..." : "同步最新模型"}</span>
-                  </button>
-
-                  <button
-                    className="ghost-button antigravity-btn"
-                    disabled={antigravityBusy || Boolean(antigravityActionBusy) || loading}
-                    type="button"
-                    onClick={() => void refreshAntigravityStatus(false)}
-                    title="刷新当前连接状态与用量信息"
-                  >
-                    <RefreshCw size={14} className={antigravityBusy ? "animate-spin" : ""} />
-                    <span>{antigravityBusy ? "检测中..." : "检查状态"}</span>
-                  </button>
-
-                  {antigravityStatus?.authenticated || antigravityStatus?.accountEmail ? (
-                    <button
-                      className="danger-button antigravity-btn"
-                      disabled={loading || Boolean(antigravityActionBusy)}
-                      type="button"
-                      onClick={() => {
-                        if (window.confirm(`确定要退出当前 Google 账号 (${antigravityStatus?.accountEmail || "当前账号"}) 吗？`)) {
-                          void handleAntigravityLogout();
-                        }
-                      }}
-                      title="退出当前登录的 Google 账号"
-                    >
-                      {antigravityActionBusy === "logout" ? (
-                        <>
-                          <Loader2 size={14} className="animate-spin" />
-                          <span>正在退出...</span>
-                        </>
-                      ) : (
-                        <>
-                          <LogOut size={14} />
-                          <span>退出账号</span>
-                        </>
-                      )}
-                    </button>
+                      <span className="multiplier-pill default">
+                        {form.modelPointsMultipliers?.[form.model] !== undefined
+                          ? `${form.modelPointsMultipliers[form.model]}x 乘区`
+                          : "1.0x 标准"}
+                      </span>
+                    </>
                   ) : (
-                    <button
-                      className="primary-button antigravity-btn antigravity-login-cta"
-                      disabled={loading || Boolean(antigravityActionBusy)}
-                      type="button"
-                      onClick={() => void startAntigravityOAuthFlow()}
-                      title="前往 Google 官方授权页登录 Antigravity"
-                    >
-                      {antigravityActionBusy === "oauth-init" ? (
-                        <>
-                          <Loader2 size={14} className="animate-spin" />
-                          <span>正在连接...</span>
-                        </>
-                      ) : (
-                        <>
-                          <LogIn size={14} />
-                          <span>登录 Google 账号</span>
-                        </>
-                      )}
-                    </button>
+                    <span className="provider-status-pill offline">服务商未开启</span>
                   )}
                 </div>
               </div>
-
-              {/* Multi-Account Bar */}
-              {antigravityStatus?.accounts && antigravityStatus.accounts.length > 1 ? (
-                <div className="antigravity-multi-accounts-card">
-                  <div className="multi-accounts-head">
-                    <div className="multi-accounts-title">
-                      <UserRound size={14} />
-                      <span>已关联的多账号 ({antigravityStatus.accounts.length})</span>
-                    </div>
-                    <button
-                      type="button"
-                      className="ghost-button compact add-account-ghost"
-                      onClick={() => void startAntigravityOAuthFlow()}
-                      title="登录并绑定另一个 Google 账号"
-                    >
-                      <Plus size={13} />
-                      <span>添加新账号</span>
-                    </button>
-                  </div>
-                  <div className="accounts-pill-list">
-                    {antigravityStatus.accounts.map((acc) => {
-                      const isCurrent = acc.isActive || acc.email === antigravityStatus.accountEmail;
-                      return (
-                        <div
-                          key={acc.email}
-                          className={`account-item-pill ${isCurrent ? "active" : ""}`}
-                          onClick={() => {
-                            if (!isCurrent && !antigravityActionBusy) {
-                              void handleAntigravitySwitchAccount(acc.email);
-                            }
-                          }}
-                        >
-                          <span className="account-pill-email">{acc.email}</span>
-                          {isCurrent ? (
-                            <span className="account-pill-badge active">活动中</span>
-                          ) : (
-                            <span className="account-pill-badge switch">点击切换</span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : (antigravityStatus?.authenticated || antigravityStatus?.accountEmail) ? (
-                <div className="antigravity-single-account-tools">
-                  <span className="tools-caption">
-                    <Info size={13} /> 支持绑定多个 Google 账号以供随时切换
-                  </span>
-                  <button
-                    type="button"
-                    className="antigravity-link-button"
-                    onClick={() => void startAntigravityOAuthFlow()}
-                  >
-                    <Plus size={13} />
-                    <span>绑定其他 Google 账号</span>
-                  </button>
-                </div>
-              ) : null}
-
-              {/* Notice banner when user is logged in with Google OAuth but proxy endpoint is not listening */}
-              {isPendingProxy ? (
-                <div className="antigravity-notice-banner warning">
-                  <div className="banner-icon-area">
-                    <AlertTriangle size={20} className="banner-icon-warning" />
-                  </div>
-                  <div className="banner-content">
-                    <div className="banner-title">
-                      Google 账号已成功授权，但反向代理服务尚未运行（端点 <code>{antigravityStatus?.endpoint || "http://localhost:8080/v1"}</code> 离线）
-                    </div>
-                    <div className="banner-desc">
-                      已成功保存 <strong>{antigravityStatus?.accountEmail}</strong> 的 Google 授权。因 Antigravity 需通过本地代理中转模型请求，请选择以下任一方式启用：
-                    </div>
-                    <div className="banner-solutions-grid">
-                      <div className="solution-card">
-                        <div className="solution-header">
-                          <span className="solution-badge primary">推荐方案 1</span>
-                          <strong>免反代直连官方服务（最简便）</strong>
-                        </div>
-                        <p>
-                          展开下方【连接方式与凭据配置】，切换到 <strong>官方直连 (Gemini API Key)</strong>，填入在 Google AI Studio 免费申请的 Key（以 <code>AIzaSy</code> 开头）并保存设置，即可直连官方 API，无需在服务器运行任何反代进程！
-                        </p>
-                      </div>
-                      <div className="solution-card">
-                        <div className="solution-header">
-                          <span className="solution-badge secondary">方案 2</span>
-                          <strong>在服务器启动本地反代进程</strong>
-                        </div>
-                        <p>
-                          若您使用的是 <code>anti-api</code> 或 <code>antigravity-proxy</code>，请在服务器终端启动反代服务并监听 8080 端口（若监听其他端口，请在下方「连接方式与凭据配置」中修改 Base URL）。
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              {/* 2-Step OAuth Wizard Box */}
-              {antigravityOAuthActive ? (
-                <div className="antigravity-oauth-wizard">
-                  <div className="wizard-header">
-                    <div className="wizard-title-group">
-                      <div className="wizard-icon-chip">
-                        <KeyRound size={16} />
-                      </div>
-                      <div>
-                        <strong>Google 官方授权向导</strong>
-                        <span className="wizard-sub">使用 Antigravity CLI 官方安全通道认证，零泄露风险</span>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="wizard-close-btn"
-                      onClick={() => {
-                        setAntigravityOAuthActive(false);
-                        setAntigravityAuthCodeInput("");
-                      }}
-                      title="关闭向导"
-                    >
-                      <X size={15} />
-                    </button>
-                  </div>
-
-                  <div className="wizard-steps-container">
-                    {/* Step 1 */}
-                    <div className="wizard-step-card">
-                      <div className="wizard-step-badge">1</div>
-                      <div className="wizard-step-body">
-                        <div className="step-body-header">
-                          <strong>第一步：打开官方授权页登录并同意权限</strong>
-                          <span className="step-body-hint">
-                            新标签页若未自动打开，请点击下方快捷按钮直达：
-                          </span>
-                        </div>
-                        <a
-                          href={antigravityLoginState?.url || antigravityLoginState?.verificationUri || "#"}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="wizard-google-link-btn"
-                          onClick={(e) => {
-                            if (!antigravityLoginState?.url && !antigravityLoginState?.verificationUri) {
-                              e.preventDefault();
-                              void startAntigravityOAuthFlow();
-                            }
-                          }}
-                        >
-                          <span>前往 Google 官方授权页 (accounts.google.com)</span>
-                          <ExternalLink size={14} />
-                        </a>
-                      </div>
-                    </div>
-
-                    {/* Step 2 */}
-                    <div className="wizard-step-card">
-                      <div className="wizard-step-badge">2</div>
-                      <div className="wizard-step-body">
-                        <div className="step-body-header">
-                          <strong>第二步：粘贴 Authorization Code 并连接</strong>
-                          <span className="step-body-hint">
-                            授权完成后页面将展示授权码。复制后粘贴在下方（亦可直接粘贴地址栏完整 URL）：
-                          </span>
-                        </div>
-                        <div className="wizard-input-group">
-                          <input
-                            type="text"
-                            className="wizard-code-input"
-                            placeholder="在此粘贴授权码 (如 4/0AY0e...) 或回调 URL"
-                            value={antigravityAuthCodeInput}
-                            onChange={(e) => setAntigravityAuthCodeInput(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                void handleAntigravityOAuthExchange();
-                              }
-                            }}
-                            disabled={antigravityActionBusy === "exchange"}
-                            autoFocus
-                          />
-                          <button
-                            type="button"
-                            className="primary-button wizard-submit-btn"
-                            disabled={!antigravityAuthCodeInput.trim() || antigravityActionBusy === "exchange"}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              void handleAntigravityOAuthExchange();
-                            }}
-                          >
-                            {antigravityActionBusy === "exchange" ? (
-                              <>
-                                <Loader2 size={15} className="animate-spin" />
-                                <span>正在校验...</span>
-                              </>
-                            ) : (
-                              <>
-                                <Check size={15} />
-                                <span>完成授权并连接</span>
-                              </>
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              {/* Usage & Quota Cards */}
-              {antigravityStatus?.usage ? (
-                <div className="antigravity-stats-deck">
-                  <div className="antigravity-stat-card card-today">
-                    <div className="stat-card-icon">
-                      <Activity size={18} />
-                    </div>
-                    <div className="stat-card-content">
-                      <span className="stat-card-label">今日 Tokens 消耗</span>
-                      <div className="stat-card-number highlight">
-                        {(antigravityStatus.usage.todayTokensUsed ?? 0).toLocaleString()}
-                      </div>
-                      <span className="stat-card-footer">今日通过 Saki 对话与智能体产生的消耗</span>
-                    </div>
-                  </div>
-
-                  <div className="antigravity-stat-card card-total">
-                    <div className="stat-card-icon">
-                      <Coins size={18} />
-                    </div>
-                    <div className="stat-card-content">
-                      <span className="stat-card-label">累计 Tokens 消耗</span>
-                      <div className="stat-card-number">
-                        {(antigravityStatus.usage.totalTokensUsed ?? 0).toLocaleString()}
-                      </div>
-                      <span className="stat-card-footer">历史总计调用 {antigravityStatus.usage.totalRequests ?? 0} 次请求</span>
-                    </div>
-                  </div>
-
-                  <div className="antigravity-stat-card card-quota">
-                    <div className="stat-card-icon">
-                      <ShieldCheck size={18} />
-                    </div>
-                    <div className="stat-card-content">
-                      <div className="stat-card-header-row">
-                        <span className="stat-card-label">反代配额与连通性</span>
-                        {antigravityStatus.usage.tier ? (
-                          <span className="stat-tier-badge">{antigravityStatus.usage.tier}</span>
-                        ) : null}
-                      </div>
-                      <div className={`stat-card-number ${isAntigravityReady ? "accent" : (isPendingProxy ? "warning-text" : "")}`}>
-                        {antigravityStatus.usage.proxyQuotaRemaining !== undefined
-                          ? (typeof antigravityStatus.usage.proxyQuotaRemaining === "number"
-                              ? antigravityStatus.usage.proxyQuotaRemaining.toLocaleString()
-                              : antigravityStatus.usage.proxyQuotaRemaining)
-                          : (isAntigravityReady
-                              ? (isDirectMode ? "官方直连" : "正常在线")
-                              : (isPendingProxy ? "反代离线 (8080)" : "未就绪"))}
-                      </div>
-                      <span className="stat-card-footer">
-                        {antigravityStatus.usage.proxyQuotaLimit !== undefined
-                          ? `配额上限: ${antigravityStatus.usage.proxyQuotaLimit.toLocaleString()}`
-                          : (isAntigravityReady
-                              ? (isDirectMode ? "端点: Google 官方 API" : `端点: ${antigravityStatus.endpoint || "http://localhost:8080/v1"}`)
-                              : `未检测到端口 8080 监听服务`)}
-                        {antigravityStatus.usage.expiresAt ? ` · 至 ${antigravityStatus.usage.expiresAt}` : ""}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              {/* Collapsible Connection Mode & Credentials Settings */}
-              <div className="antigravity-advanced-section">
-                <button
-                  type="button"
-                  className="advanced-toggle-button"
-                  onClick={() => setAntigravityLoginModalOpen((prev) => !prev)}
-                >
-                  <div className="toggle-label-wrap">
-                    <SlidersHorizontal size={14} />
-                    <span>连接方式与凭据配置</span>
-                    <span className="toggle-sublabel">本地反代网关 与 官方直连 (Gemini API Key) 二选一，两种方案的凭据互不混用</span>
-                  </div>
-                  <ChevronDown
-                    size={15}
-                    className="toggle-chevron"
-                    style={{ transform: antigravityLoginModalOpen ? "rotate(180deg)" : "none" }}
-                  />
-                </button>
-
-                {antigravityLoginModalOpen ? (
-                  <div className="advanced-drawer-content">
-                    {/* Mutually exclusive connection scheme selector */}
-                    <div className="proxy-mode-tabs">
-                      <button
-                        type="button"
-                        className={`proxy-mode-tab ${!isDirectMode ? "active" : ""}`}
-                        onClick={() => switchAntigravityMode("proxy")}
-                      >
-                        本地反代网关
-                      </button>
-                      <button
-                        type="button"
-                        className={`proxy-mode-tab ${isDirectMode ? "active" : ""}`}
-                        onClick={() => switchAntigravityMode("direct")}
-                      >
-                        官方直连 (Gemini API Key)
-                      </button>
-                    </div>
-
-                    {!isDirectMode ? (
-                      <>
-                        <div className="settings-form-row">
-                          <label className="settings-field">
-                            <span className="settings-field-label">反代网关 Base URL</span>
-                            <input
-                              className="settings-input"
-                              value={form.baseUrl}
-                              onChange={(event) => {
-                                updateActiveProviderConfig({ baseUrl: event.target.value });
-                              }}
-                              placeholder="http://localhost:8080/v1"
-                            />
-                            <span className="settings-field-hint">OpenAI 协议反向代理服务地址（默认 http://localhost:8080/v1）</span>
-                          </label>
-
-                          <label className="settings-field">
-                            <span className="settings-field-label">反代 Bearer Token (可选)</span>
-                            <div className="settings-input-with-action">
-                              <input
-                                className="settings-input"
-                                type={showApiKey ? "text" : "password"}
-                                value={form.apiKey}
-                                onChange={(event) => {
-                                  handleAntigravityApiKeyInput(event.target.value);
-                                }}
-                                placeholder="留空则优先使用已登录的 Google OAuth 凭据"
-                              />
-                              <button
-                                type="button"
-                                className="settings-inline-action-btn icon-only"
-                                onClick={() => setShowApiKey((s) => !s)}
-                                title={showApiKey ? "隐藏 Token" : "显示 Token"}
-                              >
-                                {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
-                              </button>
-                            </div>
-                            <span className="settings-field-hint">仅当反代网关要求鉴权时填写自定义 Bearer 令牌；填入 AIzaSy 开头的 Gemini Key 将自动切换为「官方直连」模式</span>
-                          </label>
-                        </div>
-
-                        <div className="manual-token-card">
-                          <div className="manual-token-header">
-                            <KeyRound size={14} />
-                            <strong>导入 Google OAuth 凭据（仅反代模式使用）</strong>
-                          </div>
-                          <div className="settings-field">
-                            <textarea
-                              id="antigravity-token-input"
-                              className="settings-input antigravity-token-textarea"
-                              rows={2}
-                              placeholder="粘贴 Google OAuth 访问令牌 (ya29...) 或完整凭据 JSON"
-                              value={antigravityTokenInput}
-                              onChange={(e) => setAntigravityTokenInput(e.target.value)}
-                              disabled={Boolean(antigravityActionBusy)}
-                            />
-                          </div>
-                          <div className="manual-token-actions-row">
-                            <input
-                              type="text"
-                              className="settings-input manual-email-input"
-                              placeholder="账号邮箱备注（可选，OAuth 令牌将自动解析邮箱）"
-                              value={antigravityEmailInput}
-                              onChange={(e) => setAntigravityEmailInput(e.target.value)}
-                              disabled={Boolean(antigravityActionBusy)}
-                            />
-                            <button
-                              type="button"
-                              className="primary-button compact-btn"
-                              disabled={!antigravityTokenInput.trim() || Boolean(antigravityActionBusy)}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                void handleAntigravityLoginSubmit();
-                              }}
-                            >
-                              {antigravityActionBusy === "login" ? (
-                                <>
-                                  <Loader2 size={13} className="animate-spin" />
-                                  <span>验证中...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Check size={13} />
-                                  <span>导入凭据并保存</span>
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="settings-form-row">
-                        <label className="settings-field">
-                          <span className="settings-field-label">Gemini API Key</span>
-                          <div className="settings-input-with-action">
-                            <input
-                              className="settings-input"
-                              type={showApiKey ? "text" : "password"}
-                              value={form.apiKey}
-                              onChange={(event) => {
-                                handleAntigravityApiKeyInput(event.target.value);
-                              }}
-                              placeholder="AIzaSy..."
-                            />
-                            <button
-                              type="button"
-                              className="settings-inline-action-btn icon-only"
-                              onClick={() => setShowApiKey((s) => !s)}
-                              title={showApiKey ? "隐藏 API Key" : "显示 API Key"}
-                            >
-                              {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
-                            </button>
-                          </div>
-                          <span className="settings-field-hint">
-                            在 Google AI Studio 免费申请（AIzaSy 开头）；保存后 Saki 将直连官方端点 generativelanguage.googleapis.com，无需任何反代进程
-                          </span>
-                        </label>
-                      </div>
-                    )}
-                  </div>
-                ) : null}
-              </div>
-
-              {/* Integrated 3-Way Architectural Guide Cards */}
-              <div className="antigravity-guides-deck">
-                <div className={`guide-card ${!isDirectMode ? "recommended" : ""}`}>
-                  <div className="guide-card-tag">本地反代网关 · OAuth 授权</div>
-                  <div className="guide-card-title">
-                    <Zap size={14} />
-                    <span>Google 官方 OAuth 登录</span>
-                  </div>
-                  <p className="guide-card-text">
-                    选择「本地反代网关」后，点击上方“登录 Google 账号”一键授权，OAuth 凭据将作为反代请求的认证令牌使用。
-                  </p>
-                </div>
-
-                <div className={`guide-card ${isDirectMode ? "recommended" : ""}`}>
-                  <div className="guide-card-tag">官方直连 · 免费</div>
-                  <div className="guide-card-title">
-                    <Globe size={14} />
-                    <span>Google AI Studio API Key</span>
-                  </div>
-                  <p className="guide-card-text">
-                    选择「官方直连 (Gemini API Key)」，填入在 <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer">Google AI Studio</a> 申请的 <code>AIzaSy</code> 开头 Key，即可免代理直连 Google 官方 API。
-                  </p>
-                </div>
-
-                <div className="guide-card">
-                  <div className="guide-card-tag">本地反代网关 · 自建代理</div>
-                  <div className="guide-card-title">
-                    <Server size={14} />
-                    <span>本地反代网关服务</span>
-                  </div>
-                  <p className="guide-card-text">
-                    在服务器本地启动 OpenAI 兼容反向代理服务（默认监听 <code>http://localhost:8080/v1</code>），在「本地反代网关」中配置 Base URL 与可选 Bearer Token。
-                  </p>
-                </div>
-              </div>
             </div>
-          );
-        })() : null}
 
-        <div className="model-multipliers-card image-gen-settings-card wide-field">
-          <div className="model-multipliers-header">
-            <div className="model-multipliers-title">
-              <ImagePlus size={18} className="settings-switch-icon" />
-              <div>
-                <strong>{t("settings.model.imageGen")}</strong>
-                <span className="model-multipliers-subtitle">{t("settings.model.imageGen.detail")}</span>
-              </div>
+            <div className="active-model-actions-row">
+              <button
+                type="button"
+                className="model-sync-btn"
+                disabled={detectingModels || loading}
+                onClick={() => void detectModels(false)}
+                title="重新检测并同步所有开启服务商的模型列表"
+              >
+                <RefreshCw size={13} className={detectingModels ? "animate-spin" : ""} />
+                <span>{detectingModels ? "正在同步..." : "同步全部模型"}</span>
+              </button>
+
+              <button
+                type="button"
+                className="model-sync-btn"
+                onClick={() => setCustomNamesOpen((prev) => !prev)}
+                title="自定义模型名称或别名"
+              >
+                <Tag size={13} />
+                <span>{customNamesOpen ? "收起改名" : "自定义模型名"}</span>
+              </button>
+
+              <button
+                type="button"
+                className="settings-text-btn"
+                style={{
+                  fontSize: 12,
+                  background: "none",
+                  border: "none",
+                  color: "var(--primary, #ff75ac)",
+                  cursor: "pointer",
+                  padding: "4px 8px"
+                }}
+                onClick={() => setCustomModelMode((prev) => !prev)}
+              >
+                {customModelMode ? "从聚合列表选择" : "手动输入未列出 ID"}
+              </button>
             </div>
           </div>
 
-          <div
-            className="settings-switch-card"
-            style={{ margin: 0 }}
-            onClick={() => onImageGenChange({ enabled: !imageGen.enabled })}
-          >
-            <div className="settings-switch-info">
-              <div className="settings-switch-title">
-                <ImagePlus size={18} className="settings-switch-icon" />
-                <strong>允许 Agent 自主画图</strong>
-              </div>
-              <span>
-                启用后，Agent 可调用独立生图 API，把 png/jpg/webp 写入当前实例工作目录，并在 HTML/CSS/Markdown 中引用。
-              </span>
-            </div>
-            <label className="settings-switch-toggle" onClick={(e) => e.stopPropagation()}>
-              <input
-                type="checkbox"
-                checked={imageGen.enabled}
-                onChange={(event) => onImageGenChange({ enabled: event.target.checked })}
-              />
-              <span className="settings-switch-slider" />
+          {/* Model Selector Dropdown */}
+          <div className="model-selector-row">
+            <label className="settings-field" style={{ margin: 0 }}>
+              <span className="settings-field-label">切换默认调用模型</span>
+              {enabledModelOptions.length > 0 && !customModelMode ? (
+                <div className="settings-input-with-action">
+                  <select
+                    className="settings-select active-model-select"
+                    value={sakiModelSelectionKey({ id: form.model, provider: form.provider })}
+                    onChange={(event) => {
+                      onSelectActiveModel(event.target.value);
+                    }}
+                    required
+                  >
+                    {Array.from(modelsByProvider.entries()).map(([providerKey, models]) => (
+                      <optgroup
+                        key={providerKey}
+                        label={`${providerLabelMap[providerKey] || providerKey} (${models.length})`}
+                      >
+                        {models.map((model) => (
+                          <option value={sakiModelSelectionKey(model)} key={sakiModelSelectionKey(model)}>
+                            {model.label} {model.supportsVision ? "👁️" : ""}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                    {form.model && !currentActiveModelItem ? (
+                      <option value={sakiModelSelectionKey({ id: form.model, provider: form.provider })}>{form.model} (当前/自定义)</option>
+                    ) : null}
+                  </select>
+                </div>
+              ) : (
+                <div className="settings-input-with-action">
+                  <input
+                    className="settings-input"
+                    value={form.model}
+                    onChange={(event) => updateActiveProviderConfig({ model: event.target.value })}
+                    placeholder="输入模型 ID（如 gemini-3.8-flash, gpt-4o 等）"
+                    required
+                  />
+                </div>
+              )}
             </label>
           </div>
+        </div>
 
-          <div className={`image-gen-settings-body ${imageGen.enabled ? "" : "is-disabled"}`}>
+        {/* ==================================================================
+            2. Custom Model Names & Aliases Drawer (用户可自己更改模型名)
+            ================================================================== */}
+        {customNamesOpen ? (
+          <div className="custom-names-box wide-field">
+            <div className="custom-names-header">
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Edit3 size={15} style={{ color: "var(--primary, #ff75ac)" }} />
+                <strong>自定义模型名称 / 别名</strong>
+                <span style={{ fontSize: 12, color: "var(--text-secondary, #86868b)" }}>
+                  多个服务商同名模型系统已默认标为“模型名-提供商”，您可在此为任意模型指定个性化名称
+                </span>
+              </div>
+              <button
+                type="button"
+                className="multipliers-search-clear"
+                onClick={() => setCustomNamesOpen(false)}
+                title="关闭"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <div className="custom-names-list">
+              {enabledModelOptions.length === 0 ? (
+                <div style={{ padding: "16px", textAlign: "center", fontSize: 13, color: "var(--text-muted)" }}>
+                  暂无可改名的模型，请确保至少开启了一个服务商并完成模型同步。
+                </div>
+              ) : (
+                enabledModelOptions.map((model) => {
+                  const key = `${model.provider}:${model.id}`;
+                  const currentCustom = form.customModelNames?.[key] ?? form.customModelNames?.[model.id] ?? "";
+                  const inputVal = customNameInputs[key] !== undefined ? customNameInputs[key] : currentCustom;
+                  const defaultLabel = model.isConflict ? `${model.id}-${model.provider}` : (model.name || model.id);
+
+                  return (
+                    <div key={key} className="custom-name-item">
+                      <div className="custom-name-meta">
+                        <span className="model-base-id">{model.id}</span>
+                        <span className="provider-tag">{providerLabelMap[model.provider] || model.provider}</span>
+                        {model.isConflict ? (
+                          <span className="conflict-pill" title="与其他服务商存在同名冲突，默认命名为：模型名-提供商">
+                            冲突模型 · 默认：{defaultLabel}
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <div className="custom-name-input-group">
+                        <input
+                          type="text"
+                          className="custom-name-input"
+                          placeholder={defaultLabel}
+                          value={inputVal}
+                          onChange={(e) => {
+                            setCustomNameInputs((prev) => ({
+                              ...prev,
+                              [key]: e.target.value
+                            }));
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="model-sync-btn"
+                          style={{ padding: "4px 10px", fontSize: 11.5 }}
+                          onClick={() => {
+                            if (inputVal.trim()) {
+                              onSetCustomModelName(key, inputVal.trim());
+                            } else {
+                              onResetCustomModelName(key);
+                            }
+                          }}
+                        >
+                          <Check size={12} />
+                          <span>保存</span>
+                        </button>
+                        {currentCustom ? (
+                          <button
+                            type="button"
+                            className="model-sync-btn"
+                            style={{ padding: "4px 8px", fontSize: 11.5 }}
+                            onClick={() => {
+                              onResetCustomModelName(key);
+                              setCustomNameInputs((prev) => ({ ...prev, [key]: "" }));
+                            }}
+                            title="恢复默认"
+                          >
+                            <RotateCcw size={12} />
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        {/* ==================================================================
+            3. Providers Hub & Independent Switches (iOS Master-Detail Deck)
+            ================================================================== */}
+        <div className="providers-section-header">
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Layers size={16} />
+            <strong style={{ fontSize: 14 }}>服务商接入与独立开关 (AI Providers)</strong>
+          </div>
+          <span style={{ fontSize: 12, color: "var(--text-secondary, #86868b)" }}>
+            每个服务商均配备独立开关，只有开关开启才会加载并启动该服务商的模型资源。开启多个服务商时，全部可用模型将自动聚合。
+          </span>
+        </div>
+
+        <div className="providers-ios-deck">
+          {/* Left Master Sidebar */}
+          <div className="providers-ios-sidebar">
+            <div className="providers-ios-sidebar-header">
+              <div className="providers-ios-sidebar-title-row">
+                <span className="providers-ios-sidebar-title">已接入服务商</span>
+                <span className="providers-ios-count-badge">
+                  {enabledProviders.length} / {allProvidersList.length} 已开启
+                </span>
+              </div>
+              <div className="providers-ios-search-wrap">
+                <Search size={13} className="providers-ios-search-icon" />
+                <input
+                  type="text"
+                  className="providers-ios-search-input"
+                  placeholder="搜索服务商..."
+                  value={providerSearch}
+                  onChange={(e) => setProviderSearch(e.target.value)}
+                />
+                {providerSearch ? (
+                  <button
+                    type="button"
+                    className="providers-ios-search-clear"
+                    onClick={() => setProviderSearch("")}
+                    title="清空"
+                  >
+                    <X size={12} />
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="providers-ios-sidebar-list">
+              {providerSearch.trim() ? (
+                filteredSidebarProviders.length === 0 ? (
+                  <div style={{ padding: "20px 12px", textAlign: "center", fontSize: 12, color: "var(--text-muted)" }}>
+                    未找到匹配的服务商
+                  </div>
+                ) : (
+                  filteredSidebarProviders.map((p) => {
+                    const isEnabled = isProviderEnabled(form, p.id);
+                    const count = enabledModelOptions.filter((m) => m.provider === p.id).length;
+                    return (
+                      <button
+                        type="button"
+                        key={p.id}
+                        className={`providers-ios-item ${selectedProviderId === p.id ? "active" : ""}`}
+                        onClick={() => setSelectedProviderId(p.id)}
+                      >
+                        <div className="providers-ios-item-icon" style={{ background: p.iconBg, color: p.iconColor }}>
+                          {renderProviderIcon(p.iconType, 16)}
+                        </div>
+                        <div className="providers-ios-item-info">
+                          <span className="providers-ios-item-name">{p.name}</span>
+                          <span className={`providers-ios-item-sub ${isEnabled ? "enabled" : "disabled"}`}>
+                            {isEnabled ? (count > 0 ? `已启用 · ${count} 个模型` : "已启用") : "已关闭"}
+                          </span>
+                        </div>
+                        <div className="providers-ios-item-trailing">
+                          {isEnabled ? <span className="providers-ios-status-dot" title="已启用" /> : null}
+                          <ChevronRight size={13} className="providers-ios-chevron" />
+                        </div>
+                      </button>
+                    );
+                  })
+                )
+              ) : (
+                providerCategories.map((cat) => {
+                  const catProviders = allProvidersList.filter((p) => p.category === cat.key);
+                  if (catProviders.length === 0) return null;
+                  return (
+                    <React.Fragment key={cat.key}>
+                      <span className="providers-ios-category-label">{cat.label}</span>
+                      {catProviders.map((p) => {
+                        const isEnabled = isProviderEnabled(form, p.id);
+                        const count = enabledModelOptions.filter((m) => m.provider === p.id).length;
+                        return (
+                          <button
+                            type="button"
+                            key={p.id}
+                            className={`providers-ios-item ${selectedProviderId === p.id ? "active" : ""}`}
+                            onClick={() => setSelectedProviderId(p.id)}
+                          >
+                            <div className="providers-ios-item-icon" style={{ background: p.iconBg, color: p.iconColor }}>
+                              {renderProviderIcon(p.iconType, 16)}
+                            </div>
+                            <div className="providers-ios-item-info">
+                              <span className="providers-ios-item-name">{p.name}</span>
+                              <span className={`providers-ios-item-sub ${isEnabled ? "enabled" : "disabled"}`}>
+                                {isEnabled ? (count > 0 ? `已启用 · ${count} 个模型` : "已启用") : "已关闭"}
+                              </span>
+                            </div>
+                            <div className="providers-ios-item-trailing">
+                              {isEnabled ? <span className="providers-ios-status-dot" title="已启用" /> : null}
+                              <ChevronRight size={13} className="providers-ios-chevron" />
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </React.Fragment>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Right Detail Settings Panel */}
+          <div className="providers-ios-detail">
+            {/* Detail Header */}
+            <div className="providers-detail-header">
+              <div className="providers-detail-brand">
+                <div
+                  className="providers-detail-brand-icon"
+                  style={{ background: activeProviderMeta.iconBg, color: activeProviderMeta.iconColor }}
+                >
+                  {renderProviderIcon(activeProviderMeta.iconType, 22)}
+                </div>
+                <div className="providers-detail-brand-text">
+                  <div className="providers-detail-title-row">
+                    <h4 className="providers-detail-title">{activeProviderMeta.name}</h4>
+                    <span className="providers-detail-tag">{activeProviderMeta.tag}</span>
+                    {selectedProviderId === "copilot" ? (
+                      <span className={`provider-status-pill ${copilotAuthStatus?.authenticated ? "online" : "offline"}`}>
+                        <span
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: "50%",
+                            background: copilotAuthStatus?.authenticated ? "#10b981" : "#94a3b8"
+                          }}
+                        />
+                        <span>{copilotAuthStatus?.authenticated ? `@${copilotAuthStatus?.login || "用户"}` : "未授权"}</span>
+                      </span>
+                    ) : selectedProviderId === "antigravity" ? (
+                      <span
+                        className={`provider-status-pill ${
+                          isAntigravityReady ? "online" : isPendingProxy ? "warning" : "offline"
+                        }`}
+                      >
+                        <span
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: "50%",
+                            background: isAntigravityReady ? "#10b981" : isPendingProxy ? "#f59e0b" : "#94a3b8"
+                          }}
+                        />
+                        <span>
+                          {isAntigravityReady
+                            ? isDirectMode
+                              ? "官方直连已就绪"
+                              : "反代服务已就绪"
+                            : isPendingProxy
+                            ? "待启动反代 (8080)"
+                            : "未就绪"}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className={`provider-status-pill ${isCurrentSelectedEnabled ? "online" : "offline"}`}>
+                        <span
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: "50%",
+                            background: isCurrentSelectedEnabled ? "#10b981" : "#94a3b8"
+                          }}
+                        />
+                        <span>{isCurrentSelectedEnabled ? "已启用" : "已关闭"}</span>
+                      </span>
+                    )}
+                  </div>
+                  <span className="providers-detail-desc">{activeProviderMeta.desc}</span>
+                </div>
+              </div>
+
+              {/* Master Switch on Header */}
+              <div className="providers-detail-master-switch">
+                <span className={`provider-switch-label ${isCurrentSelectedEnabled ? "on" : "off"}`}>
+                  {isCurrentSelectedEnabled ? "已启用" : "已关闭"}
+                </span>
+                <label className="settings-switch-toggle" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={isCurrentSelectedEnabled}
+                    onChange={(e) => onToggleProviderEnabled(selectedProviderId, e.target.checked)}
+                  />
+                  <span className="settings-switch-slider" />
+                </label>
+              </div>
+            </div>
+
+            {/* Detail Body */}
+            <div className="providers-detail-body">
+              {!isCurrentSelectedEnabled ? (
+                <div className="providers-ios-notice">
+                  <Info size={16} style={{ color: "var(--primary, #ff75ac)", flexShrink: 0, marginTop: 1 }} />
+                  <span>
+                    {activeProviderMeta.name} 服务当前未开启。您可在下方提前配置参数，开启右上角开关即可加载并聚合此服务商的模型资源。
+                  </span>
+                </div>
+              ) : null}
+
+              {/* Render Provider Specific View */}
+              {selectedProviderId === "copilot"
+                ? renderCopilotDetail()
+                : selectedProviderId === "antigravity"
+                ? renderAntigravityDetail()
+                : renderGenericProviderDetail(selectedProviderId)}
+            </div>
+          </div>
+        </div>
+
+        {/* ==================================================================
+            4. Image Generation Section (允许 Agent 自主画图)
+            ================================================================== */}
+        <div className="provider-card enabled wide-field" style={{ marginTop: 10 }}>
+          <div className="provider-card-header">
+            <div className="provider-brand-info">
+              <div className="provider-brand-icon" style={{ background: "rgba(255, 117, 172, 0.14)", color: "var(--primary, #ff75ac)" }}>
+                <ImagePlus size={20} />
+              </div>
+              <div className="provider-title-wrap">
+                <div className="provider-title-row">
+                  <span className="provider-name">{t("settings.model.imageGen")}</span>
+                  <span className="provider-tag">文生图 / 视觉生成</span>
+                </div>
+                <span className="provider-card-desc">{t("settings.model.imageGen.detail")}</span>
+              </div>
+            </div>
+
+            <div className="provider-toggle-wrap">
+              <span className={`provider-switch-label ${imageGen.enabled ? "on" : "off"}`}>
+                {imageGen.enabled ? "已启用" : "已关闭"}
+              </span>
+              <label className="settings-switch-toggle" onClick={(e) => e.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  checked={imageGen.enabled}
+                  onChange={(e) => onImageGenChange({ enabled: e.target.checked })}
+                />
+                <span className="settings-switch-slider" />
+              </label>
+            </div>
+          </div>
+
+          <div className={`provider-card-body ${imageGen.enabled ? "" : "is-disabled"}`}>
             <div className="settings-form-row">
               <label className="settings-field">
                 <span className="settings-field-label">生图服务商</span>
@@ -1098,232 +1768,172 @@ export const SettingsModelTab = memo(function SettingsModelTab({
                 </span>
               </label>
 
-              {imageGen.provider === "custom" ? (
-                <label className="settings-field">
-                  <span className="settings-field-label">协议</span>
-                  <select
-                    className="settings-select"
-                    value={imageGen.protocol}
-                    onChange={(event) =>
-                      onImageGenChange({ protocol: event.target.value as SakiImageGenConfig["protocol"] })
-                    }
-                  >
-                    {imageGenProtocolOptions.map((option) => (
-                      <option value={option.value} key={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="settings-field-hint">自定义接入时按服务实际协议选择</span>
-                </label>
-              ) : (
-                <label className="settings-field">
-                  <span className="settings-field-label">协议</span>
-                  <input className="settings-input" value={imageGen.protocol} readOnly />
-                  <span className="settings-field-hint">由服务商预设，自定义服务商时可改</span>
-                </label>
-              )}
+              <label className="settings-field">
+                <span className="settings-field-label">接口协议</span>
+                <select
+                  className="settings-select"
+                  value={imageGen.protocol}
+                  onChange={(event) =>
+                    onImageGenChange({ protocol: event.target.value as SakiImageGenConfig["protocol"] })
+                  }
+                >
+                  {imageGenProtocolOptions.map((opt) => (
+                    <option value={opt.value} key={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
 
             <div className="settings-form-row">
               <label className="settings-field">
-                <span className="settings-field-label">生图 API Base URL</span>
+                <span className="settings-field-label">Base URL</span>
                 <input
                   className="settings-input"
                   value={imageGen.baseUrl}
                   onChange={(event) => onImageGenChange({ baseUrl: event.target.value })}
-                  placeholder={
-                    imageGen.protocol === "sd-webui"
-                      ? "http://127.0.0.1:7860"
-                      : imageGenPreset?.baseUrl || "https://api.example.com/v1"
-                  }
+                  placeholder="https://api.example.com/v1"
                 />
-                <span className="settings-field-hint">
-                  {imageGen.protocol === "sd-webui"
-                    ? "本地 SD WebUI 地址，无需带 /sdapi/v1/txt2img"
-                    : "OpenAI 兼容网关填到主机或 /v1，将请求 POST {base}/v1/images/generations，请求体为 model + prompt"}
-                </span>
               </label>
 
-              <label className="settings-field">
-                <span className="settings-field-label">
-                  {imageGenNeedsApiKey(imageGen) ? "生图 API Key" : "生图 API Key（可选）"}
-                </span>
-                <div className="settings-input-with-action">
-                  <input
-                    className="settings-input"
-                    type={showImageApiKey ? "text" : "password"}
-                    value={imageGen.apiKey}
-                    onChange={(event) => onImageGenChange({ apiKey: event.target.value })}
-                    placeholder={imageGenNeedsApiKey(imageGen) ? "sk-..." : "本地 WebUI 通常留空"}
-                  />
-                  <button
-                    type="button"
-                    className="settings-inline-action-btn icon-only"
-                    onClick={() => setShowImageApiKey((s) => !s)}
-                    title={showImageApiKey ? "隐藏 API Key" : "显示 API Key"}
-                  >
-                    {showImageApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
-                  </button>
-                </div>
-              </label>
+              {imageGenNeedsApiKey(imageGen) ? (
+                <label className="settings-field">
+                  <span className="settings-field-label">API Key</span>
+                  <div className="settings-input-with-action">
+                    <input
+                      className="settings-input"
+                      type={showImageApiKey ? "text" : "password"}
+                      value={imageGen.apiKey}
+                      onChange={(event) => onImageGenChange({ apiKey: event.target.value })}
+                      placeholder="sk-..."
+                    />
+                    <button
+                      type="button"
+                      className="settings-inline-action-btn icon-only"
+                      onClick={() => setShowImageApiKey((s) => !s)}
+                      title={showImageApiKey ? "隐藏 API Key" : "显示 API Key"}
+                    >
+                      {showImageApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                </label>
+              ) : null}
             </div>
-
-            <label className="settings-field">
-              <span className="settings-field-label">生图模型</span>
-              <input
-                className="settings-input"
-                value={imageGen.model}
-                onChange={(event) => onImageGenChange({ model: event.target.value })}
-                placeholder={
-                  imageGen.provider === "sd-webui"
-                    ? "留空则使用 WebUI 当前加载的模型"
-                    : imageGenPreset?.model || "模型 ID"
-                }
-              />
-              <span className="settings-field-hint">
-                {imageGen.provider === "stability"
-                  ? "Stability 填写 core / sd3 / ultra"
-                  : imageGen.provider === "sd-webui"
-                    ? "可选，对应 WebUI 的 checkpoint 名称"
-                    : "对应厂商的图像模型 ID"}
-              </span>
-            </label>
 
             <div className="settings-form-row">
               <label className="settings-field">
-                <span className="settings-field-label">默认比例</span>
+                <span className="settings-field-label">默认画图模型</span>
+                <input
+                  className="settings-input"
+                  value={imageGen.model}
+                  onChange={(event) => onImageGenChange({ model: event.target.value })}
+                  placeholder="例如 dall-e-3, sd-xl 等"
+                />
+              </label>
+
+              <label className="settings-field">
+                <span className="settings-field-label">默认画幅比例</span>
                 <select
                   className="settings-select"
                   value={imageGen.defaultAspectRatio}
                   onChange={(event) =>
-                    onImageGenChange(
-                      withImageGenSizeDefaults(imageGen, {
-                        defaultAspectRatio: event.target.value as SakiImageGenConfig["defaultAspectRatio"]
-                      })
-                    )
+                    onImageGenChange(withImageGenSizeDefaults(imageGen, { defaultAspectRatio: event.target.value as SakiImageGenConfig["defaultAspectRatio"] }))
                   }
                 >
-                  {imageGenAspectRatioOptions.map((option) => (
-                    <option value={option.value} key={option.value}>
-                      {option.label}
+                  {imageGenAspectRatioOptions.map((opt) => (
+                    <option value={opt.value} key={opt.value}>
+                      {opt.label}
                     </option>
                   ))}
                 </select>
               </label>
+
               <label className="settings-field">
-                <span className="settings-field-label">默认清晰度</span>
+                <span className="settings-field-label">默认质量</span>
                 <select
                   className="settings-select"
                   value={imageGen.defaultQuality}
                   onChange={(event) =>
-                    onImageGenChange(
-                      withImageGenSizeDefaults(imageGen, {
-                        defaultQuality: event.target.value as SakiImageGenConfig["defaultQuality"]
-                      })
-                    )
+                    onImageGenChange(withImageGenSizeDefaults(imageGen, { defaultQuality: event.target.value as SakiImageGenConfig["defaultQuality"] }))
                   }
                 >
-                  {imageGenQualityOptions.map((option) => (
-                    <option value={option.value} key={option.value}>
-                      {option.label}
+                  {imageGenQualityOptions.map((opt) => (
+                    <option value={opt.value} key={opt.value}>
+                      {opt.label}
                     </option>
                   ))}
                 </select>
               </label>
             </div>
-
-            <div className="settings-form-row">
-              <label className="settings-field">
-                <span className="settings-field-label">默认宽度 (px)</span>
-                <input
-                  className="settings-input"
-                  type="number"
-                  min={64}
-                  max={2048}
-                  step={8}
-                  value={imageGen.defaultWidth}
-                  onChange={(event) => onImageGenChange({ defaultWidth: Number(event.target.value) || 1024 })}
-                />
-              </label>
-              <label className="settings-field">
-                <span className="settings-field-label">默认高度 (px)</span>
-                <input
-                  className="settings-input"
-                  type="number"
-                  min={64}
-                  max={2048}
-                  step={8}
-                  value={imageGen.defaultHeight}
-                  onChange={(event) => onImageGenChange({ defaultHeight: Number(event.target.value) || 1024 })}
-                />
-              </label>
-            </div>
-
-            <div className="model-multipliers-hint">
-              Agent 工具 <code>generateImage</code> 可按任务自行指定 path、prompt、aspectRatio、width、height、quality。
-              未指定时使用以上默认值，生成结果会保存到实例工作目录。
-            </div>
           </div>
         </div>
 
-        {/* 模型消耗积分乘区设置 */}
-        <div className="model-multipliers-card wide-field">
+        {/* ==================================================================
+            5. Model Points Multipliers (模型积分消耗乘区 - 只显示开启的服务商)
+            ================================================================== */}
+        <div className="model-multipliers-card wide-field" style={{ marginTop: 10 }}>
           <div className="model-multipliers-header">
             <div className="model-multipliers-title">
               <Coins size={18} className="settings-switch-icon" />
               <div>
-                <strong>模型积分消耗乘区</strong>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <strong>模型积分消耗乘区</strong>
+                </div>
                 <span className="model-multipliers-subtitle">
-                  配置每个 AI 模型的积分扣除倍率（换算规则：1000 Tokens = 1 积分 × 模型乘区倍率，向上取整）。
+                  配置各个 AI 模型的积分扣除倍率（换算规则：1000 Tokens = 1 积分 × 模型乘区倍率，向上取整）。
+                  设为 <strong>0x</strong> 则完全免费；未单独配置的模型默认按 <strong>1.0x</strong> 计费。
                 </span>
               </div>
             </div>
+
             <div className="model-multipliers-header-right">
-              <div className="model-multipliers-hint">
-                <span>设为 <strong>0x</strong> 则该模型完全免费；未单独配置乘区的模型默认按 <strong>1.0x</strong> 计费。</span>
-              </div>
-              {combinedModelKeys.length > MULTIPLIERS_PER_PAGE ? (
-                <div className="model-multipliers-search-box">
-                  <Search size={14} className="multipliers-search-icon" />
-                  <input
-                    type="text"
-                    className="settings-input mini multipliers-search-input"
-                    placeholder="搜索乘区模型..."
-                    value={multipliersFilter}
-                    onChange={(e) => {
-                      setMultipliersFilter(e.target.value);
+              <div className="model-multipliers-search-box">
+                <Search size={14} className="multipliers-search-icon" />
+                <input
+                  type="text"
+                  className="settings-input mini multipliers-search-input"
+                  placeholder="搜索已开启的模型..."
+                  value={multipliersFilter}
+                  onChange={(e) => {
+                    setMultipliersFilter(e.target.value);
+                    setMultipliersPage(1);
+                  }}
+                />
+                {multipliersFilter ? (
+                  <button
+                    type="button"
+                    className="multipliers-search-clear"
+                    onClick={() => {
+                      setMultipliersFilter("");
                       setMultipliersPage(1);
                     }}
-                  />
-                  {multipliersFilter ? (
-                    <button
-                      type="button"
-                      className="multipliers-search-clear"
-                      onClick={() => {
-                        setMultipliersFilter("");
-                        setMultipliersPage(1);
-                      }}
-                      title="清空搜索"
-                    >
-                      <X size={12} />
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
+                    title="清空搜索"
+                  >
+                    <X size={12} />
+                  </button>
+                ) : null}
+              </div>
             </div>
           </div>
 
           <div className="model-multipliers-list">
             {paginatedMultipliers.length === 0 ? (
               <div className="model-multipliers-empty">
-                <span>未找到与「{multipliersFilter}」匹配的模型</span>
+                <span>
+                  {multipliersFilter
+                    ? `未找到与「${multipliersFilter}」匹配的模型`
+                    : enabledProviders.length === 0
+                      ? "尚未开启任何模型服务商。请在上方开启服务商开关，系统将自动加载并展示对应模型及其乘区。"
+                      : "当前开启的服务商中暂无模型，请在上方点击“同步全部模型”。"}
+                </span>
               </div>
             ) : (
               paginatedMultipliers.map((modelKey) => {
                 const currentMultiplier = form.modelPointsMultipliers?.[modelKey] ?? 1.0;
                 const isCustom = form.modelPointsMultipliers?.[modelKey] !== undefined;
                 const isCurrentActive = form.model === modelKey;
+                const { displayName, baseId, providerName, isConflict } = resolveModelDisplayName(modelKey);
 
                 return (
                   <div
@@ -1331,12 +1941,24 @@ export const SettingsModelTab = memo(function SettingsModelTab({
                     className={`model-multiplier-item ${isCurrentActive ? "active-model" : ""}`}
                   >
                     <div className="model-multiplier-info">
-                      <div className="model-name-row">
-                        <span className="model-identifier">{modelKey}</span>
+                      <div className="model-name-row" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span className="model-identifier">{displayName}</span>
+                        {displayName !== baseId ? (
+                          <span style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono, monospace)" }}>
+                            ({baseId})
+                          </span>
+                        ) : null}
+                        <span className="provider-tag">{providerName}</span>
+                        {isConflict ? (
+                          <span className="conflict-pill" style={{ fontSize: 10 }}>
+                            冲突模型
+                          </span>
+                        ) : null}
                         {isCurrentActive ? (
                           <span className="model-active-badge">当前生效</span>
                         ) : null}
                       </div>
+
                       <div className="multiplier-status-row">
                         {currentMultiplier === 0 ? (
                           <span className="multiplier-pill free">0x 免费</span>
@@ -1397,10 +2019,11 @@ export const SettingsModelTab = memo(function SettingsModelTab({
             )}
           </div>
 
+          {/* Pagination */}
           {totalMultipliersPages > 1 ? (
             <div className="model-multipliers-pagination">
               <div className="multipliers-pagination-info">
-                第 <strong>{safeMultipliersPage}</strong> / {totalMultipliersPages} 页 · 共 {filteredMultipliers.length} 个模型
+                第 <strong>{safeMultipliersPage}</strong> / {totalMultipliersPages} 页 · 共 {filteredMultipliers.length} 个已开启模型
               </div>
               <div className="multipliers-pagination-controls">
                 <button
@@ -1410,37 +2033,23 @@ export const SettingsModelTab = memo(function SettingsModelTab({
                   onClick={() => setMultipliersPage((p) => Math.max(1, p - 1))}
                   title="上一页"
                 >
-                  <ChevronLeft size={15} />
+                  <ChevronLeft size={14} />
                   <span>上一页</span>
                 </button>
 
                 <div className="multipliers-page-numbers">
                   {Array.from({ length: totalMultipliersPages }, (_, i) => i + 1)
-                    .filter((p) => {
-                      return p === 1 || p === totalMultipliersPages || Math.abs(p - safeMultipliersPage) <= 1;
-                    })
-                    .reduce<(number | string)[]>((acc, p, idx, arr) => {
-                      if (idx > 0 && (p as number) - (arr[idx - 1] as number) > 1) {
-                        acc.push(`ellipsis-${p}`);
-                      }
-                      acc.push(p);
-                      return acc;
-                    }, [])
-                    .map((item) => {
-                      if (typeof item === "string") {
-                        return <span key={item} className="multipliers-page-ellipsis">…</span>;
-                      }
-                      return (
-                        <button
-                          key={item}
-                          type="button"
-                          className={`multipliers-page-num ${safeMultipliersPage === item ? "active" : ""}`}
-                          onClick={() => setMultipliersPage(item)}
-                        >
-                          {item}
-                        </button>
-                      );
-                    })}
+                    .filter((p) => p === 1 || p === totalMultipliersPages || Math.abs(p - safeMultipliersPage) <= 1)
+                    .map((item) => (
+                      <button
+                        key={item}
+                        type="button"
+                        className={`multipliers-page-num ${safeMultipliersPage === item ? "active" : ""}`}
+                        onClick={() => setMultipliersPage(item)}
+                      >
+                        {item}
+                      </button>
+                    ))}
                 </div>
 
                 <button
@@ -1451,13 +2060,13 @@ export const SettingsModelTab = memo(function SettingsModelTab({
                   title="下一页"
                 >
                   <span>下一页</span>
-                  <ChevronRight size={15} />
+                  <ChevronRight size={14} />
                 </button>
               </div>
             </div>
           ) : null}
 
-          {/* 添加自定义模型乘区 */}
+          {/* Add custom model multiplier */}
           <div className="add-multiplier-row">
             <input
               className="settings-input add-model-input"
@@ -1490,7 +2099,7 @@ export const SettingsModelTab = memo(function SettingsModelTab({
               disabled={!newMultiplierModel.trim()}
               onClick={handleAddCustomMultiplier}
             >
-              <Plus size={15} />
+              <Plus size={14} />
               <span>添加乘区</span>
             </button>
           </div>

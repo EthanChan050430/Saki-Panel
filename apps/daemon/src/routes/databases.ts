@@ -25,7 +25,8 @@ import type {
 } from "@webops/shared";
 import { daemonPaths } from "../config.js";
 import { authenticatePanelRequest } from "../daemon-auth.js";
-import { escapeDefaultValue, escapeSqlType } from "../sql-utils.js";
+import { isReadOnlyDatabaseCommand } from "@webops/shared";
+import { escapeDefaultValue, escapeSqlType, escapeSqlComment, escapeSqlString } from "../sql-utils.js";
 import * as mysql from "../mysql.js";
 import * as postgres from "../postgres.js";
 import * as redis from "../redis.js";
@@ -847,29 +848,35 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     }
   });
   app.post("/api/databases/query", { preHandler: authenticatePanelRequest }, async (request) => {
-    const body = request.body as { path?: string; sql: string; maxRows?: number; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string };
+    const body = request.body as { path?: string; sql: string; maxRows?: number; readOnly?: boolean; host?: string; port?: number; engine?: DatabaseEngine; user?: string; password?: string; database?: string };
     const sql = body.sql?.trim();
     if (!sql) {
       throw new Error("sql / command is required");
     }
 
+    const readOnly = body.readOnly === true;
+    const engine = isRedisEngine(body) ? "redis" : isPostgreSQLEngine(body) ? "postgresql" : isMySQLEngine(body) ? "mysql" : "sqlite";
+    if (readOnly && !isReadOnlyDatabaseCommand(sql, engine)) {
+      throw new Error("只读模式下不允许执行该命令");
+    }
+
     if (isRedisEngine(body)) {
       const cfg = extractRedisConfig(body);
-      const result = await redis.executeCommand(cfg, sql, body.maxRows);
+      const result = await redis.executeCommand(cfg, sql, body.maxRows, readOnly);
       return { ok: true, result };
     }
 
     if (isPostgreSQLEngine(body)) {
       const cfg = extractPostgreSQLConfig(body);
       const maxRows = Math.max(1, Math.min(body.maxRows ?? 500, 2000));
-      const result = await postgres.executeQuery(cfg, sql, maxRows);
+      const result = await postgres.executeQuery(cfg, sql, maxRows, readOnly);
       return { ok: true, result };
     }
 
     if (isMySQLEngine(body)) {
       const cfg = extractMySQLConfig(body);
       const maxRows = Math.max(1, Math.min(body.maxRows ?? 500, 2000));
-      const result = await mysql.executeQuery(cfg, sql, maxRows);
+      const result = await mysql.executeQuery(cfg, sql, maxRows, readOnly);
       return { ok: true, result };
     }
 
@@ -880,7 +887,7 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
     const maxRows = Math.max(1, Math.min(body.maxRows ?? 500, 2000));
 
     const dbPath = resolveDbPath(rawPath);
-    const db = new DatabaseSync(dbPath);
+    const db = new DatabaseSync(dbPath, { readOnly });
     const start = performance.now();
     try {
       const isSelectOrPragma = /^\s*(SELECT|PRAGMA|EXPLAIN|WITH)\b/i.test(sql);
@@ -975,9 +982,9 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
               const v = r[c];
               if (v === null || v === undefined) return "NULL";
               if (typeof v === "number") return String(v);
-              return `'${String(v).replace(/'/g, "''")}'`;
+              return escapeSqlString(String(v), "sqlite");
             });
-            sqlDump += `INSERT INTO "${t.name}" (${cols.map((c) => `"${c}"`).join(", ")}) VALUES (${vals.join(", ")});\n`;
+            sqlDump += `INSERT INTO "${t.name.replace(/"/g, '""')}" (${cols.map((c) => `"${c.replace(/"/g, '""')}"`).join(", ")}) VALUES (${vals.join(", ")});\n`;
           }
           sqlDump += "\n";
         }
@@ -1005,16 +1012,16 @@ export async function registerDatabaseRoutes(app: FastifyInstance): Promise<void
       }
 
       if (format === "sql") {
-        let dump = `-- Table export: ${tableName}\n-- Date: ${new Date().toISOString()}\n\n`;
+        let dump = `-- Table export: ${escapeSqlComment(tableName)}\n-- Date: ${new Date().toISOString()}\n\n`;
         for (const r of rows) {
           const cols = Object.keys(r);
           const vals = cols.map((c) => {
             const v = r[c];
             if (v === null || v === undefined) return "NULL";
             if (typeof v === "number") return String(v);
-            return `'${String(v).replace(/'/g, "''")}'`;
+            return escapeSqlString(String(v), "sqlite");
           });
-          dump += `INSERT INTO "${tableName}" (${cols.map((c) => `"${c}"`).join(", ")}) VALUES (${vals.join(", ")});\n`;
+          dump += `INSERT INTO ${safeName} (${cols.map((c) => `"${c.replace(/"/g, '""')}"`).join(", ")}) VALUES (${vals.join(", ")});\n`;
         }
         return {
           ok: true,

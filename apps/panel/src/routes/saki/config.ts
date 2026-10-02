@@ -23,7 +23,7 @@ import {
   type PanelSakiSettings
 } from "./types.js";
 
-function buildProviderConfigs(settings: PanelSakiSettings): Record<string, SakiProviderConfig> {
+export function buildProviderConfigs(settings: PanelSakiSettings): Record<string, SakiProviderConfig> {
   const providerConfigs: Record<string, SakiProviderConfig> = {};
   for (const providerId of knownProviderIds) {
     providerConfigs[providerId] = defaultProviderConfig(providerId);
@@ -41,6 +41,13 @@ function buildProviderConfigs(settings: PanelSakiSettings): Record<string, SakiP
   const activeConfig = {
     ...(providerConfigs[activeProvider] ?? defaultProviderConfig(activeProvider))
   };
+  // Legacy settings had no switches. Preserve their active provider on upgrade,
+  // but never re-enable providers after an explicit switch configuration is saved.
+  const hasSavedSwitches = Object.values(savedConfigs ?? {}).some((value) => {
+    const config = objectValue(value);
+    return config !== null && config !== undefined && Object.hasOwn(config, "enabled");
+  });
+  if (!hasSavedSwitches) activeConfig.enabled = true;
   if (settings.model !== undefined) activeConfig.model = trimString(settings.model);
   if (settings.ollamaUrl !== undefined) activeConfig.ollamaUrl = trimString(settings.ollamaUrl);
   if (settings.baseUrl !== undefined) activeConfig.baseUrl = trimString(settings.baseUrl);
@@ -72,6 +79,7 @@ export async function readEffectiveSakiConfig(): Promise<SakiConfigResponse> {
     baseUrl: trimString(providerConfig.baseUrl) || providerDefaults[provider]?.baseUrl || "",
     apiKey: trimString(providerConfig.apiKey),
     providerConfigs,
+    customModelNames: settings.customModelNames ?? {},
     modelPointsMultipliers: settings.modelPointsMultipliers ?? {},
     searchEnabled: settings.searchEnabled !== false,
     mcpEnabled: Boolean(settings.mcpEnabled),
@@ -119,6 +127,18 @@ export async function saveSakiConfig(input: UpdateSakiConfigRequest): Promise<Sa
     }
   }
 
+  const rawCustomNames = input.customModelNames !== undefined ? input.customModelNames : current.customModelNames;
+  const sanitizedCustomNames: Record<string, string> = {};
+  if (rawCustomNames && typeof rawCustomNames === "object") {
+    for (const [key, val] of Object.entries(rawCustomNames)) {
+      const trimmedKey = trimString(key);
+      const trimmedVal = trimString(val);
+      if (trimmedKey && trimmedVal) {
+        sanitizedCustomNames[trimmedKey] = trimmedVal;
+      }
+    }
+  }
+
   const next: PanelSakiSettings = {
     requestTimeoutMs: normalizeTimeout(input.requestTimeoutMs, current.requestTimeoutMs),
     provider: nextProvider,
@@ -127,6 +147,7 @@ export async function saveSakiConfig(input: UpdateSakiConfigRequest): Promise<Sa
     baseUrl: trimString(providerConfigs[nextProvider]?.baseUrl) || providerDefaults[nextProvider]?.baseUrl || "",
     apiKey: trimString(providerConfigs[nextProvider]?.apiKey),
     providerConfigs,
+    customModelNames: sanitizedCustomNames,
     modelPointsMultipliers: sanitizedMultipliers,
     searchEnabled: input.searchEnabled !== undefined ? Boolean(input.searchEnabled) : current.searchEnabled,
     mcpEnabled: input.mcpEnabled !== undefined ? Boolean(input.mcpEnabled) : current.mcpEnabled,

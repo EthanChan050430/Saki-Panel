@@ -19,7 +19,7 @@ import type {
   SakiWorkspaceContext,
   UpdateScheduledTaskRequest
 } from "@webops/shared";
-import { sakiAttachmentMentionToken, sakiListedModelSupportsVision } from "@webops/shared";
+import { parseSakiModelSelection, sakiAttachmentMentionToken, sakiListedModelSupportsVision } from "@webops/shared";
 export type { SakiSkillSummary } from "@webops/shared";
 import type { SakiSkillSummary } from "@webops/shared";
 import type { FastifyRequest } from "fastify";
@@ -36,6 +36,7 @@ export interface PanelSakiSettings {
   baseUrl?: string;
   apiKey?: string;
   providerConfigs?: Record<string, SakiProviderConfig>;
+  customModelNames?: Record<string, string> | undefined;
   modelPointsMultipliers?: Record<string, number> | undefined;
   searchEnabled?: boolean;
   mcpEnabled?: boolean;
@@ -1283,10 +1284,28 @@ export function sanitizeRequestedSakiModel(value: unknown): string {
 
 export function withRequestedSakiModel(
   config: SakiConfigResponse,
-  input: Pick<SakiChatRequest, "model"> | null | undefined
+  input: (Pick<SakiChatRequest, "model"> & { provider?: string | null }) | null | undefined
 ): SakiConfigResponse {
-  const model = sanitizeRequestedSakiModel(input?.model);
-  return model && model !== config.model ? { ...config, model } : config;
+  const selection = parseSakiModelSelection(sanitizeRequestedSakiModel(input?.model), trimString(input?.provider));
+  const requestedModel = selection.model;
+  const activeProvider = selection.provider ? normalizeProviderId(selection.provider) : config.provider;
+
+  if (activeProvider !== config.provider) {
+    if (!Object.hasOwn(config.providerConfigs, activeProvider)) {
+      throw new RouteError(`Unknown model provider: ${activeProvider}`, 400);
+    }
+    const pCfg = config.providerConfigs[activeProvider]!;
+    return {
+      ...config,
+      provider: activeProvider,
+      model: requestedModel || trimString(pCfg.model),
+      ollamaUrl: trimString(pCfg.ollamaUrl) || defaultLocalProviderUrl(activeProvider),
+      baseUrl: trimString(pCfg.baseUrl) || providerDefaults[activeProvider]?.baseUrl || "",
+      apiKey: trimString(pCfg.apiKey)
+    };
+  }
+
+  return requestedModel && requestedModel !== config.model ? { ...config, model: requestedModel } : config;
 }
 
 export function sakiPermissionModeLabel(mode: SakiAgentPermissionMode): string {
@@ -1570,17 +1589,20 @@ export function defaultProviderConfig(provider: string): SakiProviderConfig {
   const providerId = normalizeProviderId(provider);
   if (providerId === "ollama") {
     return {
+      enabled: false,
       model: "llama3",
       ollamaUrl: localProviderUrls.ollama
     };
   }
   if (providerId === "lmstudio") {
     return {
+      enabled: false,
       model: "",
       ollamaUrl: localProviderUrls.lmstudio
     };
   }
   return {
+    enabled: false,
     model: "",
     baseUrl: providerDefaults[providerId]?.baseUrl ?? "",
     apiKey: ""
@@ -1595,6 +1617,9 @@ export function sanitizeProviderConfig(provider: string, value: unknown): SakiPr
 
   if ("model" in item) {
     next.model = trimString(item.model);
+  }
+  if ("enabled" in item) {
+    next.enabled = Boolean(item.enabled);
   }
   if (isLocalProviderId(providerId)) {
     if ("ollamaUrl" in item || "baseUrl" in item) {

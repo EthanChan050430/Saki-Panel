@@ -1598,10 +1598,10 @@ export function sakiModelSupportsVision(modelId: string, provider?: string): boo
 
 export function sakiListedModelSupportsVision(model: {
   id: string;
-  provider?: string;
-  name?: string;
-  label?: string;
-  supportsVision?: boolean;
+  provider?: string | undefined;
+  name?: string | undefined;
+  label?: string | undefined;
+  supportsVision?: boolean | undefined;
 }): boolean {
   if (model.supportsVision === true) return true;
   return [model.id, model.name, model.label].some(
@@ -1689,6 +1689,7 @@ export interface SakiChatRequest {
   selectedSkillIds?: string[];
   attachments?: SakiInputAttachment[];
   model?: string | null;
+  provider?: string | null;
 }
 
 export interface SakiChatResponse {
@@ -1719,6 +1720,7 @@ export interface SakiStatusResponse {
 }
 
 export interface SakiProviderConfig {
+  enabled?: boolean;
   model?: string;
   baseUrl?: string;
   apiKey?: string;
@@ -2027,6 +2029,7 @@ export interface SakiConfigResponse {
   baseUrl: string;
   apiKey: string;
   providerConfigs: Record<string, SakiProviderConfig>;
+  customModelNames?: Record<string, string> | undefined;
   modelPointsMultipliers?: Record<string, number> | undefined;
   searchEnabled: boolean;
   mcpEnabled: boolean;
@@ -2047,6 +2050,7 @@ export interface UpdateSakiConfigRequest {
   baseUrl?: string;
   apiKey?: string;
   providerConfigs?: Record<string, SakiProviderConfig>;
+  customModelNames?: Record<string, string> | undefined;
   modelPointsMultipliers?: Record<string, number> | undefined;
   searchEnabled?: boolean;
   mcpEnabled?: boolean;
@@ -2062,8 +2066,29 @@ export interface SakiModelOption {
   id: string;
   name: string;
   label: string;
-  vendor?: string;
-  supportsVision?: boolean;
+  vendor?: string | undefined;
+  supportsVision?: boolean | undefined;
+  customName?: string | undefined;
+  isConflict?: boolean | undefined;
+}
+
+/** UI selection values must identify both the provider and the original model ID. */
+export function sakiModelSelectionKey(model: { id: string; provider?: string | undefined }): string {
+  return model.provider ? `${model.provider}::${model.id}` : model.id;
+}
+
+export function parseSakiModelSelection(value: string, provider?: string | null): { model: string; provider: string } {
+  const model = value.trim();
+  const separator = model.indexOf("::");
+  if (separator > 0 && separator + 2 < model.length) {
+    return { provider: model.slice(0, separator), model: model.slice(separator + 2) };
+  }
+  return { model, provider: provider?.trim() || "" };
+}
+
+export function sakiModelMatchesSelection(model: SakiModelOption, selection: string): boolean {
+  const parsed = parseSakiModelSelection(selection);
+  return model.id === parsed.model && (!parsed.provider || model.provider === parsed.provider);
 }
 
 export interface SakiModelListResponse {
@@ -2712,3 +2737,4 @@ export interface ActivateOperationPackResponse {
 }
 
 export * from "./git.js";
+export * from "./database-security.js";

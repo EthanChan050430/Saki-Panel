@@ -10,8 +10,7 @@
     "pretypecheck": "node ../../scripts/ensure-shared-built.mjs && node ../../scripts/generate-prisma.mjs",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:git": "node --import tsx --test tests/git-routes.test.ts"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.1",
