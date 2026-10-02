@@ -518,7 +518,7 @@ export function SettingsView({
       if (!silent) {
         setNotice(
           status.authenticated
-            ? `GitHub Copilot 已登录${status.login ? `：${status.login}` : ""}。`
+            ? `Copilot 模型接口可用${status.login ? `：${status.login}` : ""}。`
             : status.message || "GitHub Copilot 尚未登录。"
         );
       }
@@ -549,7 +549,7 @@ export function SettingsView({
       }
       const status = await refreshCopilotAuthStatus(true);
       if (status?.authenticated) {
-        setNotice(`GitHub Copilot 已登录${status.login ? `：${status.login}` : ""}。`);
+        setNotice(`Copilot 模型接口可用${status.login ? `：${status.login}` : ""}。`);
       } else {
         setNotice(loginState.message || "GitHub 登录已启动。");
       }
@@ -837,22 +837,28 @@ export function SettingsView({
 
   useEffect(() => {
     if (copilotLoginState?.status !== "running") return;
+    let polling = false;
     const timer = window.setInterval(() => {
+      if (polling) return;
+      polling = true;
       void (async () => {
         try {
-          const [loginState, status] = await Promise.all([
-            api.sakiCopilotLoginState(token),
-            api.sakiCopilotStatus(token)
-          ]);
-          setCopilotLoginState(loginState);
-          setCopilotAuthStatus(status);
-          if (status.authenticated) {
-            setNotice(`GitHub Copilot 已登录${status.login ? `：${status.login}` : ""}。`);
+          const loginState = await api.sakiCopilotLoginState(token);
+          // The login-state request saves the token. Check access only after it completes.
+          if (loginState.status === "completed") {
+            const status = await api.sakiCopilotStatus(token);
+            setCopilotAuthStatus(status);
+            setNotice(status.authenticated
+              ? `Copilot 模型接口可用${status.login ? `：${status.login}` : ""}。`
+              : status.message || "GitHub 授权已完成，但 Copilot 尚未就绪。");
           }
+          setCopilotLoginState(loginState);
         } catch (err) {
           if (err instanceof ApiError && err.status === 401) {
             onLogout();
           }
+        } finally {
+          polling = false;
         }
       })();
     }, 3000);

@@ -51,7 +51,6 @@ import {
   callOllamaModel,
   callOllamaModelStream
 } from "./ollama.js";
-import { streamPromptAgentTurnWithFilteredDelta } from "./common.js";
 
 export async function callConfiguredPrompt(input: SakiChatRequest, prompt: string, config: SakiConfigResponse) {
   const provider = normalizeProviderId(config.provider);
@@ -101,20 +100,6 @@ export async function callConfiguredPromptStream(
   return callOpenAiCompatibleModelStream(provider, config, input, prompt, onDelta, onThinking);
 }
 
-export async function callCopilotPromptAgentTurnStream(
-  config: SakiConfigResponse,
-  input: SakiChatRequest,
-  prompt: string,
-  onDelta: (text: string) => void,
-  onThinking?: (text: string) => void
-): Promise<SakiModelToolTurn> {
-  return streamPromptAgentTurnWithFilteredDelta(
-    (filteredDelta) => callCopilotSdkModelStream(config, input, prompt, filteredDelta, onThinking),
-    onDelta,
-    onThinking
-  );
-}
-
 export async function callConfiguredAgentTurnStream(
   runtime: SakiAgentRuntime,
   prompt: string,
@@ -133,7 +118,7 @@ export async function callConfiguredAgentTurnStream(
     return callAnthropicAgentTurnStreamWithFallback(config, runtime.input, prompt, onDelta, onThinking);
   }
   if (provider === "copilot") {
-    return callCopilotPromptAgentTurnStream(config, runtime.input, prompt, onDelta, onThinking);
+    return callCopilotSdkAgentTurn(config, runtime.input, prompt, onDelta, onThinking);
   }
   if (provider === "antigravity") {
     return callAntigravityAgentTurnStream(config, runtime.input, prompt, onDelta, onThinking);

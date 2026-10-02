@@ -22,7 +22,7 @@ export function sakiModelProfile(provider: unknown, model?: string | null): Saki
     return { family: "claude", nativeTools: true, preferXml: false, compactPrompt: false, maxAdvertisedTools: 36, invalidReplyRetries: 1 };
   }
   if (providerId === "copilot") {
-    return { family: "copilot", nativeTools: false, preferXml: true, compactPrompt: false, maxAdvertisedTools: 28, invalidReplyRetries: 2 };
+    return { family: "copilot", nativeTools: true, preferXml: false, compactPrompt: false, maxAdvertisedTools: 28, invalidReplyRetries: 2 };
   }
   if (providerId === "gemini" || modelId.includes("gemini")) {
     return { family: "gemini", nativeTools: true, preferXml: false, compactPrompt: false, maxAdvertisedTools: 24, invalidReplyRetries: 2 };

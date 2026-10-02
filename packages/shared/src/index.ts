@@ -2104,6 +2104,7 @@ export interface SakiModelListResponse {
 export interface SakiCopilotAuthStatusResponse {
   available: boolean;
   authenticated: boolean;
+  githubAuthenticated?: boolean;
   authType?: string;
   host?: string;
   login?: string;

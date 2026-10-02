@@ -528,6 +528,7 @@ export const SettingsModelTab = memo(function SettingsModelTab({
 
   const renderCopilotDetail = () => {
     const isAuth = Boolean(copilotAuthStatus?.authenticated);
+    const isGitHubAuth = Boolean(copilotAuthStatus?.githubAuthenticated || isAuth);
     const copilotModels = enabledModelOptions.filter((m) => m.provider === "copilot");
     const isCustomInput = Boolean(customModelInputProviders.copilot);
     const pConfig = form.providerConfigs?.copilot ?? {};
@@ -548,11 +549,13 @@ export const SettingsModelTab = memo(function SettingsModelTab({
               </div>
               <div className="copilot-account-text">
                 <span className="copilot-account-name">
-                  {isAuth ? `@${copilotAuthStatus?.login}` : "尚未绑定 GitHub 账号"}
+                  {copilotAuthStatus?.login
+                    ? `@${copilotAuthStatus.login}`
+                    : isGitHubAuth ? "GitHub 已登录" : "尚未绑定 GitHub 账号"}
                 </span>
                 <span className="copilot-account-sub">
                   {isAuth
-                    ? `认证类型: ${copilotAuthStatus?.authType || "OAuth App"} · 服务在线`
+                    ? "GitHub 已登录 · Copilot 模型接口可用"
                     : copilotAuthStatus?.message || "点击右侧登录按钮以绑定账号"}
                 </span>
               </div>
@@ -576,7 +579,7 @@ export const SettingsModelTab = memo(function SettingsModelTab({
                 onClick={() => void startCopilotLoginFromSettings()}
               >
                 <LogIn size={13} />
-                <span>{copilotBusy === "login" ? "连接中..." : isAuth ? "重新登录" : "登录 GitHub"}</span>
+                <span>{copilotBusy === "login" ? "连接中..." : isGitHubAuth ? "重新登录" : "登录 GitHub"}</span>
               </button>
             </div>
           </div>
@@ -1634,7 +1637,9 @@ export const SettingsModelTab = memo(function SettingsModelTab({
                             background: copilotAuthStatus?.authenticated ? "#10b981" : "#94a3b8"
                           }}
                         />
-                        <span>{copilotAuthStatus?.authenticated ? `@${copilotAuthStatus?.login || "用户"}` : "未授权"}</span>
+                        <span>{copilotAuthStatus?.authenticated
+                          ? copilotAuthStatus.login ? `@${copilotAuthStatus.login}` : "Copilot 可用"
+                          : copilotAuthStatus?.githubAuthenticated ? "Copilot 未就绪" : "未授权"}</span>
                       </span>
                     ) : selectedProviderId === "antigravity" ? (
                       <span

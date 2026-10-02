@@ -1059,7 +1059,7 @@ export const webUserAgent = "Saki-Panel-Agent/0.2 (+https://saki-panel.local/sak
 
 export const copilotMissingTokenMessage = "\u8BF7\u5148\u70B9\u51FB\u767B\u5F55 GitHub \u5B8C\u6210\u6388\u6743\u3002";
 export const copilotClassicTokenMessage =
-  "\u5F53\u524D\u4FDD\u5B58\u7684\u662F Personal access tokens (classic)\u3002GitHub Copilot SDK \u9700\u8981 Fine-grained personal access token\uFF0C\u5E76\u5728 Permissions \u4E2D\u6DFB\u52A0 Copilot Requests\uFF1Bclassic PAT \u65E0\u6CD5\u8BA4\u8BC1\u3002";
+  "当前保存的是 classic PAT，Copilot 不支持这种 Token。请点击登录 GitHub 使用 OAuth 授权，或使用带 Copilot Requests 权限的 Fine-grained PAT。";
 export const githubDeviceCodeUrl = "https://github.com/login/device/code";
 export const githubAccessTokenUrl = "https://github.com/login/oauth/access_token";
 export const githubDeviceGrantType = "urn:ietf:params:oauth:grant-type:device_code";
