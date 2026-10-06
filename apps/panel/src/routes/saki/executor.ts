@@ -1187,7 +1187,9 @@ export async function executeSakiAgentTool(
             400
           );
         } catch (error) {
-          if (error instanceof RouteError) throw error;
+          // Only a missing path permits a new write. Transport/permission/500
+          // failures cannot be interpreted as proof that a file does not exist.
+          if (error instanceof RouteError || !/PATH_NOT_FOUND|ENOENT|no such file|not found/i.test(error instanceof Error ? error.message : "")) throw error;
         }
         checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath, runtime);
         fileEditPreview = `${instance.name}:${relativePath}`;
@@ -1821,9 +1823,9 @@ export async function executeSakiAgentTool(
         const todos = rawStringArg(args, "todos") || rawStringArg(args, "list");
         if (!todos) throw new RouteError("manageTodos requires a todos markdown list (e.g. '- [ ] Step 1\\n- [x] Step 2').", 400);
         const items = todos.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
-          const match = line.match(/^- \[([ xX])\] (.+)$/);
+          const match = line.match(/^- \[([ xX-])\] (.+)$/);
           if (!match || !match[2]?.trim() || match[2].trim().length > 200) throw new RouteError("manageTodos needs checklist lines of at most 200 characters.", 400);
-          return { text: match[2].trim(), completed: match[1]?.toLowerCase() === "x" };
+          return { text: match[2].trim(), completed: match[1]?.toLowerCase() === "x", inProgress: match[1] === "-" };
         });
         if (items.length === 0 || items.length > 20) throw new RouteError("manageTodos needs 1–20 checklist items.", 400);
         observation = [

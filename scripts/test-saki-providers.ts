@@ -156,7 +156,7 @@ test("NVIDIA: model synchronization authenticates and recognizes the Omni model"
 });
 
 function stream(payloads: unknown[], ndjson = false): Response {
-  const text = payloads.map((payload) => ndjson ? `${JSON.stringify(payload)}\n` : `data: ${JSON.stringify(payload)}\n\n`).join("");
+  const text = payloads.map((payload) => ndjson ? `${JSON.stringify(payload)}\n` : `data: ${JSON.stringify(payload)}\n\n`).join("") + (ndjson ? "" : "data: [DONE]\n\n");
   // Split frames and UTF-8 text across arbitrary byte boundaries, as a real
   // transport can. The provider must reconstruct complete frames correctly.
   const bytes = new TextEncoder().encode(text);

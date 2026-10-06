@@ -19,6 +19,9 @@ export const DaemonErrorCode = {
   PATH_SYMLINK_ESCAPE: "PATH_SYMLINK_ESCAPE",
   PATH_NOT_FOUND: "PATH_NOT_FOUND",
   PATH_NOT_FILE: "PATH_NOT_FILE",
+  PATH_PERMISSION_DENIED: "PATH_PERMISSION_DENIED",
+  PATH_ALREADY_EXISTS: "PATH_ALREADY_EXISTS",
+  STORAGE_FULL: "STORAGE_FULL",
 
   // Database
   DB_AUTH_FAILED: "DB_AUTH_FAILED",
@@ -126,4 +129,20 @@ export function throwDaemonError(code: DaemonErrorCode, message: string, hint?: 
 
 export function isDaemonError(err: unknown): err is DaemonError {
   return err instanceof DaemonError;
+}
+
+// Expected filesystem failures must remain actionable in production. In
+// particular, ENOENT is how the panel distinguishes a NEW file checkpoint.
+export function normalizeDaemonFileError(error: unknown): unknown {
+  if (isDaemonError(error) || !error || typeof error !== "object" || !("code" in error)) return error;
+  switch (error.code) {
+    case "ENOENT": return new DaemonError("PATH_NOT_FOUND", "Path not found", "Path not found (ENOENT). Check the path or create a new file.", 404);
+    case "EACCES":
+    case "EPERM": return new DaemonError("PATH_PERMISSION_DENIED", "Permission denied", "Permission denied. Check the daemon's filesystem permissions.", 403);
+    case "EISDIR":
+    case "ENOTDIR": return new DaemonError("PATH_NOT_FILE", "Wrong path type", "Wrong path type. Check whether the target and parent are files or directories.", 400);
+    case "EEXIST": return new DaemonError("PATH_ALREADY_EXISTS", "Path already exists", "Path already exists. Choose another path or edit the existing file.", 409);
+    case "ENOSPC": return new DaemonError("STORAGE_FULL", "Storage full", "Storage full. Free disk space before retrying.", 507);
+    default: return error;
+  }
 }

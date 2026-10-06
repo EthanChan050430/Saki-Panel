@@ -140,7 +140,7 @@ export async function callConfiguredAgentTurn(
       withAgentTurnConversation(
         runtime.turnMessages?.length
           ? {
-              systemPrompt: `${agentSystemPromptForConfig(runtime.config, runtime.systemPromptOverride)}\n\n${buildAgentWorkspacePrefix(runtime)}`,
+              systemPrompt: runtime.agentSystemPrompt ?? `${agentSystemPromptForConfig(runtime.config, runtime.systemPromptOverride)}\n\n${buildAgentWorkspacePrefix(runtime)}`,
               messages: runtime.turnMessages
             }
           : undefined,

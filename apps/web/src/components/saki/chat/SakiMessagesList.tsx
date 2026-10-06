@@ -86,7 +86,7 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
   return (
     <div className="saki-messages" ref={messagesRef} onScroll={onScroll}>
       {messages.map((message) => {
-        const actionItems = visibleSakiActions(message.actions);
+        const actionItems = visibleSakiActions(message.actions).filter((action) => action.tool.toLowerCase() !== "managetodos");
         const fileRollbackActions = actionItems.filter(isSakiFileRollbackAction);
         const rollbackableFileActions = fileRollbackActions.filter(isSakiRollbackableFileEdit);
         const timelineItems = message.role === "assistant" ? renderableSakiTimeline(message) : [];
@@ -153,6 +153,7 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
                     );
                   }
                   if (item.kind === "action") {
+                    if (item.action.tool.toLowerCase() === "managetodos") return null;
                     return (
                       <div className="saki-tool-timeline-item" key={item.id}>
                         <SakiToolActionCard
@@ -323,7 +324,7 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
                   <button
                     className="saki-user-action-btn retry-btn"
                     type="button"
-                    title="回滚本次代码改动并重新生成"
+                    title={message.retry ? "保留修改并继续任务" : "回滚本次代码改动并重新生成"}
                     disabled={Boolean(actionBusyId) || loading}
                     onClick={() => void onRetryAssistantTurn(message.id)}
                   >

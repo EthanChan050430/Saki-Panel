@@ -5,6 +5,7 @@ import type {
   SakiAgentAction,
   SakiChatMessage,
   SakiChatMode,
+  SakiChatResponse,
   SakiInputAttachment
 } from "@webops/shared";
 import type { SakiChatWorkflowStatus } from "../api.js";
@@ -82,6 +83,7 @@ export type LocalSakiTimelineItem =
 
 export interface LocalSakiMessage extends SakiChatMessage {
   id: string;
+  retry?: SakiChatResponse["retry"];
   source?: "direct-model" | "local-fallback";
   actions?: SakiAgentAction[];
   attachments?: SakiInputAttachment[];
@@ -103,6 +105,7 @@ export interface LocalSakiMessage extends SakiChatMessage {
 
 export interface SakiSubmitOverride {
   message?: string;
+  resumeTaskId?: string;
   panelError?: string | null;
   contextTitle?: string | null;
   contextText?: string | null;

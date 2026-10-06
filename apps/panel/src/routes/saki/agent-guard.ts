@@ -65,5 +65,5 @@ export function stuckNoProgressMessage(): string {
 }
 
 export function stuckFailuresMessage(): string {
-  return "连续多次工具调用失败，Saki 已停止以免反复撞同一错误。请查看上面的失败原因，修正后发「继续」。";
+  return "连续多次工具调用失败，Saki 已停止以免反复撞同一错误。请查看上面的失败原因，修正后选择 Retry 继续任务。";
 }

@@ -2767,8 +2767,8 @@ export function SakiToolActionCard({
           ) : diffText ? (
             <div className="saki-action-diff-container">
               {cleanObservation && cleanObservation !== "没有返回内容。" ? (
-                <div className="saki-action-edit-summary">
-                  <CheckCircle2 size={13} style={{ flexShrink: 0 }} />
+                <div className={`saki-action-edit-summary${isFailed ? " failed" : ""}`}>
+                  {isFailed ? <AlertTriangle size={13} style={{ flexShrink: 0 }} /> : <CheckCircle2 size={13} style={{ flexShrink: 0 }} />}
                   <span>{cleanObservation}</span>
                 </div>
               ) : null}

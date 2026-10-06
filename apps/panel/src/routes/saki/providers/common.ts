@@ -31,6 +31,7 @@ import { openAiToolSchemas } from "../tools.js";
 import { nativeThinkingChatExtras } from "../model-profile.js";
 import { extractProviderUsage, estimateModelCallTokens, mergeModelUsage, modelUsageTotal, type ModelUsage } from "../../../tokenizer.js";
 import { parseToolCallsFromText } from "./catalog.js";
+import { currentAgentTurnConversation } from "../agent-messages.js";
 
 export const defaultTemperatureOnlyModelKeys = new Set<string>();
 
@@ -59,6 +60,8 @@ export const RATE_LIMIT_STATUS = 429;
 
 export function isRetryableError(error: unknown): boolean {
   if (!(error instanceof RouteError)) return false;
+  // Retrying after emitted tokens duplicates reasoning/text and spends tokens again.
+  if ("partialStream" in error && error.partialStream) return false;
   const message = error.message.toLowerCase();
   if (/quota exceeded|billing|credit|balance|insufficient|reset delay too long/i.test(message)) {
     return false;
@@ -105,6 +108,9 @@ export async function withRetry<T>(
       if (currentAgentAbortSignal()?.aborted) {
         throw error;
       }
+      // A long reasoning timeout should immediately offer explicit recovery,
+      // not queue several identical multi-minute inference requests.
+      if (currentAgentTurnConversation() && /timed out|timeout/i.test(lastError.message)) throw error;
       if (attempt >= MAX_RETRIES || !isRetryableError(error)) {
         throw error;
       }

@@ -42,6 +42,7 @@ import { isContextOverflowError } from "./providers/common.js";
 import { buildAgentGitNote, buildAgentPrompt, buildAgentUserTurn, buildAgentWorkspacePrefix, buildStaticAgentSystemPrompt, sakiFileToolGuidance } from "./prompt.js";
 import {
   compactAgentTurnMessages,
+  closeInterruptedToolCalls,
   ensureToolCallId,
   serializeTurnMessagesForPrompt,
   type SakiAgentTurnMessage
@@ -440,7 +441,9 @@ export function agentReadOnlyToolCacheKey(runtime: SakiAgentRuntime, call: Parse
       args: normalizedAgentToolCacheArgs(toolName, call.args),
       activeInstanceId: runtime.context.instance?.id ?? null,
       activeWorkingDirectory: runtime.context.instance?.workingDirectory ?? null,
-      userId: runtime.userId
+      userId: runtime.userId,
+      permissions: [...runtime.permissions].sort(),
+      permissionMode: effectiveSakiAgentPermissionMode(runtime.input)
     })
   );
 }
@@ -451,7 +454,7 @@ function cloneCachedAgentAction(call: ParsedToolCall, cached: SakiAgentAction): 
     id: actionId(),
     tool: call.name,
     args,
-    observation: `${cached.observation}\n\n[cache hit: reused result from earlier ${cached.tool} action ${cached.id} in this Agent run.]`,
+    observation: cached.observation,
     ok: cached.ok,
     status: cached.status ?? (cached.ok ? "completed" : "failed"),
     createdAt: new Date().toISOString()
@@ -622,9 +625,10 @@ export async function runSakiAgent(
     throw new RouteError("executeSakiAgentTool not provided; pass executeTool to runSakiAgent.", 500);
   });
   const actions: SakiAgentAction[] = [...(resume?.actions ?? [])];
+  runtime.usedToolNames = [...new Set(actions.map((action) => normalizedAgentToolName(action.tool)))];
   const gitSummary = resume ? "" : await loadWorkspaceGitSummary(runtime);
   const turnMessages: SakiAgentTurnMessage[] = resume?.turnMessages?.length
-    ? [...resume.turnMessages]
+    ? closeInterruptedToolCalls(resume.turnMessages)
     : [
         { role: "user", content: buildAgentUserTurn(runtime) },
         ...(gitSummary ? [{ role: "user" as const, content: buildAgentGitNote(gitSummary) }] : [])
@@ -633,13 +637,16 @@ export async function runSakiAgent(
   const basePrompt = buildAgentPrompt(runtime);
   const resumeGoal = resume?.input?.message;
   const agentScratchpadEntries: string[] = [...(resume?.scratchpadEntries ?? [])];
-  const readOnlyToolCache = new Map<string, SakiAgentAction>();
+  const readOnlyToolCache = new Map<string, SakiAgentAction>(
+    (resume?.readOnlyToolCache ?? []).filter(([, action]) => Date.now() - Date.parse(action.createdAt) < 5 * 60 * 1000)
+  );
   const recentlyEditedFiles = new Map<string, string>();
   let currentPrompt = basePrompt;
   const modelProfile = sakiModelProfile(runtime.config.provider, runtime.config.model);
   const agentSystemPrompt = `${runtime.systemPromptOverride || buildStaticAgentSystemPrompt(modelProfile)}
 
 ${buildAgentWorkspacePrefix(runtime)}`;
+  runtime.agentSystemPrompt = agentSystemPrompt;
   let invalidReplies = 0;
   let progressOnlyReplies = 0;
   let blockedRespondCount = 0;
@@ -687,12 +694,14 @@ ${buildAgentWorkspacePrefix(runtime)}`;
   };
 
   const createResumeState = (): SakiAgentResumeState => ({
-    input: runtime.input,
+    input: resume ? { ...runtime.input, message: resume.input.message, attachments: resume.input.attachments ?? [] } : runtime.input,
     skills: runtime.skills,
     actions: [...actions],
     scratchpadEntries: [...agentScratchpadEntries],
     toolExecutions,
-    turnMessages: [...turnMessages]
+    turnMessages: [...turnMessages],
+    readOnlyToolCache: [...readOnlyToolCache.entries()].slice(-100),
+    ...((runtime.taskId ?? resume?.taskId) ? { taskId: (runtime.taskId ?? resume?.taskId)! } : {})
   });
 
   rebuildCurrentPrompt();
@@ -789,8 +798,12 @@ ${buildAgentWorkspacePrefix(runtime)}`;
   let contextOverflowRecovered = false;
 
   const finishAgentResponse = async (reason: string, message: string): Promise<SakiChatResponse> => {
+    flushTurnNotes();
+    logSakiModelEvent("agent.run.finish", { reason, durationMs: Date.now() - runStartedAt, loopsUsed,
+      toolExecutions, toolCacheHits, toolCacheMisses, toolCacheInvalidations, totalTokensUsed });
     try {
       const currentResumeState = createResumeState();
+      if (reason !== "pending_approval" && reason !== "pending_input") currentResumeState.turnMessages = closeInterruptedToolCalls(turnMessages);
       const workingFiles = getRecentWorkingFiles(runtime.userId, runtime.context.workspace?.instanceId ?? null);
       const todos = extractTodosFromScratchpad(agentScratchpadEntries);
       saveSessionAgentMemory({
@@ -833,6 +846,7 @@ ${buildAgentWorkspacePrefix(runtime)}`;
     return {
       source: "direct-model",
       message,
+      ...(["model_error", "stuck_failures"].includes(reason) ? { retry: { reason: message, ...((runtime.taskId ?? resume?.taskId) ? { taskId: (runtime.taskId ?? resume?.taskId)! } : {}) } } : {}),
       ...(accumulatedThinking.trim() ? { thinking: accumulatedThinking.trim() } : {}),
       workspace: runtime.context.workspace,
       agentPermissionMode,
@@ -851,7 +865,7 @@ ${buildAgentWorkspacePrefix(runtime)}`;
     const cacheKey = agentReadOnlyToolCacheKey(runtime, call);
     if (cacheKey) {
       const cached = readOnlyToolCache.get(cacheKey);
-      if (cached) {
+      if (cached && Date.now() - Date.parse(cached.createdAt) < 5 * 60 * 1000) {
         toolCacheHits += 1;
         return {
           call,
@@ -949,8 +963,9 @@ ${buildAgentWorkspacePrefix(runtime)}`;
     if (cacheKey && shouldCacheAgentToolResult(call, action)) {
       readOnlyToolCache.set(cacheKey, action);
     }
-    if (shouldInvalidateAgentToolCache(call) && readOnlyToolCache.size > 0) {
+    if (shouldInvalidateAgentToolCache(call)) {
       readOnlyToolCache.clear();
+      recentlyEditedFiles.clear();
       toolCacheInvalidations += 1;
     }
     return { call, toolStepId, action, durationMs: Date.now() - toolStartedAt };
@@ -1047,7 +1062,9 @@ ${buildAgentWorkspacePrefix(runtime)}`;
       role: "tool",
       toolCallId: ensureToolCallId(call),
       name: call.name,
-      content: observationForAgentPrompt(action)
+      content: cacheHit && turnMessages.some((message) => message.role === "tool" && message.name === call.name && message.content === observationForAgentPrompt(action))
+        ? "Cache hit. Reuse the identical successful observation above; no new information. Continue the next unfinished step."
+        : observationForAgentPrompt(action)
     });
     agentScratchpadEntries.push(`\nAssistant: ${renderToolCall(call)}\nObservation:\n${observationForAgentPrompt(action)}\n`);
     rebuildCurrentPrompt();
@@ -1159,6 +1176,10 @@ ${buildAgentWorkspacePrefix(runtime)}`;
         const keepRecent = Math.min(maxAgentRecentScratchpadEntries, 6);
         const dropped = Math.max(0, agentScratchpadEntries.length - keepRecent);
         if (dropped > 0) agentScratchpadEntries.splice(0, dropped);
+        const historyChars = JSON.stringify(turnMessages).length;
+        const compactedMessages = compactAgentTurnMessages(turnMessages, Math.min(20000, Math.max(2000, Math.floor(historyChars / 2))));
+        turnMessages.splice(0, turnMessages.length, ...compactedMessages);
+        rebuildCurrentPrompt();
         appendAgentScratchpad(
           "\n[Context overflow recovery]: The request exceeded the model context window. Older working notes were dropped. Continue from the recent observations below; re-read files only when strictly necessary.\n"
         );
@@ -1181,14 +1202,8 @@ ${buildAgentWorkspacePrefix(runtime)}`;
         message: "模型调用中断。",
         status: "failed"
       });
-      if (toolExecutions > 0 || actions.length > 0) {
-        const reason = error instanceof Error ? error.message : String(error);
-        return finishAgentResponse(
-          "model_error_after_tools",
-          `\u6A21\u578B\u63A5\u53E3\u5728\u7EE7\u7EED\u89C4\u5212\u4E0B\u4E00\u6B65\u65F6\u4E2D\u65AD\uFF1A${reason}\n\n\u524D\u9762\u5DF2\u7ECF\u5B8C\u6210\u7684\u52A8\u4F5C\u5DF2\u4FDD\u7559\u3002\u4F60\u53EF\u4EE5\u76F4\u63A5\u53D1\u9001\u201C\u7EE7\u7EED\u201D\uFF0CSaki \u4F1A\u57FA\u4E8E\u5F53\u524D\u5DE5\u4F5C\u533A\u63A5\u7740\u5904\u7406\u3002`
-        );
-      }
-      throw error;
+      const reason = error instanceof Error ? error.message : String(error);
+      return finishAgentResponse("model_error", `模型调用中断：${reason}\n\n已保留任务上下文和完成的操作，选择 Retry 可从中断处继续。`);
     }
     const rawContent = stripDsmlWrappers(turn.content);
     // 让后续所有代码都基于剥掉 DSML 包装的干净内容工作

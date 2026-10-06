@@ -16,7 +16,7 @@ export const pendingSakiActions = new Map<string, PendingSakiAction>();
 export const completedSakiActions = new Map<string, SakiAgentAction>();
 export const sakiCheckpoints = new Map<string, SakiCheckpoint>();
 export const sessionAgentMemories = new Map<string, SakiSessionAgentMemory>();
-const sessionMemoryTtlMs = 30 * 60 * 1000; // 30 minutes session memory
+const sessionMemoryTtlMs = 24 * 60 * 60 * 1000;
 
 const checkpointsDir = path.join(panelPaths.dataDir, "saki-checkpoints");
 const pendingActionsDir = path.join(panelPaths.dataDir, "saki-pending-actions");
@@ -147,7 +147,7 @@ const sessionWorkingFiles = new Map<string, Set<string>>();
 const fileCacheTtlMs = 10 * 60 * 1000; // 10 minutes cache per file
 
 function fileCacheKey(instanceId: string, filePath: string): string {
-  return `${instanceId}:${filePath.replace(/\\/g, "/").toLowerCase()}`;
+  return `${instanceId}:${filePath.replace(/\\/g, "/")}`;
 }
 
 export function recordInstanceFileRead(
@@ -216,10 +216,15 @@ export function getRecentWorkingFiles(userId: string, instanceId: string | null)
 
 export function saveSessionAgentMemory(memory: SakiSessionAgentMemory): void {
   const key = sessionWorkingFilesKey(memory.userId, memory.instanceId);
+  sessionAgentMemories.delete(key);
   sessionAgentMemories.set(key, {
     ...memory,
     updatedAt: Date.now()
   });
+  for (const [sessionKey, session] of sessionAgentMemories) {
+    if (Date.now() - session.updatedAt > sessionMemoryTtlMs) sessionAgentMemories.delete(sessionKey);
+  }
+  if (sessionAgentMemories.size > 200) sessionAgentMemories.delete(sessionAgentMemories.keys().next().value!);
 }
 
 export function formatSessionFollowUpContext(memory: SakiSessionAgentMemory): string {
@@ -258,7 +263,7 @@ export function extractTodosFromScratchpad(entries: string[]): string[] {
       const lines = todoMatch[1]
         .split(/\r?\n|\\n/)
         .map((l) => l.trim())
-        .filter((l) => l.startsWith("- [ ]") || l.startsWith("- [x]"));
+        .filter((l) => /^- \[[ xX-]\]/.test(l));
       if (lines.length > 0) {
         return lines;
       }
@@ -384,7 +389,7 @@ export function finishActiveSakiTask(
   task.updatedAt = new Date().toISOString();
   if (response) task.response = response;
   if (error) task.error = error;
-  emitActiveSakiTaskEvent(taskId, status === "completed" ? "done" : "error", {
+  emitActiveSakiTaskEvent(taskId, response ? "done" : "error", {
     ...(response ? { response } : {}),
     ...(error ? { message: error } : {})
   });

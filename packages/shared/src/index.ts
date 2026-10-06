@@ -1669,7 +1669,7 @@ export interface SakiAgentAction {
   approval?: SakiAgentActionApproval;
   question?: { text: string; options: string[] };
   answer?: { selection?: string; customText?: string; skipped?: boolean };
-  todos?: Array<{ text: string; completed: boolean }>;
+  todos?: Array<{ text: string; completed: boolean; inProgress?: boolean }>;
   attachments?: SakiInputAttachment[];
   createdAt: string;
 }
@@ -1682,6 +1682,8 @@ export interface SakiActionDecisionResponse {
 
 export interface SakiChatRequest {
   message: string;
+  /** Resume this interrupted Agent task without rolling back completed work. */
+  resumeTaskId?: string;
   history?: SakiChatMessage[];
   instanceId?: string | null;
   panelError?: string | null;
@@ -1698,6 +1700,7 @@ export interface SakiChatRequest {
 
 export interface SakiChatResponse {
   message: string;
+  retry?: { reason: string; taskId?: string } | undefined;
   thinking?: string;
   source: "direct-model" | "local-fallback";
   workspace?: SakiWorkspaceContext | null;

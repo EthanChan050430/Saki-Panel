@@ -450,13 +450,17 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
       const config = withRequestedSakiModel(await readEffectiveSakiConfig(), modelInput);
       let response: SakiChatResponse;
       if (isAgent) {
-        const isContinuation = isSakiContinuationMessage(modelInput.message);
+        const isContinuation = Boolean(modelInput.resumeTaskId) || isSakiContinuationMessage(modelInput.message);
         let resumeState: SakiAgentResumeState | undefined;
         let agentInput = modelInput;
         const sessionMemory = getSessionAgentMemory(request.user.sub, instanceKeyId);
+        if (modelInput.resumeTaskId && sessionMemory?.resumeState.taskId !== modelInput.resumeTaskId) {
+          throw new RouteError("该任务的恢复记录已失效，无法安全重试。请重新描述任务。", 409);
+        }
         if (sessionMemory) {
           if (isContinuation) {
             resumeState = sessionMemory.resumeState;
+            agentInput = { ...resumeState.input, ...modelInput, message: resumeState.input.message, attachments: resumeState.input.attachments ?? [] };
           } else {
             const notes = formatSessionFollowUpContext(sessionMemory);
             agentInput = {
@@ -482,7 +486,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
           resumeState,
           executeSakiAgentTool
         );
-        finishActiveSakiTask(taskId, "completed", response);
+        finishActiveSakiTask(taskId, response.retry ? "failed" : "completed", response, response.retry?.reason);
       } else if (config.imageGen?.enabled) {
         response = await runSakiAgent(
           {
@@ -608,7 +612,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
       stream.send(event.type, event.payload);
     }
 
-    if (task.status === "completed" && task.response) {
+    if ((task.status === "completed" || task.status === "failed") && task.response) {
       stream.send("done", { response: task.response });
       stream.end();
       return;
@@ -717,13 +721,17 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
       const config = withRequestedSakiModel(await readEffectiveSakiConfig(), modelInput);
       if (modelInput.mode === "agent") {
         const instanceKeyId = context.workspace?.instanceId ?? null;
-        const isContinuation = isSakiContinuationMessage(modelInput.message);
+        const isContinuation = Boolean(modelInput.resumeTaskId) || isSakiContinuationMessage(modelInput.message);
         let resumeState: SakiAgentResumeState | undefined;
         let agentInput = modelInput;
         const sessionMemory = getSessionAgentMemory(request.user.sub, instanceKeyId);
+        if (modelInput.resumeTaskId && sessionMemory?.resumeState.taskId !== modelInput.resumeTaskId) {
+          throw new RouteError("该任务的恢复记录已失效，无法安全重试。请重新描述任务。", 409);
+        }
         if (sessionMemory) {
           if (isContinuation) {
             resumeState = sessionMemory.resumeState;
+            agentInput = { ...resumeState.input, ...modelInput, message: resumeState.input.message, attachments: resumeState.input.attachments ?? [] };
           } else {
             const notes = formatSessionFollowUpContext(sessionMemory);
             agentInput = {

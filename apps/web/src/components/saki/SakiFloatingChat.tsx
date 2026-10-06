@@ -246,6 +246,7 @@ import { ChatLauncher } from "./chat/ChatLauncher.js";
 import { SakiVideoPane } from "./chat/SakiVideoPane.js";
 import { SakiHistoryDrawer } from "./chat/SakiHistoryDrawer.js";
 import { SakiMessagesList } from "./chat/SakiMessagesList.js";
+import { SakiRetryDialog, SakiTodoCard } from "./chat/SakiAgentWidgets.js";
 import { mergeSakiMessageAttachments } from "./chat/SakiChatImages.js";
 import { SakiComposer } from "./chat/SakiComposer.js";
 import { SakiChatDropdowns } from "./chat/SakiChatDropdowns.js";
@@ -498,6 +499,11 @@ export function SakiFloatingChat({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
+  const [dismissedRetryId, setDismissedRetryId] = useState<string | null>(null);
+  const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
+  const retryMessage = !loading && latestAssistant?.retry && latestAssistant.id !== dismissedRetryId ? latestAssistant : null;
+  const latestTodo = [...messages].reverse().flatMap((message) => [...(message.actions ?? [])].reverse())
+    .find((action) => action.ok && action.tool.toLowerCase() === "managetodos" && action.todos?.length);
   const [copiedUserMessageId, setCopiedUserMessageId] = useState<string | null>(null);
   const [copiedAssistantMessageId, setCopiedAssistantMessageId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<SakiInputAttachment[]>([]);
@@ -1302,6 +1308,7 @@ export function SakiFloatingChat({
                     workflowExpanded: false,
                     streaming: false,
                     usage: response.usage,
+                    retry: response.retry,
                     ...(mergedAttachments.length ? { attachments: mergedAttachments } : {})
                   };
                   if (nextActions?.length) return { ...nextMessage, actions: nextActions };
@@ -1374,7 +1381,8 @@ export function SakiFloatingChat({
                   source: finalResp.source,
                   workflowExpanded: false,
                   streaming: false,
-                  usage: finalResp.usage
+                  usage: finalResp.usage,
+                  retry: finalResp.retry
                 };
                 if (nextActions?.length) return { ...nextMessage, actions: nextActions };
                 return nextMessage;
@@ -2276,6 +2284,7 @@ export function SakiFloatingChat({
           content: mergeSakiFinalText(message.content, response.message),
           timeline: mergeSakiTimelineActions(mergeSakiFinalTimeline(message.timeline, response.message), nextActions),
           source: response.source,
+          retry: response.retry,
           workflowExpanded: false,
           streaming: false,
           ...(mergedAttachments.length ? { attachments: mergedAttachments } : {})
@@ -3037,6 +3046,11 @@ export function SakiFloatingChat({
     if (actionBusyId || loading) return;
     const turn = findAssistantTurn(assistantMessageId);
     if (!turn) return;
+    if (turn.assistant.retry) {
+      setDismissedRetryId(assistantMessageId);
+      await submitRef.current?.(undefined, { message: "继续", mode: "agent", ...(turn.assistant.retry.taskId ? { resumeTaskId: turn.assistant.retry.taskId } : {}) });
+      return;
+    }
     setActionBusyId(`retry:${assistantMessageId}`);
     try {
       if (activeTaskIdRef.current && token) {
@@ -3273,6 +3287,7 @@ export function SakiFloatingChat({
     const history = historySource.filter((message) => message.id !== "saki-welcome").slice(-12).map(toSakiHistoryMessage);
     const request = {
       message: value,
+      ...(override?.resumeTaskId ? { resumeTaskId: override.resumeTaskId } : {}),
       history,
       instanceId: (storedConversations.find((conversation) => conversation.id === activeConversationId)?.instanceId ?? activeInstance?.id) || null,
       panelError: requestPanelError,
@@ -3365,6 +3380,7 @@ export function SakiFloatingChat({
                   workflowExpanded: false,
                   streaming: false,
                   usage: response.usage,
+                  retry: response.retry,
                   ...(mergedAttachments.length ? { attachments: mergedAttachments } : {})
                 };
                 if (nextActions?.length) return { ...nextMessage, actions: nextActions };
@@ -3975,6 +3991,11 @@ export function SakiFloatingChat({
 
   return (
     <>
+      {open && retryMessage?.retry ? createPortal(<SakiRetryDialog
+        reason={retryMessage.retry.reason} busy={loading || Boolean(actionBusyId)}
+        onRetry={() => void retryAssistantTurn(retryMessage.id)}
+        onDismiss={() => setDismissedRetryId(retryMessage.id)}
+      />, document.body) : null}
       <ChatLauncher
         open={open}
         sakiLieMode={sakiLieMode}
@@ -4426,6 +4447,7 @@ export function SakiFloatingChat({
             onPreviewAttachment={(preview) => setPreviewingAttachment(preview)}
             token={token}
           />
+          {latestTodo ? <div className="saki-agent-progress-dock"><SakiTodoCard action={latestTodo} /></div> : null}
         </div>
       </div>
 

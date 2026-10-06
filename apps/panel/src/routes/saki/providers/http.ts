@@ -164,10 +164,16 @@ export async function doRequestStreamingPayload<T>(
   const controller = new AbortController();
   const unlinkAgentAbort = linkAgentAbortSignal(controller);
   let timedOut = false;
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, timeoutMs);
+  let receivedBytes = false;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const armIdleTimeout = () => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+  };
+  armIdleTimeout();
   let response: Response;
   try {
     response = await fetch(url, {
@@ -225,7 +231,26 @@ export async function doRequestStreamingPayload<T>(
     }
     let result: T;
     try {
-      result = await consume(response);
+      // Measure silence, not total generation time. Reasoning/token/heartbeat
+      // bytes all prove that the upstream stream is still alive.
+      const reader = response.body.getReader();
+      const body = new ReadableStream<Uint8Array>({
+        async pull(streamController) {
+          try {
+            const { done, value } = await reader.read();
+            if (done) { streamController.close(); reader.releaseLock(); return; }
+            receivedBytes ||= value.byteLength > 0;
+            armIdleTimeout();
+            streamController.enqueue(value);
+          } catch (error) {
+            reader.releaseLock();
+            streamController.error(error);
+          }
+        },
+        cancel(reason) { return reader.cancel(reason); }
+      });
+      armIdleTimeout();
+      result = await consume(new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers }));
     } catch (error) {
       if (timedOut) {
         const message = new RequestTimeoutError(timeoutMs).message;
@@ -235,8 +260,9 @@ export async function doRequestStreamingPayload<T>(
           durationMs: Date.now() - startedAt,
           error: message
         });
-        throw new RouteError(`Cannot reach ${url}: ${message}`, 502);
+        throw Object.assign(new RouteError(`Cannot reach ${url}: ${message}`, 502), { partialStream: receivedBytes });
       }
+      if (receivedBytes && error instanceof Error) Object.assign(error, { partialStream: true });
       throw error;
     }
     logSakiModelEvent("stream.response", {
@@ -248,6 +274,7 @@ export async function doRequestStreamingPayload<T>(
     return result;
   } finally {
     clearTimeout(timeout);
+    controller.abort();
     unlinkAgentAbort();
   }
 }
@@ -333,6 +360,18 @@ export async function readUtf8Stream(response: Response, onChunk: (chunk: string
 
 export async function readServerSentEventData(response: Response, onData: (data: string) => void): Promise<void> {
   let buffer = "";
+  let completed = false;
+  const emit = (data: string) => {
+    if (data === "[DONE]") completed = true;
+    else {
+      try {
+        const payload = JSON.parse(data);
+        if (payload.error) throw new RouteError(`Model stream failed: ${typeof payload.error.message === "string" ? payload.error.message : "upstream error"}`, 502);
+        if (payload.type === "message_stop" || payload.choices?.some((choice: { finish_reason?: unknown }) => choice.finish_reason)) completed = true;
+      } catch (error) { if (error instanceof RouteError) throw error; }
+    }
+    onData(data);
+  };
   await readUtf8Stream(response, (chunk) => {
     buffer += chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     while (true) {
@@ -345,7 +384,7 @@ export async function readServerSentEventData(response: Response, onData: (data:
         .filter((line) => line.startsWith("data:"))
         .map((line) => line.slice(5).replace(/^ /, ""))
         .join("\n");
-      if (data) onData(data);
+      if (data) emit(data);
     }
   });
 
@@ -354,7 +393,8 @@ export async function readServerSentEventData(response: Response, onData: (data:
     .filter((line) => line.startsWith("data:"))
     .map((line) => line.slice(5).replace(/^ /, ""))
     .join("\n");
-  if (data) onData(data);
+  if (data) emit(data);
+  if (!completed) throw Object.assign(new RouteError("Model stream ended before its completion marker. Task context has been retained for retry.", 502), { partialStream: true });
 }
 
 export function parseStreamJsonPayload(data: string): unknown | undefined {

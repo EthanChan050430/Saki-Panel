@@ -2,7 +2,8 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import {
   BrowseHttpError,
-  fetchWithTimeout,
+  linkAgentAbortSignal,
+  RequestTimeoutError,
   htmlDecode,
   numericArg,
   RouteError,
@@ -123,24 +124,51 @@ function extractPageLinks(html: string, baseUrl: URL, sameHostOnly: boolean): st
   return links;
 }
 
-async function fetchPublicPage(rawUrl: string, maxChars = 9000): Promise<WebPageSnapshot> {
-  const url = await assertPublicHttpUrl(rawUrl);
-  const response = await fetchWithTimeout(
-    url.toString(),
-    {
-      method: "GET",
-      headers: {
-        "accept": "text/html, text/plain, application/xhtml+xml;q=0.9, */*;q=0.2",
-        "user-agent": webUserAgent
+async function fetchPublicText(rawUrl: string, accept: string, timeoutMs = 15000): Promise<{ url: URL; response: Response; text: string }> {
+  const controller = new AbortController();
+  const unlink = linkAgentAbortSignal(controller);
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+  try {
+    let nextUrl = rawUrl;
+    for (let redirects = 0; redirects <= 4; redirects += 1) {
+      const url = await assertPublicHttpUrl(nextUrl);
+      const response = await fetch(url, { redirect: "manual", signal: controller.signal, headers: { accept, "user-agent": webUserAgent } });
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.get("location");
+        await response.body?.cancel();
+        if (!location) throw new Error("Redirect response missing Location");
+        nextUrl = new URL(location, url).toString();
+        continue;
       }
-    },
-    15000
-  );
-  if (!response.ok) {
-    throw new BrowseHttpError(url.toString(), response.status, response.statusText);
-  }
+      if (!response.ok) { await response.body?.cancel(); throw new BrowseHttpError(url.toString(), response.status, response.statusText); }
+      const reader = response.body?.getReader();
+      if (!reader) return { url, response, text: "" };
+      const decoder = new TextDecoder();
+      let text = "";
+      let bytes = 0;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          bytes += value.byteLength;
+          if (bytes > 2 * 1024 * 1024) { await reader.cancel(); throw new Error("Web response exceeds 2 MiB; use a more specific page"); }
+          text += decoder.decode(value, { stream: true });
+        }
+        text += decoder.decode();
+      } finally { reader.releaseLock(); }
+      return { url, response, text };
+    }
+    throw new Error("Too many web redirects");
+  } catch (error) {
+    if (timedOut) throw new RequestTimeoutError(timeoutMs);
+    throw error;
+  } finally { clearTimeout(timer); unlink(); }
+}
+
+async function fetchPublicPage(rawUrl: string, maxChars = 9000): Promise<WebPageSnapshot> {
+  const { url, response, text } = await fetchPublicText(rawUrl, "text/html, text/plain, application/xhtml+xml;q=0.9, */*;q=0.2");
   const contentType = response.headers.get("content-type") ?? "";
-  const text = await response.text();
   const isHtml = /html|xml/i.test(contentType) || /<html|<body|<title/i.test(text.slice(0, 1200));
   const title = isHtml ? extractHtmlTitle(text) : "";
   const content = isHtml ? stripHtml(text) : text.replace(/\s+/g, " ").trim();
@@ -295,51 +323,73 @@ export async function browsePublicUrl(rawUrl: string): Promise<string> {
   }
 }
 
-async function webSearchResults(query: string, maxResultsInput?: string): Promise<WebSearchResult[]> {
-  const q = trimString(query).slice(0, 180);
-  if (!q) throw new RouteError("searchWeb requires a query.", 400);
-  const maxResults = numericArg(maxResultsInput, 6, 1, 10);
-  const url = `https://duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
-  const response = await fetchWithTimeout(
-    url,
-    {
-      method: "GET",
-      headers: {
-        "accept": "text/html",
-        "user-agent": webUserAgent
-      }
-    },
-    15000
-  );
-  if (!response.ok) {
-    throw new RouteError(`Search failed with ${response.status}: ${response.statusText}`, 502);
-  }
-  const html = await response.text();
+export function parseWebSearchResults(html: string, maxResults: number, rss = false): WebSearchResult[] {
   const results: WebSearchResult[] = [];
   const seen = new Set<string>();
-  const regex = /<a[^>]+class=["'][^"']*result__a[^"']*["'][^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  const add = (href: string, title: string, snippet: string) => {
+    try {
+      const url = normalizeHttpUrl(href);
+      if (isPrivateAddress(url.hostname) || /(^|\.)localhost$/i.test(url.hostname)) return;
+      const key = url.toString();
+      if (seen.has(key)) return;
+      seen.add(key);
+      results.push({ title: stripHtml(title).slice(0, 200) || key, url: key, snippet: stripHtml(snippet).slice(0, 700) });
+    } catch { /* Ignore malformed links; browse validates DNS before fetching. */ }
+  };
+  if (rss) {
+    for (const match of html.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)) {
+      const item = match[1] ?? "";
+      const field = (name: string) => htmlDecode((item.match(new RegExp(`<${name}[^>]*>([\\s\\S]*?)<\\/${name}>`, "i"))?.[1] ?? "").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1"));
+      add(field("link"), field("title"), field("description"));
+      if (results.length >= maxResults) break;
+    }
+    return results;
+  }
+  const regex = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(html)) && results.length < maxResults) {
-    const href = decodeDuckDuckGoHref(match[1] ?? "");
-    let parsed: URL;
-    try {
-      parsed = await assertPublicHttpUrl(href);
-    } catch {
-      continue;
-    }
-    const key = parsed.toString();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const blockEnd = html.indexOf("result__a", regex.lastIndex);
-    const block = html.slice(regex.lastIndex, blockEnd === -1 ? regex.lastIndex + 2000 : blockEnd);
-    const snippetMatch = block.match(/class=["'][^"']*result__snippet[^"']*["'][^>]*>([\s\S]*?)<\/(?:a|div|span)>/i);
-    results.push({
-      title: stripHtml(match[2] ?? "") || key,
-      url: key,
-      snippet: stripHtml(snippetMatch?.[1] ?? "")
-    });
+    const attrs = match[1] ?? "";
+    const className = attrs.match(/\bclass\s*=\s*["']([^"']*)["']/i)?.[1] ?? "";
+    if (!/(?:^|\s)(?:result__a|result-link)(?:\s|$)/.test(className)) continue;
+    const href = attrs.match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1];
+    if (!href) continue;
+    const block = html.slice(regex.lastIndex, regex.lastIndex + 2500);
+    const snippetMatch = block.match(/class=["'][^"']*(?:result__snippet|result-snippet)[^"']*["'][^>]*>([\s\S]*?)<\/(?:a|div|span|td)>/i);
+    add(decodeDuckDuckGoHref(href), match[2] ?? "", snippetMatch?.[1] ?? "");
   }
   return results;
+}
+
+const webSearchCache = new Map<string, { expiresAt: number; results: WebSearchResult[] }>();
+
+async function webSearchResults(query: string, maxResultsInput?: string): Promise<WebSearchResult[]> {
+  const q = trimString(query).slice(0, 300);
+  if (!q) throw new RouteError("searchWeb requires a query.", 400);
+  const maxResults = numericArg(maxResultsInput, 6, 1, 10);
+  const key = `${q}:${maxResults}`;
+  const cached = webSearchCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.results;
+  const encoded = encodeURIComponent(q);
+  const sources = [
+    { url: `https://html.duckduckgo.com/html/?q=${encoded}`, rss: false },
+    { url: `https://lite.duckduckgo.com/lite/?q=${encoded}`, rss: false },
+    { url: `https://www.bing.com/search?format=rss&q=${encoded}`, rss: true }
+  ];
+  const failures: string[] = [];
+  for (const source of sources) {
+    try {
+      const { text } = await fetchPublicText(source.url, source.rss ? "application/rss+xml, application/xml" : "text/html", 12000);
+      const results = parseWebSearchResults(text, maxResults, source.rss);
+      if (!results.length) throw new Error("No readable results (empty response or search challenge)");
+      webSearchCache.delete(key);
+      webSearchCache.set(key, { expiresAt: Date.now() + 5 * 60 * 1000, results });
+      if (webSearchCache.size > 100) webSearchCache.delete(webSearchCache.keys().next().value!);
+      return results;
+    } catch (error) {
+      failures.push(`${new URL(source.url).hostname}: ${userFacingError(error)}`);
+    }
+  }
+  throw new RouteError(`Web search unavailable. ${failures.join("; ")}. Try a direct official URL with browse or refine the query; do not infer facts from a failed search.`, 502);
 }
 
 function formatSearchResults(query: string, results: WebSearchResult[]): string {
@@ -410,13 +460,12 @@ export async function crawlPublicSite(rawUrl: string, maxPagesInput?: string, ma
 export async function researchWeb(query: string, maxPagesInput?: string): Promise<string> {
   const maxPages = numericArg(maxPagesInput, 3, 1, 5);
   const results = await webSearchResults(query, String(maxPages));
-  const pages: string[] = [];
-  for (const result of results.slice(0, maxPages)) {
+  const pages = await Promise.all(results.slice(0, maxPages).map(async (result) => {
     try {
-      pages.push(formatWebPage(await fetchPublicPage(result.url, 4200)));
+      return formatWebPage(await fetchPublicPage(result.url, 4200));
     } catch (error) {
-      pages.push(`URL: ${result.url}\nFetch failed: ${userFacingError(error)}`);
+      return `URL: ${result.url}\nFetch failed: ${userFacingError(error)}`;
     }
-  }
+  }));
   return [formatSearchResults(query, results), "", "Fetched result pages:", "", pages.join("\n\n---\n\n") || "(none)"].join("\n");
 }

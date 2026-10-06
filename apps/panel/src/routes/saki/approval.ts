@@ -75,6 +75,9 @@ function resumeAfterSakiActionDecision(pending: PendingSakiAction, action: SakiA
   }
   return {
     ...pending.resume,
+    // Approval may have just changed the workspace. Never restore observations
+    // from before that mutation as current tool results.
+    readOnlyToolCache: [],
     actions: [...pending.resume.actions, action],
     scratchpadEntries: [
       ...pending.resume.scratchpadEntries,

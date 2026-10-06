@@ -643,6 +643,7 @@ export interface SakiAgentRuntime {
   toolProfile?: "full" | "research" | "chat";
   taskId?: string;
   turnMessages?: import("./agent-messages.js").SakiAgentTurnMessage[];
+  agentSystemPrompt?: string;
 }
 
 export interface SakiAgentResumeState {
@@ -652,6 +653,8 @@ export interface SakiAgentResumeState {
   scratchpadEntries: string[];
   toolExecutions: number;
   turnMessages?: import("./agent-messages.js").SakiAgentTurnMessage[];
+  readOnlyToolCache?: Array<[string, SakiAgentAction]>;
+  taskId?: string;
 }
 
 export interface SakiSessionAgentMemory {
@@ -668,8 +671,8 @@ export interface SakiSessionAgentMemory {
 export function isSakiContinuationMessage(text: string): boolean {
   const normalized = text.trim().toLowerCase();
   if (!normalized || normalized.length > 24) return false;
-  return /^(请?继续|请?接着)(吧|做|改|修|处理|执行)?[。.!！]?$/i.test(normalized) ||
-    /^(continue|go on|keep going|proceed|next|resume|go ahead|keep working)[.!]?$/i.test(normalized);
+  return /^(请?继续|请?接着|请?重试)(吧|做|改|修|处理|执行)?[。.!！]?$/i.test(normalized) ||
+    /^(continue|go on|keep going|proceed|next|resume|retry|go ahead|keep working)[.!]?$/i.test(normalized);
 }
 
 export interface SakiActiveTaskEvent {
@@ -1282,7 +1285,8 @@ export function normalizeTimeout(value: unknown, fallback: number): number {
 export function agentModelConfig(config: any): any {
   return {
     ...config,
-    requestTimeoutMs: Math.max(config.requestTimeoutMs, minAgentModelRequestTimeoutMs)
+    // Hosted NVIDIA reasoning models may queue before the first SSE event.
+    requestTimeoutMs: Math.max(config.requestTimeoutMs || 0, normalizeProviderId(config.provider) === "nvidia" ? 300000 : minAgentModelRequestTimeoutMs)
   };
 }
 

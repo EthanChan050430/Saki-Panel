@@ -4,7 +4,7 @@ import multipart from "@fastify/multipart";
 import { collectMetrics } from "./metrics.js";
 import { daemonConfig } from "./config.js";
 import { authenticatePanelRequest } from "./daemon-auth.js";
-import { DaemonError, isDaemonError } from "./errors.js";
+import { DaemonError, isDaemonError, normalizeDaemonFileError } from "./errors.js";
 import { applyRestartLeases, instanceManager } from "./instance-manager.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerGitRoutes } from "./routes/git.js";
@@ -79,6 +79,7 @@ export async function createDaemonServer() {
   // other errors are treated as 500s. Production mode hides raw messages.
   const isProd = process.env.NODE_ENV?.toLowerCase() === "production";
   app.setErrorHandler((error: unknown, _request, reply) => {
+    error = normalizeDaemonFileError(error);
     if (isDaemonError(error)) {
       const status = error.httpStatus;
       const body: Record<string, unknown> = {

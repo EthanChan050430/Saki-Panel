@@ -390,6 +390,7 @@ export async function prepareSakiChatInvocation(
 
   const input: SakiChatRequest = {
     message,
+    ...(trimString(body.resumeTaskId) ? { resumeTaskId: trimString(body.resumeTaskId).slice(0, 200) } : {}),
     history: Array.isArray(body.history) ? body.history : [],
     instanceId: trimString(body.instanceId) || null,
     panelError: trimString(body.panelError) || null,

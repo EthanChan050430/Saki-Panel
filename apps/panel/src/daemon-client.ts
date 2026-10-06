@@ -145,10 +145,10 @@ function requestDaemonRaw(
     const url = new URL(`${node.protocol}://${node.host}:${node.port}${path}`);
     const body = requestBodyToString(options.body);
     const headers: http.OutgoingHttpHeaders = {
-      "content-type": "application/json",
       "x-node-id": node.id,
       "x-panel-token": node.tokenHash,
-      ...(body ? { "content-length": Buffer.byteLength(body) } : {}),
+      // Fastify rejects bodyless DELETE/POST requests advertised as JSON.
+      ...(body ? { "content-type": "application/json", "content-length": Buffer.byteLength(body) } : {}),
       ...(options.headers as http.OutgoingHttpHeaders | undefined)
     };
     const requestOptions: https.RequestOptions = {
@@ -302,6 +302,13 @@ async function requestDaemonRawBinaryWithFallback(
   }
 }
 
+export class DaemonRequestError extends Error {
+  constructor(readonly statusCode: number, readonly code: string | undefined, message: string) {
+    super(`Daemon request failed (${statusCode})${code ? ` [${code}]` : ""}: ${message}`);
+    this.name = "DaemonRequestError";
+  }
+}
+
 export async function requestDaemon<T>(
   node: DaemonNodeCredentials,
   path: string,
@@ -311,10 +318,14 @@ export async function requestDaemon<T>(
   const response = await requestDaemonRawWithFallback(node, path, options, timeoutMs);
   if (response.statusCode < 200 || response.statusCode >= 300) {
     let message = response.body.trim();
+    let code: string | undefined;
     try {
-      const payload = JSON.parse(response.body) as { message?: unknown; error?: unknown };
+      const payload = JSON.parse(response.body) as { message?: unknown; error?: unknown; code?: unknown; hint?: unknown };
+      code = typeof payload.code === "string" ? payload.code : undefined;
       message =
-        typeof payload.message === "string"
+        typeof payload.hint === "string" && payload.hint
+          ? payload.hint
+          : typeof payload.message === "string"
           ? payload.message
           : typeof payload.error === "string"
             ? payload.error
@@ -322,7 +333,7 @@ export async function requestDaemon<T>(
     } catch {
       // Keep raw text for non-JSON daemon errors.
     }
-    throw new Error(`Daemon request failed (${response.statusCode}): ${message || response.statusMessage}`);
+    throw new DaemonRequestError(response.statusCode, code, message || response.statusMessage);
   }
 
   return (response.body ? JSON.parse(response.body) : undefined) as T;
