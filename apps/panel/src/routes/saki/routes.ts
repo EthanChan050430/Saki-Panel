@@ -74,6 +74,7 @@ import {
   listSakiActiveTasks,
   formatSessionFollowUpContext,
   getSessionAgentMemory,
+  startSakiTaskMaintenance,
   toSakiActiveTaskSummary
 } from "./state.js";
 import {
@@ -99,6 +100,8 @@ async function acceptQueryBearer(request: FastifyRequest, _reply: FastifyReply):
 
 export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
   ensureSakiModulesReady();
+  const stopTaskMaintenance = startSakiTaskMaintenance();
+  app.addHook("onClose", async () => stopTaskMaintenance());
   app.get("/api/saki/appearance", async () => {
     const config = await readEffectiveSakiConfig();
     return config.appearance;

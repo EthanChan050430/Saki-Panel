@@ -25,6 +25,7 @@ import type { SakiSkillSummary } from "@webops/shared";
 import type { FastifyRequest } from "fastify";
 import type { InstanceWithAccess } from "../../instance-access.js";
 import { countTokens, truncateToTokenLimit } from "../../tokenizer.js";
+import { copyText } from "./text-memory.js";
 
 export type InstanceWithNode = InstanceWithAccess;
 
@@ -852,7 +853,7 @@ function emitStreamingThinkingDelta(state: StreamingTextState, raw: string, onTh
   if (!onThinking) return;
   const thinking = streamingThinkingText(raw);
   if (thinking.length > state.thinkingEmittedLength) {
-    onThinking(thinking.slice(state.thinkingEmittedLength));
+    onThinking(copyText(thinking.slice(state.thinkingEmittedLength)));
     state.thinkingEmittedLength = thinking.length;
   }
 }
@@ -901,7 +902,7 @@ export function pushStreamingTextDelta(
   emitStreamingThinkingDelta(state, state.raw, onThinking);
   const visible = visibleStreamingText(state.raw);
   if (visible.length > state.emittedLength) {
-    onDelta(visible.slice(state.emittedLength));
+    onDelta(copyText(visible.slice(state.emittedLength)));
   }
   state.emittedLength = Math.max(state.emittedLength, visible.length);
 }
@@ -918,7 +919,7 @@ export function flushStreamingTextState(
   emitStreamingThinkingDelta(state, state.raw, onThinking);
   const visible = visibleStreamingText(state.raw);
   if (visible.length > state.emittedLength) {
-    onDelta(visible.slice(state.emittedLength));
+    onDelta(copyText(visible.slice(state.emittedLength)));
     state.emittedLength = visible.length;
   }
 }

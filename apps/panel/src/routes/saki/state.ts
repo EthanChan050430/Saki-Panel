@@ -11,6 +11,7 @@ import type {
   SakiSessionAgentMemory
 } from "./types.js";
 import { trimString } from "./types.js";
+import { copyText } from "./text-memory.js";
 
 export const pendingSakiActions = new Map<string, PendingSakiAction>();
 export const completedSakiActions = new Map<string, SakiAgentAction>();
@@ -276,6 +277,32 @@ export const activeSakiTasks = new Map<string, SakiActiveTask>();
 export const activeSakiTasksByContext = new Map<string, string>(); // `${userId}:${instanceId}` -> taskId
 const activeTaskTtlMs = 60 * 60 * 1000; // Keep completed task record for 1 hour
 
+function removeActiveSakiTask(taskId: string): void {
+  activeSakiTasks.delete(taskId);
+  for (const [key, id] of activeSakiTasksByContext) {
+    if (id === taskId) activeSakiTasksByContext.delete(key);
+  }
+}
+
+export function pruneExpiredSakiTasks(now = Date.now()): number {
+  let removed = 0;
+  for (const [taskId, task] of activeSakiTasks) {
+    // An approval may still resume the task; never evict live work.
+    if (task.status === "running" || task.status === "pending_approval") continue;
+    const reference = Date.parse(task.updatedAt || task.startedAt);
+    if (Number.isFinite(reference) && now - reference <= activeTaskTtlMs) continue;
+    removeActiveSakiTask(taskId);
+    removed += 1;
+  }
+  return removed;
+}
+
+export function startSakiTaskMaintenance(): () => void {
+  const timer = setInterval(() => pruneExpiredSakiTasks(), 60 * 1000);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
 export function createActiveSakiTask(
   taskId: string,
   userId: string,
@@ -346,6 +373,9 @@ export function emitActiveSakiTaskEvent(
   // produces hundreds of delta/thinking frames; without merging they would push
   // earlier frames past the cap and a reconnecting client would lose content.
   if ((type === "delta" || type === "thinking") && typeof payload.text === "string") {
+    // Other event producers can also supply slices. Detach before the replay
+    // buffer retains them, even when they bypass the provider streaming helpers.
+    payload = { ...payload, text: copyText(payload.text) };
     const last = task.eventsBuffer[task.eventsBuffer.length - 1];
     if (last && last.type === type && typeof last.payload.text === "string") {
       last.payload = { ...last.payload, text: `${last.payload.text}${payload.text}` };
@@ -464,13 +494,8 @@ export function clearFinishedSakiTasks(userId: string): number {
   let cleared = 0;
   for (const [taskId, task] of [...activeSakiTasks.entries()]) {
     if (task.userId === userId && task.status !== "running") {
-      activeSakiTasks.delete(taskId);
+      removeActiveSakiTask(taskId);
       cleared += 1;
-      for (const [key, id] of activeSakiTasksByContext.entries()) {
-        if (id === taskId) {
-          activeSakiTasksByContext.delete(key);
-        }
-      }
     }
   }
   return cleared;
@@ -482,12 +507,7 @@ export function deleteSakiTask(taskId: string, userId: string): boolean {
   if (task.status === "running") {
     cancelActiveSakiTask(taskId);
   }
-  activeSakiTasks.delete(taskId);
-  for (const [key, id] of activeSakiTasksByContext.entries()) {
-    if (id === taskId) {
-      activeSakiTasksByContext.delete(key);
-    }
-  }
+  removeActiveSakiTask(taskId);
   return true;
 }
 

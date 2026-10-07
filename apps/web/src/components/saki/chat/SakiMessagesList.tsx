@@ -176,6 +176,8 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
                   const isThinkingStreaming = Boolean(message.streaming && item.source === "delta" && !hasAnswer);
                   const durationSec = item.thinkingDurationSec ?? message.thinkingDurationSec;
 
+                  if (!hasThinking && !hasAnswer) return null;
+
                   return (
                     <div key={item.id} className="saki-timeline-text-item">
                       {hasThinking ? (
@@ -236,6 +238,15 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
                 const hasThinking = Boolean(parsed.thinking);
                 const hasAnswer = Boolean(parsed.answer.trim());
                 const isThinkingStreaming = Boolean(message.streaming && !hasAnswer);
+                if (!hasThinking && !hasAnswer) {
+                  return message.streaming ? (
+                    <div className="saki-message-assistant-content">
+                      <div className="saki-message-body">
+                        <p className="saki-stream-placeholder">等待模型响应...</p>
+                      </div>
+                    </div>
+                  ) : null;
+                }
                 return (
                   <div className="saki-message-assistant-content">
                     {hasThinking ? (

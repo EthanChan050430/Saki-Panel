@@ -1567,8 +1567,26 @@ export function mergeSakiFinalTimeline(timeline: LocalSakiTimelineItem[] | undef
   ];
 }
 
+/**
+ * 过滤 DeepSeek Markup Language (DSML) 及原生工具调用特殊标记（如 <｜DSML｜ calls>、<|DSML|invoke:...>、<｜tool calls｜> 等）。
+ * 防止上游模型或网关流式泄漏协议标签到前端聊天内容中。
+ */
+export function stripDsmlMarkup(text: string): string {
+  if (!text) return "";
+  return text
+    // 1. 匹配所有 DSML 标签（兼容全角 ｜ \uFF5C、半角 |、任意空白及 calls / invoke / parameter / tool_calls 等变体）
+    // 例：< ｜ DSML ｜ calls>、<｜DSML｜ calls>、<|DSML|invoke:...>、</ ｜ DSML ｜ calls>、<||DSML|| calls>
+    .replace(/<\s*\/?\s*[|\uFF5C\s]*DSML[|\uFF5C\s\w:-]*(?:>|$)/gi, "")
+    // 2. 匹配 DeepSeek 原生工具调用特殊标记：<｜tool calls｜>、</｜tool calls｜>、<|tool_call|>、<｜tool outputs｜> 等
+    .replace(/<\s*\/?\s*[|\uFF5C\s]*(?:tool_calls?|tool_outputs?|function_calls?)[|\uFF5C\s\w:-]*(?:>|$)/gi, "")
+    // 3. 匹配流式尚未完全吐完的末尾 DSML 前缀（如正在流式中的 "< ｜ DSML ｜ " 或 "<｜DSML"），避免流式闪烁
+    .replace(/<\s*[|\uFF5C\s]*DSML[|\uFF5C\s\w:-]*$/gi, "")
+    .trim();
+}
+
 function timelineTextIsVisible(entry: Extract<LocalSakiTimelineItem, { kind: "text" }>): boolean {
-  return Boolean(entry.content.trim() || entry.thinking?.trim());
+  const visible = stripDsmlMarkup(entry.content);
+  return Boolean(visible.trim() || entry.thinking?.trim());
 }
 
 export function renderableSakiTimeline(message: LocalSakiMessage): LocalSakiTimelineItem[] {
@@ -1608,11 +1626,12 @@ export function renderableSakiTimeline(message: LocalSakiMessage): LocalSakiTime
     return currentTodoTimeline(missingActionItems.length ? [...timeline, ...missingActionItems] : timeline);
   }
   const fallback: LocalSakiTimelineItem[] = [];
-  if (message.content.trim() || message.thinking?.trim()) {
+  const fallbackContent = stripDsmlMarkup(message.content).trim();
+  if (fallbackContent || message.thinking?.trim()) {
     fallback.push({
       kind: "text",
       id: `${message.id}:content`,
-      content: message.content,
+      content: fallbackContent,
       ...(message.thinking?.trim() ? { thinking: message.thinking } : {}),
       source: "final",
       createdAt: message.createdAt ?? new Date().toISOString()
@@ -1793,6 +1812,9 @@ export function parseThinkingContent(
     }
   }
 
+  // 剥离泄露的 DSML 协议标签及原生工具标记
+  text = stripDsmlMarkup(text);
+
   const thinking = thinkingParts.join("\n\n").trim();
   return {
     hasThinking: Boolean(thinking),
@@ -1810,7 +1832,7 @@ export function assistantVisibleText(message: LocalSakiMessage): string {
     .filter(Boolean);
   if (parts.length > 0) return parts.join("\n\n");
   const parsed = parseThinkingContent(message.content, message.thinking).answer.trim();
-  return parsed || message.content.trim();
+  return parsed || stripDsmlMarkup(message.content).trim();
 }
 
 export function SakiThinkingActionCard({
@@ -1888,12 +1910,12 @@ export function SakiThinkingContent({
     if (streaming) {
       return (
         <div className="saki-stream-raw-wrap">
-          <span className="saki-stream-raw">{content}</span>
+          <span className="saki-stream-raw">{answer}</span>
           <span className="saki-stream-cursor" />
         </div>
       );
     }
-    return <MarkdownContent content={content} />;
+    return <MarkdownContent content={answer} />;
   }
 
   const charCount = thinking ? Math.max(1, thinking.length) : 0;

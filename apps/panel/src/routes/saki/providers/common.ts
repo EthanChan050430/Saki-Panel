@@ -32,6 +32,7 @@ import { nativeThinkingChatExtras } from "../model-profile.js";
 import { extractProviderUsage, estimateModelCallTokens, mergeModelUsage, modelUsageTotal, type ModelUsage } from "../../../tokenizer.js";
 import { parseToolCallsFromText } from "./catalog.js";
 import { currentAgentTurnConversation } from "../agent-messages.js";
+import { copyText } from "../text-memory.js";
 
 export const defaultTemperatureOnlyModelKeys = new Set<string>();
 
@@ -270,7 +271,7 @@ export async function streamPromptAgentTurnWithFilteredDelta(
     if (!onThinking) return;
     const thinking = streamingThinkingText(accumulated);
     if (thinking.length > thinkingEmitted) {
-      onThinking(thinking.slice(thinkingEmitted));
+      onThinking(copyText(thinking.slice(thinkingEmitted)));
       thinkingEmitted = thinking.length;
     }
   };
@@ -282,13 +283,13 @@ export async function streamPromptAgentTurnWithFilteredDelta(
     const stopIndex = findAgentStreamStopIndex(accumulated);
     if (stopIndex !== -1) {
       stoppedStreaming = true;
-      if (stopIndex > forwardedIndex) onDelta(accumulated.slice(forwardedIndex, stopIndex));
+      if (stopIndex > forwardedIndex) onDelta(copyText(accumulated.slice(forwardedIndex, stopIndex)));
       forwardedIndex = stopIndex;
       return;
     }
     const safeEnd = accumulated.length - maxPrefixLen;
     if (safeEnd > forwardedIndex) {
-      onDelta(accumulated.slice(forwardedIndex, safeEnd));
+      onDelta(copyText(accumulated.slice(forwardedIndex, safeEnd)));
       forwardedIndex = safeEnd;
     }
   };
@@ -301,7 +302,7 @@ export async function streamPromptAgentTurnWithFilteredDelta(
     if (findAgentStreamStopIndex(rest) === -1 && findAgentStreamStopIndex(stripDsmlWrappers(rest)) === -1 && !looksLikeDsmlMarkup(rest) && !looksLikeSpecialToolToken(rest)) {
       const tail = stripDsmlWrappers(stripThinking(rest));
       if (tail && !/<(?:tool_call|tool_calls|function_calls|command|invoke|function|action|call|calls)\b/i.test(tail) && !/"?tool_calls"?\s*:/i.test(tail)) {
-        onDelta(tail);
+        onDelta(copyText(tail));
         forwardedIndex = accumulated.length;
       }
     }

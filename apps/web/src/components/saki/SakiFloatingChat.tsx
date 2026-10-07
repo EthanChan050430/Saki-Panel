@@ -223,6 +223,7 @@ import {
   sealSakiTimelineDelta,
   settleSakiTimelinePending,
   snapSakiLauncherPositionToEdge,
+  stripDsmlMarkup,
   stripHeavySakiAttachmentData,
   upsertSakiTimelineAction,
   upsertSakiTimelinePending,
@@ -3691,14 +3692,17 @@ export function SakiFloatingChat({
       }
       if (mobileActiveTab === "video") {
         setChatPulseAlert(true);
-        const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant" && m.content?.trim());
+        const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant" && stripDsmlMarkup(m.content).trim());
         if (lastAssistant && lastAssistant.content) {
-          setSakiVideoBubble(lastAssistant.content.trim());
-          if (pokeTimerRef.current) window.clearTimeout(pokeTimerRef.current);
-          pokeTimerRef.current = window.setTimeout(() => {
-            setSakiVideoBubble(null);
-            pokeTimerRef.current = null;
-          }, 15000);
+          const bubbleText = stripDsmlMarkup(lastAssistant.content).trim();
+          if (bubbleText) {
+            setSakiVideoBubble(bubbleText);
+            if (pokeTimerRef.current) window.clearTimeout(pokeTimerRef.current);
+            pokeTimerRef.current = window.setTimeout(() => {
+              setSakiVideoBubble(null);
+              pokeTimerRef.current = null;
+            }, 15000);
+          }
         }
       }
       const nextJob = followUpQueueRef.current[0];
@@ -3952,7 +3956,7 @@ export function SakiFloatingChat({
     : echoActivityMood ?? sakiPokeMood ?? effectiveWorkMood ?? (sakiSleepy ? "sleepy" : null);
 
   const activeStreamingAssistant = [...messages].reverse().find((message) => message.role === "assistant" && message.streaming);
-  const activeStreamingContent = activeStreamingAssistant?.content?.trim();
+  const activeStreamingContent = stripDsmlMarkup(activeStreamingAssistant?.content ?? "").trim();
   const activeStreamingThinking = activeStreamingAssistant?.thinking?.trim();
   const isStreamingReply = Boolean(activeStreamingAssistant && activeStreamingContent);
 
