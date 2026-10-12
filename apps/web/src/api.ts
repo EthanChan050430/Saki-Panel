@@ -5,6 +5,8 @@ import type {
   InstanceGitDraft,
   InstanceGitCommitRequest,
   InstanceGitIgnoreRequest,
+  InstanceGitChangesSummary,
+  InstanceGitFileChange,
   CurrentUser,
   DashboardOverview,
   ArchiveInstancePathsResponse,
@@ -163,7 +165,8 @@ function defaultApiBase(): string {
 }
 
 function resolveApiBase(): string {
-  const configured = import.meta.env.VITE_API_BASE_URL?.trim();
+  if (typeof window === "undefined") return "";
+  const configured = import.meta.env?.VITE_API_BASE_URL?.trim();
   if (!configured) {
     // In dev, Vite proxies /api to the panel — same-origin avoids port/CORS mismatches.
     if (import.meta.env.DEV) {
@@ -364,6 +367,7 @@ export type SakiChatStreamEvent =
       source: SakiChatResponse["source"];
       mode?: SakiChatRequest["mode"];
       agentPermissionMode?: SakiChatRequest["agentPermissionMode"];
+      terminalSandbox?: boolean;
       workspace?: SakiChatResponse["workspace"];
       skills?: SakiSkillSummary[];
       taskId?: string;
@@ -381,10 +385,14 @@ export interface SakiActiveTaskSummary {
   id: string;
   userId: string;
   instanceId: string | null;
-  status: "running" | "completed" | "failed" | "pending_approval" | "cancelled";
+  status: "running" | "completed" | "failed" | "pending_approval" | "pending_input" | "cancelled";
   startedAt: string;
   updatedAt: string;
   message: string;
+  conversationId?: string;
+  assistantMessageId?: string;
+  userMessageId?: string;
+  runVersion?: number;
   mode?: string;
   actionCount: number;
   hasRollback?: boolean;
@@ -740,6 +748,24 @@ export const api = {
   },
   draftInstanceGit(token: string, id: string, paths: string[]) {
     return requestJson<InstanceGitDraft>(`/api/instances/${id}/git/draft`, { method: "POST", body: JSON.stringify({ paths }) }, token);
+  },
+  instanceGitChangesSummary(token: string, id?: string | null) {
+    if (id) {
+      return requestJson<InstanceGitChangesSummary>(`/api/instances/${id}/git/changes-summary`, {}, token);
+    }
+    return requestJson<InstanceGitChangesSummary>("/api/saki/git/changes-summary", {}, token);
+  },
+  instanceGitRevertAll(token: string, id?: string | null) {
+    if (id) {
+      return requestJson<{ ok: boolean; canRestore: boolean; message: string }>(`/api/instances/${id}/git/revert-all`, { method: "POST", body: "{}" }, token);
+    }
+    return requestJson<{ ok: boolean; canRestore: boolean; message: string }>("/api/saki/git/revert-all", { method: "POST", body: "{}" }, token);
+  },
+  instanceGitRestoreAll(token: string, id?: string | null) {
+    if (id) {
+      return requestJson<{ ok: boolean; canRestore: boolean; message: string }>(`/api/instances/${id}/git/restore-all`, { method: "POST", body: "{}" }, token);
+    }
+    return requestJson<{ ok: boolean; canRestore: boolean; message: string }>("/api/saki/git/restore-all", { method: "POST", body: "{}" }, token);
   },
   login(input: LoginRequest) {
     return requestJson<LoginResponse>("/api/auth/login", {
@@ -1463,6 +1489,9 @@ export const api = {
       token
     );
   },
+  sakiCreateTerminal(token: string, instanceId: string) {
+    return requestJson<{ action: SakiAgentAction }>("/api/saki/terminals", { method: "POST", body: JSON.stringify({ instanceId }) }, token);
+  },
   listInstanceShells(token: string, id: string) {
     return requestJson<{
       instanceId: string;
@@ -1604,13 +1633,19 @@ export const api = {
   sakiChatStream(token: string, input: SakiChatRequest, onEvent: (event: SakiChatStreamEvent) => void, signal?: AbortSignal) {
     return requestSakiChatStream(token, input, onEvent, signal);
   },
-  sakiGetActiveTask(token: string, instanceId?: string | null) {
-    const query = instanceId ? `?instanceId=${encodeURIComponent(instanceId)}` : "";
+  sakiGetActiveTask(token: string, instanceId?: string | null, includeFinished = false) {
+    const params = new URLSearchParams();
+    if (instanceId) params.set("instanceId", instanceId);
+    if (includeFinished) params.set("includeFinished", "1");
+    const query = params.size ? `?${params}` : "";
     return requestJson<{ hasActiveTask: boolean; task?: SakiActiveTaskSummary }>(
       `/api/saki/active-task${query}`,
       {},
       token
     );
+  },
+  sakiGetTask(token: string, taskId: string) {
+    return requestJson<SakiActiveTaskSummary>(`/api/saki/tasks/${encodeURIComponent(taskId)}`, {}, token);
   },
   sakiGetActiveTasks(token: string) {
     return requestJson<{ tasks: SakiActiveTaskSummary[]; runningCount: number }>(
@@ -1688,9 +1723,10 @@ export const api = {
       detail?: string | undefined;
       instanceId?: string | null | undefined;
       messages: any[];
+      baseUpdatedAt?: string | undefined;
     }
   ) {
-    return requestJson<{ ok: boolean; id: string }>(
+    return requestJson<{ ok: boolean; id: string; updatedAt: string }>(
       `/api/saki/conversations/${encodeURIComponent(conversation.id)}`,
       {
         method: "PUT",
@@ -1932,10 +1968,10 @@ export const api = {
       });
     }
   },
-  sakiAction(token: string, id: string, decision: "approve" | "reject" | "rollback") {
+  sakiAction(token: string, id: string, decision: "approve" | "reject" | "rollback", context?: { instanceId: string | null }) {
     return requestJson<SakiActionDecisionResponse>(
       `/api/saki/actions/${id}/${decision}`,
-      { method: "POST", body: JSON.stringify({}) },
+      { method: "POST", body: JSON.stringify(context ?? {}), ...(decision === "approve" ? { headers: { Prefer: "respond-async" } } : {}) },
       token
     );
   },

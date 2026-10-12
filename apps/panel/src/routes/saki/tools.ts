@@ -2,6 +2,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { Prisma } from "@prisma/client";
 import { classifyCommandRisk, findDangerousCommandReason } from "../../security.js";
 import { sakiModelProfile } from "./model-profile.js";
+import { requiredSakiToolPermissions, sakiHostExecutionTools } from "./resource-policy.js";
+import { parseWorkspacePatch } from "./patch.js";
 import type { InstanceWithNode, JsonSchema, ParsedToolCall, SakiAgentRuntime, SakiToolSchema } from "./types.js";
 import {
   booleanArg,
@@ -9,6 +11,7 @@ import {
   nullableStringArg,
   numericArg,
   objectValue,
+  rawStringArg,
   RouteError,
   stringArg,
   stripDsmlWrappers,
@@ -36,12 +39,13 @@ function objectSchema(properties: Record<string, JsonSchema>, required: string[]
 }
 
 export const sakiToolSchemas: SakiToolSchema[] = [
+  { name: "requestExternalAccess", description: "Request explicit one-time read approval for one file outside the active workspace. Always asks even in Full access or Plan mode. Users must provide an authorized sourceInstanceId and a relative path; only super_admin can omit sourceInstanceId to request an absolute host file on the active node. Does not grant terminal or write access. A new line range needs a new approval.", parameters: objectSchema({ sourceInstanceId: { type: "string", description: "Exact authorized source instance ID; not a name." }, path: { type: "string" }, reason: { type: "string", maxLength: 500 }, startLine: { type: "integer", minimum: 1 }, lineCount: { type: "integer", minimum: 1, maximum: 2000 } }, ["path", "reason"]) },
   { name: "listInstances", description: "List managed instances.", parameters: objectSchema({ query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 100 } }) },
-  { name: "describeInstance", description: "Show one instance configuration.", parameters: objectSchema({ instanceId: instanceLookupSchema }), aliases: ["getInstance"] },
+  { name: "describeInstance", description: "Show a managed instance's status and configuration, including its start/stop commands. Use before instanceAction to confirm the target. Omit instanceId for the active instance.", parameters: objectSchema({ instanceId: instanceLookupSchema }), aliases: ["getInstance"] },
   { name: "instanceLogs", description: "Read recent instance logs.", parameters: objectSchema({ instanceId: instanceLookupSchema, lines: { type: "integer", minimum: 1, maximum: 500 } }) },
   { name: "listFiles", description: "List a directory. Use limit on large folders.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, limit: { type: "integer", minimum: 1, maximum: 1000 } }) },
-  { name: "readFile", description: "Read a line-numbered window. Always pass startLine. Max 120 lines. Locate with searchFiles, outlineFile, or readSymbol first — do not page the whole file.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, lineCount: { type: "integer", minimum: 1, maximum: 120 } }, ["path"]), aliases: ["view_file", "viewFile", "read_file", "cat"] },
-  { name: "writeFile", description: "Create a NEW file only. Do not overwrite existing files. For existing files use editLines, applyPatch, or replaceInFile.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, content: { type: "string" } }, ["path", "content"]), aliases: ["write_file", "write_to_file", "saveFile", "createFile"] },
+  { name: "readFile", description: "Read current file contents with line numbers. Defaults to startLine=1 and 200 lines; request up to 2000 lines. Large outputs include a continuation line. Use searchFiles or readSymbol to locate code when useful.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, lineCount: { type: "integer", minimum: 1, maximum: 2000 } }, ["path"]), aliases: ["view_file", "viewFile", "read_file", "cat"] },
+  { name: "writeFile", description: "Write complete UTF-8 contents without a line-count limit. Creates a missing file or updates an existing file after reading and checkpointing it (requires file.read + file.write). Repeating identical content succeeds without writing. Set overwrite=false to require a new file, or append=true for another chunk. Prefer applyPatch/replaceInFile for targeted edits.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, content: { type: "string" }, overwrite: { type: "boolean" }, append: { type: "boolean" } }, ["path", "content"]), aliases: ["write_file", "write_to_file", "saveFile", "createFile"] },
   { name: "replaceInFile", description: "Replace one unique exact string. Use editLines when you have line numbers; applyPatch for larger diffs.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, oldText: { type: "string" }, newText: { type: "string" } }, ["path", "oldText", "newText"]), aliases: ["str_replace", "replace_file_content", "replace_in_file", "strReplace", "edit_file"] },
   { name: "editLines", description: "Replace a 1-based line range. Use this when you already have line numbers from readFile, outlineFile, or searchFiles. Checkpointed.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, endLine: { type: "integer", minimum: 0 }, replacement: { type: "string" } }, ["path", "startLine", "endLine", "replacement"]), aliases: ["editFileLines", "replaceLines", "edit_lines", "patchLines"] },
   { name: "mkdir", description: "Create a directory.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema }, ["path"]) },
@@ -50,7 +54,7 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "uploadBase64", description: "Upload a base64 file.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, contentBase64: { type: "string" } }, ["path", "contentBase64"]) },
   { name: "archivePaths", description: "Zip workspace paths. Prefer this over shell zip.", parameters: objectSchema({ instanceId: instanceLookupSchema, paths: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 200, description: "Relative paths to compress." }, outputPath: { type: "string", description: "Optional output .zip path." } }, ["paths"]), aliases: ["archive", "compressPaths", "zipPaths"] },
   { name: "extractArchive", description: "Extract zip/rar/7z. Prefer this over shell unzip.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, outputPath: { type: "string", description: "Optional output directory." }, conflictPolicy: { type: "string", enum: ["overwrite", "skip"] } }, ["path"]), aliases: ["extract", "unzipArchive", "decompressArchive"] },
-  { name: "runCommand", description: "Default way to run a shell command: opens or reuses an independent terminal tab. Omit shellId to reuse the last Saki tab (or create one). Pass shellId to run in a specific tab. Do not use this for the live instance process on the main console.", parameters: objectSchema({ instanceId: instanceLookupSchema, command: { type: "string" }, shellId: { type: "string" }, cwd: { type: "string" }, workingDirectory: { type: "string" }, timeoutMs: { type: "integer", minimum: 1000, maximum: 120000 }, input: { type: "string" }, stdin: { type: "string" } }, ["command"]), aliases: ["executeCommand", "terminal", "shell", "run_command", "bash", "bashTool", "cmd", "exec"] },
+  { name: "runCommand", description: "Default way to run a shell command: opens or reuses an independent terminal tab. Omit shellId to reuse the last Saki tab (or create one). Pass shellId to run in a specific tab. Do not use this for the live instance process on the main console. Prefer instanceAction for managed instance start/stop/restart rather than port/PID lookup, process killing and terminal startup.", parameters: objectSchema({ instanceId: instanceLookupSchema, command: { type: "string" }, shellId: { type: "string" }, cwd: { type: "string" }, workingDirectory: { type: "string" }, timeoutMs: { type: "integer", minimum: 1000, maximum: 120000 }, input: { type: "string" }, stdin: { type: "string" } }, ["command"]), aliases: ["executeCommand", "terminal", "shell", "run_command", "bash", "bashTool", "cmd", "exec"] },
   { name: "sendInput", description: "Type into the live instance process on the main console (app prompts, game/server stdin). Use only when that running process needs input. For ordinary shell work use runCommand or createShell.", parameters: objectSchema({ instanceId: instanceLookupSchema, text: { type: "string" }, pressEnter: { type: "boolean" }, echo: { type: "boolean" } }, ["text"]), aliases: ["typeConsole", "consoleInput", "terminalInput", "sendStdin"] },
   { name: "sendCommand", description: "Send a line to the live instance process on the main console. Use only when that running process must receive a command. Prefer runCommand/createShell for ordinary shell work.", parameters: objectSchema({ instanceId: instanceLookupSchema, command: { type: "string" } }, ["command"]) },
   { name: "listShells", description: "List independent terminal tabs (not the main instance console).", parameters: objectSchema({ instanceId: instanceLookupSchema }) },
@@ -58,7 +62,7 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "closeShell", description: "Close an independent terminal tab by shellId. Cannot close the main instance console.", parameters: objectSchema({ instanceId: instanceLookupSchema, shellId: { type: "string" } }, ["shellId"]), aliases: ["deleteShell", "killShell"] },
   { name: "sendShellInput", description: "Raw keystrokes to an independent terminal tab. Prefer runInShell for full commands.", parameters: objectSchema({ instanceId: instanceLookupSchema, shellId: { type: "string" }, text: { type: "string" }, pressEnter: { type: "boolean" } }, ["shellId", "text"]) },
   { name: "runInShell", description: "Run a command in a specific independent terminal tab by shellId. Never the main console.", parameters: objectSchema({ instanceId: instanceLookupSchema, shellId: { type: "string" }, command: { type: "string" }, timeoutMs: { type: "integer", minimum: 1000, maximum: 120000 } }, ["shellId", "command"]) },
-  { name: "instanceAction", description: "start/stop/restart/kill an instance. stop/restart/kill need approval.", parameters: objectSchema({ instanceId: instanceLookupSchema, action: { type: "string", enum: ["start", "stop", "restart", "kill"] } }, ["action"]) },
+  { name: "instanceAction", description: "Preferred panel API for managed instance start/stop/restart/kill, using its configured commands and daemon supervision. Use start for stopped/crashed instances and restart for running instances; prefer stop before kill. Omit instanceId for the active instance. Prefer this over port/PID lookup, killing processes or launching the app in a terminal. Check instanceLogs and describeInstance afterwards. Account permissions and the current approval mode apply.", parameters: objectSchema({ instanceId: instanceLookupSchema, action: { type: "string", enum: ["start", "stop", "restart", "kill"] } }, ["action"]) },
   { name: "updateInstanceSettings", description: "Update instance settings after approval.", parameters: objectSchema({ instanceId: instanceLookupSchema, name: { type: "string" }, workingDirectory: { type: "string" }, startCommand: { type: "string" }, stopCommand: { type: ["string", "null"] }, description: { type: ["string", "null"] }, autoStart: { type: "boolean" }, restartPolicy: { type: "string", enum: ["never", "on_failure", "always", "fixed_interval"] }, restartMaxRetries: { type: "integer", minimum: 0, maximum: 99 } }), aliases: ["setInstanceSettings", "updateInstance"] },
   { name: "searchAudit", description: "Search audit logs.", parameters: objectSchema({ query: { type: "string" } }, ["query"]) },
   { name: "listTasks", description: "List scheduled tasks.", parameters: objectSchema({ instanceId: instanceLookupSchema }) },
@@ -71,7 +75,7 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "findFiles", description: "Glob file names. Skips node_modules.", parameters: objectSchema({ instanceId: instanceLookupSchema, pattern: { type: "string" }, path: { type: "string" }, maxResults: { type: "integer", minimum: 1, maximum: 1000 } }, ["pattern"]), aliases: ["glob", "globFiles", "findByName", "find_by_name", "globTool", "locateFiles"] },
   { name: "outlineFile", description: "File structure with line numbers. Use this before reading a large file, then jump with readFile or readSymbol.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema }, ["path"]), aliases: ["fileOutline", "outline", "inspectStructure"] },
   { name: "findSymbols", description: "Go-to-definition by symbol name. Returns path and line; then readSymbol or editLines.", parameters: objectSchema({ instanceId: instanceLookupSchema, query: { type: "string" }, path: { type: "string" } }, ["query"]), aliases: ["findDefinition", "findSymbol", "gotoDefinition", "symbolSearch"] },
-  { name: "searchWeb", description: "Search the public web.", parameters: objectSchema({ query: { type: "string" }, maxResults: { type: "integer", minimum: 1, maximum: 8 } }, ["query"]), aliases: ["webSearch"] },
+  { name: "searchWeb", description: "Search the public web for real source URLs and snippets. Use before answering uncertain, unfamiliar or current factual questions; browse relevant results to verify details.", parameters: objectSchema({ query: { type: "string" }, maxResults: { type: "integer", minimum: 1, maximum: 8 } }, ["query"]), aliases: ["webSearch"] },
   { name: "browse", description: "Fetch one public web page.", parameters: objectSchema({ url: { type: "string" } }, ["url"]), aliases: ["browseUrl", "readUrl", "fetchPage"] },
   { name: "crawl", description: "Crawl same-site pages. Prefer searchWeb + browse unless you need multiple pages.", parameters: objectSchema({ url: { type: "string" }, maxPages: { type: "integer", minimum: 1, maximum: 6 }, maxDepth: { type: "integer", minimum: 0, maximum: 2 } }, ["url"]), aliases: ["crawlWeb", "crawlSite"] },
   { name: "researchWeb", description: "Search and fetch top pages. Prefer searchWeb + browse for 1-2 URLs.", parameters: objectSchema({ query: { type: "string" }, maxPages: { type: "integer", minimum: 1, maximum: 4 } }, ["query"]), aliases: ["webResearch"] },
@@ -86,7 +90,7 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "askUser", description: "Pause and ask the user one concise question when a missing preference or decision matters. Offer 2-4 distinct choices when useful; the user can choose, add custom text, or skip. Do not call for routine decisions you can make yourself.", parameters: objectSchema({ question: { type: "string" }, options: { type: "array", items: { type: "string" } } }, ["question"]), aliases: ["requestUserInput", "askQuestion"] },
   { name: "spawnTask", description: "Research-only sub-agent. Inspect, do not edit. Use only for broad multi-file exploration.", parameters: objectSchema({ instanceId: instanceLookupSchema, task: { type: "string" }, maxSteps: { type: "integer", minimum: 1, maximum: 10 } }, ["task"]), aliases: ["subAgent", "delegate", "runSubTask"] },
   { name: "batchEdit", description: "Apply several editLines/replaceInFile operations in one step. Use when changing more than one region or file. Checkpointed.", parameters: objectSchema({ instanceId: instanceLookupSchema, edits: { type: "array", items: { type: "object", properties: { path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, endLine: { type: "integer", minimum: 0 }, replacement: { type: "string" }, oldText: { type: "string" }, newText: { type: "string" } }, required: ["path"] } } }, ["edits"]), aliases: ["batch_edit", "multiFileEdit", "batch_patch"] },
-  { name: "applyPatch", description: "Apply a unified diff or Codex-style patch. Best for multi-hunk or multi-file edits. Prefer editLines when you already have line numbers. writeFile is for NEW files only.", parameters: objectSchema({ instanceId: instanceLookupSchema, patch: { type: "string", description: "Unified diff (---/+++ / @@) or *** Begin Patch format." } }, ["patch"]), aliases: ["apply_patch", "applyDiff", "applyPatches", "patchFiles", "patch"] },
+  { name: "applyPatch", description: "Apply a unified diff or multi-file block patch with context-only @@ hunks. Use for targeted or multi-file edits. Re-read current contents after a conflict before retrying.", parameters: objectSchema({ instanceId: instanceLookupSchema, patch: { type: "string", description: "Unified diff (---/+++ / @@) or *** Begin Patch format." } }, ["patch"]), aliases: ["apply_patch", "applyDiff", "applyPatches", "patchFiles", "patch"] },
   { name: "statFile", description: "Metadata only: exists, size, line count, mtime. Use this instead of reading a file just to see how large it is.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema }, ["path"]), aliases: ["fileInfo", "stat_file", "file_info", "inspectPath", "stat"] },
   { name: "gitStatus", description: "Git status (branch, staged, modified, untracked).", parameters: objectSchema({ instanceId: instanceLookupSchema }), aliases: ["git_status", "gitStatusTool"] },
   { name: "gitDiff", description: "Git unified diff of uncommitted changes.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, staged: { type: "boolean" } }), aliases: ["git_diff", "gitDiffTool", "diff"] },
@@ -161,6 +165,10 @@ export function anthropicToolSchemas(): Array<{ name: string; description: strin
 const sakiToolSchemaByName = new Map(sakiToolSchemas.map((schema) => [schema.name, schema]));
 
 const sakiCoreToolNames = [
+  "requestExternalAccess",
+  "describeInstance",
+  "instanceAction",
+  "instanceLogs",
   "listFiles",
   "readFile",
   "searchFiles",
@@ -268,17 +276,43 @@ function schemasNamed(names: Iterable<string>): SakiToolSchema[] {
 }
 
 export function toolSchemasForRuntime(runtime: SakiAgentRuntime): SakiToolSchema[] {
+  const schemas = advertisedToolSchemasForRuntime(runtime).filter((schema) => {
+    const access = runtime.context.access;
+    if (!access) return true;
+    const name = normalizedAgentToolName(schema.name);
+    if (!access.isSuperAdmin && sakiHostExecutionTools.has(name)) return false;
+    if (name === "instanceaction") return (["instance.start", "instance.stop", "instance.restart", "instance.kill"] as const).some((permission) => access.permissions.includes(permission));
+    const required = requiredSakiToolPermissions(name);
+    const properties = schema.parameters.properties as Record<string, unknown> | undefined;
+    if (!access.isSuperAdmin && !runtime.context.instance && name !== "listinstances"
+      && (required.length || (properties?.instanceId && name !== "generateimage"))) return false;
+    return required.every((permission) => access.permissions.includes(permission));
+  }).map((schema) => {
+    if (!runtime.context.access) return schema;
+    const restrictSettings = schema.name === "updateInstanceSettings" && !runtime.context.access.isSuperAdmin;
+    const restrictImage = schema.name === "generateImage" && (runtime.toolProfile === "chat" || !runtime.context.instance || !runtime.context.access.permissions.includes("file.write") || !runtime.context.access.permissions.includes("file.read"));
+    if (!restrictSettings && !restrictImage) return schema;
+    const properties = { ...(schema.parameters.properties as Record<string, unknown>) };
+    if (restrictSettings) for (const key of ["workingDirectory", "startCommand", "stopCommand"]) delete properties[key];
+    if (restrictImage) { delete properties.path; delete properties.instanceId; }
+    return { ...schema, parameters: { ...schema.parameters, properties } };
+  });
+  return capAdvertisedToolSchemas(schemas, sakiModelProfile(runtime.config.provider, runtime.config.model));
+}
+
+function advertisedToolSchemasForRuntime(runtime: SakiAgentRuntime): SakiToolSchema[] {
   if (runtime.toolProfile === "chat") {
     const names = new Set<string>(["respond", "reportProgress"]);
+    if (runtime.config.searchEnabled) { names.add("searchWeb"); names.add("browse"); }
     if (runtime.config.imageGen?.enabled) names.add("generateImage");
-    return capAdvertisedToolSchemas(schemasNamed(names), sakiModelProfile(runtime.config.provider, runtime.config.model));
+    return schemasNamed(names);
   }
   if (runtime.toolProfile === "research") {
     const research = schemasNamed([...sakiResearchToolNames].map((name) => canonicalToolSchema(name)?.name ?? name)).filter((schema) => {
       if (!runtime.config.searchEnabled && (schema.name === "searchWeb" || schema.name === "browse")) return false;
       return true;
     });
-    return capAdvertisedToolSchemas(research, sakiModelProfile(runtime.config.provider, runtime.config.model));
+    return research;
   }
 
   const hint = [
@@ -344,12 +378,15 @@ export function toolSchemasForRuntime(runtime: SakiAgentRuntime): SakiToolSchema
     }
   }
 
-  return capAdvertisedToolSchemas(schemasNamed(names), sakiModelProfile(runtime.config.provider, runtime.config.model));
+  return schemasNamed(names);
 }
 
 function capAdvertisedToolSchemas(schemas: SakiToolSchema[], maxTools: ReturnType<typeof sakiModelProfile>): SakiToolSchema[] {
   if (schemas.length <= maxTools.maxAdvertisedTools) return schemas;
   const essential = new Set([
+    "describeInstance",
+    "instanceAction",
+    "instanceLogs",
     "readFile",
     "searchFiles",
     "findFiles",
@@ -365,7 +402,9 @@ function capAdvertisedToolSchemas(schemas: SakiToolSchema[], maxTools: ReturnTyp
     "createShell",
     "closeShell",
     "manageTodos",
-    "askUser"
+    "askUser",
+    "searchWeb",
+    "browse"
   ]);
   if (schemas.some((schema) => schema.name === "generateImage")) essential.add("generateImage");
   const kept: SakiToolSchema[] = [];
@@ -374,17 +413,26 @@ function capAdvertisedToolSchemas(schemas: SakiToolSchema[], maxTools: ReturnTyp
     if (essential.has(schema.name)) kept.push(schema);
     else rest.push(schema);
   }
+  if (kept.length > maxTools.maxAdvertisedTools) {
+    // Small models must still see the managed lifecycle route and web tools.
+    const priority = new Map([
+      "instanceAction", "describeInstance", "instanceLogs", "searchWeb", "browse", "generateImage",
+      "readFile", "searchFiles", "applyPatch", "writeFile", "runCommand", "diagnoseCode", "manageTodos", "askUser", "findFiles"
+    ].map((name, index) => [name, index]));
+    return kept.sort((a, b) => (priority.get(a.name) ?? priority.size) - (priority.get(b.name) ?? priority.size))
+      .slice(0, maxTools.maxAdvertisedTools);
+  }
   const room = Math.max(0, maxTools.maxAdvertisedTools - kept.length);
   return [...kept, ...rest.slice(0, room)];
 }
 
-const sakiChatToolNames = new Set(["generateimage", "generate_image", "drawimage", "createimage", "txt2img", "imagegen", "imagine", "respond", "reportprogress"]);
+const sakiChatToolNames = new Set(["generateimage", "generate_image", "drawimage", "createimage", "txt2img", "imagegen", "imagine", "respond", "reportprogress", "searchweb", "browse"]);
 
 export function assertToolProfileAllowsTool(runtime: SakiAgentRuntime, toolName: string): void {
   const lower = normalizedAgentToolName(toolName);
   if (runtime.toolProfile === "chat") {
     if (!sakiChatToolNames.has(lower) && !sakiChatToolNames.has(toolName.toLowerCase())) {
-      throw new RouteError("Chat mode can generate images and reply. It cannot edit files, run commands, or change instances.", 403);
+      throw new RouteError("Chat mode can search the web, read public pages, generate images and reply. It cannot edit files, run commands, or change instances.", 403);
     }
     return;
   }
@@ -1314,12 +1362,12 @@ export function assertSakiPermissionModeAllowsTool(
   if (permissionMode !== "plan") return;
 
   if (sakiPlanBlockedToolNames.has(lower)) {
-    throw new RouteError("Plan mode can inspect the workspace and propose a plan, but it cannot change files, settings, tasks, or instance state. Switch to Auto accept edits, Ask, or Bypass to execute changes.", 403);
+    throw new RouteError("Plan mode can inspect the workspace and propose a plan, but it cannot change files, settings, tasks, or instance state. Switch to Request approval, Approve for me, or Full access to execute changes.", 403);
   }
 
   if (lower === "runcommand" || lower === "runinshell") {
     const commandRisk = classifyCommandRisk(stringArg(args, "command"));
-    if (commandRisk.risk !== "low") {
+    if (commandRisk.risk !== "low" || !commandRisk.readOnly || rawStringArg(args, "input") || rawStringArg(args, "stdin")) {
       throw new RouteError("Plan mode only permits low-risk inspection commands. Switch permission mode before running commands that can modify state.", 403);
     }
   }
@@ -1333,10 +1381,7 @@ export function isApprovalTool(toolName: string, args: Record<string, unknown>):
   if (lower === "runcommand" || lower === "runinshell") {
     return classifyCommandRisk(stringArg(args, "command")).risk !== "low";
   }
-  if (lower === "instanceaction") {
-    const action = stringArg(args, "action").toLowerCase();
-    return action === "stop" || action === "restart" || action === "kill";
-  }
+  if (["instanceaction", "sendshellinput", "sendinput", "sendcommand", "closeshell"].includes(lower)) return true;
   return false;
 }
 
@@ -1344,21 +1389,29 @@ export function shouldRequestSakiApproval(runtime: SakiAgentRuntime, toolName: s
   const lower = normalizedAgentToolName(toolName);
   const permissionMode = effectiveSakiAgentPermissionMode(runtime.input);
 
+  if (lower === "requestexternalaccess") return true;
+  if (runtime.externalReadPerformed && ["searchweb", "browse", "crawl", "researchweb", "generateimage"].includes(lower)) return true;
+
   if (permissionMode === "bypassPermissions" || permissionMode === "plan" || isSakiReadOnlyAgentTool(lower)) {
     return false;
   }
 
-  if (permissionMode === "ask") {
-    return lower !== "respond" && lower !== "reportprogress";
+  if (lower === "runcommand" || lower === "runinshell") {
+    // stdin can carry a program or answers that change the command's behavior.
+    if (rawStringArg(args, "input") || rawStringArg(args, "stdin")) return true;
+    const commandRisk = classifyCommandRisk(stringArg(args, "command"));
+    return permissionMode === "ask" ? commandRisk.risk !== "low" : !commandRisk.autoApprove;
   }
-
-  if (permissionMode === "acceptEdits") {
-    if (sakiAutoAcceptedFileToolNames.has(lower)) return false;
-    if (lower === "runcommand" || lower === "runinshell" || lower === "sendshellinput" || lower === "sendinput" || lower === "sendcommand" || lower === "instanceaction") {
-      return true;
+  // Normal workspace edits are allowed in both modes. File tools retain their
+  // own path checks, account permissions, and checkpoints before mutation.
+  if (lower === "applypatch" && rawStringArg(args, "patch")) {
+    try {
+      if (parseWorkspacePatch(rawStringArg(args, "patch")).some((file) => file.kind === "delete")) return true;
+    } catch {
+      return true; // The executor validates malformed patches before approval or execution.
     }
   }
-
+  if (sakiAutoAcceptedFileToolNames.has(lower)) return false;
   return isApprovalTool(lower, args);
 }
 

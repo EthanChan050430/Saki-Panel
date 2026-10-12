@@ -165,7 +165,7 @@ export const terminalCommandAutocompleteWords = [
   "cd",
   "clear",
   "claude",
-  "codex",
+  "saki",
   "cls",
   "copy",
   "curl",

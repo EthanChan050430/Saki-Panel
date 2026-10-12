@@ -13,9 +13,7 @@ import type {
 import { sakiListedModelSupportsVision } from "@webops/shared";
 import { writeAuditLog } from "../../audit.js";
 import { readDaemonInstanceFile, readDaemonInstanceLogs } from "../../daemon-client.js";
-import { loadVisibleInstance, instancePermissionOverride } from "../../instance-access.js";
-import { loadCurrentUser } from "../../auth.js";
-import type { InstanceOwnerRole, PermissionCode } from "@webops/shared";
+import { assertSakiSessionAccess, sakiProjectPermissions } from "./session-access.js";
 import { buildDirectSystemPrompt, buildPrompt } from "./prompt.js";
 import { estimateModelCallTokens } from "../../tokenizer.js";
 import {
@@ -35,7 +33,7 @@ import { getCachedInstanceFile, recordInstanceFileRead } from "./state.js";
 import {
   combinedSakiContextText,
   effectiveSakiAgentPermissionMode,
-  hasPermission,
+  effectiveSakiTerminalSandbox,
   logSakiModelEvent,
   normalizeProviderId,
   normalizeSakiAgentPermissionMode,
@@ -68,39 +66,15 @@ export function toWorkspaceContext(instance: InstanceWithNode | null): SakiWorks
 export async function resolveSakiContext(
   userId: string,
   instanceId: string | null | undefined,
-  includeLogs = false
+  includeLogs = false,
+  mode: "agent" | "chat" = "agent"
 ): Promise<ResolvedSakiContext> {
-  if (!instanceId) {
-    return { instance: null, workspace: null, logs: [] };
+  const { user, instance, permissions } = await assertSakiSessionAccess(userId, instanceId ?? null, mode);
+  const context: ResolvedSakiContext = { instance, workspace: toWorkspaceContext(instance), logs: [], access: { isSuperAdmin: user.isSuperAdmin, permissions } };
+  if (includeLogs && instance && permissions.includes("instance.logs")) {
+    try { context.logs = (await readDaemonInstanceLogs(instance.node, instance.id, 180)).lines; } catch { /* optional logs */ }
   }
-
-  const instance = await loadVisibleInstance(userId, instanceId);
-  if (!instance) {
-    return { instance: null, workspace: null, logs: [] };
-  }
-
-  if (!includeLogs) {
-    return {
-      instance,
-      workspace: toWorkspaceContext(instance),
-      logs: []
-    };
-  }
-
-  try {
-    const logs = await readDaemonInstanceLogs(instance.node, instance.id, 180);
-    return {
-      instance,
-      workspace: toWorkspaceContext(instance),
-      logs: logs.lines
-    };
-  } catch {
-    return {
-      instance,
-      workspace: toWorkspaceContext(instance),
-      logs: []
-    };
-  }
+  return context;
 }
 
 function estimateChatTokens(input: SakiChatRequest, prompt: string, reply: string, config: SakiConfigResponse): number {
@@ -377,6 +351,20 @@ export async function prepareSakiChatInvocation(
     throw new Error("message is required");
   }
 
+  // Reject stale credentials, revoked assignments and foreign projects before
+  // touching project context or sending attachments to an OCR/model provider.
+  const mode = body.mode === "agent" ? "agent" : "chat";
+  const instanceId = trimString(body.instanceId) || null;
+  requireSakiModePermission(request.user.permissions, mode);
+  const authorized = await assertSakiSessionAccess(request.user.sub, instanceId, mode);
+  const permissions = sakiProjectPermissions(authorized.user, authorized.instance, request.user.permissions);
+  requireSakiModePermission(permissions, mode);
+  if (instanceId) requireUserPermission(permissions, "instance.view");
+  const context: ResolvedSakiContext = {
+    instance: authorized.instance, workspace: toWorkspaceContext(authorized.instance), logs: [],
+    access: { isSuperAdmin: authorized.user.isSuperAdmin, permissions }
+  };
+
   const requestedModel = sanitizeRequestedSakiModel(body.model);
   const config = withRequestedSakiModel(await readEffectiveSakiConfig(), {
     model: requestedModel || null,
@@ -390,22 +378,29 @@ export async function prepareSakiChatInvocation(
 
   const input: SakiChatRequest = {
     message,
+    ...Object.fromEntries(["clientRequestId", "conversationId", "userMessageId", "assistantMessageId"].flatMap((key) => {
+      const value = trimString(body[key as keyof SakiChatRequest]);
+      return value && /^[a-zA-Z0-9_-]{1,200}$/.test(value) ? [[key, value]] : [];
+    })),
     ...(trimString(body.resumeTaskId) ? { resumeTaskId: trimString(body.resumeTaskId).slice(0, 200) } : {}),
     history: Array.isArray(body.history) ? body.history : [],
-    instanceId: trimString(body.instanceId) || null,
+    instanceId,
     panelError: trimString(body.panelError) || null,
     contextTitle: trimString(body.contextTitle) || null,
     contextText: trimContextText(body.contextText) || null,
     auditSearch: trimString(body.auditSearch) || null,
-    mode: body.mode === "agent" ? "agent" : "chat",
+    mode,
     agentPermissionMode: normalizeSakiAgentPermissionMode(body.agentPermissionMode),
+    terminalSandbox: body.terminalSandbox !== false,
     selectedSkillIds: Array.isArray(body.selectedSkillIds) ? body.selectedSkillIds.map(trimString).filter(Boolean) : [],
     attachments,
     ...(requestedModel || trimString(body.provider) ? { model: config.model, provider: config.provider } : {})
   };
   requireSakiModePermission(request.user.permissions, input.mode ?? "chat");
   const auditSearchContext = input.auditSearch
-    ? await buildAuditSearchContext(input.auditSearch, request.user.permissions.includes("audit.view"))
+    ? await buildAuditSearchContext(input.auditSearch, permissions.includes("audit.view"), {
+        userId: request.user.sub, instanceId: input.instanceId ?? null, sandbox: effectiveSakiTerminalSandbox(input, config), mode: input.mode === "chat" ? "chat" : "agent"
+      })
     : "";
   const modelInput: SakiChatRequest = auditSearchContext
     ? {
@@ -414,31 +409,8 @@ export async function prepareSakiChatInvocation(
         contextText: [input.contextText, auditSearchContext].filter(Boolean).join("\n\n")
       }
     : input;
-  if (input.instanceId) {
-    requireUserPermission(request.user.permissions, "instance.view");
-  }
-  let includeInstanceLogs = Boolean(input.instanceId && hasPermission(request.user.permissions, "instance.logs"));
-  let includeInstanceFiles = request.user.permissions.includes("file.read");
-  const context = await resolveSakiContext(request.user.sub, input.instanceId, false);
-  if (context.instance) {
-    const sakiPermission: PermissionCode = input.mode === "agent" ? "saki.agent" : "saki.chat";
-    const sakiUser = await loadCurrentUser(request.user.sub);
-    if (sakiUser) {
-      const profile = {
-        userId: sakiUser.id,
-        role: (sakiUser.isSuperAdmin ? "super_admin" : sakiUser.isAdmin ? "admin" : "user") as InstanceOwnerRole,
-        roleNames: sakiUser.roleNames
-      };
-      const override = instancePermissionOverride(profile, context.instance, sakiUser.permissions);
-      if (override !== null && !override.includes(sakiPermission)) {
-        throw Object.assign(new Error("该实例的分配权限未包含使用 Saki"), { statusCode: 403 });
-      }
-      if (override !== null) {
-        includeInstanceLogs = includeInstanceLogs && override.includes("instance.logs");
-        includeInstanceFiles = includeInstanceFiles && override.includes("file.read");
-      }
-    }
-  }
+  const includeInstanceLogs = Boolean(instanceId && permissions.includes("instance.logs"));
+  const includeInstanceFiles = Boolean(instanceId && permissions.includes("file.read"));
   if (includeInstanceLogs && context.instance) {
     try {
       context.logs = (await readDaemonInstanceLogs(context.instance.node, context.instance.id, 180)).lines;

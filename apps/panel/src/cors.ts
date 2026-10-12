@@ -2,7 +2,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { panelConfig } from "./config.js";
 
 export const panelCorsMethods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"];
-const panelCorsHeaders = "authorization, content-type, x-api-key, x-user-key, x-requested-with";
+const panelCorsHeaders = "authorization, content-type, prefer, x-api-key, x-user-key, x-requested-with";
 
 function firstHeaderValue(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0]?.trim() ?? "";

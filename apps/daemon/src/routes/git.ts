@@ -13,6 +13,9 @@ import {
   initGit,
   resolveGitRoot,
   saveGitIgnore,
+  gitChangesSummary,
+  gitRevertAll,
+  gitRestoreAll,
 } from "../git-manager.js";
 export async function registerGitRoutes(app: FastifyInstance): Promise<void> {
   for (const action of [
@@ -22,9 +25,12 @@ export async function registerGitRoutes(app: FastifyInstance): Promise<void> {
     "init",
     "ignore",
     "commit",
+    "changes-summary",
+    "revert-all",
+    "restore-all",
   ] as const) {
     const read =
-      action === "status" || action === "history" || action === "diff";
+      action === "status" || action === "history" || action === "diff" || action === "changes-summary";
     app.route({
       method: read ? "GET" : "POST",
       url: `/api/instances/:id/git/${action}`,
@@ -61,6 +67,12 @@ export async function registerGitRoutes(app: FastifyInstance): Promise<void> {
                 root,
                 input as unknown as InstanceGitCommitRequest,
               );
+            case "changes-summary":
+              return await gitChangesSummary(root);
+            case "revert-all":
+              return await gitRevertAll(root);
+            case "restore-all":
+              return await gitRestoreAll(root);
           }
         } catch (error) {
           reply.code(error instanceof GitError ? error.statusCode : 400).send({

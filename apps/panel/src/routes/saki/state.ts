@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
 import type { SakiAgentAction, SakiChatRequest, SakiChatResponse } from "@webops/shared";
 import { panelPaths } from "../../config.js";
 import type {
@@ -10,14 +11,73 @@ import type {
   SakiCheckpoint,
   SakiSessionAgentMemory
 } from "./types.js";
-import { trimString } from "./types.js";
+import { RouteError, trimString } from "./types.js";
 import { copyText } from "./text-memory.js";
+import { syncSakiTaskResult } from "./conversations.js";
 
 export const pendingSakiActions = new Map<string, PendingSakiAction>();
 export const completedSakiActions = new Map<string, SakiAgentAction>();
 export const sakiCheckpoints = new Map<string, SakiCheckpoint>();
 export const sessionAgentMemories = new Map<string, SakiSessionAgentMemory>();
 const sessionMemoryTtlMs = 24 * 60 * 60 * 1000;
+const sessionsDir = path.join(panelPaths.dataDir, "saki-sessions");
+const sessionWrites = new Map<string, Promise<void>>();
+
+function sessionMemoryPath(key: string): string {
+  return path.join(sessionsDir, `${createHash("sha256").update(key).digest("hex")}.json`);
+}
+
+export async function loadSessionAgentMemoriesFromDisk(): Promise<void> {
+  await fs.mkdir(sessionsDir, { recursive: true });
+  for (const name of await fs.readdir(sessionsDir)) {
+    if (!/^[a-f0-9]{64}\.json$/.test(name)) continue;
+    const file = path.join(sessionsDir, name);
+    try {
+      const memory = JSON.parse(await fs.readFile(file, "utf8")) as SakiSessionAgentMemory;
+      if (!memory.userId || !memory.resumeState?.input || !Array.isArray(memory.resumeState.actions)
+        || !Array.isArray(memory.resumeState.scratchpadEntries) || !Array.isArray(memory.workingFiles)
+        || !Number.isFinite(memory.updatedAt) || Date.now() - memory.updatedAt > sessionMemoryTtlMs) {
+        await fs.rm(file, { force: true });
+        continue;
+      }
+      const key = sessionWorkingFilesKey(memory.userId, memory.instanceId);
+      if ((sessionAgentMemories.get(key)?.updatedAt ?? 0) < memory.updatedAt) sessionAgentMemories.set(key, memory);
+    } catch {
+      // A damaged session must not prevent other sessions or the panel loading.
+    }
+  }
+  const newest = [...sessionAgentMemories.entries()].sort((a, b) => b[1].updatedAt - a[1].updatedAt);
+  for (const [key] of newest.slice(200)) sessionAgentMemories.delete(key);
+}
+
+export const sessionAgentMemoriesReady = loadSessionAgentMemoriesFromDisk().catch((error: unknown) => {
+  console.warn("[Saki] Could not load saved sessions:", error instanceof Error ? error.message : String(error));
+});
+
+export async function persistSessionAgentMemory(memory: SakiSessionAgentMemory): Promise<void> {
+  await sessionAgentMemoriesReady;
+  saveSessionAgentMemory(memory);
+  const key = sessionWorkingFilesKey(memory.userId, memory.instanceId);
+  const destination = sessionMemoryPath(key);
+  // Capture now: later turns can mutate their arrays while this write waits.
+  const serialized = JSON.stringify({ ...memory, updatedAt: Date.now() });
+  const operation = (sessionWrites.get(key) ?? Promise.resolve()).catch(() => {}).then(async () => {
+    await fs.mkdir(sessionsDir, { recursive: true });
+    const temporary = `${destination}.${randomUUID()}.tmp`;
+    try {
+      await fs.writeFile(temporary, serialized, { encoding: "utf8", mode: 0o600 });
+      await fs.rename(temporary, destination);
+    } finally {
+      await fs.rm(temporary, { force: true });
+    }
+  });
+  sessionWrites.set(key, operation);
+  try {
+    await operation;
+  } finally {
+    if (sessionWrites.get(key) === operation) sessionWrites.delete(key);
+  }
+}
 
 const checkpointsDir = path.join(panelPaths.dataDir, "saki-checkpoints");
 const pendingActionsDir = path.join(panelPaths.dataDir, "saki-pending-actions");
@@ -253,6 +313,11 @@ export function getSessionAgentMemory(userId: string, instanceId: string | null)
 export function clearSessionAgentMemory(userId: string, instanceId: string | null): void {
   const key = sessionWorkingFilesKey(userId, instanceId);
   sessionAgentMemories.delete(key);
+  const operation = (sessionWrites.get(key) ?? Promise.resolve()).catch(() => {}).then(() => fs.rm(sessionMemoryPath(key), { force: true }));
+  sessionWrites.set(key, operation);
+  void operation.catch(() => {}).finally(() => {
+    if (sessionWrites.get(key) === operation) sessionWrites.delete(key);
+  });
 }
 
 export function extractTodosFromScratchpad(entries: string[]): string[] {
@@ -273,9 +338,20 @@ export function extractTodosFromScratchpad(entries: string[]): string[] {
   return todos;
 }
 
+export function extractConfirmedTodos(actions: SakiAgentAction[], scratchpad: string[]): string[] {
+  const latest = [...actions].reverse().find((action) => action.ok && /^(?:managetodos|settodos|todos|updatetodos)$/i.test(action.tool));
+  if (latest?.todos) return latest.todos.map((todo) => `- [${todo.completed ? "x" : todo.inProgress ? "-" : " "}] ${todo.text}`);
+  if (latest && typeof latest.args.todos === "string") return latest.args.todos.split(/\r?\n/).filter((line) => /^- \[[ xX-]\]/.test(line));
+  return extractTodosFromScratchpad(scratchpad);
+}
+
 export const activeSakiTasks = new Map<string, SakiActiveTask>();
 export const activeSakiTasksByContext = new Map<string, string>(); // `${userId}:${instanceId}` -> taskId
 const activeTaskTtlMs = 60 * 60 * 1000; // Keep completed task record for 1 hour
+
+export function isSakiTaskUnfinished(task: SakiActiveTask): boolean {
+  return task.status === "running" || task.status === "pending_approval" || task.status === "pending_input";
+}
 
 function removeActiveSakiTask(taskId: string): void {
   activeSakiTasks.delete(taskId);
@@ -288,7 +364,7 @@ export function pruneExpiredSakiTasks(now = Date.now()): number {
   let removed = 0;
   for (const [taskId, task] of activeSakiTasks) {
     // An approval may still resume the task; never evict live work.
-    if (task.status === "running" || task.status === "pending_approval") continue;
+    if (isSakiTaskUnfinished(task) || task.execution || task.decisionInFlight || task.pendingHistorySync) continue;
     const reference = Date.parse(task.updatedAt || task.startedAt);
     if (Number.isFinite(reference) && now - reference <= activeTaskTtlMs) continue;
     removeActiveSakiTask(taskId);
@@ -298,9 +374,25 @@ export function pruneExpiredSakiTasks(now = Date.now()): number {
 }
 
 export function startSakiTaskMaintenance(): () => void {
-  const timer = setInterval(() => pruneExpiredSakiTasks(), 60 * 1000);
+  let flushing = false;
+  const timer = setInterval(() => {
+    pruneExpiredSakiTasks();
+    if (flushing) return;
+    flushing = true;
+    void retrySakiTaskHistory().catch((error) => {
+      console.warn("[Saki] History retry failed:", error instanceof Error ? error.message : String(error));
+    }).finally(() => { flushing = false; pruneExpiredSakiTasks(); });
+  }, 60 * 1000);
   timer.unref();
   return () => clearInterval(timer);
+}
+
+export async function retrySakiTaskHistory(): Promise<void> {
+  for (const task of activeSakiTasks.values()) {
+    if (task.pendingHistorySync && task.status !== "running" && !task.execution && !task.decisionInFlight) {
+      await syncSakiTaskResult(task, task.pendingHistorySync);
+    }
+  }
 }
 
 export function createActiveSakiTask(
@@ -316,6 +408,8 @@ export function createActiveSakiTask(
     instanceId,
     input,
     status: "running",
+    acceptingSteers: true,
+    runVersion: 1,
     startedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     eventsBuffer: [],
@@ -328,30 +422,18 @@ export function createActiveSakiTask(
 }
 
 export function getActiveSakiTask(userId: string, instanceId?: string | null): SakiActiveTask | null {
-  if (instanceId) {
+  if (instanceId !== undefined) {
     const contextKey = sessionWorkingFilesKey(userId, instanceId);
     const taskId = activeSakiTasksByContext.get(contextKey);
     if (taskId) {
       const task = activeSakiTasks.get(taskId);
-      if (task) {
-        const startedAt = Date.parse(task.startedAt);
-        if (!Number.isFinite(startedAt) || Date.now() - startedAt <= activeTaskTtlMs) {
-          if (task.status === "running") {
-            return task;
-          }
-        }
-      }
+      if (task?.userId === userId && task.instanceId === instanceId && task.status === "running") return task;
     }
   }
 
   // Find any active running task for this user:
   for (const task of activeSakiTasks.values()) {
-    if (task.userId === userId && task.status === "running") {
-      const startedAt = Date.parse(task.startedAt);
-      if (!Number.isFinite(startedAt) || Date.now() - startedAt <= activeTaskTtlMs) {
-        return task;
-      }
-    }
+    if (task.userId === userId && task.status === "running" && (instanceId === undefined || task.instanceId === instanceId)) return task;
   }
 
   return null;
@@ -359,6 +441,37 @@ export function getActiveSakiTask(userId: string, instanceId?: string | null): S
 
 export function getActiveSakiTaskById(taskId: string): SakiActiveTask | null {
   return activeSakiTasks.get(taskId) ?? null;
+}
+
+export function findSakiTaskByRequest(userId: string, clientRequestId?: string): SakiActiveTask | null {
+  if (!clientRequestId) return null;
+  return [...activeSakiTasks.values()].find((task) => task.userId === userId && task.input.clientRequestId === clientRequestId) ?? null;
+}
+
+export function assertSakiTaskContextAvailable(userId: string, instanceId: string | null, exceptTaskId?: string): void {
+  const conflict = [...activeSakiTasks.values()].find((task) => task.userId === userId && task.instanceId === instanceId && task.id !== exceptTaskId && (isSakiTaskUnfinished(task) || task.execution || task.decisionInFlight));
+  if (conflict) throw new RouteError("此工作区已有运行中或等待处理的任务，请先连接、处理或停止该任务。", 409);
+}
+
+export function getLatestSakiTask(userId: string, instanceId: string | null): SakiActiveTask | null {
+  return [...activeSakiTasks.values()].filter((task) => task.userId === userId && task.instanceId === instanceId)
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0] ?? null;
+}
+
+export function restartActiveSakiTask(taskId: string, abortController: AbortController): boolean {
+  const task = activeSakiTasks.get(taskId);
+  if (!task || task.status === "cancelled" || task.status === "running") return false;
+  assertSakiTaskContextAvailable(task.userId, task.instanceId, task.id);
+  task.status = "running";
+  task.runVersion = (task.runVersion ?? 1) + 1;
+  task.acceptingSteers = true;
+  task.abortController = abortController;
+  task.updatedAt = new Date().toISOString();
+  task.eventsBuffer = [];
+  delete task.pendingHistorySync;
+  delete task.response;
+  delete task.error;
+  return true;
 }
 
 export function emitActiveSakiTaskEvent(
@@ -414,8 +527,19 @@ export function finishActiveSakiTask(
   if (!task) return;
   // A cancelled task is terminal: do not let the still-unwinding agent run
   // overwrite it back to completed/failed or emit a second terminal event.
-  if (task.status === "cancelled") return;
+  if (task.status === "cancelled") {
+    if (response) task.response = response;
+    return;
+  }
+  if (status === "completed" && response) {
+    const latestActions = new Map((response.actions ?? []).map((action) => [action.id, action]));
+    const waiting = [...latestActions.values()].find((action) => action.status === "pending_input" || action.status === "pending_approval");
+    status = response.retry || response.source === "local-fallback" ? "failed"
+      : waiting?.status === "pending_input" ? "pending_input"
+      : waiting?.status === "pending_approval" ? "pending_approval" : "completed";
+  }
   task.status = status;
+  task.acceptingSteers = false;
   task.updatedAt = new Date().toISOString();
   if (response) task.response = response;
   if (error) task.error = error;
@@ -427,17 +551,20 @@ export function finishActiveSakiTask(
 
 export function cancelActiveSakiTask(taskId: string): boolean {
   const task = activeSakiTasks.get(taskId);
-  if (!task || task.status !== "running") return false;
+  if (!task || !isSakiTaskUnfinished(task)) return false;
   task.status = "cancelled";
   task.updatedAt = new Date().toISOString();
   task.abortController?.abort();
+  for (const [id, pending] of pendingSakiActions) {
+    if (pending.resume?.taskId === taskId) void removePendingSakiAction(id);
+  }
   emitActiveSakiTaskEvent(taskId, "error", { message: "Task was cancelled by user." });
   return true;
 }
 
 export function enqueueSakiTaskSteer(taskId: string, message: string): boolean {
   const task = activeSakiTasks.get(taskId);
-  if (!task || task.status !== "running") return false;
+  if (!task || task.status !== "running" || task.acceptingSteers === false) return false;
   const text = message.trim();
   if (!text) return false;
   task.pendingSteers = [...(task.pendingSteers ?? []), text.slice(0, 8000)];
@@ -449,6 +576,11 @@ export function enqueueSakiTaskSteer(taskId: string, message: string): boolean {
     status: "running"
   });
   return true;
+}
+
+export function sealSakiTaskSteers(taskId: string): void {
+  const task = activeSakiTasks.get(taskId);
+  if (task) task.acceptingSteers = false;
 }
 
 export function takeSakiTaskSteers(taskId: string): string[] {
@@ -493,7 +625,7 @@ export function cancelAllRunningSakiTasks(userId: string): number {
 export function clearFinishedSakiTasks(userId: string): number {
   let cleared = 0;
   for (const [taskId, task] of [...activeSakiTasks.entries()]) {
-    if (task.userId === userId && task.status !== "running") {
+    if (task.userId === userId && !isSakiTaskUnfinished(task) && !task.execution && !task.decisionInFlight && !task.pendingHistorySync) {
       removeActiveSakiTask(taskId);
       cleared += 1;
     }
@@ -504,9 +636,9 @@ export function clearFinishedSakiTasks(userId: string): number {
 export function deleteSakiTask(taskId: string, userId: string): boolean {
   const task = activeSakiTasks.get(taskId);
   if (!task || task.userId !== userId) return false;
-  if (task.status === "running") {
-    cancelActiveSakiTask(taskId);
-  }
+  if (isSakiTaskUnfinished(task)) cancelActiveSakiTask(taskId);
+  if (task.execution || task.decisionInFlight) throw new RouteError("任务正在停止，执行结束后可以删除。", 409);
+  if (task.pendingHistorySync) throw new RouteError("任务结果正在同步，保存完成后可以删除。", 409);
   removeActiveSakiTask(taskId);
   return true;
 }
@@ -545,6 +677,10 @@ export function toSakiActiveTaskSummary(task: SakiActiveTask): SakiActiveTaskSum
     startedAt: task.startedAt,
     updatedAt: task.updatedAt,
     message: task.input.message,
+    ...(task.input.conversationId ? { conversationId: task.input.conversationId } : {}),
+    ...(task.input.assistantMessageId ? { assistantMessageId: task.input.assistantMessageId } : {}),
+    ...(task.input.userMessageId ? { userMessageId: task.input.userMessageId } : {}),
+    runVersion: task.runVersion ?? 1,
     ...(task.input.mode ? { mode: task.input.mode } : {}),
     actionCount,
     hasRollback,
@@ -566,6 +702,7 @@ export function listSakiActiveTasks(userId: string, limit = 20): SakiActiveTask[
   const now = Date.now();
   const tasks = [...activeSakiTasks.values()].filter((task) => {
     if (task.userId !== userId) return false;
+    if (isSakiTaskUnfinished(task)) return true;
     const reference = Date.parse(task.updatedAt || task.startedAt);
     return Number.isFinite(reference) && now - reference <= activeTaskTtlMs;
   });
@@ -578,6 +715,4 @@ export function listSakiActiveTasks(userId: string, limit = 20): SakiActiveTask[
   return tasks.slice(0, Math.max(1, Math.min(limit, 50)));
 }
 
-void loadCheckpointsFromDisk();
-void loadPendingSakiActionsFromDisk();
-void loadCompletedSakiActionsFromDisk();
+export const sakiActionsReady = Promise.all([loadCheckpointsFromDisk(), loadPendingSakiActionsFromDisk(), loadCompletedSakiActionsFromDisk()]);

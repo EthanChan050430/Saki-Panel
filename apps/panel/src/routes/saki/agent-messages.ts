@@ -27,12 +27,12 @@ export interface SakiAgentTurnConversation {
   messages: SakiAgentTurnMessage[];
 }
 
-export function closeInterruptedToolCalls(messages: SakiAgentTurnMessage[]): SakiAgentTurnMessage[] {
+export function closeInterruptedToolCalls(messages: SakiAgentTurnMessage[], interruptedContent = "Execution interrupted before a result was recorded. This call is unconfirmed; inspect the target before retrying a mutation."): SakiAgentTurnMessage[] {
   const result: SakiAgentTurnMessage[] = [];
   let pending: ParsedToolCall[] = [];
   const close = () => {
     for (const call of pending) result.push({ role: "tool", toolCallId: ensureToolCallId(call), name: call.name,
-      content: "Execution interrupted before a result was recorded. This call is unconfirmed; inspect the target before retrying a mutation." });
+      content: interruptedContent });
     pending = [];
   };
   for (const message of messages) {
@@ -335,7 +335,7 @@ export function compactAgentTurnMessages(messages: SakiAgentTurnMessage[], maxCh
   const compacted = messages.map((message, index) => {
     if (message.role !== "tool" || message.content.length < 800) return message;
     const fromEnd = messages.length - index;
-    const limit = fromEnd <= 6 ? 2500 : 500;
+    const limit = fromEnd <= 2 ? 28000 : fromEnd <= 6 ? 2500 : 500;
     if (message.content.length <= limit) return message;
     return {
       ...message,
@@ -353,7 +353,13 @@ export function compactAgentTurnMessages(messages: SakiAgentTurnMessage[], maxCh
     else groups.at(-1)!.push(message);
   }
   const summaries: string[] = [];
-  const latestTodos = [...messages].reverse().find((message) => message.role === "tool" && message.name?.toLowerCase() === "managetodos")?.content;
+  const latestTodos = [...messages].reverse().map((message) => {
+    if (message.role === "tool" && message.name?.toLowerCase() === "managetodos") return message.content;
+    if (message.content.startsWith("[Compacted execution history")) {
+      return message.content.match(/Current checklist:\n([\s\S]*?)(?=\n(?:Assistant:|Result |User note:)|$)/)?.[1];
+    }
+    return undefined;
+  }).find(Boolean);
   const memoryBudget = Math.max(400, Math.min(8000, maxChars - totalChars([first]) - 300));
   const todoBudget = latestTodos ? Math.min(5000, Math.floor(memoryBudget / 2)) : 0;
   const summary = (): SakiAgentTurnMessage => ({ role: "user", content: `[Compacted execution history — retain completed work; continue the unfinished step]\n${latestTodos ? `Current checklist:\n${latestTodos.slice(0, todoBudget)}\n` : ""}${summaries.slice(-20).join("\n").slice(-(memoryBudget - todoBudget))}` });

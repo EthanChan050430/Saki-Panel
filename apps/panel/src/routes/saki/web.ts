@@ -2,6 +2,7 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import {
   BrowseHttpError,
+  currentAgentAbortSignal,
   linkAgentAbortSignal,
   RequestTimeoutError,
   htmlDecode,
@@ -353,7 +354,9 @@ export function parseWebSearchResults(html: string, maxResults: number, rss = fa
     if (!/(?:^|\s)(?:result__a|result-link)(?:\s|$)/.test(className)) continue;
     const href = attrs.match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1];
     if (!href) continue;
-    const block = html.slice(regex.lastIndex, regex.lastIndex + 2500);
+    const following = html.slice(regex.lastIndex, regex.lastIndex + 2500);
+    const nextResult = following.search(/<a\b[^>]*\bclass\s*=\s*["'][^"']*\b(?:result__a|result-link)\b/i);
+    const block = nextResult >= 0 ? following.slice(0, nextResult) : following;
     const snippetMatch = block.match(/class=["'][^"']*(?:result__snippet|result-snippet)[^"']*["'][^>]*>([\s\S]*?)<\/(?:a|div|span|td)>/i);
     add(decodeDuckDuckGoHref(href), match[2] ?? "", snippetMatch?.[1] ?? "");
   }
@@ -386,6 +389,7 @@ async function webSearchResults(query: string, maxResultsInput?: string): Promis
       if (webSearchCache.size > 100) webSearchCache.delete(webSearchCache.keys().next().value!);
       return results;
     } catch (error) {
+      if (currentAgentAbortSignal()?.aborted) throw error;
       failures.push(`${new URL(source.url).hostname}: ${userFacingError(error)}`);
     }
   }

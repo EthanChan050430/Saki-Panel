@@ -61,7 +61,8 @@ export function SakiChatImage({
   onPreview?: (attachment: SakiInputAttachment) => void;
 }) {
   const imageId = attachment.generatedImageId || (attachment.id && !attachment.dataUrl ? attachment.id : "");
-  const [src, setSrc] = useState(attachment.dataUrl || (imageId ? generatedImageSrcCache.get(imageId) : "") || "");
+  const cacheKey = `${token}:${imageId}`;
+  const [src, setSrc] = useState(attachment.dataUrl || (imageId && token ? generatedImageSrcCache.get(cacheKey) : "") || "");
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(!src && Boolean(imageId && token));
 
@@ -73,11 +74,12 @@ export function SakiChatImage({
       return;
     }
     if (!imageId || !token) {
+      setSrc("");
       setLoading(false);
-      if (!src) setFailed(true);
+      setFailed(true);
       return;
     }
-    const cached = generatedImageSrcCache.get(imageId);
+    const cached = generatedImageSrcCache.get(cacheKey);
     if (cached) {
       setSrc(cached);
       setFailed(false);
@@ -91,7 +93,7 @@ export function SakiChatImage({
       .then((blob) => {
         if (cancelled) return;
         const objectUrl = URL.createObjectURL(blob);
-        generatedImageSrcCache.set(imageId, objectUrl);
+        generatedImageSrcCache.set(cacheKey, objectUrl);
         setSrc(objectUrl);
         setFailed(false);
         setLoading(false);
@@ -104,7 +106,7 @@ export function SakiChatImage({
     return () => {
       cancelled = true;
     };
-  }, [attachment.dataUrl, imageId, token]);
+  }, [attachment.dataUrl, imageId, token, cacheKey]);
 
   const previewAttachment = useMemo(
     () => (src ? { ...attachment, dataUrl: src, kind: "image" as const } : attachment),
@@ -147,7 +149,7 @@ export function SakiChatImage({
       tabIndex={onPreview ? 0 : undefined}
       title={onPreview ? "点击查看大图" : attachment.name}
     >
-      <img src={src} alt={attachment.name || "generated"} draggable={false} />
+      <img src={src} alt={attachment.name || "generated"} draggable={false} onError={() => setFailed(true)} />
       {attachment.name ? <figcaption>{attachment.name}</figcaption> : null}
     </figure>
   );

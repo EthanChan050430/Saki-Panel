@@ -2,17 +2,11 @@ import type { Prisma } from "@prisma/client";
 import type { InstanceAssignedUser, InstanceAssignee, InstanceOwnerRole, PermissionCode } from "@webops/shared";
 import { noRolePermissionRoleName, isInstanceAssignablePermission } from "@webops/shared";
 import { prisma } from "./db.js";
+import { panelConfig } from "./config.js";
 
-const adminRoleNames = new Set(["admin", "administrator", "operator"]);
-const adminPermissionHints = new Set<PermissionCode>([
-  "instance.update",
-  "instance.delete",
-  "node.create",
-  "node.update",
-  "user.view",
-  "user.delete",
-  "role.update"
-]);
+// Administrative authority must be explicit. Functional permissions (including
+// instance.update) and an operator role must never imply cross-user access.
+const adminRoleNames = new Set(["admin", "administrator"]);
 
 export const instanceUserInclude = {
   roles: {
@@ -66,25 +60,12 @@ export function roleNamesFromUser(user: { roles: Array<{ role: { name: string } 
     .sort();
 }
 
-function permissionCodesFromUser(user: {
-  roles: Array<{ role: { permissions?: Array<{ permission: { code: string } }> } }>;
-}): PermissionCode[] {
-  const permissions = new Set<PermissionCode>();
-  for (const userRole of user.roles) {
-    for (const rolePermission of userRole.role.permissions ?? []) {
-      permissions.add(rolePermission.permission.code as PermissionCode);
-    }
-  }
-  return [...permissions].sort();
-}
-
 export function classifyInstanceUser(user: {
   roles: Array<{ role: { name: string; permissions?: Array<{ permission: { code: string } }> } }>;
 }): InstanceOwnerRole {
   const roleNames = roleNamesFromUser(user);
   if (roleNames.includes("super_admin")) return "super_admin";
   if (roleNames.some((name) => adminRoleNames.has(name))) return "admin";
-  if (permissionCodesFromUser(user).some((permission) => adminPermissionHints.has(permission))) return "admin";
   return "user";
 }
 
@@ -148,11 +129,12 @@ function instanceAccessUserIds(instance: InstanceWithAccess): { createdById: str
 }
 
 export async function loadInstanceAccessProfile(userId: string): Promise<InstanceAccessProfile | null> {
+  if (panelConfig.disableAuth) return { userId, role: "super_admin", roleNames: ["auth-disabled"] };
   const user = await prisma.user.findUnique({
     where: { id: userId },
     include: instanceUserInclude
   });
-  if (!user) return null;
+  if (!user || user.status !== "ACTIVE") return null;
   return {
     userId: user.id,
     role: classifyInstanceUser(user),
@@ -168,9 +150,7 @@ export function canAccessInstance(profile: InstanceAccessProfile, instance: Inst
   }
 
   if (profile.role === "super_admin") {
-    const creatorRole = instance.createdBy ? classifyInstanceUser(instance.createdBy) : null;
-    const hasAdminAssignee = assignees.some((user) => classifyInstanceUser(user) === "admin");
-    return creatorRole === "super_admin" || creatorRole === "admin" || hasAdminAssignee;
+    return true;
   }
 
   if (profile.role === "admin") {
@@ -207,6 +187,7 @@ export function instancePermissionOverride(
   instance: InstanceWithAccess,
   userPermissions: readonly PermissionCode[]
 ): PermissionCode[] | null {
+  if (!canAccessInstance(profile, instance)) return [];
   if (profile.role === "super_admin") return null;
   if (instanceAccessUserIds(instance).createdById === profile.userId) return null;
   const override = assignmentPermissionsFor(instance, profile.userId);

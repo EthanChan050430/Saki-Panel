@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { ConversationSyncQueue } from "./conversation-sync.js";
+import { prepareSakiTaskReplay, taskAssistantMessageId } from "./task-messages.js";
 import {
   Activity,
   AlertTriangle,
@@ -247,9 +248,10 @@ import { ChatLauncher } from "./chat/ChatLauncher.js";
 import { SakiVideoPane } from "./chat/SakiVideoPane.js";
 import { SakiHistoryDrawer } from "./chat/SakiHistoryDrawer.js";
 import { SakiMessagesList } from "./chat/SakiMessagesList.js";
-import { SakiRetryDialog, SakiTodoCard } from "./chat/SakiAgentWidgets.js";
+import { SakiTodoCard } from "./chat/SakiAgentWidgets.js";
 import { mergeSakiMessageAttachments } from "./chat/SakiChatImages.js";
 import { SakiComposer } from "./chat/SakiComposer.js";
+import { SakiChangedFilesPill, useCodeChanges, filterGitChangesForSession } from "./chat/SakiCodeChanges.js";
 import { SakiChatDropdowns } from "./chat/SakiChatDropdowns.js";
 import { SakiVoiceEcho } from "./sakiVoice.js";
 import {
@@ -329,6 +331,7 @@ function getPanelContextForView(view: ViewMode, t: (key: any) => string): SakiPa
 
 export function SakiFloatingChat({
   token,
+  userId,
   instance,
   seed,
   panelContext,
@@ -361,6 +364,7 @@ export function SakiFloatingChat({
   onNavigateView
 }: {
   token: string;
+  userId: string;
   instance: ManagedInstance | null;
   seed: SakiPromptSeed | null;
   panelContext: SakiPanelContext;
@@ -439,12 +443,28 @@ export function SakiFloatingChat({
   const [draft, setDraft] = useState("");
   const [mode, setMode] = useState<SakiChatMode>(() => coerceSakiMode("agent", canUseChat, canUseAgent));
   const [permissionMode, setPermissionMode] = useState<SakiAgentPermissionMode>(defaultSakiAgentPermissionMode);
+  const [terminalSandbox, setTerminalSandbox] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("saki:terminal_sandbox") !== "false";
+    } catch {
+      return true;
+    }
+  });
+
+  const handleToggleTerminalSandbox = useCallback((enabled: boolean) => {
+    setTerminalSandbox(enabled);
+    try {
+      localStorage.setItem("saki:terminal_sandbox", enabled ? "true" : "false");
+    } catch {}
+  }, []);
   const [panelError, setPanelError] = useState<string | null>(null);
   const [contextTitle, setContextTitle] = useState<string | null>(null);
   const [contextText, setContextText] = useState<string | null>(null);
   const [messages, setMessages] = useState<LocalSakiMessage[]>([
     createSakiWelcomeMessage(getSakiWelcomeMessageText(instance, panelContext.label))
   ]);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const [skills, setSkills] = useState<SakiSkillSummary[]>([]);
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [reachable, setReachable] = useState<boolean | null>(null);
@@ -492,17 +512,25 @@ export function SakiFloatingChat({
       }
     };
   }, [onLauncherDraggingChange]);
-  const [storedConversations, setStoredConversations] = useState<StoredSakiConversation[]>(() => readSakiConversations());
+  const [storedConversations, setStoredConversations] = useState<StoredSakiConversation[]>(() => readSakiConversations(userId));
+  const storedConversationsRef = useRef(storedConversations);
+  storedConversationsRef.current = storedConversations;
+  const knownCloudIdsRef = useRef(new Set<string>());
+  const cloudQueue = useMemo(() => new ConversationSyncQueue<StoredSakiConversation>(
+    (conversation, baseUpdatedAt) => api.sakiSaveConversation(token, { ...conversation, baseUpdatedAt }),
+    (_id, error) => {
+      if (error instanceof ApiError && error.status === 409) window.dispatchEvent(new CustomEvent("saki:cloud_refresh"));
+    }
+  ), [token]);
   const [activeConversationId, setActiveConversationId] = useState(() => newClientId());
   const activeConversationIdRef = useRef(activeConversationId);
   activeConversationIdRef.current = activeConversationId;
-  const persistCloudTimerRef = useRef<number | null>(null);
+  const actionObserversRef = useRef(new Set<() => void>());
   const [historyOpen, setHistoryOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const [dismissedRetryId, setDismissedRetryId] = useState<string | null>(null);
-  const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
-  const retryMessage = !loading && latestAssistant?.retry && latestAssistant.id !== dismissedRetryId ? latestAssistant : null;
+  const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant" && !message.rollbackJournal);
   const latestTodo = [...messages].reverse().flatMap((message) => [...(message.actions ?? [])].reverse())
     .find((action) => action.ok && action.tool.toLowerCase() === "managetodos" && action.todos?.length);
   const [copiedUserMessageId, setCopiedUserMessageId] = useState<string | null>(null);
@@ -1092,73 +1120,45 @@ export function SakiFloatingChat({
   }, [messages, open, messagesExpanded, fullscreen]);
 
   const reconnectSeqRef = useRef(0);
+  const taskSnapshotRef = useRef("");
+  const loadingRef = useRef(loading);
+  loadingRef.current = loading;
 
   // Reconnects to the running task stream for the current context. Runs on
   // mount/context change, and is also triggered by an empty-message seed
   // (Agent monitor bell jump) so revisiting the same instance still resumes.
-  async function reconnectActiveTask() {
-    if (!token || loading) return;
+  async function reconnectActiveTask(explicitTaskId?: string, force = false) {
+    if (!token || (loadingRef.current && !explicitTaskId)) return;
+    if (sakiStreamAbortRef.current && !sakiStreamAbortRef.current.signal.aborted) return;
     userStoppedRef.current = false;
     const seq = ++reconnectSeqRef.current;
     const checkActiveTask = async () => {
       try {
-        const result = await api.sakiGetActiveTask(token, activeInstance?.id);
+        const result = explicitTaskId ? { hasActiveTask: true, task: await api.sakiGetTask(token, explicitTaskId) } : await api.sakiGetActiveTask(token, activeInstance?.id, true);
         if (seq !== reconnectSeqRef.current) return;
-        if (!result.hasActiveTask || !result.task || result.task.status !== "running") {
+        if (!result.hasActiveTask || !result.task || result.task.status === "cancelled") {
           activeTaskIdRef.current = null;
           setSakiActivityMood((prev) => (isSakiWorkMood(prev) ? null : prev));
           settleInterruptedSakiMessage();
           return;
         }
         const task = result.task;
-        if (task.status === "running") {
+        const snapshotKey = `${task.id}:${task.runVersion ?? 1}:${task.status}`;
+        if (!explicitTaskId && !force && snapshotKey === taskSnapshotRef.current) return;
+        if (!explicitTaskId && !force && task.conversationId && task.conversationId !== activeConversationIdRef.current && hasPersistableSakiSpeech(messagesRef.current)) return;
+        taskSnapshotRef.current = snapshotKey;
+        if (task.status === "running" || task.response) {
+          const switchingConversation = Boolean(task.conversationId && task.conversationId !== activeConversationIdRef.current);
+          if (task.conversationId && task.conversationId !== activeConversationIdRef.current) {
+            activeConversationIdRef.current = task.conversationId;
+            setActiveConversationId(task.conversationId);
+          }
           activeTaskIdRef.current = task.id;
 
-          let assistantId = "";
-          setMessages((current) => {
-            const lastMsg = current.at(-1);
-            if (lastMsg && lastMsg.role === "assistant") {
-              assistantId = lastMsg.id;
-              // The persisted copy may hold partial streamed content from before the
-              // refresh; the replayed event buffer is the source of truth, so reset
-              // all transient stream state before applying replayed events.
-              return current.map((msg) =>
-                msg.id === assistantId
-                  ? {
-                      ...msg,
-                      content: "",
-                      thinking: undefined,
-                      timeline: [],
-                      actions: [],
-                      workflow: [],
-                      streaming: true
-                    }
-                  : msg
-              );
-            }
-            assistantId = newClientId();
-            const hasMatchingUser = current.some(
-              (msg) => msg.role === "user" && msg.content === task.message
-            );
-            const userMessage: LocalSakiMessage = {
-              id: newClientId(),
-              role: "user",
-              content: task.message,
-              createdAt: task.startedAt
-            };
-            const assistantMessage: LocalSakiMessage = {
-              id: assistantId,
-              role: "assistant",
-              content: "",
-              createdAt: task.startedAt,
-              source: "direct-model",
-              timeline: [],
-              workflowExpanded: false,
-              streaming: true
-            };
-            return hasMatchingUser
-              ? [...current, assistantMessage]
-              : [...current, userMessage, assistantMessage];
+          const assistantId = taskAssistantMessageId(task);
+          setMessages((previous) => {
+            const current = switchingConversation ? storedConversationsRef.current.find((conversation) => conversation.id === task.conversationId)?.messages ?? [] : previous;
+            return prepareSakiTaskReplay(current, task);
           });
 
           setSakiActivityMood("working");
@@ -1168,7 +1168,7 @@ export function SakiFloatingChat({
           sakiStreamAbortRef.current = abortController;
 
           const applyStreamEvent = (streamEvent: SakiChatStreamEvent) => {
-            if (abortController.signal.aborted) return;
+            if (abortController.signal.aborted || seq !== reconnectSeqRef.current) return;
             if (streamEvent.type === "meta") {
               setReachable(streamEvent.source === "direct-model");
               if (streamEvent.taskId) {
@@ -1394,11 +1394,16 @@ export function SakiFloatingChat({
               return next;
             });
           } catch {
+            if (abortController.signal.aborted || seq !== reconnectSeqRef.current) return;
+            taskSnapshotRef.current = "";
             settleInterruptedSakiMessage(assistantId);
           } finally {
-            setLoading(false);
-            setSakiActivityMood((prev) => (isSakiWorkMood(prev) ? null : prev));
-            activeTaskIdRef.current = null;
+            if (sakiStreamAbortRef.current === abortController) {
+              sakiStreamAbortRef.current = null;
+              setLoading(false);
+              setSakiActivityMood((prev) => (isSakiWorkMood(prev) ? null : prev));
+              activeTaskIdRef.current = null;
+            }
           }
         }
       } catch {
@@ -1408,7 +1413,17 @@ export function SakiFloatingChat({
   }
 
   useEffect(() => {
+    loadingRef.current = false;
+    setLoading(false);
+    taskSnapshotRef.current = "";
     void reconnectActiveTask();
+    return () => {
+      reconnectSeqRef.current += 1;
+      sakiStreamAbortRef.current?.abort();
+      sakiStreamAbortRef.current = null;
+      activeTaskIdRef.current = null;
+      for (const stop of actionObserversRef.current) stop();
+    };
   }, [token, activeInstance?.id]);
 
   async function selectModel(modelId: string) {
@@ -1521,23 +1536,15 @@ export function SakiFloatingChat({
     };
   }, [annotationMode]);
 
-  // NOTE: Saki always starts a fresh conversation when the panel mounts —
-  // past conversations stay available in the history panel but are never auto-restored.
+  // Ordinary history stays in the history panel. Tracked tasks reconnect
+  // separately so work started before this page opened remains reachable.
 
   const syncConversationToCloud = useCallback((conv: StoredSakiConversation) => {
     if (!token || !hasPersistableSakiSpeech(conv.messages)) return;
-    void api.sakiSaveConversation(token, {
-      id: conv.id,
-      contextKey: conv.contextKey,
-      title: conv.title,
-      label: conv.label,
-      detail: conv.detail,
-      instanceId: conv.instanceId ?? null,
-      messages: conv.messages
-    }).catch((err) => {
+    void cloudQueue.save(conv).catch((err) => {
       console.warn("[saki] failed to save conversation to cloud:", err);
     });
-  }, [token]);
+  }, [token, cloudQueue]);
 
   const saveConversationStateDirectly = useCallback(
     (targetMessages: LocalSakiMessage[], conversationId?: string) => {
@@ -1548,44 +1555,35 @@ export function SakiFloatingChat({
       }
       const now = new Date().toISOString();
       const storedMessages = persistableSakiMessages(targetMessages);
-      let nextToPersist: StoredSakiConversation | null = null;
+      const current = storedConversationsRef.current;
+      const existing = current.find((conversation) => conversation.id === targetId);
+      const nextConversation: StoredSakiConversation = {
+        id: targetId,
+        contextKey: existing?.contextKey ?? contextKey,
+        label: existing?.label ?? baseContextLabel,
+        detail: existing?.detail ?? baseContextPath,
+        instanceId: existing ? existing.instanceId ?? null : activeInstance?.id ?? null,
+        title: sakiConversationTitle(storedMessages),
+        messages: storedMessages,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now
+      };
+      const next = sortSakiConversationsByTime([
+        nextConversation,
+        ...current.filter((conversation) => conversation.id !== targetId)
+      ]).slice(0, 80);
+      writeSakiConversations(next, userId);
+      storedConversationsRef.current = next;
+      setStoredConversations(next);
 
-      setStoredConversations((current) => {
-        const existing = current.find((conversation) => conversation.id === targetId);
-        const nextConversation: StoredSakiConversation = {
-          id: targetId,
-          contextKey: existing?.contextKey ?? contextKey,
-          label: existing?.label ?? baseContextLabel,
-          detail: existing?.detail ?? baseContextPath,
-          instanceId: (existing?.instanceId ?? activeInstance?.id) || null,
-          title: sakiConversationTitle(storedMessages),
-          messages: storedMessages,
-          createdAt: existing?.createdAt ?? now,
-          updatedAt: now
-        };
-        nextToPersist = nextConversation;
-        const next = sortSakiConversationsByTime([
-          nextConversation,
-          ...current.filter((conversation) => conversation.id !== targetId)
-        ]).slice(0, 80);
-        writeSakiConversations(next);
-        return next;
-      });
-
-      if (token && nextToPersist) {
+      if (token) {
         const isCurrentlyStreaming = targetMessages.some((m) => m.streaming);
         if (!isCurrentlyStreaming) {
-          syncConversationToCloud(nextToPersist);
-        } else {
-          if (persistCloudTimerRef.current) window.clearTimeout(persistCloudTimerRef.current);
-          persistCloudTimerRef.current = window.setTimeout(() => {
-            if (nextToPersist) syncConversationToCloud(nextToPersist);
-            persistCloudTimerRef.current = null;
-          }, 2000);
+          syncConversationToCloud(nextConversation);
         }
       }
     },
-    [baseContextLabel, baseContextPath, contextKey, activeInstance?.id, syncConversationToCloud, token]
+    [baseContextLabel, baseContextPath, contextKey, activeInstance?.id, syncConversationToCloud, token, userId]
   );
 
   useEffect(() => {
@@ -1635,46 +1633,62 @@ export function SakiFloatingChat({
   useEffect(() => {
     if (!token) return;
     let disposed = false;
+    let inFlight = false;
+    let refreshRequested = false;
     async function syncCloudConversations() {
+      if (inFlight) { refreshRequested = true; return; }
+      inFlight = true;
       try {
         const cloudRows = await api.sakiListConversations(token);
-        if (disposed || !Array.isArray(cloudRows) || cloudRows.length === 0) return;
-        setStoredConversations((currentLocal) => {
-          const map = new Map<string, StoredSakiConversation>();
-          for (const item of currentLocal) {
-            map.set(item.id, item);
-          }
-          for (const row of cloudRows) {
-            const local = map.get(row.id);
-            if (!local || new Date(row.updatedAt).getTime() >= new Date(local.updatedAt).getTime()) {
-              map.set(row.id, {
-                id: row.id,
-                contextKey: row.contextKey,
-                label: row.label,
-                detail: row.detail,
-                instanceId: row.instanceId ?? null,
-                title: row.title,
-                messages: row.messages,
-                createdAt: row.createdAt,
-                updatedAt: row.updatedAt
-              });
-            }
-          }
-          const merged = sortSakiConversationsByTime([...map.values()]).slice(0, 80);
-          writeSakiConversations(merged);
-          // Do not auto-restore the latest cloud conversation — the current
-          // (fresh) conversation stays active; history remains listed.
-          return merged;
-        });
+        if (disposed || !Array.isArray(cloudRows)) return;
+        const incomingIds = new Set(cloudRows.map((row) => row.id));
+        const removedIds = new Set([...knownCloudIdsRef.current].filter((id) => !incomingIds.has(id)));
+        knownCloudIdsRef.current = incomingIds;
+        const acceptedRows = cloudRows.filter((row) => !cloudQueue.version(row.id) || row.updatedAt >= cloudQueue.version(row.id)!);
+        const changedRows = acceptedRows.filter((row) => cloudQueue.version(row.id) !== row.updatedAt);
+        for (const row of cloudRows) cloudQueue.observe(row.id, row.updatedAt);
+        const map = new Map(storedConversationsRef.current.filter((item) => !removedIds.has(item.id)).map((item) => [item.id, item]));
+        for (const row of acceptedRows) {
+          if (!map.has(row.id) || changedRows.includes(row)) map.set(row.id, { ...row, instanceId: row.instanceId ?? null });
+        }
+        const merged = sortSakiConversationsByTime([...map.values()]).slice(0, 80);
+        writeSakiConversations(merged, userId);
+        storedConversationsRef.current = merged;
+        setStoredConversations(merged);
+        const active = changedRows.find((row) => row.id === activeConversationIdRef.current);
+        if (active && !loadingRef.current) {
+          restoringContextRef.current = true;
+          setMessages((current) => active.messages.map((remote: LocalSakiMessage) => {
+            const local = current.find((message) => message.id === remote.id);
+            return { ...local, ...remote, timeline: mergeSakiTimelineActions(mergeSakiFinalTimeline(sealSakiTimelineDelta(local?.timeline), remote.content), remote.actions) };
+          }));
+        }
       } catch {
         // Fallback to local
+      } finally {
+        inFlight = false;
+        if (refreshRequested && !disposed) {
+          refreshRequested = false;
+          void syncCloudConversations();
+        }
       }
     }
     void syncCloudConversations();
+    const refresh = () => { if (document.visibilityState !== "hidden") void syncCloudConversations(); };
+    const timer = window.setInterval(refresh, 5000);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("saki:cloud_refresh", refresh);
     return () => {
       disposed = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("saki:cloud_refresh", refresh);
     };
-  }, [contextKey, token]);
+  }, [contextKey, token, cloudQueue]);
 
   useEffect(() => {
     if (!seed) return;
@@ -1687,7 +1701,7 @@ export function SakiFloatingChat({
     // An empty message means the panel was opened from the Agent monitor
     // bell: nothing to seed into the composer, just resume any running task
     // stream for this context.
-    if (!seed.message.trim()) void reconnectActiveTask();
+    if (!seed.message.trim()) void reconnectActiveTask(undefined, true);
   }, [canUseAgent, canUseChat, seed]);
 
   useEffect(() => {
@@ -2049,44 +2063,8 @@ export function SakiFloatingChat({
 
   function toggleSakiHistory() {
     setMessagesExpanded(true);
-    setHistoryOpen((current) => {
-      const next = !current;
-      if (next) {
-        const local = readSakiConversations();
-        if (local.length > 0) {
-          setStoredConversations(local);
-        }
-        if (token) {
-          void api.sakiListConversations(token).then((cloudRows) => {
-            if (!Array.isArray(cloudRows) || cloudRows.length === 0) return;
-            setStoredConversations((currentLocal) => {
-              const map = new Map<string, StoredSakiConversation>();
-              for (const item of currentLocal) map.set(item.id, item);
-              for (const row of cloudRows) {
-                const l = map.get(row.id);
-                if (!l || new Date(row.updatedAt).getTime() >= new Date(l.updatedAt).getTime()) {
-                  map.set(row.id, {
-                    id: row.id,
-                    contextKey: row.contextKey,
-                    label: row.label,
-                    detail: row.detail,
-                    instanceId: row.instanceId ?? null,
-                    title: row.title,
-                    messages: row.messages,
-                    createdAt: row.createdAt,
-                    updatedAt: row.updatedAt
-                  });
-                }
-              }
-              const merged = sortSakiConversationsByTime([...map.values()]).slice(0, 80);
-              writeSakiConversations(merged);
-              return merged;
-            });
-          }).catch(() => {});
-        }
-      }
-      return next;
-    });
+    setHistoryOpen((current) => !current);
+    window.dispatchEvent(new CustomEvent("saki:cloud_refresh"));
   }
 
   function toggleSakiFullscreen() {
@@ -2104,6 +2082,10 @@ export function SakiFloatingChat({
     if (hasPersistableSakiSpeech(messages)) {
       saveConversationStateDirectly(messages, activeConversationIdRef.current);
     }
+    resetSakiConversation();
+  }
+
+  function resetSakiConversation() {
     const id = newClientId();
     activeConversationIdRef.current = id;
     restoringContextRef.current = true;
@@ -2135,19 +2117,18 @@ export function SakiFloatingChat({
     setMessagesExpanded(true);
   }
 
-  function deleteConversation(conversationId: string) {
-    setStoredConversations((current) => {
-      const next = current.filter((conversation) => conversation.id !== conversationId);
-      writeSakiConversations(next);
-      return next;
-    });
-    if (token) {
-      void api.sakiDeleteConversation(token, conversationId).catch((err) => {
-        console.warn("[saki] failed to delete conversation on server:", err);
-      });
-    }
-    if (conversationId === activeConversationIdRef.current) {
-      startNewConversation();
+  async function deleteConversation(conversationId: string) {
+    try {
+      if (token) await api.sakiDeleteConversation(token, conversationId);
+      const next = storedConversationsRef.current.filter((conversation) => conversation.id !== conversationId);
+      storedConversationsRef.current = next;
+      setStoredConversations(next);
+      writeSakiConversations(next, userId);
+      knownCloudIdsRef.current.delete(conversationId);
+      if (conversationId === activeConversationIdRef.current) resetSakiConversation();
+    } catch (error) {
+      showComposerNotice(error instanceof Error ? error.message : "删除对话失败，请重试。");
+      window.dispatchEvent(new CustomEvent("saki:cloud_refresh"));
     }
   }
 
@@ -2342,9 +2323,18 @@ export function SakiFloatingChat({
       setLoading(true);
       setSakiActivityMood("working");
     }
+    const stopObserving = decision === "approve" ? observeActionTask() : () => {};
     try {
       const response = await api.sakiAction(token, action.id, decision);
       replaceAction(response.action);
+      if (response.taskId) {
+        if (!sakiStreamAbortRef.current) await reconnectActiveTask(response.taskId);
+        return;
+      }
+      // The JSON response can beat buffered SSE deltas to this device. Let
+      // the task stream deliver its own final text so those deltas cannot be
+      // appended to a final answer that was already installed through JSON.
+      if (decision === "approve" && sakiStreamAbortRef.current && !sakiStreamAbortRef.current.signal.aborted) return;
       if (decision === "approve") {
         appendActionCompletionThought(response.action);
         if (response.response) {
@@ -2373,16 +2363,23 @@ export function SakiFloatingChat({
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Saki action failed";
-      replaceAction({
-        ...action,
-        ok: false,
-        status: "failed",
-        observation: message
-      });
+      // A network failure or another device's decision does not prove the
+      // approved command failed. Preserve its decision state and reconcile.
+      showComposerNotice(message);
+      window.dispatchEvent(new CustomEvent("saki:cloud_refresh"));
+      if (decision === "approve") {
+        try {
+          const latest = await api.sakiGetActiveTask(token, activeInstance?.id, true);
+          if (latest.task && latest.task.status !== "cancelled" && (!latest.task.conversationId || latest.task.conversationId === activeConversationIdRef.current)) {
+            await reconnectActiveTask(latest.task.id);
+          }
+        } catch {}
+      }
       setSakiActivityMood("sorry");
     } finally {
+      stopObserving();
       setActionBusyId(null);
-      if (decision === "approve") setLoading(false);
+      if (decision === "approve" && !sakiStreamAbortRef.current) setLoading(false);
     }
   }
 
@@ -2391,9 +2388,11 @@ export function SakiFloatingChat({
     setActionBusyId(action.id);
     setLoading(true);
     setSakiActivityMood("working");
+    const stopObserving = observeActionTask();
     try {
       const result = await api.sakiAnswerQuestion(token, action.id, answer);
       replaceAction(result.action);
+      if (sakiStreamAbortRef.current && !sakiStreamAbortRef.current.signal.aborted) return;
       if (result.response) {
         applyActionContinuationResponse(action.id, result.response);
         const pending = result.response.actions?.some((item) => item.status === "pending_approval" || item.status === "pending_input");
@@ -2402,12 +2401,35 @@ export function SakiFloatingChat({
         setSakiActivityMood("happy");
       }
     } catch (error) {
+      window.dispatchEvent(new CustomEvent("saki:cloud_refresh"));
+      if (activeTaskIdRef.current) return;
       setSakiActivityMood("sorry");
       throw error;
     } finally {
+      stopObserving();
       setActionBusyId(null);
-      setLoading(false);
+      if (!sakiStreamAbortRef.current) setLoading(false);
     }
+  }
+
+  function observeActionTask(): () => void {
+    let disposed = false;
+    let checking = false;
+    const check = async () => {
+      if (disposed || checking || sakiStreamAbortRef.current) return;
+      checking = true;
+      try {
+        const result = await api.sakiGetActiveTask(token, activeInstance?.id, true);
+        if (!disposed && result.task?.status === "running" && (!result.task.conversationId || result.task.conversationId === activeConversationIdRef.current)) {
+          void reconnectActiveTask(result.task.id);
+        }
+      } catch {} finally { checking = false; }
+    };
+    const timer = window.setInterval(() => { void check(); }, 750);
+    void check();
+    const stop = () => { disposed = true; window.clearInterval(timer); actionObserversRef.current.delete(stop); };
+    actionObserversRef.current.add(stop);
+    return stop;
   }
 
   function suppressPanelDismiss() {
@@ -3285,9 +3307,13 @@ export function SakiFloatingChat({
     }
     const abortController = new AbortController();
     sakiStreamAbortRef.current = abortController;
-    const history = historySource.filter((message) => message.id !== "saki-welcome").slice(-12).map(toSakiHistoryMessage);
+    const history = historySource.filter((message) => message.id !== "saki-welcome" && !message.rollbackJournal).slice(-12).map(toSakiHistoryMessage);
     const request = {
       message: value,
+      clientRequestId: assistantId,
+      conversationId: activeConversationIdRef.current,
+      userMessageId: userMessage.id,
+      assistantMessageId: assistantId,
       ...(override?.resumeTaskId ? { resumeTaskId: override.resumeTaskId } : {}),
       history,
       instanceId: (storedConversations.find((conversation) => conversation.id === activeConversationId)?.instanceId ?? activeInstance?.id) || null,
@@ -3296,7 +3322,7 @@ export function SakiFloatingChat({
       contextText: requestContextText,
       auditSearch: !activeInstance && activePanelContext.auditSearch ? value : null,
       mode: requestMode,
-      ...(requestMode === "agent" ? { agentPermissionMode: permissionMode } : {}),
+      ...(requestMode === "agent" ? { agentPermissionMode: permissionMode, terminalSandbox } : { terminalSandbox }),
       selectedSkillIds,
       attachments: submittedAttachments,
       ...(currentModelId.trim() ? parseSakiModelSelection(currentModelId) : {})
@@ -3407,6 +3433,7 @@ export function SakiFloatingChat({
           setReachable(streamEvent.source === "direct-model");
           if (streamEvent.skills) setSkills(streamEvent.skills);
           if (streamEvent.agentPermissionMode) setPermissionMode(streamEvent.agentPermissionMode);
+          if (typeof streamEvent.terminalSandbox === "boolean") setTerminalSandbox(streamEvent.terminalSandbox);
           if (streamEvent.taskId) {
             activeTaskIdRef.current = streamEvent.taskId;
             window.dispatchEvent(new CustomEvent("saki:active_task_updated"));
@@ -3568,6 +3595,9 @@ export function SakiFloatingChat({
               await new Promise((resolve) => window.setTimeout(resolve, 400 * attempt));
             }
             if (userStoppedRef.current || reconnectAbort.signal.aborted) break;
+            // Reconnect replays the task from the beginning. Clear partial
+            // streamed text before applying it, otherwise it appears twice.
+            setMessages((current) => current.map((message) => message.id === assistantId ? { ...message, content: "", thinking: undefined, actions: [], workflow: [], timeline: [] } : message));
             const response = await api.sakiStreamTaskReconnect(
               token,
               runningTaskId,
@@ -3719,6 +3749,38 @@ export function SakiFloatingChat({
     prevBusyRef.current = isAgentBusy;
   }, [isAgentBusy, mobileActiveTab, messages, sakiActivityMood]);
 
+  const [showCodeChangesDetails, setShowCodeChangesDetails] = useState(false);
+  const {
+    summary: rawGitChangesSummary,
+    loading: gitChangesLoading,
+    reverting: revertingChanges,
+    revertAll: handleRevertAllChanges,
+    restoreAll: handleRestoreAllChanges
+  } = useCodeChanges({
+    token,
+    instanceId: activeInstance?.id ?? null,
+    isRunning: isAgentBusy,
+    watchKey: messages.length
+  });
+
+  const gitChangesSummary = useMemo(() => {
+    return filterGitChangesForSession(rawGitChangesSummary, messages);
+  }, [rawGitChangesSummary, messages]);
+
+  const handleToggleCodeChangesDetails = useCallback(() => {
+    setMessagesExpanded(true);
+    setShowCodeChangesDetails((prev) => !prev);
+  }, []);
+
+  useEffect(() => {
+    if (showCodeChangesDetails && sakiMessagesRef.current) {
+      setTimeout(() => {
+        const el = sakiMessagesRef.current?.querySelector(".saki-code-changes-inline-container");
+        el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }, 50);
+    }
+  }, [showCodeChangesDetails]);
+
   useEffect(() => {
     const handleActiveTaskUpdated = () => {
       if (sakiStreamAbortRef.current && !sakiStreamAbortRef.current.signal.aborted) {
@@ -3727,7 +3789,15 @@ export function SakiFloatingChat({
       void reconnectActiveTask();
     };
     window.addEventListener("saki:active_task_updated", handleActiveTaskUpdated);
-    return () => window.removeEventListener("saki:active_task_updated", handleActiveTaskUpdated);
+    const timer = window.setInterval(handleActiveTaskUpdated, 4000);
+    window.addEventListener("focus", handleActiveTaskUpdated);
+    window.addEventListener("online", handleActiveTaskUpdated);
+    return () => {
+      window.removeEventListener("saki:active_task_updated", handleActiveTaskUpdated);
+      window.removeEventListener("focus", handleActiveTaskUpdated);
+      window.removeEventListener("online", handleActiveTaskUpdated);
+      window.clearInterval(timer);
+    };
   }, [token, activeInstance?.id]);
 
   useEffect(() => {
@@ -3995,11 +4065,6 @@ export function SakiFloatingChat({
 
   return (
     <>
-      {open && retryMessage?.retry ? createPortal(<SakiRetryDialog
-        reason={retryMessage.retry.reason} busy={loading || Boolean(actionBusyId)}
-        onRetry={() => void retryAssistantTurn(retryMessage.id)}
-        onDismiss={() => setDismissedRetryId(retryMessage.id)}
-      />, document.body) : null}
       <ChatLauncher
         open={open}
         sakiLieMode={sakiLieMode}
@@ -4429,6 +4494,7 @@ export function SakiFloatingChat({
           ) : null}
 
           <SakiMessagesList
+            mode={mode}
             messagesRef={sakiMessagesRef}
             onScroll={handleSakiMessagesScroll}
             messages={messages}
@@ -4439,6 +4505,8 @@ export function SakiFloatingChat({
             actionBusyId={actionBusyId}
             copiedUserMessageId={copiedUserMessageId}
             copiedAssistantMessageId={copiedAssistantMessageId}
+            dismissedRetryId={dismissedRetryId}
+            onDismissRetry={(id) => setDismissedRetryId(id)}
             onRollbackUserTurn={rollbackUserTurn}
             onCopyUserMessage={copyUserMessage}
             onCopyAssistantMessage={copyAssistantMessage}
@@ -4450,8 +4518,24 @@ export function SakiFloatingChat({
             onRollbackAllFileActions={rollbackAllFileActions}
             onPreviewAttachment={(preview) => setPreviewingAttachment(preview)}
             token={token}
+            changesSummary={gitChangesSummary}
+            showCodeChangesDetails={showCodeChangesDetails}
+            revertingChanges={revertingChanges}
+            changesLoading={gitChangesLoading}
+            onToggleCodeChangesDetails={handleToggleCodeChangesDetails}
+            onCloseCodeChangesDetails={() => setShowCodeChangesDetails(false)}
+            onRevertAllChanges={handleRevertAllChanges}
+            onRestoreAllChanges={handleRestoreAllChanges}
           />
           {latestTodo ? <div className="saki-agent-progress-dock"><SakiTodoCard action={latestTodo} /></div> : null}
+          {isAgentBusy && gitChangesSummary && (gitChangesSummary.filesCount > 0 || gitChangesSummary.canRestore) ? (
+            <div className="saki-docked-changes-pill-wrap">
+              <SakiChangedFilesPill
+                summary={gitChangesSummary}
+                onClick={handleToggleCodeChangesDetails}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -4508,6 +4592,7 @@ export function SakiFloatingChat({
         permissionDropdownOpen={permissionDropdownOpen}
         onTogglePermissionDropdown={() => setPermissionDropdownOpen(!permissionDropdownOpen)}
         permissionMode={permissionMode}
+        terminalSandbox={terminalSandbox}
         modelSelectorRef={modelSelectorRef}
         modelDropdownOpen={modelDropdownOpen}
         onToggleModelDropdown={() => setModelDropdownOpen(!modelDropdownOpen)}
@@ -4569,6 +4654,8 @@ export function SakiFloatingChat({
         setPermissionMode(nextMode);
         setPermissionDropdownOpen(false);
       }}
+      terminalSandbox={terminalSandbox}
+      onToggleTerminalSandbox={handleToggleTerminalSandbox}
       modelDropdownOpen={modelDropdownOpen}
       modelSelectorRef={modelSelectorRef}
       modelDropdownRef={modelDropdownRef}

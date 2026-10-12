@@ -16,6 +16,8 @@ function taskStatusLabel(status: SakiActiveTaskSummary["status"]): string {
       return "已取消";
     case "pending_approval":
       return "等待批准";
+    case "pending_input":
+      return "等待回答";
     default:
       return status;
   }
@@ -59,21 +61,30 @@ export function AgentMonitorBell({
   const [feedback, setFeedback] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const taskRefreshSeq = useRef(0);
+  const instanceRefreshSeq = useRef(0);
 
   const refresh = useCallback(async () => {
+    const seq = ++taskRefreshSeq.current;
     try {
       const result = await api.sakiGetActiveTasks(token);
+      if (seq !== taskRefreshSeq.current) return;
       setTasks(result.tasks);
       setRunningCount(result.runningCount);
     } catch (error) {
+      if (seq !== taskRefreshSeq.current) return;
       if (error instanceof ApiError && error.status === 401) onLogout();
     }
   }, [onLogout, token]);
 
   const refreshInstances = useCallback(async () => {
+    const seq = ++instanceRefreshSeq.current;
     try {
-      setInstances(await api.instances(token));
+      const result = await api.instances(token);
+      if (seq !== instanceRefreshSeq.current) return;
+      setInstances(result);
     } catch (error) {
+      if (seq !== instanceRefreshSeq.current) return;
       if (error instanceof ApiError && error.status === 401) onLogout();
     }
   }, [onLogout, token]);
@@ -81,6 +92,7 @@ export function AgentMonitorBell({
   useEffect(() => {
     void refresh();
     void refreshInstances();
+    return () => { taskRefreshSeq.current += 1; instanceRefreshSeq.current += 1; };
   }, [refresh, refreshInstances]);
 
   useEffect(() => {
@@ -115,7 +127,7 @@ export function AgentMonitorBell({
     return () => window.clearInterval(timer);
   }, [runningCount]);
 
-  const finishedTasksCount = tasks.filter((t) => t.status !== "running").length;
+  const finishedTasksCount = tasks.filter((t) => t.status === "completed" || t.status === "failed" || t.status === "cancelled").length;
 
   const handleStopAll = async () => {
     if (runningCount === 0 || globalOperating) return;
@@ -357,6 +369,7 @@ export function AgentMonitorBell({
               <ul className="incident-list">
                 {tasks.map((task) => {
                   const running = task.status === "running";
+                  const canStop = running || task.status === "pending_approval" || task.status === "pending_input";
                   const instance = task.instanceId ? instanceById.get(task.instanceId) ?? null : null;
                   const isOperatingThis = operatingTaskId === task.id;
                   return (
@@ -403,11 +416,11 @@ export function AgentMonitorBell({
                         </span>
                       </button>
                       <div className="agent-task-item-actions">
-                        {running ? (
+                        {canStop ? (
                           <button
                             type="button"
                             className="agent-task-action-btn btn-stop"
-                            disabled={isOperatingThis}
+                            disabled={Boolean(operatingTaskId || globalOperating)}
                             onClick={(e) => {
                               e.stopPropagation();
                               void handleStopTask(task.id);
@@ -422,10 +435,10 @@ export function AgentMonitorBell({
                             <span>停止</span>
                           </button>
                         ) : null}
-                        <button
+                        {task.hasRollback ? <button
                           type="button"
                           className="agent-task-action-btn btn-rollback"
-                          disabled={isOperatingThis}
+                          disabled={Boolean(operatingTaskId || globalOperating) || running}
                           onClick={(e) => {
                             e.stopPropagation();
                             void handleRollbackTask(task.id);
@@ -438,11 +451,11 @@ export function AgentMonitorBell({
                             <Undo2 size={11} />
                           )}
                           <span>撤销（回溯全部代码）</span>
-                        </button>
+                        </button> : null}
                         <button
                           type="button"
                           className="agent-task-action-btn btn-delete"
-                          disabled={isOperatingThis}
+                          disabled={Boolean(operatingTaskId || globalOperating)}
                           onClick={(e) => {
                             e.stopPropagation();
                             void handleDeleteTask(task.id);
@@ -471,16 +484,14 @@ export function AgentMonitorBell({
         type="button"
         aria-expanded={open}
         aria-haspopup="dialog"
+        aria-label={runningCount ? `${runningCount} 个 Agent 任务运行中` : "Agent 任务监控"}
         title={runningCount ? `${runningCount} 个 Agent 任务运行中` : "Agent 任务监控"}
         onClick={() => {
-          setOpen((value) => {
-            const next = !value;
-            if (next) {
-              void refresh();
-              void refreshInstances();
-            }
-            return next;
-          });
+          if (!open) {
+            void refresh();
+            void refreshInstances();
+          }
+          setOpen(!open);
         }}
       >
         <Bot size={14} />

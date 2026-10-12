@@ -12,6 +12,7 @@ import type {
 } from "@webops/shared";
 import { prisma } from "./db.js";
 import { writeAuditLog } from "./audit.js";
+import { assertScheduledTaskAccess, assertTaskDefinitionAuthority, assertTaskExecutionAllowed } from "./task-access.js";
 import {
   restartDaemonInstance,
   runDaemonInstanceCommand,
@@ -313,6 +314,8 @@ export async function createScheduledTask(
   input: CreateScheduledTaskRequest,
   createdBy: string | null
 ): Promise<ManagedScheduledTask> {
+  await assertTaskDefinitionAuthority(createdBy);
+  await assertScheduledTaskAccess(createdBy!, { instanceId: input.instanceId ?? null, createdBy }, "task.create");
   const taskId = randomUUID();
   const type = normalizeTaskType(input.type);
   const enabled = normalizeEnabled(input.enabled);
@@ -350,9 +353,12 @@ export async function createScheduledTask(
   return created;
 }
 
-export async function updateScheduledTask(id: string, input: UpdateScheduledTaskRequest): Promise<ManagedScheduledTask> {
+export async function updateScheduledTask(id: string, input: UpdateScheduledTaskRequest, actorUserId: string): Promise<ManagedScheduledTask> {
+  await assertTaskDefinitionAuthority(actorUserId);
   const existing = await getScheduledTask(id);
   if (!existing) throw new Error("Task not found");
+  await assertScheduledTaskAccess(actorUserId, existing, "task.update");
+  if (input.instanceId !== undefined) await assertScheduledTaskAccess(actorUserId, { instanceId: input.instanceId, createdBy: existing.createdBy }, "task.update");
 
   const type = normalizeTaskType(input.type ?? existing.type);
   const instanceId = input.instanceId === undefined ? existing.instanceId ?? null : input.instanceId;
@@ -547,6 +553,9 @@ export async function executeScheduledTask(
   runningTaskIds.add(taskId);
   const runId = await createTaskRun(taskId);
   try {
+    const actorId = options.trigger === "schedule" ? task.createdBy : options.userId;
+    if (!actorId) throw new Error("Task has no authorized execution owner.");
+    await assertTaskExecutionAllowed(actorId, task);
     const output = await executeTaskOperation(task);
     await finishTaskRun(runId, "SUCCESS", output, null);
     await markTaskRunComplete(task);

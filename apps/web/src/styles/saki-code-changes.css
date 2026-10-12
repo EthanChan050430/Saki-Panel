@@ -1,0 +1,1102 @@
+/* ==========================================================================
+   Saki Code Changes Pill & Review Details (Liquid Glass Aesthetic)
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   The Floating Capsule Pill (matches Figure 1 with Liquid Glass aesthetic)
+   -------------------------------------------------------------------------- */
+.saki-changed-files-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 14px 5px 9px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow:
+    0 4px 16px -2px rgba(0, 0, 0, 0.08),
+    0 2px 6px -1px rgba(0, 0, 0, 0.04),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.95);
+  color: #1e293b;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  outline: none;
+  white-space: nowrap;
+  position: relative;
+}
+
+[data-theme="dark"] .saki-changed-files-pill {
+  background: rgba(24, 25, 34, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 8px 24px -4px rgba(0, 0, 0, 0.5),
+    0 2px 6px -1px rgba(0, 0, 0, 0.3),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.08);
+  color: #f1f5f9;
+}
+
+.saki-changed-files-pill:hover {
+  transform: translateY(-1.5px) scale(1.01);
+  border-color: rgba(99, 102, 241, 0.35);
+  box-shadow:
+    0 8px 24px -2px rgba(99, 102, 241, 0.18),
+    0 2px 8px -1px rgba(0, 0, 0, 0.06),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+[data-theme="dark"] .saki-changed-files-pill:hover {
+  border-color: rgba(129, 140, 248, 0.4);
+  box-shadow:
+    0 10px 28px -4px rgba(99, 102, 241, 0.28),
+    0 2px 8px -1px rgba(0, 0, 0, 0.4),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.saki-changed-files-pill:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.saki-pill-icon-glow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(99, 102, 241, 0.1);
+  color: #6366f1;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+[data-theme="dark"] .saki-pill-icon-glow {
+  background: rgba(129, 140, 248, 0.15);
+  color: #818cf8;
+}
+
+.saki-pill-label {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.saki-pill-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.saki-pill-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", monospace;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+}
+
+.saki-pill-badge.is-add {
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+[data-theme="dark"] .saki-pill-badge.is-add {
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.saki-pill-badge.is-del {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+[data-theme="dark"] .saki-pill-badge.is-del {
+  background: rgba(239, 68, 68, 0.18);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.saki-pill-badge.is-zero {
+  background: rgba(156, 163, 175, 0.12);
+  color: #6b7280;
+}
+
+.saki-pill-badge.is-restore-hint {
+  background: rgba(245, 158, 11, 0.12);
+  color: #d97706;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+[data-theme="dark"] .saki-pill-badge.is-restore-hint {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+.saki-pill-arrow {
+  color: #9ca3af;
+  transition: transform 0.2s ease, color 0.2s ease;
+  margin-left: 1px;
+}
+
+.saki-changed-files-pill:hover .saki-pill-arrow {
+  transform: translateX(2px);
+  color: #4b5563;
+}
+
+[data-theme="dark"] .saki-changed-files-pill:hover .saki-pill-arrow {
+  color: #e2e8f0;
+}
+
+.saki-changed-files-pill.is-restorable {
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.saki-changed-files-pill.is-restorable .saki-pill-icon-glow {
+  background: rgba(245, 158, 11, 0.12);
+  color: #d97706;
+}
+
+[data-theme="dark"] .saki-changed-files-pill.is-restorable .saki-pill-icon-glow {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+}
+
+/* Docked pill wrapper above composer in Saki Agent */
+.saki-docked-changes-pill-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  padding: 6px 12px 10px;
+  position: relative;
+  z-index: 15;
+  pointer-events: auto;
+  box-sizing: border-box;
+}
+
+/* Docked pill wrapper above docked input in DashboardView */
+.dashboard-docked-changes-pill-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  padding: 6px 16px 10px;
+  position: relative;
+  z-index: 15;
+  pointer-events: auto;
+  box-sizing: border-box;
+}
+
+/* Session bottom pill (shown after run finishes) */
+.saki-session-bottom-changes,
+.dashboard-session-bottom-changes {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  margin: 10px 0 6px;
+  padding: 0;
+  width: 100%;
+}
+
+/* --------------------------------------------------------------------------
+   Code Changes Details Panel / Card
+   -------------------------------------------------------------------------- */
+.saki-code-changes-details {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  box-sizing: border-box;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.saki-code-changes-details.inline {
+  margin: 10px 0;
+  border-radius: 12px;
+  border: 1px solid rgba(226, 232, 240, 0.85);
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+  max-height: 580px;
+}
+
+[data-theme="dark"] .saki-code-changes-details.inline {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(24, 25, 34, 0.88);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.4);
+}
+
+.saki-code-changes-details.drawer {
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+}
+
+/* --------------------------------------------------------------------------
+   Details Header / Toolbar
+   -------------------------------------------------------------------------- */
+.saki-code-changes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: rgba(248, 250, 252, 0.7);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  gap: 12px;
+  flex-shrink: 0;
+  min-height: 44px;
+  box-sizing: border-box;
+}
+
+[data-theme="dark"] .saki-code-changes-header {
+  background: rgba(30, 31, 42, 0.65);
+  border-bottom-color: rgba(255, 255, 255, 0.07);
+}
+
+.saki-code-changes-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.saki-code-changes-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.saki-btn-icon-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.8);
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+[data-theme="dark"] .saki-btn-icon-toggle {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: #94a3b8;
+}
+
+.saki-btn-icon-toggle:hover {
+  background: #ffffff;
+  color: #1e293b;
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="dark"] .saki-btn-icon-toggle:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #f8fafc;
+}
+
+.saki-btn-icon-toggle.is-active {
+  background: rgba(99, 102, 241, 0.1);
+  color: #6366f1;
+  border-color: rgba(99, 102, 241, 0.25);
+}
+
+.saki-code-changes-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: inherit;
+  min-width: 0;
+}
+
+.saki-code-changes-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.saki-code-changes-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Revert & Restore action buttons (refined frosted glass aesthetic) */
+.saki-btn-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  outline: none;
+  border: 1px solid transparent;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.saki-btn-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.saki-btn-revert {
+  background: rgba(244, 63, 94, 0.08);
+  color: #e11d48;
+  border-color: rgba(244, 63, 94, 0.22);
+}
+
+.saki-btn-revert:hover:not(:disabled) {
+  background: rgba(244, 63, 94, 0.14);
+  border-color: rgba(244, 63, 94, 0.35);
+  transform: translateY(-0.5px);
+  box-shadow: 0 2px 8px rgba(244, 63, 94, 0.15);
+}
+
+[data-theme="dark"] .saki-btn-revert {
+  background: rgba(244, 63, 94, 0.12);
+  color: #fb7185;
+  border-color: rgba(244, 63, 94, 0.26);
+}
+
+[data-theme="dark"] .saki-btn-revert:hover:not(:disabled) {
+  background: rgba(244, 63, 94, 0.2);
+  border-color: rgba(244, 63, 94, 0.4);
+  box-shadow: 0 4px 12px rgba(244, 63, 94, 0.2);
+}
+
+.saki-btn-restore {
+  background: rgba(16, 185, 129, 0.09);
+  color: #059669;
+  border-color: rgba(16, 185, 129, 0.25);
+}
+
+.saki-btn-restore:hover:not(:disabled) {
+  background: rgba(16, 185, 129, 0.16);
+  border-color: rgba(16, 185, 129, 0.4);
+  transform: translateY(-0.5px);
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.18);
+}
+
+[data-theme="dark"] .saki-btn-restore {
+  background: rgba(16, 185, 129, 0.14);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+[data-theme="dark"] .saki-btn-restore:hover:not(:disabled) {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: rgba(16, 185, 129, 0.45);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.22);
+}
+
+.saki-code-changes-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.saki-code-changes-close-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #0f172a;
+}
+
+[data-theme="dark"] .saki-code-changes-close-btn {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .saki-code-changes-close-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+/* --------------------------------------------------------------------------
+   Details Body & Sidebar (Collapsible)
+   -------------------------------------------------------------------------- */
+.saki-code-changes-body {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+  transition: grid-template-columns 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.saki-code-changes-body.is-sidebar-collapsed {
+  grid-template-columns: 0px 1fr;
+}
+
+/* File list sidebar */
+.saki-code-changes-sidebar {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(226, 232, 240, 0.75);
+  background: rgba(248, 250, 252, 0.45);
+  overflow: hidden;
+  min-width: 0;
+  width: 220px;
+  transition: opacity 0.18s ease;
+}
+
+.saki-code-changes-body.is-sidebar-collapsed .saki-code-changes-sidebar {
+  opacity: 0;
+  pointer-events: none;
+  border-right: none;
+}
+
+[data-theme="dark"] .saki-code-changes-sidebar {
+  border-right-color: rgba(255, 255, 255, 0.07);
+  background: rgba(20, 21, 28, 0.4);
+}
+
+.saki-file-filter-wrapper {
+  display: flex;
+  align-items: center;
+  position: relative;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.6);
+}
+
+[data-theme="dark"] .saki-file-filter-wrapper {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.saki-filter-icon {
+  position: absolute;
+  left: 18px;
+  color: #94a3b8;
+  pointer-events: none;
+}
+
+.saki-file-filter-input {
+  width: 100%;
+  padding: 5px 26px 5px 26px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.8);
+  font-size: 11.5px;
+  color: inherit;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+[data-theme="dark"] .saki-file-filter-input {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.saki-file-filter-input:focus {
+  border-color: #6366f1;
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+[data-theme="dark"] .saki-file-filter-input:focus {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: #818cf8;
+  box-shadow: 0 0 0 2px rgba(129, 140, 248, 0.2);
+}
+
+.saki-filter-clear-btn {
+  position: absolute;
+  right: 16px;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.saki-filter-clear-btn:hover {
+  color: #475569;
+}
+
+.saki-file-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.saki-file-list-empty {
+  padding: 24px 14px;
+  text-align: center;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+/* Individual file item */
+.saki-file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+  user-select: none;
+  box-sizing: border-box;
+}
+
+.saki-file-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="dark"] .saki-file-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.saki-file-item.is-selected {
+  background: rgba(99, 102, 241, 0.1);
+  color: #4f46e5;
+}
+
+[data-theme="dark"] .saki-file-item.is-selected {
+  background: rgba(99, 102, 241, 0.18);
+  color: #a5b4fc;
+}
+
+.saki-file-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.saki-file-item-names {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.saki-file-item-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saki-file-item-dir {
+  font-size: 10px;
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saki-file-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+.saki-file-status-badge {
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.saki-file-status-badge.is-modified {
+  background: rgba(245, 158, 11, 0.14);
+  color: #d97706;
+}
+
+.saki-file-status-badge.is-added {
+  background: rgba(16, 185, 129, 0.14);
+  color: #059669;
+}
+
+.saki-file-status-badge.is-deleted {
+  background: rgba(239, 68, 68, 0.14);
+  color: #dc2626;
+}
+
+.saki-file-status-badge.is-renamed {
+  background: rgba(168, 85, 247, 0.14);
+  color: #9333ea;
+}
+
+/* --------------------------------------------------------------------------
+   Diff Pane & Diff Viewer
+   -------------------------------------------------------------------------- */
+.saki-code-changes-diff-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+.saki-diff-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: rgba(248, 250, 252, 0.6);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.7);
+  font-size: 11.5px;
+  flex-shrink: 0;
+  gap: 10px;
+  min-height: 38px;
+  box-sizing: border-box;
+}
+
+[data-theme="dark"] .saki-diff-header-bar {
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.saki-diff-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.saki-diff-expand-sidebar-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  background: rgba(99, 102, 241, 0.06);
+  color: #6366f1;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+[data-theme="dark"] .saki-diff-expand-sidebar-pill {
+  border-color: rgba(129, 140, 248, 0.25);
+  background: rgba(129, 140, 248, 0.1);
+  color: #a5b4fc;
+}
+
+.saki-diff-expand-sidebar-pill:hover {
+  background: rgba(99, 102, 241, 0.12);
+  border-color: rgba(99, 102, 241, 0.35);
+}
+
+.saki-diff-file-path-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.saki-diff-file-path {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", monospace;
+  font-size: 11.5px;
+  color: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.saki-diff-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.saki-diff-file-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 4px;
+}
+
+.saki-diff-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.7);
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+[data-theme="dark"] .saki-diff-action-btn {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: #cbd5e1;
+}
+
+.saki-diff-action-btn:hover {
+  background: #ffffff;
+  color: #0f172a;
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="dark"] .saki-diff-action-btn:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #ffffff;
+}
+
+.saki-diff-action-btn.is-open {
+  color: #4f46e5;
+  border-color: rgba(99, 102, 241, 0.2);
+  background: rgba(99, 102, 241, 0.05);
+}
+
+[data-theme="dark"] .saki-diff-action-btn.is-open {
+  color: #a5b4fc;
+  border-color: rgba(129, 140, 248, 0.25);
+  background: rgba(129, 140, 248, 0.08);
+}
+
+.saki-diff-action-btn.is-open:hover {
+  background: rgba(99, 102, 241, 0.1);
+  border-color: rgba(99, 102, 241, 0.35);
+}
+
+.saki-diff-viewer-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px;
+}
+
+.saki-diff-viewer-wrap .saki-git-diff-container {
+  margin: 0;
+}
+
+.saki-diff-viewer-wrap .saki-git-diff-file-card {
+  border-radius: 8px;
+  border: 1px solid rgba(226, 232, 240, 0.75);
+}
+
+[data-theme="dark"] .saki-diff-viewer-wrap .saki-git-diff-file-card {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: #141620;
+}
+
+/* Hide duplicate file header inside card when top bar is already showing it */
+.saki-diff-header-bar + .saki-diff-viewer-wrap .saki-git-diff-file-header {
+  display: none;
+}
+
+.saki-diff-viewer-wrap .saki-git-diff-lines {
+  max-height: none;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.saki-diff-viewer-wrap .saki-git-diff-line.add {
+  background-color: rgba(16, 185, 129, 0.08) !important;
+  color: #065f46 !important;
+  border-left: 3px solid #10b981 !important;
+  padding-left: 9px !important;
+}
+
+[data-theme="dark"] .saki-diff-viewer-wrap .saki-git-diff-line.add {
+  background-color: rgba(16, 185, 129, 0.12) !important;
+  color: #6ee7b7 !important;
+  border-left-color: #10b981 !important;
+}
+
+.saki-diff-viewer-wrap .saki-git-diff-line.del {
+  background-color: rgba(244, 63, 94, 0.08) !important;
+  color: #9f1239 !important;
+  border-left: 3px solid #f43f5e !important;
+  padding-left: 9px !important;
+}
+
+[data-theme="dark"] .saki-diff-viewer-wrap .saki-git-diff-line.del {
+  background-color: rgba(244, 63, 94, 0.12) !important;
+  color: #fda4af !important;
+  border-left-color: #f43f5e !important;
+}
+
+.saki-diff-viewer-wrap .saki-git-diff-line.hunk {
+  background-color: rgba(99, 102, 241, 0.06) !important;
+  color: #4f46e5 !important;
+  font-weight: 600 !important;
+  padding: 4px 12px !important;
+  font-size: 11px !important;
+}
+
+[data-theme="dark"] .saki-diff-viewer-wrap .saki-git-diff-line.hunk {
+  background-color: rgba(99, 102, 241, 0.12) !important;
+  color: #a5b4fc !important;
+}
+
+.saki-diff-viewer-wrap .saki-git-diff-line-gutter {
+  color: #94a3b8 !important;
+  font-weight: 500 !important;
+  font-size: 11px !important;
+}
+
+.saki-diff-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 220px;
+  font-size: 12.5px;
+  color: #94a3b8;
+  text-align: center;
+  padding: 24px;
+  gap: 12px;
+}
+
+.saki-diff-empty-icon {
+  color: #cbd5e1;
+  opacity: 0.8;
+}
+
+[data-theme="dark"] .saki-diff-empty-icon {
+  color: #475569;
+}
+
+.saki-spin {
+  animation: saki-spin 1s linear infinite;
+}
+
+@keyframes saki-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ==========================================================================
+   Mobile Responsive Adaptation for Saki Code Changes (max-width: 768px)
+   ========================================================================== */
+.saki-code-changes-mobile-nav {
+  display: none;
+}
+.saki-diff-mobile-back-btn {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .saki-code-changes-details {
+    border-radius: 0;
+    height: 100%;
+  }
+
+  .saki-code-changes-details.inline {
+    border-radius: 12px;
+    margin: 8px 0;
+    max-height: 520px;
+  }
+
+  .saki-code-changes-header {
+    flex-wrap: wrap;
+    padding: 8px 10px;
+    gap: 8px;
+    min-height: auto;
+  }
+
+  .saki-code-changes-toolbar-left {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .saki-btn-icon-toggle {
+    display: none; /* On mobile, segmented tabs handle switching */
+  }
+
+  .saki-code-changes-toolbar-right {
+    flex: 0 0 auto;
+    margin-left: auto;
+    gap: 6px;
+  }
+
+  .saki-btn-action {
+    padding: 5px 10px;
+    font-size: 11.5px;
+  }
+
+  /* Segmented switcher between files list and diff */
+  .saki-code-changes-mobile-nav {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    order: 3;
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 8px;
+    padding: 2px;
+    gap: 2px;
+    box-sizing: border-box;
+  }
+
+  [data-theme="dark"] .saki-code-changes-mobile-nav {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .saki-mobile-tab-btn {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.18s ease;
+  }
+
+  [data-theme="dark"] .saki-mobile-tab-btn {
+    color: #94a3b8;
+  }
+
+  .saki-mobile-tab-btn.is-active {
+    background: #ffffff;
+    color: #0f172a;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+    font-weight: 600;
+  }
+
+  [data-theme="dark"] .saki-mobile-tab-btn.is-active {
+    background: #1e293b;
+    color: #f8fafc;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  }
+
+  .saki-mobile-tab-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* Mobile Two-View Switching */
+  .saki-code-changes-body {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .saki-code-changes-body.mobile-view-files .saki-code-changes-sidebar {
+    display: flex;
+    width: 100%;
+    max-width: 100%;
+    flex: 1;
+    border-right: none;
+  }
+
+  .saki-code-changes-body.mobile-view-files .saki-code-changes-diff-pane {
+    display: none;
+  }
+
+  .saki-code-changes-body.mobile-view-diff .saki-code-changes-sidebar {
+    display: none;
+  }
+
+  .saki-code-changes-body.mobile-view-diff .saki-code-changes-diff-pane {
+    display: flex;
+    width: 100%;
+    flex: 1;
+  }
+
+  /* Mobile diff header back button */
+  .saki-diff-mobile-back-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    background: rgba(255, 255, 255, 0.85);
+    color: #0071e3;
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  [data-theme="dark"] .saki-diff-mobile-back-btn {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.1);
+    color: #38bdf8;
+  }
+
+  .saki-diff-header-bar {
+    padding: 6px 10px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .saki-diff-file-path-group {
+    max-width: calc(100vw - 120px);
+  }
+
+  .saki-diff-viewer-wrap {
+    padding: 6px;
+  }
+
+  .saki-changed-files-pill {
+    padding: 5px 10px 5px 8px;
+    font-size: 12px;
+    max-width: calc(100vw - 32px);
+  }
+}

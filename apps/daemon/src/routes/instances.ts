@@ -149,7 +149,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
 
   app.post("/api/instances/:id/shells/:sid/command", { preHandler: authenticatePanelRequest }, async (request) => {
     const { id, sid } = request.params as { id: string; sid: string };
-    const body = request.body as { command?: string; timeoutMs?: number; input?: string };
+    const body = request.body as { command?: string; timeoutMs?: number; input?: string; workingDirectory?: string; cwd?: string };
     const command = typeof body.command === "string" ? body.command.trim() : "";
     if (!command) {
       throw new Error("command is required");
@@ -164,6 +164,8 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       return await instanceManager.runShellCommand(id, sid, command, {
         ...(typeof body.timeoutMs === "number" ? { timeoutMs: body.timeoutMs } : {}),
         ...(typeof body.input === "string" ? { input: body.input } : {}),
+        ...(typeof body.workingDirectory === "string" ? { workingDirectory: body.workingDirectory } : {}),
+        ...(typeof body.cwd === "string" ? { cwd: body.cwd } : {}),
         signal: abort.signal
       });
     } finally {

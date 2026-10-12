@@ -21,9 +21,12 @@ export async function registerGitRoutes(app: FastifyInstance): Promise<void> {
     "ignore",
     "commit",
     "draft",
+    "changes-summary",
+    "revert-all",
+    "restore-all",
   ] as const) {
     const read =
-      action === "status" || action === "history" || action === "diff";
+      action === "status" || action === "history" || action === "diff" || action === "changes-summary";
     app.route({
       method: read ? "GET" : "POST",
       url: `/api/instances/:id/git/${action}`,
@@ -181,7 +184,7 @@ export async function registerGitRoutes(app: FastifyInstance): Promise<void> {
             });
           // 仅将未注册的 Git 路由识别为旧节点。
           if (
-            /^Daemon request failed \(404\): Route (?:GET|POST):\/api\/instances\/[^/?]+\/git\/(?:status|history|diff|init|ignore|commit)(?:\?[^\r\n]*)? not found$/.test(
+            /^Daemon request failed \(404\): Route (?:GET|POST):\/api\/instances\/[^/?]+\/git\/(?:status|history|diff|init|ignore|commit|changes-summary|revert-all|restore-all)(?:\?[^\r\n]*)? not found$/.test(
               message,
             )
           ) {

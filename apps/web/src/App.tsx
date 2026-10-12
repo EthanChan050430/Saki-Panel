@@ -438,6 +438,7 @@ export function App() {
       <ElegantCursor />
       <PluginProvider token={token}>
         <Workspace
+          key={user.id}
           token={token}
           user={user}
           appearance={appearance}

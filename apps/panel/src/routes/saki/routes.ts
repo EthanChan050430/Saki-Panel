@@ -12,6 +12,8 @@ import type {
   UpdateSakiSkillRequest
 } from "@webops/shared";
 import { requireAnyPermission, requirePermission } from "../../auth.js";
+import { loadVisibleInstance, listVisibleInstances } from "../../instance-access.js";
+import { requestDaemon } from "../../daemon-client.js";
 import { writeAuditLog } from "../../audit.js";
 import {
   answerPendingSakiQuestion,
@@ -59,8 +61,17 @@ import {
 } from "./skills.js";
 import { prisma } from "../../db.js";
 import { createSakiAgentEvents, startSakiEventStream } from "./stream.js";
+import { connectSakiTaskStream } from "./task-stream.js";
+import { assertSakiSessionAccess, assertSakiTaskAccess, hasSakiProjectAccess, sakiProjectPermissions } from "./session-access.js";
+import { withSakiWorkspaceMutation } from "./workspace-mutation.js";
+import { createSakiTerminal } from "./terminals.js";
+import { assertSakiWorkspaceBinding, bindSakiWorkspace } from "./workspace-binding.js";
+import { runTrackedSakiTask, trackedSakiTaskEvents } from "./task-runner.js";
+import { saveClientSakiConversation, withSakiConversationLock } from "./conversations.js";
 import {
   cancelActiveSakiTask,
+  activeSakiTasks,
+  assertSakiTaskContextAvailable,
   cancelAllRunningSakiTasks,
   cancelRunningSakiTasksForContext,
   clearFinishedSakiTasks,
@@ -71,14 +82,20 @@ import {
   finishActiveSakiTask,
   getActiveSakiTask,
   getActiveSakiTaskById,
+  findSakiTaskByRequest,
+  getLatestSakiTask,
   listSakiActiveTasks,
+  pendingSakiActions,
   formatSessionFollowUpContext,
   getSessionAgentMemory,
+  sessionAgentMemoriesReady,
+  sakiActionsReady,
   startSakiTaskMaintenance,
   toSakiActiveTaskSummary
 } from "./state.js";
 import {
   effectiveSakiAgentPermissionMode,
+  effectiveSakiTerminalSandbox,
   getModelPointsMultiplier,
   isSakiContinuationMessage,
   normalizeProviderId,
@@ -91,6 +108,64 @@ import {
   type SakiAgentResumeState,
   type SakiAgentRunEvents
 } from "./types.js";
+
+async function sakiGitTarget(request: FastifyRequest, instanceId: string, mutating: boolean) {
+  if (!instanceId) throw new RouteError("请先选择项目。", 400);
+  const mode = !mutating && !request.user.permissions.includes("saki.agent") ? "chat" : "agent";
+  const { user } = await assertSakiSessionAccess(request.user.sub, null, mode);
+  const instance = await loadVisibleInstance(user.id, instanceId);
+  if (!instance || !hasSakiProjectAccess(user, instance)) throw new RouteError("Instance not found.", 404);
+  const scoped = sakiProjectPermissions(user, instance, request.user.permissions);
+  if (!scoped.includes("instance.view") || !(mutating ? scoped.includes("saki.agent") : scoped.includes("saki.agent") || scoped.includes("saki.chat"))) throw new RouteError("Instance not found.", 404);
+  const required = mutating ? ["file.read", "file.write", "file.delete"] as const : ["file.read"] as const;
+  if (!required.every((code) => scoped.includes(code))) throw new RouteError("Forbidden.", 403);
+  return instance;
+}
+
+export async function startSakiTaskInvocation(request: FastifyRequest, prepared: Awaited<ReturnType<typeof prepareSakiChatInvocation>>) {
+  const { modelInput, context, skills } = prepared;
+  await Promise.all([sessionAgentMemoriesReady, sakiActionsReady]);
+  const previous = findSakiTaskByRequest(request.user.sub, modelInput.clientRequestId);
+  if (previous) {
+    await assertSakiTaskAccess(request.user.sub, previous);
+    if (previous.instanceId !== (context.workspace?.instanceId ?? null) || previous.input.conversationId !== modelInput.conversationId) throw new RouteError("Client request belongs to another workspace or conversation.", 409);
+    return previous;
+  }
+  const instanceId = context.workspace?.instanceId ?? null;
+  let memory = getSessionAgentMemory(request.user.sub, instanceId);
+  const continuation = Boolean(modelInput.resumeTaskId) || isSakiContinuationMessage(modelInput.message);
+  if (memory && context.instance) {
+    try {
+      if (!memory.resumeState.workspaceBinding) throw new RouteError("Resume record has no workspace binding.", 409);
+      assertSakiWorkspaceBinding(context.instance, memory.resumeState.workspaceBinding);
+    } catch {
+      if (continuation) throw new RouteError("Workspace or node changed, or this resume record predates workspace binding. Describe a new task.", 409);
+      memory = null;
+    }
+  }
+  if (modelInput.resumeTaskId && memory?.resumeState.taskId !== modelInput.resumeTaskId) throw new RouteError("该任务的恢复记录已失效，无法安全重试。请重新描述任务。", 409);
+  const config = withRequestedSakiModel(await readEffectiveSakiConfig(), modelInput);
+  const resume = continuation ? memory?.resumeState : undefined;
+  const input = resume ? { ...resume.input, ...modelInput, message: resume.input.message, attachments: resume.input.attachments ?? [] }
+    : memory ? { ...modelInput, contextText: [modelInput.contextText, formatSessionFollowUpContext(memory)].filter(Boolean).join("\n\n") } : modelInput;
+  // No await between this second deduplication check and claiming the context.
+  const concurrent = findSakiTaskByRequest(request.user.sub, modelInput.clientRequestId);
+  if (concurrent) {
+    if (concurrent.instanceId !== instanceId || concurrent.input.conversationId !== modelInput.conversationId) throw new RouteError("Client request belongs to another workspace or conversation.", 409);
+    return concurrent;
+  }
+  assertSakiTaskContextAvailable(request.user.sub, instanceId);
+  const abortController = new AbortController();
+  const task = createActiveSakiTask(randomUUID(), request.user.sub, instanceId, modelInput, abortController);
+  if (context.instance) task.workspaceBinding = bindSakiWorkspace(context.instance);
+  void runTrackedSakiTask(task, async () => {
+    const response = await runSakiAgent({ request, input, context, skills, userId: request.user.sub, permissions: request.user.permissions, config, abortController, taskId: task.id }, trackedSakiTaskEvents(task.id), resume, executeSakiAgentTool);
+    try { await auditSakiChatResponse(request, prepared, response); }
+    catch (error) { console.warn("[Saki] Task audit failed:", error instanceof Error ? error.message : String(error)); }
+    return response;
+  });
+  return task;
+}
 async function acceptQueryBearer(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
   const query = request.query as { token?: string };
   if (!request.headers.authorization && typeof query.token === "string" && query.token.trim()) {
@@ -385,17 +460,22 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     return result;
   });
 
-  app.post("/api/saki/actions/:id/approve", { preHandler: requirePermission("saki.agent") }, async (request) => {
+  app.post("/api/saki/actions/:id/approve", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
     const { id } = request.params as { id: string };
     return approvePendingSakiAction(request, id);
   });
 
-  app.post("/api/saki/actions/:id/reject", { preHandler: requirePermission("saki.agent") }, async (request) => {
+  app.post("/api/saki/terminals", { preHandler: requirePermission("saki.agent") }, async (request) => {
+    const body = request.body as { instanceId?: unknown } | undefined;
+    return createSakiTerminal(request.user.sub, request.user.permissions, typeof body?.instanceId === "string" ? body.instanceId.trim() : "");
+  });
+
+  app.post("/api/saki/actions/:id/reject", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
     const { id } = request.params as { id: string };
     return rejectPendingSakiAction(request, id);
   });
 
-  app.post("/api/saki/actions/:id/answer", { preHandler: requirePermission("saki.agent") }, async (request) => {
+  app.post("/api/saki/actions/:id/answer", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
     const { id } = request.params as { id: string };
     return answerPendingSakiQuestion(request, id, (request.body ?? {}) as { selection?: unknown; customText?: unknown; skipped?: unknown });
   });
@@ -409,88 +489,31 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     const prepared = await prepareSakiChatInvocation(request, request.body as Partial<SakiChatRequest>);
     const { modelInput, context, skills } = prepared;
     await assertUserHasSpendablePoints(request.user.sub);
+    if (modelInput.mode === "agent") {
+      const task = await startSakiTaskInvocation(request, prepared);
+      await assertSakiTaskAccess(request.user.sub, task);
+      connectSakiTaskStream(task, request, reply, () => assertSakiTaskAccess(request.user.sub, task));
+      return;
+    }
     const stream = startSakiEventStream(request, reply);
     const directEvents = createSakiAgentEvents(stream);
-    const taskId = randomUUID();
-    const isAgent = modelInput.mode === "agent";
-    const instanceKeyId = context.workspace?.instanceId ?? null;
     const taskAbortController = new AbortController();
-
-    if (isAgent) {
-      cancelRunningSakiTasksForContext(request.user.sub, instanceKeyId);
-      createActiveSakiTask(taskId, request.user.sub, instanceKeyId, modelInput, taskAbortController);
-    }
-
-    const events: Required<SakiAgentRunEvents> = {
-      workflow: (update) => {
-        directEvents.workflow(update);
-        if (isAgent) emitActiveSakiTaskEvent(taskId, "workflow", update as unknown as Record<string, unknown>);
-      },
-      action: (action) => {
-        directEvents.action(action);
-        if (isAgent) emitActiveSakiTaskEvent(taskId, "action", { action: action as unknown as Record<string, unknown> });
-      },
-      delta: (text) => {
-        directEvents.delta(text);
-        if (isAgent) emitActiveSakiTaskEvent(taskId, "delta", { text });
-      },
-      thinking: (text) => {
-        directEvents.thinking(text);
-        if (isAgent) emitActiveSakiTaskEvent(taskId, "thinking", { text });
-      }
-    };
+    const abortDirectChat = () => taskAbortController.abort();
+    reply.raw.once("close", abortDirectChat);
+    const events = directEvents;
 
     try {
+      const config = withRequestedSakiModel(await readEffectiveSakiConfig(), modelInput);
       stream.send("meta", {
         source: "direct-model",
         mode: modelInput.mode,
         agentPermissionMode: effectiveSakiAgentPermissionMode(modelInput),
+        terminalSandbox: effectiveSakiTerminalSandbox(modelInput, config),
         workspace: context.workspace,
-        skills,
-        taskId: isAgent ? taskId : undefined
+        skills
       });
-
-      const config = withRequestedSakiModel(await readEffectiveSakiConfig(), modelInput);
       let response: SakiChatResponse;
-      if (isAgent) {
-        const isContinuation = Boolean(modelInput.resumeTaskId) || isSakiContinuationMessage(modelInput.message);
-        let resumeState: SakiAgentResumeState | undefined;
-        let agentInput = modelInput;
-        const sessionMemory = getSessionAgentMemory(request.user.sub, instanceKeyId);
-        if (modelInput.resumeTaskId && sessionMemory?.resumeState.taskId !== modelInput.resumeTaskId) {
-          throw new RouteError("该任务的恢复记录已失效，无法安全重试。请重新描述任务。", 409);
-        }
-        if (sessionMemory) {
-          if (isContinuation) {
-            resumeState = sessionMemory.resumeState;
-            agentInput = { ...resumeState.input, ...modelInput, message: resumeState.input.message, attachments: resumeState.input.attachments ?? [] };
-          } else {
-            const notes = formatSessionFollowUpContext(sessionMemory);
-            agentInput = {
-              ...modelInput,
-              contextText: [modelInput.contextText, notes].filter(Boolean).join("\n\n")
-            };
-          }
-        }
-
-        response = await runSakiAgent(
-          {
-            request,
-            input: agentInput,
-            context,
-            skills,
-            userId: request.user.sub,
-            permissions: request.user.permissions,
-            config,
-            abortController: taskAbortController,
-            taskId
-          },
-          events,
-          resumeState,
-          executeSakiAgentTool
-        );
-        finishActiveSakiTask(taskId, response.retry ? "failed" : "completed", response, response.retry?.reason);
-      } else if (config.imageGen?.enabled) {
+      if (config.imageGen?.enabled || config.searchEnabled) {
         response = await runSakiAgent(
           {
             request,
@@ -502,8 +525,8 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
             config,
             kind: "chat",
             toolProfile: "chat",
-            maxLoops: 8,
-            systemPromptOverride: buildChatModeSystemPrompt(true, config.systemPrompt),
+            maxLoops: 12,
+            systemPromptOverride: buildChatModeSystemPrompt(Boolean(config.imageGen?.enabled), config.systemPrompt, config.searchEnabled),
             abortController: taskAbortController
           },
           events,
@@ -554,6 +577,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
           source: "direct-model",
           message: replyText,
           ...(accumulatedThinking.trim() ? { thinking: accumulatedThinking.trim() } : {}),
+          terminalSandbox: effectiveSakiTerminalSandbox(modelInput, config),
           workspace: context.workspace,
           skills,
           ...(chatUsage ? { usage: chatUsage } : {})
@@ -565,18 +589,18 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Saki request failed";
       const fallback = directLocalFallback(modelInput, context, skills, reason);
-      if (isAgent) {
-        finishActiveSakiTask(taskId, "failed", fallback, reason);
-      }
       await auditSakiChatResponse(request, prepared, fallback, "FAILURE", reason);
       stream.send("done", { response: fallback });
     } finally {
+      reply.raw.off("close", abortDirectChat);
       stream.end();
     }
   });
 
   app.get("/api/saki/active-tasks", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
-    const tasks = listSakiActiveTasks(request.user.sub);
+    const candidates = listSakiActiveTasks(request.user.sub);
+    const access = await Promise.all(candidates.map(async (task) => { try { await assertSakiTaskAccess(request.user.sub, task); return true; } catch { return false; } }));
+    const tasks = candidates.filter((_, index) => access[index]);
     return {
       tasks: tasks.map(toSakiActiveTaskSummary),
       runningCount: tasks.filter((task) => task.status === "running").length
@@ -584,15 +608,23 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/saki/active-task", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
-    const query = request.query as { instanceId?: string };
-    const task = getActiveSakiTask(request.user.sub, query.instanceId ?? null);
+    const query = request.query as { instanceId?: string; includeFinished?: string };
+    const task = query.includeFinished === "1" ? getLatestSakiTask(request.user.sub, query.instanceId ?? null) : getActiveSakiTask(request.user.sub, query.instanceId ?? null);
     if (!task) {
       return { hasActiveTask: false };
     }
+    await assertSakiTaskAccess(request.user.sub, task);
     return {
       hasActiveTask: true,
       task: toSakiActiveTaskSummary(task)
     };
+  });
+
+  app.get("/api/saki/tasks/:taskId", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    const task = getActiveSakiTaskById((request.params as { taskId: string }).taskId);
+    if (!task || task.userId !== request.user.sub) throw new RouteError("Task not found.", 404);
+    await assertSakiTaskAccess(request.user.sub, task);
+    return toSakiActiveTaskSummary(task);
   });
 
   app.get("/api/saki/tasks/:taskId/stream", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request, reply) => {
@@ -601,44 +633,8 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     if (!task || task.userId !== request.user.sub) {
       throw new RouteError("Task not found.", 404);
     }
-    const stream = startSakiEventStream(request, reply);
-    stream.send("meta", {
-      source: "direct-model",
-      mode: task.input.mode ?? "agent",
-      agentPermissionMode: effectiveSakiAgentPermissionMode(task.input),
-      taskId: task.id,
-      status: task.status
-    });
-
-    // Replay all buffered events that occurred while the client was disconnected:
-    for (const event of task.eventsBuffer) {
-      stream.send(event.type, event.payload);
-    }
-
-    if ((task.status === "completed" || task.status === "failed") && task.response) {
-      stream.send("done", { response: task.response });
-      stream.end();
-      return;
-    }
-
-    if (task.status === "failed" || task.status === "cancelled") {
-      stream.send("error", { message: task.error || "Task failed" });
-      stream.end();
-      return;
-    }
-
-    // Subscribe to live events
-    const subscriber = (event: SakiActiveTaskEvent) => {
-      stream.send(event.type, event.payload);
-      if (event.type === "done" || event.type === "error") {
-        stream.end();
-        task.subscribers.delete(subscriber);
-      }
-    };
-    task.subscribers.add(subscriber);
-    reply.raw.on("close", () => {
-      task.subscribers.delete(subscriber);
-    });
+    await assertSakiTaskAccess(request.user.sub, task);
+    connectSakiTaskStream(task, request, reply, () => assertSakiTaskAccess(request.user.sub, task));
   });
 
   app.post("/api/saki/tasks/:taskId/cancel", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
@@ -657,6 +653,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     if (!task || task.userId !== request.user.sub) {
       throw new RouteError("Task not found.", 404);
     }
+    await assertSakiTaskAccess(request.user.sub, task);
     const body = objectValue(request.body) ?? {};
     const message = trimString(body.message);
     if (!message) {
@@ -715,54 +712,45 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     return rollbackSakiTask(request, taskId);
   });
 
+  app.get("/api/saki/git/changes-summary", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    const query = request.query as { instanceId?: string } | undefined;
+    const instanceId = typeof query?.instanceId === "string" ? query.instanceId.trim() : "";
+    if (!instanceId) {
+      return { available: false, initialized: false, filesCount: 0, additions: 0, deletions: 0, changes: [], diff: "", canRestore: false };
+    }
+    const targetInstance = await sakiGitTarget(request, instanceId, false);
+    const q = new URLSearchParams({ workingDirectory: targetInstance.workingDirectory });
+    return requestDaemon(targetInstance.node, `/api/instances/${encodeURIComponent(targetInstance.id)}/git/changes-summary?${q}`, {}, 30000);
+  });
+
+  for (const operation of ["revert-all", "restore-all"] as const) {
+    app.post(`/api/saki/git/${operation}`, { preHandler: requirePermission("saki.agent") }, async (request) => {
+      const body = request.body as { instanceId?: string } | undefined;
+      const instanceId = typeof body?.instanceId === "string" ? body.instanceId.trim() : "";
+      if (!instanceId) throw new RouteError("请先选择项目。", 400);
+      return withSakiWorkspaceMutation(instanceId, async () => {
+        const instance = await sakiGitTarget(request, instanceId, true);
+        const result = await requestDaemon(instance.node, `/api/instances/${encodeURIComponent(instance.id)}/git/${operation}`, {
+          method: "POST", body: JSON.stringify({ workingDirectory: instance.workingDirectory })
+        }, 45000);
+        await writeAuditLog({ request, userId: request.user.sub, action: `saki.git.${operation}`, resourceType: "instance", resourceId: instance.id });
+        return result;
+      });
+    });
+  }
+
   app.post("/api/saki/chat", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
     const prepared = await prepareSakiChatInvocation(request, request.body as Partial<SakiChatRequest>);
     const { modelInput, context, skills } = prepared;
     await assertUserHasSpendablePoints(request.user.sub);
+    if (modelInput.mode === "agent") {
+      const task = await startSakiTaskInvocation(request, prepared);
+      return task.execution ?? task.response;
+    }
 
     try {
       const config = withRequestedSakiModel(await readEffectiveSakiConfig(), modelInput);
-      if (modelInput.mode === "agent") {
-        const instanceKeyId = context.workspace?.instanceId ?? null;
-        const isContinuation = Boolean(modelInput.resumeTaskId) || isSakiContinuationMessage(modelInput.message);
-        let resumeState: SakiAgentResumeState | undefined;
-        let agentInput = modelInput;
-        const sessionMemory = getSessionAgentMemory(request.user.sub, instanceKeyId);
-        if (modelInput.resumeTaskId && sessionMemory?.resumeState.taskId !== modelInput.resumeTaskId) {
-          throw new RouteError("该任务的恢复记录已失效，无法安全重试。请重新描述任务。", 409);
-        }
-        if (sessionMemory) {
-          if (isContinuation) {
-            resumeState = sessionMemory.resumeState;
-            agentInput = { ...resumeState.input, ...modelInput, message: resumeState.input.message, attachments: resumeState.input.attachments ?? [] };
-          } else {
-            const notes = formatSessionFollowUpContext(sessionMemory);
-            agentInput = {
-              ...modelInput,
-              contextText: [modelInput.contextText, notes].filter(Boolean).join("\n\n")
-            };
-          }
-        }
-
-        const response = await runSakiAgent(
-          {
-            request,
-            input: agentInput,
-            context,
-            skills,
-            userId: request.user.sub,
-            permissions: request.user.permissions,
-            config
-          },
-          undefined,
-          resumeState,
-          executeSakiAgentTool
-        );
-        await auditSakiChatResponse(request, prepared, response);
-        return response;
-      }
-
-      if (config.imageGen?.enabled) {
+      if (config.imageGen?.enabled || config.searchEnabled) {
         const response = await runSakiAgent(
           {
             request,
@@ -774,8 +762,8 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
             config,
             kind: "chat",
             toolProfile: "chat",
-            maxLoops: 8,
-            systemPromptOverride: buildChatModeSystemPrompt(true, config.systemPrompt)
+            maxLoops: 12,
+            systemPromptOverride: buildChatModeSystemPrompt(Boolean(config.imageGen?.enabled), config.systemPrompt, config.searchEnabled)
           },
           undefined,
           undefined,
@@ -858,43 +846,22 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     if (!body || typeof body !== "object") {
       throw new RouteError("Invalid conversation data.", 400);
     }
-    const existing = await prisma.sakiConversation.findUnique({ where: { id } });
-    if (existing && existing.userId !== request.user.sub) {
-      throw new RouteError("Forbidden", 403);
-    }
-    const record = await prisma.sakiConversation.upsert({
-      where: { id },
-      create: {
-        id,
-        userId: request.user.sub,
-        contextKey: typeof body.contextKey === "string" ? body.contextKey : "global",
-        title: typeof body.title === "string" ? body.title : "新对话",
-        label: typeof body.label === "string" ? body.label : "Saki",
-        detail: typeof body.detail === "string" ? body.detail : "",
-        instanceId: typeof body.instanceId === "string" ? body.instanceId : null,
-        messages: JSON.stringify(Array.isArray(body.messages) ? body.messages : [])
-      },
-      update: {
-        ...(typeof body.contextKey === "string" ? { contextKey: body.contextKey } : {}),
-        ...(typeof body.instanceId === "string" ? { instanceId: body.instanceId } : {}),
-        ...(typeof body.title === "string" ? { title: body.title } : {}),
-        ...(typeof body.label === "string" ? { label: body.label } : {}),
-        ...(typeof body.detail === "string" ? { detail: body.detail } : {}),
-        ...(Array.isArray(body.messages) ? { messages: JSON.stringify(body.messages) } : {})
-      }
-    });
-    return { ok: true, id: record.id };
+    return saveClientSakiConversation(request.user.sub, id, body);
   });
 
   app.delete("/api/saki/conversations/:id", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
     const { id } = request.params as { id: string };
-    await prisma.sakiConversation.deleteMany({
-      where: { id, userId: request.user.sub }
+    await withSakiConversationLock(id, async () => {
+      const liveTask = [...activeSakiTasks.values()].some((task) => task.userId === request.user.sub && (task.input.conversationId ?? `task-${task.id}`) === id && (task.status === "running" || task.status === "pending_approval" || task.status === "pending_input" || task.execution || task.decisionInFlight || task.pendingHistorySync));
+      const pendingDecision = [...pendingSakiActions.values()].some((pending) => pending.userId === request.user.sub && pending.resume && (pending.resume.input.conversationId ?? `task-${pending.resume.taskId}`) === id);
+      if (liveTask || pendingDecision) throw new RouteError("请先停止或处理该对话的任务，再删除记录。", 409);
+      await prisma.sakiConversation.deleteMany({ where: { id, userId: request.user.sub } });
     });
     return { ok: true };
   });
 
   app.delete("/api/saki/conversations", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    if ([...activeSakiTasks.values()].some((task) => task.userId === request.user.sub && (task.status === "running" || task.status === "pending_approval" || task.status === "pending_input" || task.execution || task.decisionInFlight || task.pendingHistorySync)) || [...pendingSakiActions.values()].some((pending) => pending.userId === request.user.sub && pending.resume)) throw new RouteError("请先停止、处理或完成同步中的任务，再清空记录。", 409);
     await prisma.sakiConversation.deleteMany({
       where: { userId: request.user.sub }
     });

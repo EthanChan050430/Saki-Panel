@@ -42,3 +42,4 @@ safeCopy(dtsFile, rootDtsFile);
 // 根声明文件使用同目录的 Git 类型。
 safeCopy(path.join(typesDir, "git.d.ts"), path.join(distDir, "git.d.ts"));
 safeCopy(path.join(typesDir, "database-security.d.ts"), path.join(distDir, "database-security.d.ts"));
+safeCopy(path.join(typesDir, "terminal.d.ts"), path.join(distDir, "terminal.d.ts"));

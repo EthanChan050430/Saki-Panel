@@ -9,6 +9,7 @@ import {
   Paperclip,
   ScanEye,
   Shield,
+  ShieldCheck,
   XOctagon
 } from "lucide-react";
 import { LiquidGlassContainer } from "../../common/LiquidGlass.js";
@@ -43,6 +44,8 @@ export interface SakiChatDropdownsProps {
   permissionDropdownRef: React.RefObject<HTMLDivElement | null>;
   permissionMode: SakiAgentPermissionMode;
   onSelectPermissionMode: (mode: SakiAgentPermissionMode) => void;
+  terminalSandbox?: boolean;
+  onToggleTerminalSandbox?: (enabled: boolean) => void;
 
   // Model selector
   modelDropdownOpen: boolean;
@@ -69,6 +72,8 @@ export const SakiChatDropdowns = React.memo(function SakiChatDropdowns({
   permissionDropdownRef,
   permissionMode,
   onSelectPermissionMode,
+  terminalSandbox,
+  onToggleTerminalSandbox,
   modelDropdownOpen,
   modelSelectorRef,
   modelDropdownRef,
@@ -155,7 +160,7 @@ export const SakiChatDropdowns = React.memo(function SakiChatDropdowns({
                   8,
                   Math.min(
                     permissionSelectorRef.current.getBoundingClientRect().left,
-                    window.innerWidth - Math.min(260, window.innerWidth - 16) - 8
+                    window.innerWidth - Math.min(260, window.innerWidth - 16) - 10
                   )
                 ),
                 bottom: window.innerHeight - permissionSelectorRef.current.getBoundingClientRect().top + 8
@@ -174,10 +179,10 @@ export const SakiChatDropdowns = React.memo(function SakiChatDropdowns({
                 <div className="saki-dropdown-title">智能体权限模式</div>
                 {(
                   [
-                    { id: "acceptEdits", label: "自动接受", desc: "自动执行安全文件编辑", icon: CheckCircle2, colorClass: "accept" },
-                    { id: "ask", label: "询问确认", desc: "每次文件修改均需确认", icon: Shield, colorClass: "ask" },
-                    { id: "plan", label: "仅规划", desc: "只输出执行方案，不落盘修改", icon: Eye, colorClass: "plan" },
-                    { id: "bypassPermissions", label: "跳过审查", desc: "绕过所有确认全速自动执行", icon: XOctagon, colorClass: "bypass" }
+                    { id: "ask", label: "请求批准", desc: "终端联网、越界访问和风险操作询问", icon: Shield, colorClass: "ask" },
+                    { id: "acceptEdits", label: "帮我批准", desc: "仅对检测到的风险操作请求批准", icon: CheckCircle2, colorClass: "accept" },
+                    { id: "bypassPermissions", label: "完全访问权限", desc: "无需逐项批准，仍遵守账号与安全策略", icon: XOctagon, colorClass: "bypass" },
+                    { id: "plan", label: "仅规划", desc: "只读探索和规划，不修改文件", icon: Eye, colorClass: "plan" }
                   ] as const
                 ).map((opt) => {
                   const IconComponent = opt.icon;
@@ -202,6 +207,25 @@ export const SakiChatDropdowns = React.memo(function SakiChatDropdowns({
                     </button>
                   );
                 })}
+                {onToggleTerminalSandbox ? (
+                  <>
+                    <div className="saki-perm-divider" />
+                    <button
+                      className="saki-perm-sandbox-row"
+                      type="button"
+                      onClick={() => onToggleTerminalSandbox(!terminalSandbox)}
+                      title="限制终端与文件范围，禁止越界读取外部目录或其它项目"
+                    >
+                      <div className="saki-perm-sandbox-left">
+                        <Shield size={14} className="saki-perm-sandbox-icon" />
+                        <span className="saki-perm-sandbox-label">终端与工作区沙箱</span>
+                      </div>
+                      <div className={`saki-switch ${terminalSandbox ? "checked" : ""}`} aria-hidden="true">
+                        <div className="saki-switch-handle" />
+                      </div>
+                    </button>
+                  </>
+                ) : null}
               </div>
             </LiquidGlassContainer>,
             document.body

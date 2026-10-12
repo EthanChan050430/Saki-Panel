@@ -1657,7 +1657,8 @@
   border-color: rgba(0, 0, 0, 0.08);
 }
 
-.agent-task-status.status-pending_approval {
+.agent-task-status.status-pending_approval,
+.agent-task-status.status-pending_input {
   background: rgba(255, 149, 0, 0.12);
   color: #c93400;
   border-color: rgba(255, 149, 0, 0.25);
@@ -1687,7 +1688,8 @@
   border-color: rgba(255, 255, 255, 0.12);
 }
 
-[data-theme="dark"] .agent-task-status.status-pending_approval {
+[data-theme="dark"] .agent-task-status.status-pending_approval,
+[data-theme="dark"] .agent-task-status.status-pending_input {
   background: rgba(255, 159, 10, 0.18);
   color: #ff9f0a;
   border-color: rgba(255, 159, 10, 0.35);

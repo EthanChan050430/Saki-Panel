@@ -83,6 +83,8 @@ export type LocalSakiTimelineItem =
 
 export interface LocalSakiMessage extends SakiChatMessage {
   id: string;
+  taskId?: string | undefined;
+  rollbackJournal?: boolean | undefined;
   retry?: SakiChatResponse["retry"];
   source?: "direct-model" | "local-fallback";
   actions?: SakiAgentAction[];
@@ -219,5 +221,6 @@ export type MarkdownBlock =
   | { type: "paragraph"; text: string }
   | { type: "heading"; level: number; text: string }
   | { type: "quote"; text: string }
-  | { type: "list"; ordered: boolean; items: string[] }
+  | { type: "list"; ordered: boolean; items: string[]; start?: number }
+  | { type: "table"; headers: string[]; rows: string[][]; alignments: ("left" | "center" | "right" | undefined)[] }
   | { type: "code"; language: string; code: string };

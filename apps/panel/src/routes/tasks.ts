@@ -2,7 +2,9 @@ import type { FastifyInstance } from "fastify";
 import type { CreateScheduledTaskRequest, UpdateScheduledTaskRequest } from "@webops/shared";
 import { requirePermission } from "../auth.js";
 import { writeAuditLog } from "../audit.js";
-import { listVisibleInstances, loadVisibleInstance } from "../instance-access.js";
+import { loadVisibleInstance } from "../instance-access.js";
+import { assertScheduledTaskAccess, filterAccessibleScheduledTasks } from "../task-access.js";
+import type { PermissionCode } from "@webops/shared";
 import {
   createScheduledTask,
   deleteScheduledTask,
@@ -21,11 +23,9 @@ async function ensureTask(id: string) {
   return task;
 }
 
-async function ensureVisibleTask(id: string, userId: string) {
+async function ensureVisibleTask(id: string, userId: string, permission: PermissionCode = "task.view") {
   const task = await ensureTask(id);
-  if (task.instanceId && !(await loadVisibleInstance(userId, task.instanceId))) {
-    throw Object.assign(new Error("Task not found"), { statusCode: 404 });
-  }
+  await assertScheduledTaskAccess(userId, task, permission);
   return task;
 }
 
@@ -37,9 +37,7 @@ export async function registerTaskRoutes(app: FastifyInstance): Promise<void> {
       throw Object.assign(new Error("Instance not found"), { statusCode: 404 });
     }
     const tasks = await listScheduledTasks(instanceId);
-    if (instanceId) return tasks;
-    const visibleInstanceIds = new Set((await listVisibleInstances(request.user.sub)).map((instance) => instance.id));
-    return tasks.filter((task) => !task.instanceId || visibleInstanceIds.has(task.instanceId));
+    return filterAccessibleScheduledTasks(request.user.sub, tasks);
   });
 
   app.post("/api/tasks", { preHandler: requirePermission("task.create") }, async (request, reply) => {
@@ -52,6 +50,8 @@ export async function registerTaskRoutes(app: FastifyInstance): Promise<void> {
       reply.code(404).send({ message: "Instance not found" });
       return;
     }
+
+    await assertScheduledTaskAccess(request.user.sub, { instanceId: body.instanceId ?? null, createdBy: request.user.sub }, "task.create");
 
     const task = await createScheduledTask(
       {
@@ -82,12 +82,13 @@ export async function registerTaskRoutes(app: FastifyInstance): Promise<void> {
 
   app.put("/api/tasks/:id", { preHandler: requirePermission("task.update") }, async (request) => {
     const { id } = request.params as { id: string };
-    await ensureVisibleTask(id, request.user.sub);
+    const existing = await ensureVisibleTask(id, request.user.sub, "task.update");
     const body = request.body as UpdateScheduledTaskRequest;
     if (body.instanceId && !(await loadVisibleInstance(request.user.sub, body.instanceId))) {
       throw Object.assign(new Error("Instance not found"), { statusCode: 404 });
     }
-    const task = await updateScheduledTask(id, body);
+    if (body.instanceId !== undefined) await assertScheduledTaskAccess(request.user.sub, { instanceId: body.instanceId, createdBy: existing.createdBy }, "task.update");
+    const task = await updateScheduledTask(id, body, request.user.sub);
     await writeAuditLog({
       request,
       userId: request.user.sub,
@@ -101,7 +102,7 @@ export async function registerTaskRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete("/api/tasks/:id", { preHandler: requirePermission("task.delete") }, async (request) => {
     const { id } = request.params as { id: string };
-    await ensureVisibleTask(id, request.user.sub);
+    await ensureVisibleTask(id, request.user.sub, "task.delete");
     await deleteScheduledTask(id);
     await writeAuditLog({
       request,
@@ -115,7 +116,7 @@ export async function registerTaskRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/tasks/:id/run", { preHandler: requirePermission("task.run") }, async (request) => {
     const { id } = request.params as { id: string };
-    await ensureVisibleTask(id, request.user.sub);
+    await ensureVisibleTask(id, request.user.sub, "task.run");
     return executeScheduledTask(id, {
       trigger: "manual",
       request,

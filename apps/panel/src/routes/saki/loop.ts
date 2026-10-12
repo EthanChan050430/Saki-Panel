@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { bindSakiWorkspace } from "./workspace-binding.js";
 import type { SakiAgentAction, SakiAgentRiskLevel, SakiChatRequest, SakiChatResponse, SakiInputAttachment, PermissionCode } from "@webops/shared";
 import { countTokens, estimateModelCallTokens } from "../../tokenizer.js";
 import { recordAgentTokenUsage } from "../../points.js";
@@ -8,6 +9,7 @@ import {
   checkpointId,
   defaultAgentReadFileLineCount,
   effectiveSakiAgentPermissionMode,
+  effectiveSakiTerminalSandbox,
   getModelPointsMultiplier,
   maxAgentCompactedScratchpadChars,
   maxAgentCompactedScratchpadTokens,
@@ -33,12 +35,12 @@ import {
   stripThinking,
   truncateText,
   trimString,
-  combinedSakiContextText,
-  formatLineNumberedContent
+  combinedSakiContextText
 } from "./types.js";
 import { advertisedSakiToolSchemas, isSakiReadOnlyAgentTool, normalizedAgentToolName, shouldRequestSakiApproval, assertSakiPermissionModeAllowsTool, sakiToolSchemas, toolArgs } from "./tools.js";
 import { callConfiguredAgentTurn } from "./providers.js";
 import { isContextOverflowError } from "./providers/common.js";
+import { webVerificationBlockReason } from "./web-policy.js";
 import { buildAgentGitNote, buildAgentPrompt, buildAgentUserTurn, buildAgentWorkspacePrefix, buildStaticAgentSystemPrompt, sakiFileToolGuidance } from "./prompt.js";
 import {
   compactAgentTurnMessages,
@@ -65,12 +67,12 @@ import {
 import { bootstrapAgentSkills } from "./skills.js";
 import {
   completedSakiActions,
-  extractTodosFromScratchpad,
-  getCachedInstanceFile,
+  extractConfirmedTodos,
   getRecentWorkingFiles,
   pendingSakiActions,
+  persistSessionAgentMemory,
   sakiCheckpoints,
-  saveSessionAgentMemory,
+  sealSakiTaskSteers,
   takeSakiTaskSteers
 } from "./state.js";
 
@@ -352,7 +354,7 @@ function promptObservationLimit(action: SakiAgentAction, modelId?: string): numb
   if (!action.ok) return modelId ? Math.max(maxAgentPromptObservationTokens, 1200) : Math.max(maxAgentPromptObservationChars, 3800);
   const toolName = normalizedAgentToolName(action.tool);
   if (modelId) {
-    if (toolName === "readfile") return 1200;
+    if (toolName === "readfile") return 8000;
     if (toolName === "runcommand" || toolName === "runinshell") return 1200;
     if (toolName === "listfiles" || toolName === "instancelogs") return 800;
     if (toolName === "browse" || toolName === "crawl" || toolName === "researchweb" || toolName === "searchweb") return 900;
@@ -360,7 +362,7 @@ function promptObservationLimit(action: SakiAgentAction, modelId?: string): numb
     if (toolName === "findfiles") return 600;
     return maxAgentPromptObservationTokens;
   }
-  if (toolName === "readfile") return 3600;
+  if (toolName === "readfile") return 28000;
   if (toolName === "runcommand" || toolName === "runinshell") return 3600;
   if (toolName === "listfiles" || toolName === "instancelogs") return 2400;
   if (toolName === "browse" || toolName === "crawl" || toolName === "researchweb" || toolName === "searchweb") return 2600;
@@ -377,11 +379,8 @@ export function observationForAgentPrompt(action: SakiAgentAction): string {
 }
 
 export const cacheableReadOnlyAgentToolNames = new Set([
-  "listinstances",
   "describeinstance",
   "listfiles",
-  "readfile",
-  "listtasks",
   "findfiles",
   "searchfiles",
   "outlinefile",
@@ -621,12 +620,14 @@ export async function runSakiAgent(
   resume?: SakiAgentResumeState,
   executeTool?: ExecuteToolFn
 ): Promise<SakiChatResponse> {
+  const workspaceBinding = runtime.context.instance ? bindSakiWorkspace(runtime.context.instance) : null;
   const executeToolFn = executeTool ?? (async () => {
     throw new RouteError("executeSakiAgentTool not provided; pass executeTool to runSakiAgent.", 500);
   });
   const actions: SakiAgentAction[] = [...(resume?.actions ?? [])];
+  runtime.externalReadPerformed ||= actions.some((action) => normalizedAgentToolName(action.tool) === "requestexternalaccess" && action.ok);
   runtime.usedToolNames = [...new Set(actions.map((action) => normalizedAgentToolName(action.tool)))];
-  const gitSummary = resume ? "" : await loadWorkspaceGitSummary(runtime);
+  const gitSummary = resume || runtime.toolProfile === "chat" ? "" : await loadWorkspaceGitSummary(runtime);
   const turnMessages: SakiAgentTurnMessage[] = resume?.turnMessages?.length
     ? closeInterruptedToolCalls(resume.turnMessages)
     : [
@@ -640,16 +641,18 @@ export async function runSakiAgent(
   const readOnlyToolCache = new Map<string, SakiAgentAction>(
     (resume?.readOnlyToolCache ?? []).filter(([, action]) => Date.now() - Date.parse(action.createdAt) < 5 * 60 * 1000)
   );
-  const recentlyEditedFiles = new Map<string, string>();
   let currentPrompt = basePrompt;
   const modelProfile = sakiModelProfile(runtime.config.provider, runtime.config.model);
   const agentSystemPrompt = `${runtime.systemPromptOverride || buildStaticAgentSystemPrompt(modelProfile)}
 
-${buildAgentWorkspacePrefix(runtime)}`;
+${buildAgentWorkspacePrefix(runtime)}
+
+Current UTC date: ${new Date().toISOString().slice(0, 10)}.
+${runtime.config.searchEnabled ? "Web search and public-page browsing are available. Use them to verify uncertain or current facts." : "Web search is disabled. Do not claim online verification; disclose uncertainty about current facts."}`;
   runtime.agentSystemPrompt = agentSystemPrompt;
   let invalidReplies = 0;
+  let truncatedReplies = 0;
   let progressOnlyReplies = 0;
-  let blockedRespondCount = 0;
   let degenerateRetries = 0;
   let identicalOutputStreak = 0;
   let noProgressStreak = 0;
@@ -667,6 +670,10 @@ ${buildAgentWorkspacePrefix(runtime)}`;
   let totalTokensUsed = 0;
 
   const rebuildCurrentPrompt = (): void => {
+    if (agentScratchpadEntries.reduce((total, entry) => total + entry.length, 0) > maxAgentScratchpadChars) {
+      const rendered = renderAgentScratchpad(agentScratchpadEntries);
+      agentScratchpadEntries.splice(0, agentScratchpadEntries.length, rendered);
+    }
     const compacted = compactAgentTurnMessages(turnMessages);
     if (compacted !== turnMessages) {
       turnMessages.splice(0, turnMessages.length, ...compacted);
@@ -695,6 +702,7 @@ ${buildAgentWorkspacePrefix(runtime)}`;
 
   const createResumeState = (): SakiAgentResumeState => ({
     input: resume ? { ...runtime.input, message: resume.input.message, attachments: resume.input.attachments ?? [] } : runtime.input,
+    workspaceBinding,
     skills: runtime.skills,
     actions: [...actions],
     scratchpadEntries: [...agentScratchpadEntries],
@@ -703,6 +711,42 @@ ${buildAgentWorkspacePrefix(runtime)}`;
     readOnlyToolCache: [...readOnlyToolCache.entries()].slice(-100),
     ...((runtime.taskId ?? resume?.taskId) ? { taskId: (runtime.taskId ?? resume?.taskId)! } : {})
   });
+
+  const persistProgress = async (summary: string, resumeState = createResumeState()): Promise<void> => {
+    // Read-only chat turns must not replace a coding task's resume checkpoint
+    // for the same user/workspace (including another device's active task).
+    if (runtime.toolProfile === "chat") return;
+    await persistSessionAgentMemory({
+      userId: runtime.userId,
+      instanceId: runtime.context.workspace?.instanceId ?? null,
+      resumeState,
+      workingFiles: getRecentWorkingFiles(runtime.userId, runtime.context.workspace?.instanceId ?? null),
+      lastGoal: resumeGoal || runtime.input.message,
+      lastSummary: summary,
+      todos: extractConfirmedTodos(actions, agentScratchpadEntries),
+      updatedAt: Date.now()
+    });
+  };
+
+  let steeringRevision = 0;
+  const acceptPendingSteers = (): boolean => {
+    if (!runtime.taskId) return false;
+    const steers = takeSakiTaskSteers(runtime.taskId);
+    if (!steers.length) return false;
+    const closed = closeInterruptedToolCalls(turnMessages, "This call was not executed because the user supplied newer instructions. Follow those instructions before choosing further tools.");
+    turnMessages.splice(0, turnMessages.length, ...closed);
+    for (const steer of steers) {
+      turnMessages.push({ role: "user", content: steer });
+      emitAgentNarration(events, `收到新指示：${steer.slice(0, 200)}`);
+    }
+    steeringRevision += 1;
+    rebuildCurrentPrompt();
+    return true;
+  };
+  const persistSteering = async (): Promise<void> => {
+    try { await persistProgress("New user instructions received; continue from the confirmed results."); }
+    catch (error) { logSakiModelEvent("agent.checkpoint.error", { error: error instanceof Error ? error.message : String(error) }); }
+  };
 
   rebuildCurrentPrompt();
 
@@ -795,28 +839,24 @@ ${buildAgentWorkspacePrefix(runtime)}`;
     });
   };
 
-  let contextOverflowRecovered = false;
+  let contextOverflowRecoveries = 0;
+  let completionRetries = 0;
 
   const finishAgentResponse = async (reason: string, message: string): Promise<SakiChatResponse> => {
     flushTurnNotes();
+    // Stop accepting new steers before the asynchronous persistence/billing
+    // phase. Already accepted instructions remain in the resume record.
+    if (runtime.taskId) sealSakiTaskSteers(runtime.taskId);
+    acceptPendingSteers();
     logSakiModelEvent("agent.run.finish", { reason, durationMs: Date.now() - runStartedAt, loopsUsed,
       toolExecutions, toolCacheHits, toolCacheMisses, toolCacheInvalidations, totalTokensUsed });
     try {
       const currentResumeState = createResumeState();
       if (reason !== "pending_approval" && reason !== "pending_input") currentResumeState.turnMessages = closeInterruptedToolCalls(turnMessages);
-      const workingFiles = getRecentWorkingFiles(runtime.userId, runtime.context.workspace?.instanceId ?? null);
-      const todos = extractTodosFromScratchpad(agentScratchpadEntries);
-      saveSessionAgentMemory({
-        userId: runtime.userId,
-        instanceId: runtime.context.workspace?.instanceId ?? null,
-        resumeState: currentResumeState,
-        workingFiles,
-        lastGoal: resumeGoal || runtime.input.message,
-        lastSummary: message,
-        todos,
-        updatedAt: Date.now()
-      });
-    } catch {}
+      await persistProgress(message, currentResumeState);
+    } catch (error) {
+      logSakiModelEvent("agent.checkpoint.error", { error: error instanceof Error ? error.message : String(error) });
+    }
 
     let usageResult: { tokensUsed: number; pointsUsed: number; isUnlimited: boolean; remainingPoints: number } | undefined;
     try {
@@ -846,10 +886,11 @@ ${buildAgentWorkspacePrefix(runtime)}`;
     return {
       source: "direct-model",
       message,
-      ...(["model_error", "stuck_failures"].includes(reason) ? { retry: { reason: message, ...((runtime.taskId ?? resume?.taskId) ? { taskId: (runtime.taskId ?? resume?.taskId)! } : {}) } } : {}),
+      ...(["model_error", "round_limit", "incomplete", "invalid_output"].includes(reason) || reason.startsWith("stuck_") ? { retry: { reason: message, ...((runtime.taskId ?? resume?.taskId) ? { taskId: (runtime.taskId ?? resume?.taskId)! } : {}) } } : {}),
       ...(accumulatedThinking.trim() ? { thinking: accumulatedThinking.trim() } : {}),
       workspace: runtime.context.workspace,
       agentPermissionMode,
+      terminalSandbox: effectiveSakiTerminalSandbox(runtime.input, runtime.config),
       skills: runtime.skills,
       actions,
       ...(attachments.length ? { attachments } : {}),
@@ -862,6 +903,15 @@ ${buildAgentWorkspacePrefix(runtime)}`;
     toolStepId: string
   ): Promise<{ call: ParsedToolCall; toolStepId: string; action: SakiAgentAction; durationMs: number; cacheHit?: boolean }> => {
     const toolStartedAt = Date.now();
+    const authorize = (executeToolFn as ExecuteToolFn & { authorize?: (runtime: SakiAgentRuntime, call: ParsedToolCall) => Promise<void> }).authorize;
+    if (authorize) {
+      try { await authorize(runtime, call); }
+      catch (error) {
+        readOnlyToolCache.clear();
+        return { call, toolStepId, action: { id: actionId(), tool: call.name, args: toolCallArgsForDisplay(call), ok: false, status: "failed",
+          observation: `Authorization denied: ${error instanceof Error ? error.message : String(error)}`, createdAt: new Date().toISOString() }, durationMs: Date.now() - toolStartedAt };
+      }
+    }
     const cacheKey = agentReadOnlyToolCacheKey(runtime, call);
     if (cacheKey) {
       const cached = readOnlyToolCache.get(cacheKey);
@@ -876,65 +926,6 @@ ${buildAgentWorkspacePrefix(runtime)}`;
         };
       }
       toolCacheMisses += 1;
-    }
-
-    const readPath = normalizedAgentToolName(call.name) === "readfile" ? toolTargetPath(call).replace(/\\/g, "/") : "";
-    const editedCopy = readPath ? recentlyEditedFiles.get(readPath) : undefined;
-    if (editedCopy !== undefined) {
-      const signature = agentReadOnlyToolCacheKey(runtime, call) ?? `${normalizedAgentToolName(call.name)}::${JSON.stringify(toolCallArgsForDisplay(call))}`;
-      const previousCount = toolExecutionCounts.get(signature) ?? 0;
-      if (previousCount >= maxIdenticalToolExecutions) {
-        return {
-          call,
-          toolStepId,
-          action: {
-            id: actionId(),
-            tool: call.name,
-            args: toolCallArgsForDisplay(call),
-            observation: `Skipped duplicate '${call.name}' — already ran ${previousCount} times with the same arguments. Do not repeat. Edit, diagnoseCode, or respond.`,
-            ok: true,
-            status: "completed",
-            createdAt: new Date().toISOString()
-          },
-          durationMs: Date.now() - toolStartedAt,
-          cacheHit: true
-        };
-      }
-      toolExecutionCounts.set(signature, previousCount + 1);
-      const args = toolArgs(call);
-      const startLine = Math.max(1, Number(args.startLine) || 1);
-      const lineCount = Math.max(1, Number(args.lineCount) || defaultAgentReadFileLineCount);
-      let windowText = editedCopy;
-      let totalLines = editedCopy.split(/\r?\n/).length;
-      let endLine = totalLines;
-      try {
-        const numbered = formatLineNumberedContent(editedCopy, String(startLine), String(lineCount));
-        windowText = numbered.text;
-        totalLines = numbered.totalLines;
-        endLine = numbered.endLine;
-      } catch {
-        // Keep the raw copy if the requested window is invalid.
-      }
-      const action = {
-        id: actionId(),
-        tool: call.name,
-        args: toolCallArgsForDisplay(call),
-        observation: [
-          `Reused in-memory copy of ${readPath} (just edited this run; not re-fetched from disk).`,
-          `File: ${readPath}`,
-          `Total lines: ${totalLines}`,
-          `Showing lines: ${startLine}-${endLine}`,
-          "",
-          truncateText(windowText, 4000),
-          "",
-          "Do not re-read this file unless you need a different line window."
-        ].join("\n"),
-        ok: true,
-        status: "completed" as const,
-        createdAt: new Date().toISOString()
-      };
-      if (cacheKey) readOnlyToolCache.set(cacheKey, action);
-      return { call, toolStepId, action, durationMs: Date.now() - toolStartedAt, cacheHit: true };
     }
 
     runtime.usedToolNames ??= [];
@@ -959,13 +950,31 @@ ${buildAgentWorkspacePrefix(runtime)}`;
       };
     }
     toolExecutionCounts.set(signature, previousCount + 1);
-    const action = await executeToolFn(runtime, call, { pendingResume: createResumeState() });
+    if (!isSakiReadOnlyAgentTool(call.name)) {
+      try {
+        await persistProgress("Tool execution started; pending calls are unconfirmed. Inspect their targets before retrying mutations.");
+      } catch (error) {
+        logSakiModelEvent("agent.checkpoint.error", { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    let action: SakiAgentAction;
+    try {
+      action = await executeToolFn(runtime, call, { pendingResume: createResumeState() });
+    } catch (error) {
+      // Transport/audit failures can escape the executor after a mutation.
+      // Record uncertainty and let the model inspect, never replay it blindly.
+      action = {
+        id: actionId(), tool: call.name, args: toolCallArgsForDisplay(call), ok: false, status: "failed",
+        observation: `Tool execution interrupted: ${error instanceof Error ? error.message : String(error)}. The result is unconfirmed. Inspect the target before retrying any mutation; otherwise adjust the request and continue.`,
+        createdAt: new Date().toISOString()
+      };
+    }
     if (cacheKey && shouldCacheAgentToolResult(call, action)) {
       readOnlyToolCache.set(cacheKey, action);
     }
     if (shouldInvalidateAgentToolCache(call)) {
       readOnlyToolCache.clear();
-      recentlyEditedFiles.clear();
+      toolExecutionCounts.clear();
       toolCacheInvalidations += 1;
     }
     return { call, toolStepId, action, durationMs: Date.now() - toolStartedAt };
@@ -973,9 +982,23 @@ ${buildAgentWorkspacePrefix(runtime)}`;
 
   const recentToolSignatures: Array<{ name: string; argsStr: string; ok: boolean }> = [];
   const failedAttemptsByTarget = new Map<string, number>();
-  const sequentialReadPages = new Map<string, { start: number; count: number }>();
   const fileEditTools = new Set(["writefile", "replaceinfile", "editlines", "batchedit", "applypatch"]);
-  const verifyTools = new Set(["diagnosecode", "gitdiff", "gitstatus"]);
+
+  const completionBlockReason = (answer = ""): string => {
+    if (runtime.kind === "watch" || runtime.toolProfile === "research") return "";
+    const webReason = webVerificationBlockReason(runtime.input.message, answer, actions, Boolean(runtime.config.searchEnabled));
+    if (webReason) return webReason;
+    const pending = extractConfirmedTodos(actions, agentScratchpadEntries).filter((todo) => /^- \[[ -]\]/.test(todo));
+    if (pending.length) return `The checklist still has unfinished work:\n${pending.join("\n")}\nContinue these steps and update manageTodos only after each result is confirmed. If blocked, explain the specific blocker.`;
+    const lastEdit = actions.reduce((last, item, index) => item.ok && fileEditTools.has(normalizedAgentToolName(item.tool)) ? index : last, -1);
+    const verification = actions.slice(lastEdit + 1).filter((item) => {
+      const name = normalizedAgentToolName(item.tool);
+      return name === "diagnosecode" || ((name === "runcommand" || name === "runinshell") && /\b(test|check|build|lint|tsc|pytest|jest|vitest)\b/i.test(String(item.args.command ?? "")));
+    });
+    if (lastEdit >= 0 && !verification.length) return "Code changed after the last verification. Run appropriate diagnostics, a build, or targeted tests, fix failures, then continue the task. If verification is unavailable, state that limitation.";
+    if (lastEdit >= 0 && verification.at(-1)?.ok === false) return `The last verification failed: ${verification.at(-1)!.observation.slice(0, 1600)}\nRepair the failure and verify again before claiming completion. If blocked, report the specific blocker.`;
+    return "";
+  };
 
   const handleToolResult = async (result: {
     call: ParsedToolCall;
@@ -984,30 +1007,27 @@ ${buildAgentWorkspacePrefix(runtime)}`;
     durationMs: number;
     cacheHit?: boolean;
   }): Promise<SakiChatResponse | null> => {
-    if (abortSignal?.aborted) {
-      return finishAgentResponse("aborted", abortedMessage());
-    }
     const { call, toolStepId, action, cacheHit } = result;
     toolExecutions += 1;
     if (call.name.toLowerCase() === "respond") {
-      const edited = actions.some((item) => item.ok && fileEditTools.has(normalizedAgentToolName(item.tool)));
-      const verified = actions.some((item) => item.ok && verifyTools.has(normalizedAgentToolName(item.tool)));
-      const diagnoseAttempted = actions.some((item) => normalizedAgentToolName(item.tool) === "diagnosecode");
-      if (edited && !verified && !diagnoseAttempted && runtime.kind !== "watch" && blockedRespondCount < 1) {
-        blockedRespondCount += 1;
+      if (abortSignal?.aborted) return finishAgentResponse("aborted", abortedMessage());
+      if (acceptPendingSteers()) return null;
+      const correction = completionBlockReason(action.observation || stringArg(toolArgs(call), "text"));
+      if (correction && completionRetries < 2) {
+        completionRetries += 1;
         turnMessages.push({
           role: "tool",
           toolCallId: ensureToolCallId(call),
           name: call.name,
-          content: "Blocked: diagnoseCode has not been called after edits. Call diagnoseCode once, then give the final answer in plain text."
+          content: correction
         });
         appendAgentScratchpad(
-          "\n[Blocked respond]: You edited files but did not verify. Call diagnoseCode once, then answer in plain text. If diagnostics are unavailable, answer with what you changed.\n"
+          `\n[Completion check]: ${correction}\n`
         );
         emitSakiWorkflow(events, {
           id: toolStepId,
           stage: "retry",
-          message: "改完代码后需要先跑诊断，再给出结论。",
+          message: "正在补充核实与验证…",
           status: "running"
         });
         rebuildCurrentPrompt();
@@ -1023,7 +1043,7 @@ ${buildAgentWorkspacePrefix(runtime)}`;
         actionId: action.id
       });
       const finalMessage = safeAgentFinalText(action.observation || stringArg(toolArgs(call), "text") || "");
-      return finishAgentResponse("respond_tool", finalMessage);
+      return finishAgentResponse(correction ? "incomplete" : "respond_tool", correction ? `任务尚未确认完成，已保存进度，可重试继续。\n\n${finalMessage}` : finalMessage);
     }
     actions.push(action);
     events?.action?.(action);
@@ -1042,21 +1062,6 @@ ${buildAgentWorkspacePrefix(runtime)}`;
         ? "请在下方回答 Saki 的问题，或选择跳过。"
         : "Saki has prepared an action that needs your approval. Please review it in the action preview first.";
       return finishAgentResponse(action.status, finalMessage);
-    }
-    if (action.ok && fileEditTools.has(normalizedAgentToolName(call.name))) {
-      const editedPath = toolTargetPath(call).replace(/\\/g, "/");
-      const instanceId = runtime.context.workspace?.instanceId;
-      if (editedPath && instanceId) {
-        const cached = getCachedInstanceFile(instanceId, editedPath);
-        if (cached?.content) recentlyEditedFiles.set(editedPath, cached.content);
-      }
-      const observationPaths = action.observation.matchAll(/✓ \S+ (\S+)/g);
-      for (const match of observationPaths) {
-        const path = (match[1] ?? "").replace(/\\/g, "/");
-        if (!path || !instanceId) continue;
-        const cached = getCachedInstanceFile(instanceId, path);
-        if (cached?.content) recentlyEditedFiles.set(path, cached.content);
-      }
     }
     turnMessages.push({
       role: "tool",
@@ -1085,21 +1090,6 @@ ${buildAgentWorkspacePrefix(runtime)}`;
 
     if (isDuplicate && isSakiReadOnlyAgentTool(toolName)) {
       appendAgentScratchpad(`\n[Self-Correction & Loop Breaker]: You called '${call.name}' with identical parameters twice in a row. The observation is already above in your memory. DO NOT re-read or re-search the same query. Proceed to editing with editLines/replaceInFile, or formulate your final response.\n`);
-    }
-
-    if (toolName === "readfile") {
-      const readPath = String(args.path || "");
-      const start = Math.max(1, Number(args.startLine) || 1);
-      const count = Math.max(1, Number(args.lineCount) || defaultAgentReadFileLineCount);
-      const prev = sequentialReadPages.get(readPath);
-      if (prev && start > prev.start && start <= prev.start + prev.count + 8) {
-        appendAgentScratchpad(
-          `\n[Paging blocked]: '${readPath}' was already read at lines ${prev.start}-${prev.start + prev.count - 1}. Do not sequential-page. Use searchFiles or readSymbol to jump, then edit.\n`
-        );
-      }
-      sequentialReadPages.set(readPath, { start, count });
-    } else if (fileEditTools.has(toolName) || verifyTools.has(toolName)) {
-      sequentialReadPages.clear();
     }
 
     if (!action.ok) {
@@ -1132,11 +1122,20 @@ ${buildAgentWorkspacePrefix(runtime)}`;
       turnMadeProgress = true;
     }
 
+    // Persist each confirmed result, so a process restart can resume without
+    // replaying mutations whose success was already recorded.
+    try {
+      await persistProgress("Task in progress; continue from the confirmed tool results.");
+    } catch (error) {
+      logSakiModelEvent("agent.checkpoint.error", { error: error instanceof Error ? error.message : String(error) });
+    }
+
     return null;
   };
 
   for (let loop = 0; loop < loopLimit; loop += 1) {
     flushTurnNotes();
+    if (acceptPendingSteers()) await persistSteering();
     if (abortSignal?.aborted) {
       return finishAgentResponse("aborted", abortedMessage());
     }
@@ -1152,6 +1151,7 @@ ${buildAgentWorkspacePrefix(runtime)}`;
     let turn: SakiModelToolTurn;
     try {
       turn = await callAgentTurnWithAbort(currentPrompt);
+      contextOverflowRecoveries = 0;
       totalTokensUsed += billedAgentTurnTokens(runtime.config.model, currentPrompt, turn);
       emitSakiWorkflow(events, {
         id: thinkStepId,
@@ -1171,8 +1171,8 @@ ${buildAgentWorkspacePrefix(runtime)}`;
       }
       // Context-window recovery (like Claude Code auto-compact): when the
       // request exceeds the model context, drop older working notes and retry once.
-      if (isContextOverflowError(error) && !contextOverflowRecovered) {
-        contextOverflowRecovered = true;
+      if (isContextOverflowError(error) && contextOverflowRecoveries < 2) {
+        contextOverflowRecoveries += 1;
         const keepRecent = Math.min(maxAgentRecentScratchpadEntries, 6);
         const dropped = Math.max(0, agentScratchpadEntries.length - keepRecent);
         if (dropped > 0) agentScratchpadEntries.splice(0, dropped);
@@ -1203,8 +1203,21 @@ ${buildAgentWorkspacePrefix(runtime)}`;
         status: "failed"
       });
       const reason = error instanceof Error ? error.message : String(error);
-      return finishAgentResponse("model_error", `模型调用中断：${reason}\n\n已保留任务上下文和完成的操作，选择 Retry 可从中断处继续。`);
+      return finishAgentResponse("model_error", `模型调用中断：${reason}\n\n已保留任务上下文与已完成操作，可重试继续。`);
     }
+    // A generated answer or tool batch may already be obsolete when the user
+    // steers during the model request. Re-plan before executing any of it.
+    if (acceptPendingSteers()) {
+      await persistSteering();
+      continue;
+    }
+    if (turn.truncated) {
+      if (truncatedReplies++ >= 2) return finishAgentResponse("invalid_output", "模型连续触及输出 token 上限，已阻止本轮不完整的工具调用写入。已保存此前进度，可重试继续。");
+      emitSakiWorkflow(events, { id: randomUUID(), stage: "retry", status: "running", message: "模型输出达到 token 上限，正在改用较小补丁或分块写入重试。" });
+      appendAgentScratchpad("\n[Output truncated]: Your previous generation reached the output token limit. NONE of its tool calls were executed. Keep the full task scope, but send fewer calls per turn and smaller targeted patches. For a large new file, create the first complete chunk with writeFile, then append subsequent chunks with append=true. Do not repeat the same oversized output.\n");
+      continue;
+    }
+    truncatedReplies = 0;
     const rawContent = stripDsmlWrappers(turn.content);
     // 让后续所有代码都基于剥掉 DSML 包装的干净内容工作
     (turn as SakiModelToolTurn & { content: string }).content = rawContent;
@@ -1278,6 +1291,15 @@ IMPORTANT: ${sakiFileToolGuidance}\nPrevious output:\n${turn.content.slice(0, 12
       }
 
       const finalMessage = safeAgentFinalText(turn.content);
+      if (shouldRetry) return finishAgentResponse("invalid_output", "模型未生成有效的回复或工具调用，已保存进度，可重试继续。");
+      const correction = completionBlockReason(finalMessage);
+      if (correction && completionRetries < 2) {
+        completionRetries += 1;
+        emitAgentNarration(events, cleaned);
+        appendAgentScratchpad(`\n[Completion check]: ${correction}\n`);
+        continue;
+      }
+      if (correction || progressOnlyToolIntent) return finishAgentResponse("incomplete", `任务尚未完成，已保存进度，可重试继续。\n\n${finalMessage}`);
       return finishAgentResponse("natural", finalMessage);
     }
 
@@ -1298,9 +1320,14 @@ IMPORTANT: ${sakiFileToolGuidance}\nPrevious output:\n${turn.content.slice(0, 12
     });
     rebuildCurrentPrompt();
 
+    const turnSteeringRevision = steeringRevision;
     for (let callIndex = 0; callIndex < toolCalls.length;) {
       if (abortSignal?.aborted) {
         return finishAgentResponse("aborted", abortedMessage());
+      }
+      if (acceptPendingSteers() || steeringRevision !== turnSteeringRevision) {
+        await persistSteering();
+        break;
       }
       const call = toolCalls[callIndex];
       if (!call) break;
@@ -1338,13 +1365,11 @@ IMPORTANT: ${sakiFileToolGuidance}\nPrevious output:\n${turn.content.slice(0, 12
         }
 
         const results = await Promise.all(batch.map((item) => runToolWithWorkflow(item.call, item.toolStepId)));
-        if (abortSignal?.aborted) {
-          return finishAgentResponse("aborted", abortedMessage());
-        }
         for (const result of results) {
           const finalResponse = await handleToolResult(result);
           if (finalResponse) return finalResponse;
         }
+        if (abortSignal?.aborted) return finishAgentResponse("aborted", abortedMessage());
         continue;
       }
 
@@ -1358,22 +1383,19 @@ IMPORTANT: ${sakiFileToolGuidance}\nPrevious output:\n${turn.content.slice(0, 12
         call: toolDisplayArgs(call)
       });
       const toolResult = await runToolWithWorkflow(call, toolStepId);
-      if (abortSignal?.aborted) {
-        return finishAgentResponse("aborted", abortedMessage());
-      }
+      // Even when cancelled, retain the confirmed result of a tool that has
+      // already finished. Check cancellation before starting the next tool.
       const finalResponse = await handleToolResult(toolResult);
       if (finalResponse) return finalResponse;
+      if (abortSignal?.aborted) return finishAgentResponse("aborted", abortedMessage());
       callIndex += 1;
     }
 
     flushTurnNotes();
-    if (runtime.taskId) {
-      const steers = takeSakiTaskSteers(runtime.taskId);
-      for (const steer of steers) {
-        turnMessages.push({ role: "user", content: steer });
-        emitAgentNarration(events, `收到新指示：${steer.slice(0, 200)}`);
-      }
-      if (steers.length) rebuildCurrentPrompt();
+    if (acceptPendingSteers() || steeringRevision !== turnSteeringRevision) {
+      await persistSteering();
+      noProgressStreak = 0;
+      continue;
     }
 
     if (turnMadeProgress) {
@@ -1391,29 +1413,6 @@ IMPORTANT: ${sakiFileToolGuidance}\nPrevious output:\n${turn.content.slice(0, 12
 
   flushTurnNotes();
 
-  // Synthesize a structured engineering outcome if the model did not emit text:
-  const edits = actions.filter((a) => a.ok && fileEditTools.has(normalizedAgentToolName(a.tool)));
-  const searches = actions.filter((a) => a.ok && (a.tool === "searchfiles" || a.tool === "outlinefile" || a.tool === "findsymbols" || a.tool === "readfile"));
-  let finalSummary = "";
-  if (edits.length > 0) {
-    const paths = new Set<string>();
-    for (const edit of edits) {
-      const direct = String(edit.args?.path ?? "").replace(/\\/g, "/").trim();
-      if (direct) paths.add(direct);
-      for (const match of edit.observation.matchAll(/✓ \S+ (\S+)/g)) {
-        const path = (match[1] ?? "").replace(/\\/g, "/").trim();
-        if (path) paths.add(path);
-      }
-    }
-    const list = [...paths].map((path) => `- \`${path}\``).join("\n");
-    finalSummary = list
-      ? `已完成修改。\n\n${list}\n\n请检查上述文件是否符合预期。`
-      : `已完成 ${edits.length} 处文件修改。请检查是否符合预期。`;
-  } else if (searches.length > 0) {
-    finalSummary = `已完成工作区代码排查与分析。\n\n**排查结果**：\n${searches.slice(-5).map((s) => `- \`${s.tool}\`: ${s.observation.slice(0, 120)}`).join("\n")}`;
-  } else {
-    finalSummary = "已完成当前任务的操作与排查。";
-  }
-
-  return finishAgentResponse("completed_summary", finalSummary);
+  const pending = extractConfirmedTodos(actions, agentScratchpadEntries).filter((todo) => /^- \[[ -]\]/.test(todo));
+  return finishAgentResponse("round_limit", `本轮已达到 ${loopLimit} 轮执行上限，任务尚未确认完成。已保留当前上下文与进度，可重试继续。${pending.length ? `\n\n未完成步骤：\n${pending.join("\n")}` : ""}`);
 }

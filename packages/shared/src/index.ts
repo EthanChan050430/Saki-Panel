@@ -1,4 +1,6 @@
-export const PANEL_VERSION = "4.0";
+export const PANEL_VERSION = "5.0";
+
+export { wrapSakiCommandWithCwd, type AgentShellKind } from "./terminal.js";
 
 export const noRolePermissionRoleName = "__no_role__";
 
@@ -1065,6 +1067,10 @@ export interface InstanceFileContentResponse {
 export interface WriteInstanceFileRequest {
   path: string;
   content: string;
+  /** Fail if another writer has already created the target. */
+  createOnly?: boolean;
+  /** Undo must not overwrite edits made after its checkpoint. */
+  expectedSha256?: string;
 }
 
 export interface UploadInstanceFileRequest {
@@ -1088,6 +1094,9 @@ export interface MakeInstanceDirectoryRequest {
 
 export interface DeleteInstanceFileRequest {
   path: string;
+  /** Undo a created directory only after its checkpointed children are gone. */
+  onlyIfEmpty?: boolean;
+  expectedSha256?: string;
 }
 
 export interface RenameInstanceFileRequest {
@@ -1650,6 +1659,7 @@ export type SakiAgentRiskLevel = "low" | "medium" | "high" | "critical";
 
 export interface SakiAgentActionApproval {
   required: boolean;
+  kind?: "external_read" | "external_data_egress";
   reason: string;
   risk: SakiAgentRiskLevel;
   preview?: string;
@@ -1657,6 +1667,15 @@ export interface SakiAgentActionApproval {
   checkpointId?: string;
   relatedCheckpointIds?: string[];
   rollbackAvailable?: boolean;
+}
+
+/** Server-created file identity, bound to a single external-read approval. */
+export interface SakiExternalFileSnapshot {
+  path: string;
+  device: string;
+  inode: string;
+  size: number;
+  modifiedNs: string;
 }
 
 export interface SakiAgentAction {
@@ -1671,6 +1690,8 @@ export interface SakiAgentAction {
   answer?: { selection?: string; customText?: string; skipped?: boolean };
   todos?: Array<{ text: string; completed: boolean; inProgress?: boolean }>;
   attachments?: SakiInputAttachment[];
+  /** Server-selected independent terminal associated with this tool call. */
+  terminal?: { instanceId: string; shellId: string; label?: string };
   createdAt: string;
 }
 
@@ -1678,10 +1699,17 @@ export interface SakiActionDecisionResponse {
   action: SakiAgentAction;
   message: string;
   response?: SakiChatResponse;
+  /** The approved action finished; subscribe to this task for the ongoing follow-up. */
+  taskId?: string;
 }
 
 export interface SakiChatRequest {
   message: string;
+  /** Stable client turn identity, used for reconnects and cross-device history. */
+  clientRequestId?: string;
+  conversationId?: string;
+  userMessageId?: string;
+  assistantMessageId?: string;
   /** Resume this interrupted Agent task without rolling back completed work. */
   resumeTaskId?: string;
   history?: SakiChatMessage[];
@@ -1692,6 +1720,7 @@ export interface SakiChatRequest {
   auditSearch?: string | null;
   mode?: SakiChatMode;
   agentPermissionMode?: SakiAgentPermissionMode;
+  terminalSandbox?: boolean;
   selectedSkillIds?: string[];
   attachments?: SakiInputAttachment[];
   model?: string | null;
@@ -1705,6 +1734,7 @@ export interface SakiChatResponse {
   source: "direct-model" | "local-fallback";
   workspace?: SakiWorkspaceContext | null;
   agentPermissionMode?: SakiAgentPermissionMode;
+  terminalSandbox?: boolean;
   skills?: SakiSkillSummary[];
   diagnostics?: string[];
   actions?: SakiAgentAction[];

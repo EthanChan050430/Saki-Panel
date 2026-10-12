@@ -4,11 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import type { Dirent, Stats } from "node:fs";
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
-import { Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import type { FastifyInstance } from "fastify";
 import type { MultipartFile } from "@fastify/multipart";
 import type {
@@ -36,24 +34,20 @@ import type {
 import { daemonPaths, daemonConfig } from "../config.js";
 import { authenticatePanelRequest } from "../daemon-auth.js";
 import { assertSafeRegex } from "../regex-utils.js";
+import { writeTextFileAtomic, writeStreamFileAtomic } from "../atomic-file.js";
+import { inspectExternalFile, readApprovedExternalFile } from "../external-file.js";
+import { captureWorkspaceCheckpoint, finalizeWorkspaceCheckpoint, restoreWorkspaceCheckpoint } from "../workspace-checkpoint.js";
+import type { SakiExternalFileSnapshot } from "@webops/shared";
 
 const maxEditableFileBytes = 1024 * 1024;
 
-function createSizeLimitStream(maxBytes: number): Transform {
-  let seen = 0;
-  return new Transform({
-    transform(chunk, _encoding, callback) {
-      seen += chunk.length;
-      if (seen > maxBytes) {
-        callback(
-          new Error(`File transfer size exceeds the ${Math.round(maxBytes / (1024 * 1024))} MB limit`)
-        );
-        return;
-      }
-      callback(null, chunk);
-    }
-  });
+async function assertUndoHash(target: string, expected: string | undefined): Promise<void> {
+  if (expected === undefined) return;
+  if (!/^[a-f0-9]{64}$/.test(expected) || createHash("sha256").update(await fs.readFile(target)).digest("hex") !== expected) {
+    throw Object.assign(new Error("File changed after the Agent edit. Preserve or resolve that edit before undo."), { statusCode: 409 });
+  }
 }
+
 const outlinePatterns = [
   /^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+([a-zA-Z0-9_$]+)/,
   /^\s*(?:export\s+)?class\s+([a-zA-Z0-9_$]+)/,
@@ -232,7 +226,7 @@ async function moveEntry(source: string, destination: string): Promise<void> {
   await fs.unlink(source);
 }
 
-async function ensureRealPathInside(root: string, target: string, targetExists: boolean): Promise<void> {
+async function ensureRealPathInside(root: string, target: string, targetExists: boolean, createParents = false): Promise<void> {
   const realRoot = await fs.realpath(root);
   if (targetExists) {
     const realTarget = await fs.realpath(target);
@@ -243,13 +237,19 @@ async function ensureRealPathInside(root: string, target: string, targetExists: 
   }
 
   const parent = path.dirname(target);
-  const parentExists = await pathExists(parent);
-  if (!parentExists) {
-    await fs.mkdir(parent, { recursive: true });
+  let ancestor = parent;
+  while (!(await pathExists(ancestor))) {
+    const next = path.dirname(ancestor);
+    if (next === ancestor) throw new Error("Cannot resolve the target parent directory");
+    ancestor = next;
   }
-  const realParent = await fs.realpath(parent);
-  if (!isInside(realRoot, realParent)) {
+  if (!isInside(realRoot, await fs.realpath(ancestor))) {
     throw new Error("Path escapes the instance working directory");
+  }
+  if (createParents) {
+    // Check the nearest existing ancestor before mkdir follows any links.
+    await fs.mkdir(parent, { recursive: true });
+    if (!isInside(realRoot, await fs.realpath(parent))) throw new Error("Path escapes the instance working directory");
   }
 }
 
@@ -265,7 +265,7 @@ async function resolveInstanceRoot(workingDirectory: string | undefined): Promis
   return root;
 }
 
-async function resolveTarget(workingDirectory: string | undefined, requestedPath: string | undefined): Promise<ResolvedTarget> {
+async function resolveTarget(workingDirectory: string | undefined, requestedPath: string | undefined, createParents = false): Promise<ResolvedTarget> {
   const root = await resolveInstanceRoot(workingDirectory);
   const relativePath = normalizeRelativePath(requestedPath);
   const target = path.resolve(root, relativePath);
@@ -273,7 +273,7 @@ async function resolveTarget(workingDirectory: string | undefined, requestedPath
     throw new Error("Path escapes the instance working directory");
   }
 
-  await ensureRealPathInside(root, target, await pathExists(target));
+  await ensureRealPathInside(root, target, await pathExists(target), createParents);
   return { root, target, relativePath: toClientPath(root, target) };
 }
 
@@ -912,7 +912,7 @@ async function archivePathsToOutput(
 ): Promise<ArchiveInstancePathsResponse> {
   const resolvedSources = await resolveArchiveSources(workingDirectory, body.paths);
   const outputPath = body.outputPath?.trim() || defaultArchiveCreationOutputPath(resolvedSources.sources);
-  const output = await resolveTarget(workingDirectory, outputPath);
+  const output = await resolveTarget(workingDirectory, outputPath, true);
   if (output.relativePath === "") {
     throw new Error("Archive output cannot be the instance working directory");
   }
@@ -1048,6 +1048,29 @@ async function* walkFiles(root: string, subPath: string): AsyncGenerator<string>
 }
 
 export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
+  for (const operation of ["capture", "finalize", "restore"] as const) {
+    app.post(`/api/instances/:id/files/checkpoints/${operation}`, { preHandler: authenticatePanelRequest }, async (request) => {
+      const { id } = request.params as { id: string };
+      const body = request.body as { workingDirectory: string; snapshotId?: string };
+      const resolved = await resolveTarget(body.workingDirectory, "");
+      if (operation === "capture") return captureWorkspaceCheckpoint(id, resolved.root);
+      if (!body.snapshotId) throw new Error("snapshotId is required");
+      return operation === "finalize" ? finalizeWorkspaceCheckpoint(id, resolved.root, body.snapshotId) : restoreWorkspaceCheckpoint(id, resolved.root, body.snapshotId);
+    });
+  }
+  // The authenticated panel owns account authorization. These endpoints never
+  // execute commands and never relax the normal instance file-tool boundary.
+  app.post("/api/agent/external-files/inspect", { preHandler: authenticatePanelRequest }, async (request) => {
+    const body = request.body as { path: string; workingDirectory?: string };
+    const resolved = body.workingDirectory ? await resolveTarget(body.workingDirectory, body.path) : null;
+    const snapshot = await inspectExternalFile(resolved?.target ?? body.path);
+    if (resolved && !isInside(await fs.realpath(resolved.root), snapshot.path)) throw Object.assign(new Error("Path escapes the instance working directory"), { statusCode: 403 });
+    return snapshot;
+  });
+  app.post("/api/agent/external-files/read", { preHandler: authenticatePanelRequest }, async (request) => {
+    const body = request.body as { snapshot: SakiExternalFileSnapshot; startLine: number; lineCount: number };
+    return readApprovedExternalFile(body.snapshot, body.startLine, body.lineCount);
+  });
   app.get("/api/instances/:id/files", { preHandler: authenticatePanelRequest }, async (request) => {
     const { id } = request.params as { id: string };
     const query = request.query as FileQuery;
@@ -1130,6 +1153,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     assertTextBuffer(buffer);
     const text = buffer.toString("utf8");
     const lines = text.length === 0 ? [] : text.split(/\r?\n/);
+    if (text.endsWith("\n")) lines.pop();
     const totalLines = lines.length;
     const startLine = Math.max(1, Number(query.startLine) || 0);
     const lineCount = Math.max(0, Number(query.lineCount) || 0);
@@ -1188,8 +1212,8 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       throw new Error("File is too large to edit online");
     }
 
-    const resolved = await resolveTarget(body.workingDirectory, body.path);
-    await fs.writeFile(resolved.target, buffer);
+    const resolved = await resolveTarget(body.workingDirectory, body.path, true);
+    await writeTextFileAtomic(resolved.target, body.content, body.createOnly === true, body.expectedSha256);
     const stats = await fs.lstat(resolved.target);
 
     return {
@@ -1206,7 +1230,8 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     const contentType = request.headers["content-type"] ?? "";
 
     if (contentType.includes("multipart/form-data")) {
-      const data = await (request as unknown as { file: () => Promise<MultipartFile> }).file();
+      const data = await (request as unknown as { file: () => Promise<MultipartFile | undefined> }).file();
+      if (!data) throw Object.assign(new Error("A file is required"), { statusCode: 400 });
       const fields = data.fields;
       const pathField = fields.path;
       const overwriteField = fields.overwrite;
@@ -1220,20 +1245,12 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
         throw new Error("path is required");
       }
 
-      const resolved = await resolveTarget(workingDirectory, filePath);
+      const resolved = await resolveTarget(workingDirectory, filePath, true);
       if (!overwrite && (await pathExists(resolved.target))) {
         throw new Error("Target file already exists");
       }
 
-      const writeStream = fsSync.createWriteStream(resolved.target);
-      try {
-        await pipeline(data.file, createSizeLimitStream(daemonConfig.maxTransferBytes), writeStream);
-      } catch (err) {
-        try {
-          await fs.unlink(resolved.target);
-        } catch {}
-        throw err;
-      }
+      await writeStreamFileAtomic(resolved.target, data.file, daemonConfig.maxTransferBytes, !overwrite);
       return toFileEntry(resolved.root, resolved.target, path.basename(resolved.target));
     }
 
@@ -1242,13 +1259,13 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       throw new Error("path and contentBase64 are required");
     }
 
-    const resolved = await resolveTarget(body.workingDirectory, body.path);
+    const resolved = await resolveTarget(body.workingDirectory, body.path, true);
     if (!body.overwrite && (await pathExists(resolved.target))) {
       throw new Error("Target file already exists");
     }
 
     const buffer = decodeBase64Content(body.contentBase64);
-    await fs.writeFile(resolved.target, buffer);
+    await writeTextFileAtomic(resolved.target, buffer, !body.overwrite);
     return toFileEntry(resolved.root, resolved.target, path.basename(resolved.target));
   });
 
@@ -1264,7 +1281,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       return;
     }
 
-    const resolved = await resolveTarget(workingDirectory, filePath);
+    const resolved = await resolveTarget(workingDirectory, filePath, true);
     if (!overwrite && (await pathExists(resolved.target))) {
       reply.code(409).send({ message: "Target file already exists" });
       return;
@@ -1274,15 +1291,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       request.body && typeof request.body === "object" && "pipe" in (request.body as object)
         ? (request.body as NodeJS.ReadableStream)
         : request.raw;
-    const writeStream = fsSync.createWriteStream(resolved.target);
-    try {
-      await pipeline(bodyStream, createSizeLimitStream(daemonConfig.maxTransferBytes), writeStream);
-    } catch (err) {
-      try {
-        await fs.unlink(resolved.target);
-      } catch {}
-      throw err;
-    }
+    await writeStreamFileAtomic(resolved.target, bodyStream, daemonConfig.maxTransferBytes, !overwrite);
     return toFileEntry(resolved.root, resolved.target, path.basename(resolved.target));
   });
 
@@ -1343,7 +1352,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const outputPath = body.outputPath?.trim() || defaultArchiveOutputPath(archive.relativePath);
-    const output = await resolveTarget(body.workingDirectory, outputPath);
+    const output = await resolveTarget(body.workingDirectory, outputPath, !body.preview);
     if (output.relativePath === "") {
       throw new Error("Extraction target cannot be the instance working directory");
     }
@@ -1439,7 +1448,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       throw new Error("path is required");
     }
 
-    const resolved = await resolveTarget(body.workingDirectory, body.path);
+    const resolved = await resolveTarget(body.workingDirectory, body.path, true);
     await fs.mkdir(resolved.target, { recursive: true });
     return toFileEntry(resolved.root, resolved.target, path.basename(resolved.target));
   });
@@ -1455,7 +1464,9 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       throw new Error("Instance working directory cannot be deleted");
     }
 
-    await fs.rm(resolved.target, { force: true, recursive: true });
+    await assertUndoHash(resolved.target, body.expectedSha256);
+    if (body.onlyIfEmpty) await fs.rmdir(resolved.target);
+    else await fs.rm(resolved.target, { force: true, recursive: true });
     return { ok: true };
   });
 
@@ -1466,7 +1477,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const from = await resolveTarget(body.workingDirectory, body.fromPath);
-    const to = await resolveTarget(body.workingDirectory, body.toPath);
+    const to = await resolveTarget(body.workingDirectory, body.toPath, true);
     if (await pathExists(to.target)) {
       throw new Error("Target path already exists");
     }
@@ -1482,7 +1493,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const from = await resolveTarget(body.workingDirectory, body.fromPath);
-    const to = await resolveTarget(body.workingDirectory, body.toPath);
+    const to = await resolveTarget(body.workingDirectory, body.toPath, true);
     if (await pathExists(to.target)) {
       throw new Error("Target path already exists");
     }

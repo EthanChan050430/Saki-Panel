@@ -1,7 +1,17 @@
 import type { AuditLogEntry } from "@webops/shared";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../db.js";
+import { isAuthDisabled, loadAuthDisabledCurrentUser, loadCurrentUser } from "../../auth.js";
+import { loadVisibleInstance } from "../../instance-access.js";
+import { sakiProjectPermissions } from "./session-access.js";
 import { trimString, type OperationLogWithUser } from "./types.js";
+
+export interface SakiAuditSearchScope {
+  userId: string;
+  instanceId: string | null;
+  sandbox: boolean;
+  mode?: "agent" | "chat";
+}
 
 function classifyDiagnostic(source: string): string[] {
   const text = source.toLowerCase();
@@ -111,9 +121,25 @@ function formatAuditSearchEntry(log: AuditLogEntry, index: number): string {
   ].join("\n");
 }
 
-export async function buildAuditSearchContext(query: string, canViewAudit: boolean): Promise<string> {
-  if (!canViewAudit) {
+export async function buildAuditSearchContext(query: string, canViewAudit: boolean, scope: SakiAuditSearchScope): Promise<string> {
+  const user = isAuthDisabled() ? await loadAuthDisabledCurrentUser() : await loadCurrentUser(scope.userId);
+  if (!canViewAudit || !user || user.status !== "ACTIVE" || !user.permissions.includes("audit.view")) {
     return "当前用户没有 audit.view 权限，Saki 不能读取审计日志。";
+  }
+
+  // Legacy audit payloads do not have a trustworthy instance foreign key.
+  // Only explicitly instance-addressed records are safe for scoped readers.
+  let boundary: Prisma.OperationLogWhereInput = {};
+  if (!user.isSuperAdmin || (scope.sandbox && scope.instanceId)) {
+    const visible = scope.instanceId
+      ? [await loadVisibleInstance(user.id, scope.instanceId)].filter((instance) => instance !== null)
+      : [];
+    const instances = visible.filter((instance) => {
+      const permissions = sakiProjectPermissions(user, instance);
+      return permissions.includes("instance.view") && permissions.includes(scope.mode === "chat" ? "saki.chat" : "saki.agent");
+    });
+    if (!instances.length) return "没有可检索审计日志的授权实例。";
+    boundary = { resourceType: "instance", resourceId: { in: instances.map((instance) => instance.id) } };
   }
 
   const search = trimString(query).slice(0, 240);
@@ -148,7 +174,7 @@ export async function buildAuditSearchContext(query: string, canViewAudit: boole
   };
 
   const logs = await prisma.operationLog.findMany({
-    where,
+    where: { AND: [boundary, where] },
     orderBy: { createdAt: "desc" },
     take: 24,
     include: { user: true }
@@ -160,7 +186,7 @@ export async function buildAuditSearchContext(query: string, canViewAudit: boole
     logs.length > 0
       ? []
       : await prisma.operationLog.findMany({
-          where: fallbackWhere,
+          where: { AND: [boundary, fallbackWhere] },
           orderBy: { createdAt: "desc" },
           take: 12,
           include: { user: true }

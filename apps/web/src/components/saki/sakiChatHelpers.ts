@@ -68,17 +68,17 @@ export function coerceSakiMode(mode: SakiChatMode | undefined, canUseChat: boole
 export const defaultSakiAgentPermissionMode: SakiAgentPermissionMode = "acceptEdits";
 
 export function sakiPermissionModeLabel(mode: SakiAgentPermissionMode): string {
-  if (mode === "ask") return "询问";
+  if (mode === "ask") return "请求批准";
   if (mode === "plan") return "计划";
-  if (mode === "bypassPermissions") return "免确认";
-  return "自动改文件";
+  if (mode === "bypassPermissions") return "完全访问权限";
+  return "帮我批准";
 }
 
 export function sakiPermissionModeTitle(mode: SakiAgentPermissionMode): string {
-  if (mode === "ask") return "编辑、命令和状态变更都先确认";
+  if (mode === "ask") return "常规工作区操作自动执行；终端联网、越界访问和风险操作请求批准";
   if (mode === "plan") return "只读探索并输出计划，不写文件";
   if (mode === "bypassPermissions") return "在账号权限和安全策略内尽量不打断执行";
-  return "文件编辑自动执行，命令和高风险操作先确认";
+  return "自动审查常规操作，仅对检测到的风险操作请求批准";
 }
 
 export function formatSakiActionArgs(args: Record<string, unknown>): string {
@@ -90,6 +90,7 @@ export function formatSakiActionArgs(args: Record<string, unknown>): string {
 }
 
 export function sakiHistoryContent(message: LocalSakiMessage): string {
+  if (message.rollbackJournal) return "";
   const sections = [message.content];
   const attachmentSummary = sakiAttachmentHistoryText(message.attachments);
   if (attachmentSummary) {

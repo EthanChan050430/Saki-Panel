@@ -1678,7 +1678,7 @@
 
 [data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not(.terminal-cmd-input):not(.mobile-capsule-input):not(.capsule-text-input-field):focus,
 [data-theme="dark"] select:focus,
-[data-theme="dark"] textarea:focus {
+[data-theme="dark"] textarea:not(.dashboard-input-textarea):not(.saki-input-main-row textarea):focus {
   outline: none !important;
   border-color: rgba(255, 117, 172, 0.5) !important;
   background: rgba(255, 255, 255, 0.12) !important;
@@ -7533,7 +7533,7 @@ textarea {
 
 input:not([type="checkbox"]):not([type="radio"]):not(.terminal-cmd-input):not(.mobile-capsule-input):not(.capsule-text-input-field):focus,
 select:focus,
-textarea:focus {
+textarea:not(.dashboard-input-textarea):not(.saki-input-main-row textarea):focus {
   outline: 2px solid rgba(255, 117, 172, 0.3) !important;
   border-color: var(--primary) !important;
   background: rgba(255, 255, 255, 0.9) !important;

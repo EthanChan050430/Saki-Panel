@@ -10,6 +10,8 @@ import type {
   InstanceGitIgnoreRequest,
   InstanceGitStatus,
   InstanceGitDiff,
+  InstanceGitChangesSummary,
+  InstanceGitFileChange,
 } from "@webops/shared";
 import { daemonPaths } from "./config.js";
 
@@ -60,7 +62,7 @@ async function git(
       "git",
       [
         "--no-pager",
-        "--literal-pathspecs",
+        ...(args[0] === "stash" ? [] : ["--literal-pathspecs"]),
         "-c",
         "core.hooksPath=/dev/null",
         "-c",
@@ -145,9 +147,44 @@ async function isRepository(root: string): Promise<boolean> {
   return true;
 }
 
+export async function ensureRepository(root: string): Promise<boolean> {
+  if (await isRepository(root)) return true;
+  return withMutation(root, async () => {
+    if (await isRepository(root)) return true;
+    try {
+      await fs.mkdir(root, { recursive: true });
+      await git(root, ["init", "--initial-branch=main"]);
+      await git(root, ["config", "--local", "user.name", "Saki"]);
+      await git(root, ["config", "--local", "user.email", "saki@localhost"]);
+      const gitignorePath = path.join(root, ".gitignore");
+      if (!(await exists(gitignorePath))) {
+        await fs.writeFile(
+          gitignorePath,
+          "__pycache__/\n*.pyc\n.DS_Store\nThumbs.db\n",
+          "utf8",
+        );
+      }
+      const head = await optionalGit(root, ["rev-parse", "--verify", "HEAD"]);
+      if (!head) {
+        if (await exists(gitignorePath)) {
+          await optionalGit(root, ["add", ".gitignore"]);
+        }
+        await git(root, ["commit", "--allow-empty", "-m", "Initial commit"]);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 async function requireRepository(root: string): Promise<void> {
-  if (!(await isRepository(root)))
-    throw new GitError("请先在实例工作目录创建 Git 仓库。");
+  if (!(await isRepository(root))) {
+    const initialized = await ensureRepository(root);
+    if (!initialized || !(await isRepository(root))) {
+      throw new GitError("请先在实例工作目录创建 Git 仓库。");
+    }
+  }
 }
 
 async function validatePaths(root: string, value: unknown): Promise<string[]> {
@@ -647,5 +684,220 @@ export async function commitGit(
       await fs.rm(indexFile, { force: true });
       await fs.rm(`${indexFile}.lock`, { force: true });
     }
+  });
+}
+
+function parseDiffLinesStats(diffText: string): {
+  totalAdditions: number;
+  totalDeletions: number;
+  perFile: Map<string, { additions: number; deletions: number }>;
+} {
+  let totalAdditions = 0;
+  let totalDeletions = 0;
+  const perFile = new Map<string, { additions: number; deletions: number }>();
+  let currentFile: string | null = null;
+  const lines = diffText.split(/\r?\n/);
+  for (const line of lines) {
+    const gitDiffMatch = line.match(/^diff --git\s+[ab]\/(.+)\s+[ab]\/(.+)$/);
+    if (gitDiffMatch && gitDiffMatch[2]) {
+      currentFile = gitDiffMatch[2].trim();
+      if (!perFile.has(currentFile)) {
+        perFile.set(currentFile, { additions: 0, deletions: 0 });
+      }
+      continue;
+    }
+    const newFileMatch = line.match(/^(?:新增文件|Binary file added:)\s+(.+?)(?:（|$)/);
+    if (newFileMatch && newFileMatch[1]) {
+      currentFile = newFileMatch[1].trim();
+      if (!perFile.has(currentFile)) {
+        perFile.set(currentFile, { additions: 0, deletions: 0 });
+      }
+      continue;
+    }
+    if (line.startsWith("+++ ") || line.startsWith("--- ")) continue;
+    if (line.startsWith("+")) {
+      totalAdditions++;
+      if (currentFile) {
+        const stats = perFile.get(currentFile) || { additions: 0, deletions: 0 };
+        stats.additions++;
+        perFile.set(currentFile, stats);
+      }
+    } else if (line.startsWith("-")) {
+      totalDeletions++;
+      if (currentFile) {
+        const stats = perFile.get(currentFile) || { additions: 0, deletions: 0 };
+        stats.deletions++;
+        perFile.set(currentFile, stats);
+      }
+    }
+  }
+  return { totalAdditions, totalDeletions, perFile };
+}
+
+function determineChangeStatus(index: string, worktree: string): "modified" | "added" | "deleted" | "renamed" {
+  const code = index + worktree;
+  if (code.includes("R")) return "renamed";
+  if (index === "?" || code.includes("A")) return "added";
+  if (code.includes("D")) return "deleted";
+  return "modified";
+}
+
+export async function gitChangesSummary(root: string): Promise<InstanceGitChangesSummary> {
+  const empty: InstanceGitChangesSummary = {
+    available: true,
+    initialized: false,
+    filesCount: 0,
+    additions: 0,
+    deletions: 0,
+    changes: [],
+    diff: "",
+    canRestore: false,
+    isReverted: false,
+  };
+  try {
+    await git(root, ["--version"]);
+  } catch (error) {
+    if (error instanceof GitError && error.statusCode === 503) {
+      return { ...empty, available: false };
+    }
+    throw error;
+  }
+  if (!(await isRepository(root))) {
+    const initialized = await ensureRepository(root);
+    if (!initialized) return empty;
+  }
+
+  const status = await gitStatus(root);
+  const stashList = await optionalGit(root, ["stash", "list"]);
+  const canRestore = stashList.includes("saki-ai-changes");
+
+  if (status.changes.length > 0) {
+    const paths = status.changes.map((c) => c.path);
+    const diffResult = await gitDiff(root, paths);
+    const { totalAdditions, totalDeletions, perFile } = parseDiffLinesStats(diffResult.diff);
+
+    const changes: InstanceGitFileChange[] = status.changes.map((c) => {
+      const stats = perFile.get(c.path) || { additions: 0, deletions: 0 };
+      return {
+        path: c.path,
+        ...(c.originalPath ? { originalPath: c.originalPath } : {}),
+        index: c.index,
+        worktree: c.worktree,
+        status: determineChangeStatus(c.index, c.worktree),
+        additions: stats.additions,
+        deletions: stats.deletions,
+      };
+    });
+
+    return {
+      available: true,
+      initialized: true,
+      filesCount: changes.length,
+      additions: totalAdditions,
+      deletions: totalDeletions,
+      changes,
+      diff: diffResult.diff,
+      canRestore,
+      isReverted: false,
+    };
+  }
+
+  // If no active working directory changes but a stash exists from a previous revert:
+  if (canRestore) {
+    let stashDiff = await optionalGit(root, ["stash", "show", "--include-untracked", "-p", "stash@{0}"]);
+    if (!stashDiff) {
+      stashDiff = await optionalGit(root, ["stash", "show", "-p", "stash@{0}"]);
+    }
+    const { totalAdditions, totalDeletions, perFile } = parseDiffLinesStats(stashDiff);
+    const files = Array.from(perFile.keys());
+    const changes: InstanceGitFileChange[] = files.map((file) => {
+      const stats = perFile.get(file) || { additions: 0, deletions: 0 };
+      return {
+        path: file,
+        index: " ",
+        worktree: "M",
+        status: stats.deletions > 0 && stats.additions === 0 ? "deleted" : stats.additions > 0 && stats.deletions === 0 ? "added" : "modified",
+        additions: stats.additions,
+        deletions: stats.deletions,
+      };
+    });
+
+    return {
+      available: true,
+      initialized: true,
+      filesCount: changes.length,
+      additions: totalAdditions,
+      deletions: totalDeletions,
+      changes,
+      diff: stashDiff,
+      canRestore: true,
+      isReverted: true,
+    };
+  }
+
+  return {
+    available: true,
+    initialized: true,
+    filesCount: 0,
+    additions: 0,
+    deletions: 0,
+    changes: [],
+    diff: "",
+    canRestore: false,
+    isReverted: false,
+  };
+}
+
+export async function gitRevertAll(
+  root: string,
+): Promise<{ ok: boolean; canRestore: boolean; message: string }> {
+  return withMutation(root, async () => {
+    await requireRepository(root);
+    const status = await gitStatus(root);
+    if (!status.changes.length) {
+      return { ok: true, canRestore: false, message: "工作区没有可撤回的更改。" };
+    }
+    const head = await optionalGit(root, ["rev-parse", "--verify", "HEAD"]);
+    if (!head) {
+      await git(root, ["config", "--local", "user.name", "Saki"]);
+      await git(root, ["config", "--local", "user.email", "saki@localhost"]);
+      await git(root, ["commit", "--allow-empty", "-m", "Initial commit"]);
+    }
+    // Drop any existing saki-ai-changes stash first to keep only the latest
+    while (true) {
+      const existingStashes = await optionalGit(root, ["stash", "list"]);
+      const match = existingStashes.match(/stash@\{(\d+)\}:.*saki-ai-changes/);
+      if (!match) break;
+      try {
+        await git(root, ["stash", "drop", `stash@{${match[1]}}`]);
+      } catch {
+        break;
+      }
+    }
+    await git(root, ["stash", "push", "--include-untracked", "-m", "saki-ai-changes"]);
+    return { ok: true, canRestore: true, message: "已一键撤回全部更改。" };
+  });
+}
+
+export async function gitRestoreAll(
+  root: string,
+): Promise<{ ok: boolean; canRestore: boolean; message: string }> {
+  return withMutation(root, async () => {
+    await requireRepository(root);
+    const stashList = await optionalGit(root, ["stash", "list"]);
+    if (!stashList.includes("saki-ai-changes")) {
+      throw new GitError("未找到可恢复的撤回记录。", 404);
+    }
+    const lines = stashList.split("\n");
+    let targetStash = "stash@{0}";
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i]?.includes("saki-ai-changes")) {
+        const match = lines[i]?.match(/stash@\{(\d+)\}/);
+        if (match) targetStash = `stash@{${match[1]}}`;
+        break;
+      }
+    }
+    await git(root, ["stash", "pop", targetStash]);
+    return { ok: true, canRestore: false, message: "已一键恢复所有撤回的更改。" };
   });
 }

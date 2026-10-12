@@ -17,7 +17,7 @@ import { buildDirectMessages, buildDirectSystemPrompt } from "../prompt.js";
 import { buildAnthropicAgentMessages, buildPromptFallbackMessages, currentAgentTurnConversation } from "../agent-messages.js";
 import { extractProviderUsage, mergeModelUsage, type ModelUsage } from "../../../tokenizer.js";
 import { anthropicSupportsThinking } from "../model-profile.js";
-import { streamPromptAgentTurnWithFilteredDelta, withTurnUsage } from "./common.js";
+import { modelOutputWasTruncated, streamPromptAgentTurnWithFilteredDelta, withTurnUsage } from "./common.js";
 import { parseStreamJsonPayload, readServerSentEventData, requestJsonPayload, requestStreamingPayload } from "./http.js";
 import {
   isToolCallingUnsupportedError,
@@ -282,6 +282,7 @@ export async function callAnthropicAgentTurnStream(
   const messages = buildAnthropicAgentMessages(input, prompt);
   const state = createStreamingTextState();
   const toolAccumulator = new AnthropicStreamToolCallAccumulator();
+  let truncated = false;
   const thinkingAccumulator = new AnthropicStreamThinkingAccumulator();
   const usageHolder: { current: ModelUsage | null } = { current: null };
   await requestStreamingPayload(
@@ -304,6 +305,7 @@ export async function callAnthropicAgentTurnStream(
         const event = objectValue(parseStreamJsonPayload(data));
         if (!event) return;
         usageHolder.current = mergeModelUsage(usageHolder.current, extractProviderUsage(event));
+        truncated ||= modelOutputWasTruncated(event);
         toolAccumulator.ingest(event);
         thinkingAccumulator.ingest(event);
         const chunk = anthropicAgentStreamDelta(event);
@@ -319,6 +321,7 @@ export async function callAnthropicAgentTurnStream(
     {
       content,
       toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content),
+      truncated,
       forwardedDeltaText: state.emittedLength > 0,
       forwardedDeltaContent: state.raw.slice(0, state.emittedLength),
       ...(thinkingBlocks.length ? { assistantState: { thinkingBlocks } } : {})

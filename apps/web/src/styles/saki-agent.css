@@ -1,0 +1,86 @@
+/* Keep Agent presentation changes inside the message list. */
+.saki-messages.saki-messages-agent {
+  --agent-paper: #fff;
+  --agent-surface: #f5f5f5;
+  --agent-ink: #202020;
+  --agent-muted: #737373;
+  --agent-border: #e5e5e5;
+  background: var(--agent-paper) !important;
+  padding: 20px;
+  gap: 24px;
+}
+[data-theme="dark"] .saki-messages.saki-messages-agent {
+  --agent-paper: #202020;
+  --agent-surface: #2c2c2c;
+  --agent-ink: #ededed;
+  --agent-muted: #aaa;
+  --agent-border: #414141;
+}
+.saki-messages.saki-messages-agent .saki-message { width: 100% !important; min-width: 0 !important; max-width: 100% !important; align-self: stretch !important; box-sizing: border-box !important; text-shadow: none !important; }
+.saki-messages.saki-messages-agent .saki-message-timeline { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
+.saki-messages.saki-messages-agent .saki-message-meta { display: none; }
+.saki-messages.saki-messages-agent .saki-message-assistant .saki-message-body { background: transparent !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; padding: 4px 0 !important; color: var(--agent-ink) !important; backdrop-filter: none !important; }
+.saki-messages.saki-messages-agent .saki-message-user .saki-message-body { background: var(--agent-surface) !important; color: var(--agent-ink) !important; border: 0 !important; border-radius: 16px !important; box-shadow: none !important; padding: 10px 14px !important; backdrop-filter: none !important; }
+.saki-messages.saki-messages-agent .saki-markdown, .saki-messages.saki-messages-agent .saki-stream-raw { color: var(--agent-ink) !important; text-shadow: none !important; font-size: 14px; line-height: 1.75; }
+.saki-messages.saki-messages-agent .saki-action-row-main { padding: 5px 0; }
+.saki-messages.saki-messages-agent .saki-action-label code, .saki-messages.saki-messages-agent .saki-action-label span { color: var(--agent-muted) !important; }
+.saki-messages.saki-messages-agent .saki-action-status-dot:not(.saki-action-status-live) { width: 5px; height: 5px; opacity: .6; }
+.saki-messages.saki-messages-agent .saki-agent-widget { color: var(--agent-ink); background: var(--agent-surface); border-color: var(--agent-border); border-radius: 10px; box-shadow: none; }
+.saki-messages.saki-messages-agent .saki-agent-widget-icon { background: transparent; color: var(--agent-muted); width: auto; height: auto; }
+.saki-messages.saki-messages-agent .saki-action-terminal { background: var(--agent-surface); border-color: var(--agent-border); box-shadow: none; }
+.saki-messages.saki-messages-agent .saki-action-terminal-header { background: rgba(0, 0, 0, 0.03); border-bottom-color: var(--agent-border); color: var(--agent-muted); }
+.saki-messages.saki-messages-agent .saki-action-terminal-status { color: var(--agent-muted); }
+.saki-messages.saki-messages-agent .saki-action-terminal-output { color: var(--agent-ink); }
+[data-theme="dark"] .saki-messages.saki-messages-agent .saki-action-terminal-header { background: rgba(255, 255, 255, 0.03); }
+.saki-messages.saki-messages-agent .saki-user-action-btn { color: var(--agent-muted) !important; border: 0 !important; box-shadow: none !important; background: transparent !important; }
+.saki-messages.saki-messages-agent .saki-assistant-message-actions > .saki-user-action-btn span,
+.saki-messages.saki-messages-agent .saki-user-message-actions > .saki-user-action-btn span { display: none; }
+.saki-messages.saki-messages-agent .saki-thinking-bubble { background: transparent !important; border: 0 !important; box-shadow: none !important; color: var(--agent-muted); }
+.saki-messages.saki-messages-agent .saki-thinking-bubble img { display: none; }
+.saki-messages.saki-messages-agent .saki-markdown a { color: var(--agent-ink) !important; text-decoration: underline; text-underline-offset: 3px; }
+
+.saki-messages .saki-more-menu { position: relative; color: var(--agent-muted, #737373); flex: 0 0 auto; }
+.saki-messages .saki-more-menu > summary { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; cursor: pointer; list-style: none; border-radius: 6px; }
+.saki-messages .saki-more-menu > summary::-webkit-details-marker { display: none; }
+.saki-messages .saki-more-menu > summary:hover, .saki-messages .saki-more-menu[open] > summary { background: #8882; }
+.saki-messages .saki-more-menu-content { position: absolute; left: 0; right: auto; bottom: calc(100% + 6px); z-index: 200; min-width: 176px; max-width: min(260px, calc(100vw - 32px)); padding: 5px; border-radius: 10px; border: 1px solid var(--agent-border, #ddd); background: var(--agent-paper, #fff); box-shadow: 0 5px 22px #0002; color: var(--agent-ink, #252525); }
+.saki-messages .saki-more-menu:not([open]) > .saki-more-menu-content { display: none; }
+.saki-messages .saki-more-menu-content button { display: flex !important; align-items: center; gap: 8px; width: 100% !important; height: auto !important; min-height: 34px; padding: 7px 9px !important; font: inherit; font-size: 12px; font-weight: 400; text-align: left; color: inherit !important; border: 0 !important; border-radius: 6px; box-shadow: none !important; background: transparent !important; cursor: pointer; white-space: nowrap; }
+.saki-messages .saki-more-menu-content button:hover { background: #8882 !important; }
+.saki-messages .saki-more-menu-content button:disabled { opacity: .45; cursor: not-allowed; }
+.saki-messages .saki-more-menu-content .saki-token-usage-text { padding: 5px 9px; margin: 0; color: inherit; font-size: 11px; white-space: nowrap; }
+.saki-messages .saki-assistant-message-actions .saki-more-menu-content,
+.saki-messages .saki-more-menu.align-left .saki-more-menu-content { left: 0; right: auto; bottom: calc(100% + 6px); top: auto; }
+.saki-messages .saki-user-message-actions .saki-more-menu-content,
+.saki-messages .saki-more-menu.align-right .saki-more-menu-content { top: calc(100% + 6px); bottom: auto; right: 0; left: auto; }
+.saki-messages .saki-more-menu-content.drop-down { top: calc(100% + 6px) !important; bottom: auto !important; }
+.saki-messages .saki-more-menu-content.drop-up { bottom: calc(100% + 6px) !important; top: auto !important; }
+.saki-messages .saki-user-message-actions,
+.saki-messages .saki-assistant-message-actions { position: relative; z-index: 5; }
+.saki-messages .saki-user-message-actions:has(details[open]),
+.saki-messages .saki-assistant-message-actions:has(details[open]) { z-index: 30; }
+[data-theme="dark"] .saki-messages .saki-more-menu-content { background: var(--agent-paper, #252525); color: var(--agent-ink, #ededed); border-color: var(--agent-border, #444); }
+.saki-messages .saki-tool-group { margin: 4px 0; font-size: 12px; color: var(--agent-muted, #777); width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
+.saki-messages .saki-tool-group > summary { padding: 5px 0; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.saki-messages .saki-tool-group[open] { border-left: 1px solid var(--agent-border, #ddd); padding-left: 10px; }
+.saki-messages .saki-web-sources { list-style: none; padding: 0; margin: 4px 0 8px 24px; display: grid; gap: 5px; min-width: 0; }
+.saki-messages .saki-web-sources li { min-width: 0; }
+.saki-messages .saki-web-sources a { display: flex; align-items: center; flex-wrap: wrap; column-gap: 5px; font-size: 12px; color: var(--agent-ink, #385d91); text-decoration: none; }
+.saki-messages .saki-web-sources a:hover .saki-web-source-title { text-decoration: underline; }
+.saki-messages .saki-web-source-title { min-width: 0; overflow-wrap: anywhere; }
+.saki-messages .saki-web-source-host { color: var(--agent-muted, #888); font-size: 10px; }
+.saki-messages .saki-web-sources p { color: var(--agent-muted, #888); font-size: 12px; line-height: 1.5; margin: 4px 0 8px; overflow-wrap: anywhere; }
+[data-theme="dark"] .saki-messages .saki-web-sources a { color: var(--agent-ink, #b4cbec); }
+.saki-messages .saki-more-menu > summary:focus-visible, .saki-messages .saki-tool-group > summary:focus-visible { outline: 2px solid #888; outline-offset: 2px; }
+@media (min-width: 721px) and (hover: hover) {
+  .saki-messages.saki-messages-agent .saki-assistant-message-actions { opacity: 0; transition: opacity .15s; }
+  .saki-messages.saki-messages-agent .saki-message:hover .saki-assistant-message-actions,
+  .saki-messages.saki-messages-agent .saki-message:focus-within .saki-assistant-message-actions,
+  .saki-messages.saki-messages-agent .saki-assistant-message-actions:has(details[open]) { opacity: 1; }
+}
+@media (max-width: 720px) {
+  .saki-messages.saki-messages-agent { padding: 16px 12px; }
+}
+@media (hover: none), (max-width: 720px) {
+  .saki-messages .saki-user-message-actions, .saki-messages .saki-assistant-message-actions { opacity: 1; pointer-events: auto; transform: none; }
+}

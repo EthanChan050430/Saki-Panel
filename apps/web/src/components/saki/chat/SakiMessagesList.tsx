@@ -9,9 +9,13 @@ import {
   Trash2
 } from "lucide-react";
 import { MarkdownContent } from "../../common/MarkdownContent.js";
-import { isSakiImageAttachment, type SakiAgentAction, type SakiInputAttachment } from "@webops/shared";
+import { isSakiImageAttachment, type InstanceGitChangesSummary, type SakiAgentAction, type SakiChatMode, type SakiInputAttachment } from "@webops/shared";
 import { SakiChatGeneratedImages } from "./SakiChatImages.js";
+import { SakiRetryCard } from "./SakiAgentWidgets.js";
+import { SakiChangedFilesPill, SakiCodeChangesDetails, filterGitChangesForSession } from "./SakiCodeChanges.js";
 import type { LocalSakiMessage } from "../../../types/app.js";
+import { SakiMoreMenu } from "./SakiMoreMenu.js";
+import { compactSakiTimeline } from "./timeline-presentation.js";
 import {
   SakiAttachmentChip,
   SakiPendingToolCard,
@@ -27,6 +31,7 @@ import {
 } from "../SakiComponents.js";
 
 export interface SakiMessagesListProps {
+  mode?: SakiChatMode;
   messagesRef: React.RefObject<HTMLDivElement | null>;
   onScroll: (event: React.UIEvent<HTMLDivElement>) => void;
   messages: LocalSakiMessage[];
@@ -37,6 +42,8 @@ export interface SakiMessagesListProps {
   actionBusyId: string | null;
   copiedUserMessageId: string | null;
   copiedAssistantMessageId?: string | null;
+  dismissedRetryId?: string | null;
+  onDismissRetry?: (messageId: string) => void;
   onRollbackUserTurn: (messageId: string) => Promise<void> | void;
   onCopyUserMessage: (messageId: string, content: string) => Promise<void> | void;
   onCopyAssistantMessage?: (messageId: string, content: string) => Promise<void> | void;
@@ -48,6 +55,14 @@ export interface SakiMessagesListProps {
   onRollbackAllFileActions: (messageId: string, fileRollbackActions: SakiAgentAction[]) => Promise<void> | void;
   onPreviewAttachment: (preview: { attachment: SakiInputAttachment; editable: boolean }) => void;
   token: string;
+  changesSummary?: InstanceGitChangesSummary | null | undefined;
+  showCodeChangesDetails?: boolean | undefined;
+  revertingChanges?: boolean | undefined;
+  changesLoading?: boolean | undefined;
+  onToggleCodeChangesDetails?: (() => void) | undefined;
+  onCloseCodeChangesDetails?: (() => void) | undefined;
+  onRevertAllChanges?: (() => Promise<void>) | undefined;
+  onRestoreAllChanges?: (() => Promise<void>) | undefined;
 }
 
 function findPrecedingUserMessage(messages: LocalSakiMessage[], assistantId: string): LocalSakiMessage | null {
@@ -61,6 +76,7 @@ function findPrecedingUserMessage(messages: LocalSakiMessage[], assistantId: str
 }
 
 export const SakiMessagesList = React.memo(function SakiMessagesList({
+  mode = "chat",
   messagesRef,
   onScroll,
   messages,
@@ -71,6 +87,8 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
   actionBusyId,
   copiedUserMessageId,
   copiedAssistantMessageId = null,
+  dismissedRetryId = null,
+  onDismissRetry,
   onRollbackUserTurn,
   onCopyUserMessage,
   onCopyAssistantMessage,
@@ -81,17 +99,42 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
   onOpenPath,
   onRollbackAllFileActions,
   onPreviewAttachment,
-  token
+  token,
+  changesSummary,
+  showCodeChangesDetails,
+  revertingChanges,
+  changesLoading,
+  onToggleCodeChangesDetails,
+  onCloseCodeChangesDetails,
+  onRevertAllChanges,
+  onRestoreAllChanges
 }: SakiMessagesListProps) {
+  const activeChangesSummary = React.useMemo(() => {
+    return filterGitChangesForSession(changesSummary, messages);
+  }, [changesSummary, messages]);
+
   return (
-    <div className="saki-messages" ref={messagesRef} onScroll={onScroll}>
-      {messages.map((message) => {
+    <div className={`saki-messages${mode === "agent" ? " saki-messages-agent" : ""}`} ref={messagesRef} onScroll={onScroll}>
+      {messages.filter((message) => !message.rollbackJournal).map((message) => {
         const actionItems = visibleSakiActions(message.actions).filter((action) => action.tool.toLowerCase() !== "managetodos");
         const fileRollbackActions = actionItems.filter(isSakiFileRollbackAction);
         const rollbackableFileActions = fileRollbackActions.filter(isSakiRollbackableFileEdit);
-        const timelineItems = message.role === "assistant" ? renderableSakiTimeline(message) : [];
+        const timelineItems = message.role === "assistant" ? compactSakiTimeline(renderableSakiTimeline(message)) : [];
         const precedingUser = message.role === "assistant" ? findPrecedingUserMessage(messages, message.id) : null;
         const showAssistantActions = Boolean(onCopyAssistantMessage) && message.role === "assistant" && message.id !== "saki-welcome" && !message.streaming;
+        const showRetryCard = Boolean(
+          message.role === "assistant" &&
+          message.retry &&
+          message.id !== dismissedRetryId &&
+          onRetryAssistantTurn
+        );
+        let renderedRetryCard = false;
+        const isRetryReasonText = (text: string) => {
+          if (!message.retry?.reason) return false;
+          const t = text.trim();
+          const r = message.retry.reason.trim();
+          return t === r || (r.length > 8 && (t.startsWith(r) || r.startsWith(t)));
+        };
 
         return (
           <div className={`saki-message saki-message-${message.role}`} key={message.id}>
@@ -106,11 +149,12 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
             {message.role === "user" ? (
               <div className="saki-user-message-wrapper">
                 <div className="saki-user-message-actions">
+                  <SakiMoreMenu label="提问的更多操作" align="right">
                   <button
                     className="saki-user-action-btn rollback-btn"
                     type="button"
                     title="回退到此对话并撤销所有修改"
-                    disabled={Boolean(actionBusyId)}
+                    disabled={Boolean(actionBusyId) || loading}
                     onClick={() => void onRollbackUserTurn(message.id)}
                   >
                     {actionBusyId === `rollback_user:${message.id}` ? (
@@ -120,10 +164,12 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
                     )}
                     <span>回退</span>
                   </button>
+                  </SakiMoreMenu>
                   <button
                     className="saki-user-action-btn copy-btn"
                     type="button"
                     title="复制提问内容"
+                    aria-label="复制提问内容"
                     onClick={() => void onCopyUserMessage(message.id, message.content)}
                   >
                     {copiedUserMessageId === message.id ? (
@@ -141,6 +187,14 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
             ) : message.role === "assistant" && timelineItems.length > 0 ? (
               <div className="saki-message-timeline">
                 {timelineItems.map((item) => {
+                  if (item.kind === "tool-group") {
+                    return <details className="saki-tool-group" key={item.id}>
+                      <summary>已完成 {item.items.length} 个步骤</summary>
+                      {item.items.map((entry) => <SakiToolActionCard key={entry.id} action={entry.action} actionBusyId={actionBusyId}
+                        onDecision={(targetAction, decision) => void onDecideAction(targetAction, decision)}
+                        onAnswer={onAnswerQuestion} onOpenPath={onOpenPath} />)}
+                    </details>;
+                  }
                   if (item.kind === "pending") {
                     return (
                       <div className="saki-tool-timeline-item" key={item.id}>
@@ -165,6 +219,22 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
                         />
                       </div>
                     );
+                  }
+                  if (item.kind === "text" && isRetryReasonText(item.content)) {
+                    if (showRetryCard && !renderedRetryCard) {
+                      renderedRetryCard = true;
+                      return (
+                        <div key={item.id} className="saki-tool-timeline-item">
+                          <SakiRetryCard
+                            reason={message.retry!.reason}
+                            busy={loading || Boolean(actionBusyId)}
+                            onRetry={() => void onRetryAssistantTurn?.(message.id)}
+                            onDismiss={() => onDismissRetry?.(message.id)}
+                          />
+                        </div>
+                      );
+                    }
+                    return null;
                   }
                   const parsed = parseThinkingContent(
                     item.content,
@@ -204,27 +274,17 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
                     </div>
                   );
                 })}
-                {message.streaming && message.workflow?.length ? (
+                {message.streaming && message.workflow?.length && !timelineItems.some((item) => item.kind === "pending") ? (
                   <SakiStreamStatus workflow={message.workflow} />
                 ) : null}
-                {fileRollbackActions.length > 1 ? (
-                  <div className="saki-rollback-bulk">
-                    <span>
-                      {rollbackableFileActions.length} / {fileRollbackActions.length} 个文件改动可回滚
-                    </span>
-                    <button
-                      className="small-button"
-                      type="button"
-                      disabled={Boolean(actionBusyId) || rollbackableFileActions.length === 0}
-                      onClick={() => void onRollbackAllFileActions(message.id, fileRollbackActions)}
-                    >
-                      {actionBusyId === `rollback_all:${message.id}` ? (
-                        <Loader2 size={14} className="status-spinner" />
-                      ) : (
-                        <CornerUpLeft size={14} />
-                      )}
-                      全部回滚
-                    </button>
+                {showRetryCard && !renderedRetryCard ? (
+                  <div className="saki-tool-timeline-item">
+                    <SakiRetryCard
+                      reason={message.retry!.reason}
+                      busy={loading || Boolean(actionBusyId)}
+                      onRetry={() => void onRetryAssistantTurn?.(message.id)}
+                      onDismiss={() => onDismissRetry?.(message.id)}
+                    />
                   </div>
                 ) : null}
               </div>
@@ -236,9 +296,10 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
               (() => {
                 const parsed = parseThinkingContent(message.content, message.thinking, Boolean(message.streaming));
                 const hasThinking = Boolean(parsed.thinking);
-                const hasAnswer = Boolean(parsed.answer.trim());
+                const isRetryAnswer = isRetryReasonText(parsed.answer);
+                const hasAnswer = Boolean(parsed.answer.trim()) && !isRetryAnswer;
                 const isThinkingStreaming = Boolean(message.streaming && !hasAnswer);
-                if (!hasThinking && !hasAnswer) {
+                if (!hasThinking && !hasAnswer && !showRetryCard) {
                   return message.streaming ? (
                     <div className="saki-message-assistant-content">
                       <div className="saki-message-body">
@@ -270,16 +331,37 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
                         )}
                       </div>
                     ) : null}
+                    {showRetryCard ? (
+                      <div className="saki-tool-timeline-item">
+                        <SakiRetryCard
+                          reason={message.retry!.reason}
+                          busy={loading || Boolean(actionBusyId)}
+                          onRetry={() => void onRetryAssistantTurn?.(message.id)}
+                          onDismiss={() => onDismissRetry?.(message.id)}
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 );
               })()
             ) : message.role === "assistant" ? (
-              <div className="saki-message-body saki-message-body-failed">
-                <div className="saki-message-failed-notice">
-                  <AlertTriangle size={14} className="saki-failed-icon" />
-                  <span>{message.source === "local-fallback" ? "Agent 执行中断或未完成" : "未收到 Agent 回应"}</span>
+              showRetryCard ? (
+                <div className="saki-tool-timeline-item">
+                  <SakiRetryCard
+                    reason={message.retry!.reason}
+                    busy={loading || Boolean(actionBusyId)}
+                    onRetry={() => void onRetryAssistantTurn?.(message.id)}
+                    onDismiss={() => onDismissRetry?.(message.id)}
+                  />
                 </div>
-              </div>
+              ) : (
+                <div className="saki-message-body saki-message-body-failed">
+                  <div className="saki-message-failed-notice">
+                    <AlertTriangle size={14} className="saki-failed-icon" />
+                    <span>{message.source === "local-fallback" ? "Agent 执行中断或未完成" : "未收到 Agent 回应"}</span>
+                  </div>
+                </div>
+              )
             ) : null}
 
             {message.role === "assistant" ? (
@@ -288,14 +370,6 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
                 token={token}
                 onPreview={(attachment) => onPreviewAttachment({ attachment, editable: false })}
               />
-            ) : null}
-
-            {message.role === "assistant" && message.usage ? (
-              <div className="saki-token-usage-text">
-                {message.usage.isUnlimited
-                  ? `消耗 Token: ${message.usage.tokensUsed.toLocaleString()}`
-                  : `消耗 Token: ${message.usage.tokensUsed.toLocaleString()} · 消耗积分: ${message.usage.pointsUsed.toLocaleString()}`}
-              </div>
             ) : null}
 
             {(() => {
@@ -322,6 +396,7 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
                   className="saki-user-action-btn copy-btn"
                   type="button"
                   title="复制回复"
+                  aria-label="复制回复"
                   onClick={() => void onCopyAssistantMessage?.(message.id, assistantVisibleText(message))}
                 >
                   {copiedAssistantMessageId === message.id ? (
@@ -331,11 +406,12 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
                   )}
                   <span>{copiedAssistantMessageId === message.id ? "已复制" : "复制"}</span>
                 </button>
-                {precedingUser && onRetryAssistantTurn ? (
+                {precedingUser && onRetryAssistantTurn && !showRetryCard ? (
                   <button
                     className="saki-user-action-btn retry-btn"
                     type="button"
                     title={message.retry ? "保留修改并继续任务" : "回滚本次代码改动并重新生成"}
+                    aria-label="重试回复"
                     disabled={Boolean(actionBusyId) || loading}
                     onClick={() => void onRetryAssistantTurn(message.id)}
                   >
@@ -347,6 +423,7 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
                     <span>重试</span>
                   </button>
                 ) : null}
+                {(precedingUser && onDeleteAssistantTurn) || fileRollbackActions.length > 1 || message.usage ? <SakiMoreMenu label="回复的更多操作" align="left">
                 {precedingUser && onDeleteAssistantTurn ? (
                   <button
                     className="saki-user-action-btn delete-btn"
@@ -363,6 +440,12 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
                     <span>删除</span>
                   </button>
                 ) : null}
+                {fileRollbackActions.length > 1 ? <button type="button" disabled={Boolean(actionBusyId) || loading || rollbackableFileActions.length === 0}
+                  onClick={() => void onRollbackAllFileActions(message.id, fileRollbackActions)}>
+                  <CornerUpLeft size={12} />回滚文件改动（{rollbackableFileActions.length}）
+                </button> : null}
+                {message.usage ? <p className="saki-token-usage-text">{message.usage.tokensUsed.toLocaleString()} Token{message.usage.isUnlimited ? "" : ` · ${message.usage.pointsUsed.toLocaleString()} 积分`}</p> : null}
+                </SakiMoreMenu> : null}
               </div>
             ) : null}
           </div>
@@ -379,6 +462,30 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
             <img src={thinkingGif} alt="" />
             <span>思考中...</span>
           </p>
+        </div>
+      ) : null}
+
+      {showCodeChangesDetails && activeChangesSummary ? (
+        <div className="saki-code-changes-inline-container">
+          <SakiCodeChangesDetails
+            summary={activeChangesSummary}
+            loading={changesLoading}
+            reverting={revertingChanges}
+            onRevertAll={onRevertAllChanges ?? (async () => {})}
+            onRestoreAll={onRestoreAllChanges ?? (async () => {})}
+            onClose={onCloseCodeChangesDetails}
+            onOpenPath={onOpenPath}
+            variant="inline"
+          />
+        </div>
+      ) : null}
+
+      {!loading && !hasStreamingAssistant && activeChangesSummary && (activeChangesSummary.filesCount > 0 || activeChangesSummary.canRestore) ? (
+        <div className="saki-session-bottom-changes">
+          <SakiChangedFilesPill
+            summary={activeChangesSummary}
+            onClick={() => onToggleCodeChangesDetails?.()}
+          />
         </div>
       ) : null}
     </div>

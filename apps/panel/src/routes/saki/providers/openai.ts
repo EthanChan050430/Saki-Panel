@@ -20,6 +20,7 @@ import { buildOpenAiAgentMessages, buildPromptFallbackMessages } from "../agent-
 import { extractProviderUsage, mergeModelUsage, type ModelUsage } from "../../../tokenizer.js";
 import {
   isOfficialOpenAiEndpoint,
+  modelOutputWasTruncated,
   openAiCompatibleChatBody,
   shouldSendCustomTemperature,
   streamPromptAgentTurnWithFilteredDelta,
@@ -278,6 +279,7 @@ export async function callOpenAiCompatibleAgentTurnStream(
   const { baseUrl, apiKey, model } = requireCloudConfig(config, provider);
   const state = createStreamingTextState();
   const toolAccumulator = new OpenAiStreamToolCallAccumulator();
+  let truncated = false;
   let protocolReasoningContent: string | undefined;
   const usageHolder: { current: ModelUsage | null } = { current: null };
   await requestOpenAiCompatibleStreamingPayload(
@@ -309,6 +311,7 @@ export async function callOpenAiCompatibleAgentTurnStream(
         const parsed = parseStreamJsonPayload(data);
         if (parsed === undefined) return;
         usageHolder.current = mergeModelUsage(usageHolder.current, extractProviderUsage(parsed));
+        truncated ||= modelOutputWasTruncated(parsed);
         const chunk = openAiStreamChunk(parsed);
         if (chunk.protocolReasoningContent !== undefined) protocolReasoningContent = (protocolReasoningContent ?? "") + chunk.protocolReasoningContent;
         toolAccumulator.ingest(chunk.toolCalls);
@@ -323,6 +326,7 @@ export async function callOpenAiCompatibleAgentTurnStream(
     {
       content,
       toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content),
+      truncated,
       forwardedDeltaText: state.emittedLength > 0,
       forwardedDeltaContent: state.raw.slice(0, state.emittedLength),
       ...(protocolReasoningContent !== undefined ? { assistantState: { reasoningContent: protocolReasoningContent } } : {})

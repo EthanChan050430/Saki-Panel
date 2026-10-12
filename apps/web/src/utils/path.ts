@@ -113,7 +113,7 @@ export function formatNumber(value: number): string {
 }
 
 export function compactContextText(value: string, maxLength = 1400): string {
-  return value.length > maxLength ? `${value.slice(0, maxLength)}\n...(已截断)` : value;
+  return value.length > maxLength ? `${value.slice(0, maxLength).trimEnd()}...` : value;
 }
 
 export function averageMetricValues(values: number[]): number {

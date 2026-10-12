@@ -57,3 +57,25 @@ export interface InstanceGitDraft {
   body: string;
   issue: string;
 }
+
+export interface InstanceGitFileChange {
+  path: string;
+  originalPath?: string | undefined;
+  index: string;
+  worktree: string;
+  status: "modified" | "added" | "deleted" | "renamed";
+  additions: number;
+  deletions: number;
+}
+
+export interface InstanceGitChangesSummary {
+  available: boolean;
+  initialized: boolean;
+  filesCount: number;
+  additions: number;
+  deletions: number;
+  changes: InstanceGitFileChange[];
+  diff: string;
+  canRestore: boolean;
+  isReverted?: boolean | undefined;
+}

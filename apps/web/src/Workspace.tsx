@@ -929,7 +929,14 @@ export function Workspace({
             <AccessEmptyView user={user} onOpenAccount={() => setAccountOpen(true)} />
           ) : effectiveView === "dashboard" ? (
             <DashboardView
+              key={user.id}
               token={token}
+              userId={user.id}
+              isSuperAdmin={user.isSuperAdmin}
+              canUseTerminal={user.permissions.includes("terminal.view") && user.permissions.includes("terminal.input")}
+              canUseAgent={canUseSakiAgent}
+              canUseChat={canUseSakiChat}
+              canConfigureSaki={canConfigureSaki}
               onLogout={onLogout}
               refreshTick={refreshTick}
               canViewNodes={canViewNodes}
@@ -939,6 +946,10 @@ export function Workspace({
                 setSelectedInstanceId(instanceId);
                 selectView("instances", instanceId);
               }}
+              onNavigateView={(view, instanceId) => {
+                selectView(view, instanceId);
+              }}
+              availableViews={availableViews}
             />
           ) : effectiveView === "instances" ? (
             <InstancesView
@@ -1005,7 +1016,9 @@ export function Workspace({
       />
       {canUseSaki ? (
         <SakiFloatingChat
+          key={user.id}
           token={token}
+          userId={user.id}
           instance={sakiInstance}
           seed={sakiSeed}
           panelContext={panelContext}

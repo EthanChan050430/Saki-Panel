@@ -9,6 +9,7 @@ import {
   Mic,
   Plus,
   Shield,
+  ShieldCheck,
   Sparkles,
   Square,
   TextQuote,
@@ -108,6 +109,7 @@ export interface SakiComposerProps {
   permissionDropdownOpen: boolean;
   onTogglePermissionDropdown: () => void;
   permissionMode: SakiAgentPermissionMode;
+  terminalSandbox?: boolean;
 
   // Model selection
   modelSelectorRef: React.RefObject<HTMLDivElement | null>;
@@ -176,6 +178,7 @@ export const SakiComposer = React.memo(function SakiComposer({
   permissionDropdownOpen,
   onTogglePermissionDropdown,
   permissionMode,
+  terminalSandbox,
   modelSelectorRef,
   modelDropdownOpen,
   onToggleModelDropdown,

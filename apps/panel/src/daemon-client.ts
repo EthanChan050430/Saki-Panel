@@ -708,6 +708,18 @@ export function statDaemonInstancePath(
   return readDaemonInstanceFile(node, instanceId, workingDirectory, relativePath, { stat: true });
 }
 
+export function captureDaemonWorkspaceCheckpoint(node: DaemonNodeCredentials, instanceId: string, workingDirectory: string) {
+  return requestDaemon<{ snapshotId: string }>(node, `/api/instances/${instanceId}/files/checkpoints/capture`, { method: "POST", body: JSON.stringify({ workingDirectory }) });
+}
+
+export function finalizeDaemonWorkspaceCheckpoint(node: DaemonNodeCredentials, instanceId: string, workingDirectory: string, snapshotId: string) {
+  return requestDaemon<{ snapshotId: string; changedCount: number }>(node, `/api/instances/${instanceId}/files/checkpoints/finalize`, { method: "POST", body: JSON.stringify({ workingDirectory, snapshotId }) });
+}
+
+export function restoreDaemonWorkspaceCheckpoint(node: DaemonNodeCredentials, instanceId: string, workingDirectory: string, snapshotId: string) {
+  return requestDaemon<{ restoredCount: number }>(node, `/api/instances/${instanceId}/files/checkpoints/restore`, { method: "POST", body: JSON.stringify({ workingDirectory, snapshotId }) });
+}
+
 export function writeDaemonInstanceFile(
   node: DaemonNodeCredentials,
   instanceId: string,
@@ -1025,7 +1037,7 @@ export function createDaemonInstanceShell(
   const body: { workingDirectory?: string; label?: string } = {};
   if (workingDirectory) body.workingDirectory = workingDirectory;
   if (label) body.label = label;
-  return requestDaemon<{ sessionId: string; label?: string }>(node, `/api/instances/${instanceId}/shells`, {
+  return requestDaemon<{ sessionId: string; label?: string; kind?: "powershell" | "cmd" | "posix" }>(node, `/api/instances/${instanceId}/shells`, {
     method: "POST",
     body: JSON.stringify(body)
   });
@@ -1035,7 +1047,7 @@ export function listDaemonInstanceShells(node: DaemonNodeCredentials, instanceId
   return requestDaemon<{
     instanceId: string;
     sessions: string[];
-    shells?: Array<{ id: string; label?: string; createdAt: number }>;
+    shells?: Array<{ id: string; label?: string; createdAt: number; kind?: "powershell" | "cmd" | "posix" }>;
   }>(node, `/api/instances/${instanceId}/shells`);
 }
 
@@ -1056,7 +1068,7 @@ export function runDaemonShellCommand(
   node: DaemonNodeCredentials,
   instanceId: string,
   shellId: string,
-  input: { command: string; timeoutMs?: number; input?: string },
+  input: { command: string; timeoutMs?: number; input?: string; workingDirectory?: string; cwd?: string },
   signal?: AbortSignal
 ) {
   return requestDaemon<InstanceCommandResponse>(node, `/api/instances/${instanceId}/shells/${shellId}/command`, {

@@ -26,6 +26,7 @@ import type { FastifyRequest } from "fastify";
 import type { InstanceWithAccess } from "../../instance-access.js";
 import { countTokens, truncateToTokenLimit } from "../../tokenizer.js";
 import { copyText } from "./text-memory.js";
+import type { SakiWorkspaceBinding } from "./workspace-binding.js";
 
 export type InstanceWithNode = InstanceWithAccess;
 
@@ -51,6 +52,8 @@ export interface ResolvedSakiContext {
   instance: InstanceWithNode | null;
   workspace: SakiWorkspaceContext | null;
   logs: InstanceLogLine[];
+  /** Server-derived authority; never accepted from request context text. */
+  access?: { isSuperAdmin: boolean; permissions: PermissionCode[] };
 }
 
 export type OperationLogWithUser = Prisma.OperationLogGetPayload<{ include: { user: true } }>;
@@ -80,8 +83,8 @@ export class BrowseHttpError extends RouteError {
   }
 }
 
-export const maxAgentLoops = 80;
-export const maxAgentProgressOnlyRetries = 1;
+export const maxAgentLoops = 400;
+export const maxAgentProgressOnlyRetries = 3;
 export const maxAgentVerificationRetries = 2;
 export const maxAgentObservationTokens = 1500;
 export const maxAgentPromptObservationTokens = 800;
@@ -90,8 +93,8 @@ export const maxAgentContinuationContextTokens = 5000;
 export const maxAgentRecentScratchpadEntries = 10;
 export const maxAgentCompactedScratchpadTokens = 1200;
 export const maxParallelReadOnlyTools = 8;
-export const defaultAgentReadFileLineCount = 40;
-export const maxAgentReadFileLineCount = 120;
+export const defaultAgentReadFileLineCount = 200;
+export const maxAgentReadFileLineCount = 2000;
 export const largeFileLineThreshold = 120;
 export const minAgentModelRequestTimeoutMs = 120000;
 export const maxAgentObservationChars = 20000;
@@ -131,6 +134,19 @@ export function normalizeSakiAgentPermissionMode(value: unknown): SakiAgentPermi
 
 export function effectiveSakiAgentPermissionMode(input: Pick<SakiChatRequest, "mode" | "agentPermissionMode">): SakiAgentPermissionMode {
   return input.mode === "agent" ? normalizeSakiAgentPermissionMode(input.agentPermissionMode) : defaultSakiAgentPermissionMode;
+}
+
+export function effectiveSakiTerminalSandbox(
+  input?: Pick<SakiChatRequest, "terminalSandbox"> | null,
+  config?: { allowCrossInstanceEnforcement?: boolean } | null
+): boolean {
+  if (input?.terminalSandbox !== undefined) {
+    return Boolean(input.terminalSandbox);
+  }
+  if (config?.allowCrossInstanceEnforcement !== undefined) {
+    return config.allowCrossInstanceEnforcement !== false;
+  }
+  return true;
 }
 
 export function truncateText(value: unknown, limit = maxAgentObservationChars, modelId?: string): string {
@@ -226,14 +242,23 @@ export function isSensitiveRelativePath(value: string): boolean {
   ].some((pattern) => pattern.test(normalized));
 }
 
-export function safeRelativePath(value: unknown): string {
-  const raw = trimString(value).replace(/\\/g, "/");
+export function safeRelativePath(value: unknown, workingDirectory?: string): string {
+  let raw = trimString(value).replace(/\\/g, "/");
   if (!raw || raw === ".") return "";
+  raw = raw.replace(/^\.\/+/, "");
+  if (workingDirectory) {
+    const normWd = workingDirectory.replace(/\\/g, "/").replace(/\/+$/, "");
+    if (raw.toLowerCase().startsWith(normWd.toLowerCase() + "/")) {
+      raw = raw.slice(normWd.length + 1).replace(/^\.\/+/, "");
+    } else if (raw.toLowerCase() === normWd.toLowerCase()) {
+      return "";
+    }
+  }
   if (path.isAbsolute(raw) || raw.split("/").some((part) => part === "..")) {
-    throw new RouteError("Agent file tools only accept paths inside the active instance working directory.", 400);
+    throw new RouteError("沙箱安全拦截：文件工具仅允许访问当前实例工作区内部的路径。", 403);
   }
   if (isSensitiveRelativePath(raw)) {
-    throw new RouteError("Saki blocked access to a sensitive path.", 403);
+    throw new RouteError("沙箱安全拦截：禁止访问敏感配置文件或凭据路径。", 403);
   }
   return raw;
 }
@@ -310,7 +335,7 @@ export function formatLineNumberedContent(content: string, startLineInput?: stri
     throw new RouteError(`startLine ${startLine} is outside the file; file has ${totalLines} line(s).`, 400);
   }
   const defaultCount = totalLines - startLine + 1;
-  const lineCount = lineCountInput ? numericArg(lineCountInput, defaultCount, 1, 800) : defaultCount;
+  const lineCount = lineCountInput ? numericArg(lineCountInput, defaultCount, 1, maxAgentReadFileLineCount) : defaultCount;
   const endLine = Math.min(totalLines, startLine + lineCount - 1);
   const width = String(totalLines).length;
   const text = lines
@@ -451,9 +476,9 @@ export function inferCommandEnvironment(instance: InstanceWithNode | null): {
       arch,
       daemonVersion,
       pathStyle: "windows",
-      shell: "cmd.exe /d /s /c",
+      shell: "independent PowerShell terminal (Windows PowerShell 5.1 compatible; CMD fallback if unavailable)",
       commandGuidance:
-        "Use Windows command syntax for runCommand: dir, type, copy, move, del, rmdir, where, and backslash-aware paths. Use PowerShell explicitly only when needed, e.g. powershell -NoProfile -Command \"...\"."
+        "runCommand and runInShell use an independent PowerShell terminal by default. Use PowerShell 5.1-compatible syntax: Get-ChildItem, Get-Content, Copy-Item, Move-Item, Remove-Item, and where.exe. Do not use && or ||; use separate commands and inspect their results, or explicitly invoke cmd.exe /d /c for CMD syntax. Cwd is reset to the instance workspace or the tool's relative cwd before each command."
     };
   }
 
@@ -463,7 +488,7 @@ export function inferCommandEnvironment(instance: InstanceWithNode | null): {
       arch,
       daemonVersion,
       pathStyle: "posix",
-      shell: "$SHELL -lc or /bin/sh -lc",
+      shell: "independent $SHELL terminal or /bin/bash",
       commandGuidance:
         "Use POSIX shell syntax for runCommand: ls, cat, cp, mv, rm, mkdir -p, grep, find, test, and forward-slash paths."
     };
@@ -612,6 +637,7 @@ export interface SakiAssistantState {
 export interface SakiModelToolTurn {
   content: string;
   toolCalls: ParsedToolCall[];
+  truncated?: boolean;
   forwardedDeltaText?: boolean;
   forwardedDeltaContent?: string;
   usageTokens?: number;
@@ -645,10 +671,12 @@ export interface SakiAgentRuntime {
   taskId?: string;
   turnMessages?: import("./agent-messages.js").SakiAgentTurnMessage[];
   agentSystemPrompt?: string;
+  externalReadPerformed?: boolean;
 }
 
 export interface SakiAgentResumeState {
   input: SakiChatRequest;
+  workspaceBinding?: import("./workspace-binding.js").SakiWorkspaceBinding | null;
   skills: SakiAgentRuntime["skills"];
   actions: SakiAgentAction[];
   scratchpadEntries: string[];
@@ -687,7 +715,8 @@ export interface SakiActiveTask {
   userId: string;
   instanceId: string | null;
   input: SakiChatRequest;
-  status: "running" | "completed" | "failed" | "pending_approval" | "cancelled";
+  workspaceBinding?: import("./workspace-binding.js").SakiWorkspaceBinding;
+  status: "running" | "completed" | "failed" | "pending_approval" | "pending_input" | "cancelled";
   startedAt: string;
   updatedAt: string;
   eventsBuffer: SakiActiveTaskEvent[];
@@ -696,6 +725,11 @@ export interface SakiActiveTask {
   abortController?: AbortController;
   subscribers: Set<(event: SakiActiveTaskEvent) => void>;
   pendingSteers?: string[];
+  acceptingSteers?: boolean;
+  execution?: Promise<SakiChatResponse>;
+  decisionInFlight?: boolean;
+  pendingHistorySync?: SakiChatResponse;
+  runVersion?: number;
 }
 
 export interface SakiActiveTaskSummary {
@@ -706,6 +740,10 @@ export interface SakiActiveTaskSummary {
   startedAt: string;
   updatedAt: string;
   message: string;
+  conversationId?: string;
+  assistantMessageId?: string;
+  userMessageId?: string;
+  runVersion?: number;
   mode?: string;
   actionCount: number;
   hasRollback?: boolean;
@@ -738,7 +776,35 @@ export interface SakiAgentRunEvents {
   thinking?: (text: string) => void;
 }
 
-export type SakiCheckpoint =
+export type SakiCheckpoint = { userId?: string; workspaceBinding?: SakiWorkspaceBinding } & (
+  | {
+      id: string;
+      type: "workspace";
+      instanceId: string;
+      snapshotId: string;
+      actionId: string;
+      taskId?: string;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      type: "directory";
+      instanceId: string;
+      path: string;
+      actionId: string;
+      taskId?: string;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      type: "rename";
+      instanceId: string;
+      fromPath: string;
+      toPath: string;
+      actionId: string;
+      taskId?: string;
+      createdAt: string;
+    }
   | {
       id: string;
       type: "file";
@@ -746,6 +812,8 @@ export type SakiCheckpoint =
       path: string;
       existed: boolean;
       content: string;
+      afterHash?: string;
+      afterExisted?: boolean;
       actionId: string;
       taskId?: string;
       createdAt: string;
@@ -794,15 +862,17 @@ export type SakiCheckpoint =
       actionId: string;
       taskId?: string;
       createdAt: string;
-    };
+    });
 
 export interface PendingSakiAction {
   id: string;
   call: ParsedToolCall;
   userId: string;
   contextInstanceId: string | null;
+  resourceBindings?: import("./workspace-binding.js").SakiWorkspaceBinding[];
   createdAt: string;
   approval: NonNullable<SakiAgentAction["approval"]>;
+  externalRead?: import("./external-access.js").PreparedExternalRead;
   resume?: SakiAgentResumeState;
   incidentId?: string;
   kind?: SakiAgentRuntime["kind"];
@@ -1322,23 +1392,23 @@ export function withRequestedSakiModel(
 }
 
 export function sakiPermissionModeLabel(mode: SakiAgentPermissionMode): string {
-  if (mode === "ask") return "Ask permissions";
+  if (mode === "ask") return "Request approval";
   if (mode === "plan") return "Plan mode";
-  if (mode === "bypassPermissions") return "Bypass permissions";
-  return "Auto accept edits";
+  if (mode === "bypassPermissions") return "Full access";
+  return "Approve for me";
 }
 
 export function sakiPermissionModeBehavior(mode: SakiAgentPermissionMode): string {
   if (mode === "ask") {
-    return "Ask before file edits, terminal input, commands, task changes, instance state changes, and settings changes. Read-only inspection can run immediately.";
+    return "Run ordinary workspace reads/edits and recognized local inspection, build, and test commands immediately. Ask before explicit terminal network access, external/sensitive paths, destructive or unknown commands, raw terminal input, and instance/settings/task changes. Dedicated web-search tools use their separate tool permissions.";
   }
   if (mode === "plan") {
     return "Explore with read-only tools and low-risk inspection commands, then propose a concrete plan. Do not edit files or change state.";
   }
   if (mode === "bypassPermissions") {
-    return "Run allowed tools without approval prompts. Still obey user permissions and hard safety blocks for critical commands or sensitive paths.";
+    return "Run allowed tools without routine approval prompts. External file reads and subsequent outbound tool requests still require explicit approval. Account, instance and host-execution restrictions always apply.";
   }
-  return "Automatically accept file edits and common file operations. Ask before terminal commands, raw console input, instance state changes, deletes, task changes, and settings changes.";
+  return "Use the backend risk policy to automatically approve ordinary workspace edits, recognized local inspection/build/test commands, standard workspace dependency installs, and simple unauthenticated web fetches. Ask for detected risks: deletion, deployment/history changes, unknown scripts, external/sensitive paths, raw terminal input, and instance/settings/task changes. This is command risk review, not an OS sandbox; user permissions and hard safety blocks still apply.";
 }
 
 export function consoleInputPreview(data: string, limit = 200): string {
@@ -1376,8 +1446,12 @@ export function htmlDecode(value: string): string {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x2F;/g, "/");
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#(x[\da-f]+|\d+);/gi, (entity, code: string) => {
+      const value = code[0]!.toLowerCase() === "x" ? parseInt(code.slice(1), 16) : parseInt(code, 10);
+      return value > 0 && value <= 0x10ffff && !(value >= 0xd800 && value <= 0xdfff) ? String.fromCodePoint(value) : entity;
+    });
 }
 
 export function stripHtml(value: string): string {

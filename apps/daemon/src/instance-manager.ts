@@ -11,6 +11,7 @@ import type { InstanceCommandResponse, InstanceLogLine, InstanceProxyConfig, Ins
 import { daemonPaths } from "./config.js";
 import { loadRuntimeState, saveRuntimeState, type PersistedInstance } from "./state-persist.js";
 import { ensureInstanceClashProxy, stopInstanceClash } from "./clash-core.js";
+import { parseShellMarker, resolveShellCommandCwd, shellCommandSubmission, stripTerminalText } from "./shell-command.js";
 
 export interface DaemonInstanceSpec {
   id: string;
@@ -87,6 +88,7 @@ interface ShellSession {
   label?: string | undefined;
   createdAt: number;
   kind: ShellKind;
+  cwd: string;
   pty: IPty;
   exited: boolean;
   exit?: RuntimeExit | undefined;
@@ -413,7 +415,7 @@ function createInteractiveShellPty(instanceId: string, cwd: string, label?: stri
     });
     if (ps) {
       shellCmd = ps;
-      shellArgs = ["-NoLogo", "-NoExit"];
+      shellArgs = ["-NoLogo", "-NoProfile", "-NoExit"];
     } else {
       shellCmd = process.env.ComSpec || "cmd.exe";
       shellArgs = [];
@@ -446,6 +448,7 @@ function createInteractiveShellPty(instanceId: string, cwd: string, label?: stri
     label: label?.trim() || undefined,
     createdAt: Date.now(),
     kind,
+    cwd,
     pty,
     exited: false,
     exit: undefined,
@@ -552,39 +555,6 @@ function closeShellSession(sessionId: string): void {
   session.dataListeners.clear();
   session.exitListeners.clear();
   shellSessions.delete(sessionId);
-}
-
-function stripTerminalText(value: string): string {
-  return value
-    .replace(/\u001b\][^\u0007]*\u0007/g, "")
-    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
-    .replace(/\u001b[PX^_].*?\u001b\\/g, "")
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001A\u001C-\u001F]/g, "");
-}
-
-function wrapShellMarker(kind: ShellKind, marker: string): string {
-  if (kind === "powershell") {
-    return `Write-Host "${marker}:$(if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } elseif ($?) { 0 } else { 1 })"\r`;
-  }
-  if (kind === "cmd") {
-    return `echo ${marker}:%ERRORLEVEL%\r`;
-  }
-  return `printf '%s:%s\\n' '${marker}' $?\n`;
-}
-
-function parseShellMarker(captured: string, marker: string): { exitCode: number | null; stdout: string } | null {
-  const plain = stripTerminalText(captured).replace(/\r/g, "");
-  const token = `${marker}:`;
-  const index = plain.lastIndexOf(token);
-  if (index < 0) return null;
-  const after = plain.slice(index + token.length);
-  const match = after.match(/^(-?\d+)/);
-  const exitCode = match ? Number(match[1]) : null;
-  const before = plain.slice(0, index).replace(new RegExp(`(?:Write-Host |echo |printf )[^\n]*${marker}[^\\n]*\\n?$`), "");
-  return {
-    exitCode: Number.isFinite(exitCode) ? exitCode : null,
-    stdout: before.replace(/^\s+/, "").replace(/\n+$/, "")
-  };
 }
 
 function enqueueShellTask<T>(session: ShellSession, task: () => Promise<T>): Promise<T> {
@@ -1320,7 +1290,7 @@ export class InstanceManager {
     instanceId: string,
     workingDirectory?: string,
     label?: string
-  ): Promise<{ sessionId: string; label?: string | undefined }> {
+  ): Promise<{ sessionId: string; label?: string | undefined; kind: ShellKind }> {
     if (this.listShells(instanceId).length >= maxShellsPerInstance) {
       throw new Error(`Too many independent terminals (max ${maxShellsPerInstance}). Close one with closeShell before opening another.`);
     }
@@ -1329,7 +1299,7 @@ export class InstanceManager {
     const cwd = await resolveWorkingDirectory(targetDir);
     await fs.mkdir(cwd, { recursive: true });
     const session = createInteractiveShellPty(instanceId, cwd, label);
-    return { sessionId: session.id, label: session.label };
+    return { sessionId: session.id, label: session.label, kind: session.kind };
   }
 
   writeShellInput(instanceId: string, sessionId: string, data: string): void {
@@ -1352,7 +1322,7 @@ export class InstanceManager {
     instanceId: string,
     sessionId: string,
     command: string,
-    options: { timeoutMs?: number; input?: string; signal?: AbortSignal } = {}
+    options: { timeoutMs?: number; input?: string; signal?: AbortSignal; workingDirectory?: string; cwd?: string } = {}
   ): Promise<InstanceCommandResponse> {
     assertCommandAllowed(command);
     if (typeof options.input === "string") validateCommandInput(options.input);
@@ -1364,8 +1334,7 @@ export class InstanceManager {
       throw new Error("That terminal does not belong to this instance.");
     }
     const timeoutMs = Math.max(1000, Math.min(Math.floor(options.timeoutMs ?? 30000), 120000));
-    const runtime = getRuntime(instanceId);
-    const cwd = runtime.cwd || ".";
+    const cwd = resolveShellCommandCwd(daemonPaths.workspaceDir, options.workingDirectory ?? session.cwd, options.cwd);
 
     return enqueueShellTask(session, async () => {
       if (session.outputBufferChars === 0 && !session.exited) {
@@ -1415,14 +1384,14 @@ export class InstanceManager {
       };
 
       const onData = (text: string) => {
-        captured += text;
+        captured = (captured + text).slice(-maxCommandCaptureChars);
         const parsed = parseShellMarker(captured, marker);
         if (parsed) finish(parsed.exitCode, null, parsed.stdout);
       };
 
       const onExit: RuntimeExitListener = (exit) => {
         const parsed = parseShellMarker(captured, marker);
-        finish(parsed?.exitCode ?? exit.code ?? null, typeof exit.signal === "string" ? exit.signal : null, parsed?.stdout ?? stripTerminalText(captured).trim());
+        finish(parsed?.exitCode ?? exit.code ?? null, parsed ? null : "SHELL_CLOSED", parsed?.stdout ?? stripTerminalText(captured).trim());
       };
 
       const interrupt = () => {
@@ -1459,11 +1428,10 @@ export class InstanceManager {
 
       try {
         const newline = session.kind === "posix" ? "\n" : "\r";
-        writeToShell(sessionId, `${command}${newline}`);
+        writeToShell(sessionId, shellCommandSubmission(session.kind, cwd, command, marker));
         if (typeof options.input === "string" && options.input.length > 0) {
           writeToShell(sessionId, options.input.endsWith("\n") || options.input.endsWith("\r") ? options.input : `${options.input}${newline}`);
         }
-        writeToShell(sessionId, wrapShellMarker(session.kind, marker));
       } catch (error) {
         session.dataListeners.delete(onData);
         session.exitListeners.delete(onExit);
@@ -1475,13 +1443,14 @@ export class InstanceManager {
     });
   }
 
-  listShells(instanceId: string): Array<{ id: string; label?: string | undefined; createdAt: number }> {
-    const result: Array<{ id: string; label?: string | undefined; createdAt: number }> = [];
+  listShells(instanceId: string): Array<{ id: string; label?: string | undefined; createdAt: number; kind: ShellKind }> {
+    const result: Array<{ id: string; label?: string | undefined; createdAt: number; kind: ShellKind }> = [];
     for (const [sid, sess] of shellSessions.entries()) {
       if (sess.instanceId === instanceId && !sess.exited) {
         result.push({
           id: sid,
           label: sess.label,
+          kind: sess.kind,
           createdAt: sess.createdAt
         });
       }

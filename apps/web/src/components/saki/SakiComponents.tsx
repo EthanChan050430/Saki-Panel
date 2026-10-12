@@ -97,6 +97,7 @@ import { useSkinRevision } from "../../plugins/SkinLoader.js";
 import { compactContextText, formatBytes } from "../../utils/path.js";
 import { newClientId } from "../../utils/id.js";
 import { MarkdownContent } from "../common/MarkdownContent.js";
+import { isSakiWebTool, sakiWebSources, SakiWebSources } from "./chat/SakiWebSources.js";
 import { panelT, type PanelLanguage } from "../../i18n/translations.js";
 import { SakiAskUserCard, SakiTodoCard } from "./chat/SakiAgentWidgets.js";
 
@@ -355,9 +356,10 @@ export function sortSakiConversationsByTime(conversations: StoredSakiConversatio
     .map((item) => item.conversation);
 }
 
-export function readSakiConversations(): StoredSakiConversation[] {
+export function readSakiConversations(userId?: string): StoredSakiConversation[] {
+  if (!userId) return [];
   try {
-    const raw = globalThis.localStorage?.getItem(sakiConversationStorageKey);
+    const raw = globalThis.localStorage?.getItem(`${sakiConversationStorageKey}:user:${encodeURIComponent(userId)}`);
     const parsed = raw ? (JSON.parse(raw) as unknown) : [];
     if (!Array.isArray(parsed)) return [];
     return sortSakiConversationsByTime(
@@ -386,10 +388,11 @@ export function readSakiConversations(): StoredSakiConversation[] {
   }
 }
 
-export function writeSakiConversations(conversations: StoredSakiConversation[]) {
+export function writeSakiConversations(conversations: StoredSakiConversation[], userId?: string) {
+  if (!userId) return;
   try {
     globalThis.localStorage?.setItem(
-      sakiConversationStorageKey,
+      `${sakiConversationStorageKey}:user:${encodeURIComponent(userId)}`,
       JSON.stringify(sortSakiConversationsByTime(conversations).slice(0, 80))
     );
   } catch {
@@ -1527,7 +1530,7 @@ export function mergeSakiActionList(
   return next;
 }
 
-export function mergeSakiFinalTimeline(timeline: LocalSakiTimelineItem[] | undefined, finalText: string): LocalSakiTimelineItem[] {
+export function mergeSakiFinalTimeline(timeline: LocalSakiTimelineItem[] | undefined, finalText: string, finalId?: string): LocalSakiTimelineItem[] {
   const text = finalText.trim();
   const rawCurrent = timeline ?? [];
   const current = rawCurrent.filter(
@@ -1559,7 +1562,7 @@ export function mergeSakiFinalTimeline(timeline: LocalSakiTimelineItem[] | undef
     ...current,
     {
       kind: "text",
-      id: `final:${newClientId()}`,
+      id: finalId ?? `final:${newClientId()}`,
       content: text,
       source: "final",
       createdAt: new Date().toISOString()
@@ -1590,11 +1593,23 @@ function timelineTextIsVisible(entry: Extract<LocalSakiTimelineItem, { kind: "te
 }
 
 export function renderableSakiTimeline(message: LocalSakiMessage): LocalSakiTimelineItem[] {
-  let timeline = (message.timeline ?? []).filter((entry) => {
-    if (entry.kind === "action" || entry.kind === "pending") return true;
-    return timelineTextIsVisible(entry);
-  });
   const visibleActions = visibleSakiActions(message.actions);
+  const latestActions = new Map(visibleActions.map((action) => [action.id, action]));
+  const seenActions = new Set<string>();
+  let timeline = (message.timeline ?? []).filter((entry) => {
+    if (entry.kind === "action") {
+      if (seenActions.has(entry.action.id)) return false;
+      seenActions.add(entry.action.id);
+      return !["reportprogress", "respond"].includes(entry.action.tool.toLowerCase());
+    }
+    if (entry.kind === "pending") return true;
+    return timelineTextIsVisible(entry);
+  }).map((entry) => entry.kind === "action" ? { ...entry, action: latestActions.get(entry.action.id) ?? entry.action } : entry);
+  const existingText = timeline.filter((entry): entry is Extract<LocalSakiTimelineItem, { kind: "text" }> => entry.kind === "text").map((entry) => entry.content.trim()).filter(Boolean).join("\n\n");
+  if (timeline.length && message.content.trim() && existingText !== message.content.trim()) {
+    if (!message.streaming) timeline = mergeSakiFinalTimeline(timeline, message.content, `${message.id}:final`);
+    else if (!existingText) timeline = [...timeline, { kind: "text", id: `${message.id}:stream`, content: message.content, source: "delta", createdAt: message.createdAt ?? "" }];
+  }
   const latestTodoId = [...visibleActions].reverse().find((action) => action.tool.toLowerCase() === "managetodos" && action.todos?.length)?.id;
   const currentTodoTimeline = (items: LocalSakiTimelineItem[]) => items.filter((entry) =>
     entry.kind !== "action" || entry.action.tool.toLowerCase() !== "managetodos" || !latestTodoId || entry.action.id === latestTodoId
@@ -1693,7 +1708,7 @@ export function isReadOnlySakiTool(tool: string | undefined): boolean {
 
 export function visibleSakiActions(actions: SakiAgentAction[] | undefined): SakiAgentAction[] {
   const hiddenTools = new Set(["reportprogress", "respond"]);
-  return (actions ?? []).filter((action) => !hiddenTools.has(action.tool.toLowerCase()));
+  return [...new Map((actions ?? []).map((action) => [action.id, action])).values()].filter((action) => !hiddenTools.has(action.tool.toLowerCase()));
 }
 
 export function isSakiFileEditTool(tool: string): boolean {
@@ -1839,12 +1854,14 @@ export function SakiThinkingActionCard({
   thinking,
   streaming,
   durationSec,
-  defaultExpanded = false
+  defaultExpanded = false,
+  completedLabel = "Thought for"
 }: {
   thinking: string;
   streaming?: boolean | undefined;
   durationSec?: number | undefined;
   defaultExpanded?: boolean | undefined;
+  completedLabel?: string | undefined;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const displaySec = durationSec && durationSec > 0 ? durationSec : Math.max(1, Math.round(thinking.length / 80));
@@ -1868,7 +1885,7 @@ export function SakiThinkingActionCard({
         </span>
         <span className="saki-action-label">
           <span style={{ fontWeight: 500 }}>
-            {streaming ? "Thinking..." : `Thought for ${displaySec}s`}
+            {streaming ? "Thinking..." : `${completedLabel} ${displaySec}s`}
           </span>
         </span>
         {streaming ? (
@@ -2008,32 +2025,34 @@ export function sakiActionMeta(action: SakiAgentAction): string {
 
 export function sakiActionTitle(action: SakiAgentAction): string {
   switch (action.tool.toLowerCase()) {
+    case "requestexternalaccess":
+      return "读取外部文件";
     case "listinstances":
-      return "查看实例列表";
+      return "实例列表";
     case "describeinstance":
-      return "查看实例信息";
+      return "实例详情";
     case "instancelogs":
-      return "读取实例日志";
+      return "实例日志";
     case "listfiles":
-      return "查看目录结构";
+      return "浏览目录";
     case "readfile":
       return "读取文件";
     case "outlinefile":
-      return "查看文件结构";
+      return "文件大纲";
     case "readsymbol":
       return "读取符号";
     case "findsymbols":
       return "查找符号";
     case "statfile":
-      return "查看文件信息";
+      return "文件属性";
     case "writefile":
       return "写入文件";
     case "replaceinfile":
-      return "替换文件内容";
+      return "编辑文件";
     case "editlines":
-      return "编辑文件行";
+      return "编辑文件";
     case "batchedit":
-      return "批量编辑";
+      return "批量修改";
     case "applypatch":
     case "apply_patch":
     case "applydiff":
@@ -2041,9 +2060,9 @@ export function sakiActionTitle(action: SakiAgentAction): string {
     case "mkdir":
       return "创建目录";
     case "deletepath":
-      return "删除路径";
+      return "删除文件";
     case "renamepath":
-      return "移动/重命名";
+      return "重命名";
     case "uploadbase64":
       return "上传文件";
     case "generateimage":
@@ -2056,52 +2075,52 @@ export function sakiActionTitle(action: SakiAgentAction): string {
       return "生成图片";
     case "runcommand":
     case "runinshell":
-      return "运行终端命令";
+      return "执行命令";
     case "createshell":
-      return "打开独立终端";
+      return "新建终端";
     case "closeshell":
     case "deleteshell":
     case "killshell":
-      return "关闭独立终端";
+      return "关闭终端";
     case "listshells":
-      return "查看独立终端";
+      return "终端列表";
     case "sendshellinput":
-      return "向独立终端输入";
+      return "终端输入";
     case "sendinput":
-      return "发送控制台输入";
+      return "发送输入";
     case "sendcommand":
-      return "发送控制台命令";
+      return "发送命令";
     case "searchaudit":
-      return "查询审计日志";
+      return "审计日志";
     case "listtasks":
-      return "查看计划任务";
+      return "计划任务";
     case "taskruns":
-      return "查看任务运行";
+      return "任务运行";
     case "searchweb":
     case "researchweb":
-      return "检索网页";
+      return "网页搜索";
     case "browse":
     case "crawl":
-      return "读取网页";
+      return "浏览网页";
     case "listskills":
     case "searchskills":
-      return "查找技能";
+      return "技能列表";
     case "readskill":
       return "读取技能";
     case "searchfiles":
-      return "搜索文件内容";
+      return "搜索文件";
     case "findfiles":
       return "查找文件";
     case "readmemory":
-      return "读取项目记忆";
+      return "读取记忆";
     case "writememory":
-      return "保存项目记忆";
+      return "保存记忆";
     case "plan":
       return "制定计划";
     case "managetodos":
-      return "更新任务清单";
+      return "任务计划";
     case "askuser":
-      return "询问用户";
+      return "确认";
     case "spawntask":
       return "子任务";
     default:
@@ -2129,69 +2148,72 @@ export function sakiResultSummary(action: SakiAgentAction): string {
   const target = sakiActionTarget(action);
 
   if (action.status === "pending_approval") {
-    return action.approval?.reason ? `等待确认：${compactContextText(action.approval.reason, 180)}` : "等待你确认后执行。";
+    return action.approval?.reason ? compactContextText(action.approval.reason, 180) : "等待批准";
   }
-  if (action.status === "rejected") return "这次调用已被拒绝，没有执行。";
-  if (action.status === "rolled_back") return target ? `已回滚 ${target}。` : "已回滚到执行前的状态。";
-  if (!observation) return action.ok ? "调用完成，没有返回额外内容。" : "调用失败，没有返回详细信息。";
+  if (action.status === "rejected") return "已拒绝";
+  if (action.status === "rolled_back") return target ? `已回滚 ${target}` : "已回滚";
+  if (!observation) return action.ok ? "完成" : "失败";
   if (!action.ok) return compactContextText(observation.replace(/\s+/g, " "), 220);
 
   if (tool === "listfiles") {
-    if (/Directory is empty\./i.test(observation)) return target ? `${target} 是空目录。` : "目录为空。";
+    if (/Directory is empty\./i.test(observation)) return target ? `${target} 为空` : "目录为空";
     const lines = observation.split(/\r?\n/);
     const dirCount = lines.filter((line) => line.startsWith("[DIR]")).length;
     const fileCount = lines.filter((line) => line.startsWith("[FILE]")).length;
-    const truncated = lines.find((line) => /^Showing\s+/i.test(line.trim()));
-    return `找到 ${dirCount} 个目录、${fileCount} 个文件。${truncated ? ` ${compactContextText(truncated.trim(), 120)}` : ""}`;
+    return `${fileCount} 个文件 · ${dirCount} 个目录`;
   }
 
   if (tool === "readfile") {
-    const file = sakiObservationLine(observation, "File") || target || "文件";
-    const size = sakiObservationLine(observation, "Size").replace(/\s*bytes$/i, "");
     const totalLines = sakiObservationLine(observation, "Total lines");
-    const showing = sakiObservationLine(observation, "Showing lines");
-    return `已读取 ${file}${totalLines ? `，共 ${totalLines} 行` : ""}${showing ? `，显示 ${showing}` : ""}${size ? `，${sakiByteText(size)}` : ""}。`;
+    const size = sakiObservationLine(observation, "Size").replace(/\s*bytes$/i, "");
+    const parts: string[] = [];
+    if (totalLines) parts.push(`${totalLines} 行`);
+    if (size) parts.push(sakiByteText(size));
+    return parts.join(" · ") || "已读取";
   }
 
   if (tool === "writefile" || tool === "uploadbase64") {
     const size = observation.match(/\((\d+)\s+bytes\)/i)?.[1] ?? "";
-    return `已${tool === "writefile" ? "写入" : "上传"} ${target || "文件"}${size ? `，${sakiByteText(size)}` : ""}。`;
+    return size ? sakiByteText(size) : "已写入";
   }
 
   if (tool === "replaceinfile" || tool === "editlines") {
-    const size = observation.match(/\((\d+)\s+bytes\)/i)?.[1] ?? "";
     const removed = sakiObservationLine(observation, "Removed lines");
     const inserted = sakiObservationLine(observation, "Inserted lines");
-    return `已编辑 ${target || "文件"}${removed ? `，删除 ${removed} 行` : ""}${inserted ? `，插入 ${inserted} 行` : ""}${size ? `，${sakiByteText(size)}` : ""}。`;
+    const parts: string[] = [];
+    if (inserted) parts.push(`+${inserted}`);
+    if (removed) parts.push(`-${removed}`);
+    return parts.join(" ") || "已修改";
   }
 
   if (tool === "applypatch" || tool === "apply_patch" || tool === "applydiff" || tool === "patchfiles") {
     const fileCount = observation.match(/applied patch to (\d+) file/i)?.[1];
-    return fileCount ? `已应用补丁到 ${fileCount} 个文件。` : `已应用补丁到 ${target || "文件"}。`;
+    return fileCount ? `已应用 ${fileCount} 个文件` : "已应用补丁";
   }
 
   if (tool === "batchedit" || tool === "applypatches" || tool === "multifileedit" || tool === "batch_patch") {
     const opCount = observation.match(/across (\d+) operation/i)?.[1];
-    return opCount ? `批量编辑完成（${opCount} 处修改）。` : "批量编辑已完成。";
+    return opCount ? `${opCount} 处修改` : "批量修改";
   }
 
-  if (tool === "mkdir") return `目录已准备好：${target || "目标目录"}。`;
-  if (tool === "deletepath") return target ? `已处理删除：${target}，可用回滚检查点恢复。` : "删除操作已完成。";
-  if (tool === "renamepath") return target ? `已移动/重命名：${target}。` : "移动或重命名已完成。";
+  if (tool === "mkdir") return "已创建";
+  if (tool === "deletepath") return "已删除";
+  if (tool === "renamepath") return "已重命名";
 
-  if (tool === "runcommand") {
+  if (tool === "runcommand" || tool === "runinshell") {
     const exitCode = sakiObservationLine(observation, "exitCode");
     const duration = sakiObservationLine(observation, "durationMs");
-    const stdoutEmpty = /stdout:\s*\(empty\)/i.test(observation);
-    const stderrEmpty = /stderr:\s*\(empty\)/i.test(observation);
-    return `命令已结束${exitCode ? `，退出码 ${exitCode}` : ""}${duration ? `，耗时 ${duration}ms` : ""}${stdoutEmpty ? "，stdout 为空" : ""}${stderrEmpty ? "，stderr 为空" : ""}。`;
+    const parts: string[] = [];
+    if (exitCode) parts.push(`exit ${exitCode}`);
+    if (duration) parts.push(`${duration}ms`);
+    return parts.length ? parts.join(" · ") : (action.ok ? "exit 0" : "失败");
   }
 
-  if (tool === "sendinput" || tool === "sendcommand") return "控制台输入已发送。";
+  if (tool === "sendinput" || tool === "sendcommand") return "已发送";
 
   if (tool === "spawntask") {
     const taskText = sakiActionStringArg(action, ["task"]);
-    return taskText ? `子任务: ${taskText.slice(0, 80)}` : "子任务执行";
+    return taskText ? `子任务: ${taskText.slice(0, 80)}` : "子任务";
   }
 
   return compactContextText(observation.replace(/\s+/g, " "), 220);
@@ -2699,15 +2721,17 @@ export function SakiToolActionCard({
   actionBusyId,
   onDecision,
   onAnswer,
-  onOpenPath
+  onOpenPath,
+  defaultExpanded = false
 }: {
   action: SakiAgentAction;
   actionBusyId: string | null;
   onDecision: (action: SakiAgentAction, decision: "approve" | "reject" | "rollback") => void;
   onAnswer: (action: SakiAgentAction, answer: { selection?: string; customText?: string; skipped?: boolean }) => Promise<void> | void;
   onOpenPath?: ((path: string, line?: number) => void) | undefined;
+  defaultExpanded?: boolean | undefined;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
   if (action.tool.toLowerCase() === "managetodos" && action.todos?.length) return <SakiTodoCard action={action} />;
   if (action.tool.toLowerCase() === "askuser" && action.question) {
     return <SakiAskUserCard action={action} busy={Boolean(actionBusyId)} onAnswer={(answer) => onAnswer(action, answer)} />;
@@ -2716,23 +2740,54 @@ export function SakiToolActionCard({
   const controlsDisabled = Boolean(actionBusyId);
   const target = sakiActionTarget(action);
   const meta = sakiActionMeta(action);
-  const observation = action.observation.trim() || "没有返回内容。";
+  const observation = action.observation.trim() || "（无输出）";
   const toolLower = action.tool.toLowerCase();
-  const isCommand = toolLower === "runcommand" || toolLower === "sendcommand" || toolLower === "sendinput";
+  const isExternalRead = toolLower === "requestexternalaccess";
+  const isExternalEgress = action.approval?.kind === "external_data_egress";
+  const requiresExplicitClick = isExternalRead || isExternalEgress;
+  const isWeb = isSakiWebTool(toolLower);
+  const searchHasSources = ["searchweb", "websearch", "researchweb", "webresearch"].includes(toolLower) && action.ok && sakiWebSources(observation).length > 0;
+  const isCommand = ["runcommand", "runinshell", "sendcommand", "sendinput", "sendshellinput"].includes(toolLower);
+  const fileTarget = ["readfile", "writefile", "replaceinfile", "editlines", "batchedit", "outlinefile", "readsymbol", "statfile", "uploadbase64", "deletepath", "listfiles", "mkdir", "readmemory", "writememory", "applypatch", "apply_patch", "applydiff"].includes(toolLower);
   const diffText = sakiActionExtractDiff(action);
   const diffStats = sakiActionDiffStats(action, diffText);
   const cleanObservation = sakiExtractCleanObservation(observation, diffText);
   const isPending = action.status === "pending_approval";
-  const isFailed = !action.ok || action.status === "failed" || action.status === "rejected";
+  const isFailed = !isPending && (!action.ok || action.status === "failed" || action.status === "rejected");
   const statusColor = isPending ? "#f59e0b" : isFailed ? "#ef4444" : "#22c55e";
+
+  useEffect(() => {
+    if (!isPending || busy || controlsDisabled || requiresExplicitClick) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      if (targetTag === "input" || targetTag === "textarea" || (e.target as HTMLElement)?.isContentEditable) {
+        return;
+      }
+      if (e.key === "y" || e.key === "Y") {
+        e.preventDefault();
+        onDecision(action, "approve");
+      } else if (e.key === "n" || e.key === "N") {
+        e.preventDefault();
+        onDecision(action, "reject");
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isPending, busy, controlsDisabled, requiresExplicitClick, action, onDecision]);
 
   return (
     <div className={`saki-action-row ${isPending ? "pending" : ""} ${isFailed ? "failed" : ""}${diffText ? " has-diff" : ""}`}>
-      <div className="saki-action-row-main" onClick={() => setExpanded(!expanded)}>
+      <div className="saki-action-row-main" role="button" tabIndex={0} aria-expanded={expanded}
+        onClick={() => setExpanded(!expanded)} onKeyDown={(event) => {
+          if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+          event.preventDefault();
+          setExpanded((value) => !value);
+        }}>
         <span className="saki-action-icon"><SakiToolIcon action={action} /></span>
         <span className="saki-action-label" title={target || undefined}>
+          {isWeb && target ? <span>{sakiActionTitle(action)}</span> : null}
           {target ? (
-            onOpenPath && !target.includes(" ") ? (
+            onOpenPath && fileTarget ? (
               <button
                 type="button"
                 className="saki-action-path-link"
@@ -2776,19 +2831,33 @@ export function SakiToolActionCard({
         ) : null}
         <span className="saki-action-expand">{expanded ? "▾" : "▸"}</span>
       </div>
-      {expanded ? (
+      {isWeb ? <SakiWebSources action={action} expanded={expanded} /> : null}
+      {expanded && !searchHasSources ? (
         <div className="saki-action-detail">
           {isCommand ? (
             <div className="saki-action-terminal">
               <div className="saki-action-terminal-header">
-                <span>{sakiActionTitle(action)}</span>
-                <span className="saki-action-terminal-status">{sakiResultSummary(action)}</span>
+                <span className="saki-action-terminal-title">{sakiActionTitle(action)}</span>
+                <div className="saki-action-terminal-meta">
+                  <span className="saki-action-terminal-status">{sakiResultSummary(action)}</span>
+                  <button
+                    type="button"
+                    className="saki-action-terminal-copy-btn"
+                    title="复制输出"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void navigator.clipboard.writeText(observation);
+                    }}
+                  >
+                    <Copy size={12} />
+                  </button>
+                </div>
               </div>
               <pre className="saki-action-terminal-output">{compactContextText(observation, 8000)}</pre>
             </div>
           ) : diffText ? (
             <div className="saki-action-diff-container">
-              {cleanObservation && cleanObservation !== "没有返回内容。" ? (
+              {cleanObservation && cleanObservation !== "没有返回内容。" && cleanObservation !== "（无输出）" ? (
                 <div className={`saki-action-edit-summary${isFailed ? " failed" : ""}`}>
                   {isFailed ? <AlertTriangle size={13} style={{ flexShrink: 0 }} /> : <CheckCircle2 size={13} style={{ flexShrink: 0 }} />}
                   <span>{cleanObservation}</span>
@@ -2796,6 +2865,8 @@ export function SakiToolActionCard({
               ) : null}
               <SakiGitDiffView diff={diffText} target={target} onOpenPath={onOpenPath} />
             </div>
+          ) : isWeb ? (
+            <MarkdownContent content={compactContextText(observation, 5200)} />
           ) : (
             <pre className="saki-action-observation">{compactContextText(observation, 5200)}</pre>
           )}
@@ -2808,16 +2879,23 @@ export function SakiToolActionCard({
         </div>
       ) : null}
       {isPending ? (
+        <>
+        {requiresExplicitClick ? <div className="saki-action-detail" role="note">
+          <strong>{isExternalRead ? "申请读取外部文件 · 仅此次读取" : "确认向其他服务发送请求"}</strong>
+          <p>{action.approval?.reason}</p>
+          <pre className="saki-action-observation">{action.approval?.preview}</pre>
+        </div> : null}
         <div className="saki-action-approval">
           <button className="saki-approval-btn approve" type="button" disabled={controlsDisabled} onClick={() => onDecision(action, "approve")}>
             {busy ? <Loader2 size={13} className="status-spinner" /> : <CheckCircle2 size={13} />}
-            批准
+            {isExternalRead ? "允许此次读取" : isExternalEgress ? "允许此次发送" : <>批准 <kbd className="saki-kbd-hint">Y</kbd></>}
           </button>
           <button className="saki-approval-btn reject" type="button" disabled={controlsDisabled} onClick={() => onDecision(action, "reject")}>
             <X size={13} />
-            拒绝
+            拒绝 {!requiresExplicitClick ? <kbd className="saki-kbd-hint">N</kbd> : null}
           </button>
         </div>
+        </>
       ) : null}
     </div>
   );

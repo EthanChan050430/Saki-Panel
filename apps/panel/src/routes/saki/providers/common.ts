@@ -36,6 +36,13 @@ import { copyText } from "../text-memory.js";
 
 export const defaultTemperatureOnlyModelKeys = new Set<string>();
 
+export function modelOutputWasTruncated(payload: unknown): boolean {
+  const root = objectValue(payload);
+  const reasons = [root?.stop_reason, root?.done_reason, objectValue(root?.delta)?.stop_reason];
+  for (const choice of Array.isArray(root?.choices) ? root.choices : []) reasons.push(objectValue(choice)?.finish_reason);
+  return reasons.some((reason) => reason === "length" || reason === "max_tokens" || reason === "max_output_tokens");
+}
+
 export function withTurnUsage(
   turn: SakiModelToolTurn,
   prompt: string,
@@ -52,7 +59,7 @@ export function withTurnUsage(
       "gpt-4",
       includeToolSchemas ? JSON.stringify(openAiToolSchemas()) : undefined
     );
-  return tokens > 0 ? { ...turn, usageTokens: tokens } : turn;
+  return { ...turn, ...(tokens > 0 ? { usageTokens: tokens } : {}), ...(modelOutputWasTruncated(payload) ? { truncated: true } : {}) };
 }
 
 export const MAX_RETRIES = 3;

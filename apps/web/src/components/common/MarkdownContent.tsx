@@ -5,10 +5,7 @@ import type { MarkdownBlock } from "../../types/app.js";
 export const SakiPathOpenContext = createContext<((path: string, line?: number) => void) | undefined>(undefined);
 
 const workspaceRefPattern =
-  /^([A-Za-z0-9_./\\-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|cs|json|md|css|html|vue|svelte|toml|ya?ml))(?::(\d+))?$/i;
-const workspaceRefInTextPattern =
-  /(?<![A-Za-z0-9_./])([A-Za-z0-9_./\\-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|cs|json|md|css|html|vue|svelte|toml|ya?ml):(\d+))/gi;
-
+  /^((?:[A-Za-z]:)?[\p{L}\p{N}_./\\ -]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|cs|json|md|css|html|vue|svelte|toml|ya?ml))(?::(\d+))?$/iu;
 function parseWorkspaceRef(raw: string): { path: string; line?: number } | null {
   const match = raw.trim().match(workspaceRefPattern);
   if (!match?.[1]) return null;
@@ -43,12 +40,40 @@ function renderPathButton(
 function isMarkdownBoundary(line: string): boolean {
   const trimmed = line.trim();
   return (
-    /^```/.test(trimmed) ||
+    /^(?:`{3,}|~{3,})/.test(trimmed) ||
     /^#{1,4}\s+/.test(trimmed) ||
     /^>\s?/.test(trimmed) ||
     /^[-*+]\s+/.test(trimmed) ||
     /^\d+[.)]\s+/.test(trimmed)
   );
+}
+
+function splitTableRow(line: string): string[] {
+  const cells: string[] = [];
+  const text = line.trim().replace(/^\|/, "").replace(/(?<!\\)\|$/, "");
+  let cell = "";
+  let codeDelimiter = "";
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]!;
+    if (char === "\\" && text[index + 1] === "|") { cell += "|"; index += 1; continue; }
+    if (char === "`") {
+      const delimiter = text.slice(index).match(/^`+/)![0];
+      codeDelimiter = codeDelimiter === delimiter ? "" : codeDelimiter || delimiter;
+      cell += delimiter; index += delimiter.length - 1; continue;
+    }
+    if (char === "|" && !codeDelimiter) { cells.push(cell.trim()); cell = ""; }
+    else cell += char;
+  }
+  cells.push(cell.trim());
+  return cells;
+}
+
+function tableHeader(lines: string[], index: number): Extract<MarkdownBlock, { type: "table" }> | null {
+  if (!lines[index]?.includes("|") || !lines[index + 1]?.includes("-")) return null;
+  const headers = splitTableRow(lines[index]!);
+  const delimiters = splitTableRow(lines[index + 1]!);
+  if (headers.length !== delimiters.length || !delimiters.every((cell) => /^:?-{3,}:?$/.test(cell))) return null;
+  return { type: "table", headers, rows: [], alignments: delimiters.map((cell) => cell.startsWith(":") ? cell.endsWith(":") ? "center" : "left" : cell.endsWith(":") ? "right" : undefined) };
 }
 
 function parseMarkdownBlocks(content: string): MarkdownBlock[] {
@@ -64,16 +89,17 @@ function parseMarkdownBlocks(content: string): MarkdownBlock[] {
       continue;
     }
 
-    const codeMatch = trimmed.match(/^```([A-Za-z0-9_-]*)/);
+    const codeMatch = trimmed.match(/^(`{3,}|~{3,})([^\s]*)/);
     if (codeMatch) {
       const codeLines: string[] = [];
       index += 1;
-      while (index < lines.length && !(lines[index] ?? "").trim().startsWith("```")) {
+      const closingFence = new RegExp(`^${codeMatch[1]![0]}{${codeMatch[1]!.length},}\\s*$`);
+      while (index < lines.length && !closingFence.test((lines[index] ?? "").trim())) {
         codeLines.push(lines[index] ?? "");
         index += 1;
       }
       if (index < lines.length) index += 1;
-      blocks.push({ type: "code", language: codeMatch[1] ?? "", code: codeLines.join("\n") });
+      blocks.push({ type: "code", language: codeMatch[2] ?? "", code: codeLines.join("\n") });
       continue;
     }
 
@@ -106,14 +132,25 @@ function parseMarkdownBlocks(content: string): MarkdownBlock[] {
         items.push(itemMatch[1] ?? "");
         index += 1;
       }
-      blocks.push({ type: "list", ordered, items });
+      blocks.push({ type: "list", ordered, items, ...(ordered ? { start: Number(trimmed.match(/^\d+/)![0]) } : {}) });
+      continue;
+    }
+
+    const table = tableHeader(lines, index);
+    if (table) {
+      index += 2;
+      while (index < lines.length && lines[index]?.trim() && lines[index]!.includes("|") && !isMarkdownBoundary(lines[index]!)) {
+        const cells = splitTableRow(lines[index++]!);
+        table.rows.push(table.headers.map((_header, column) => cells[column] ?? ""));
+      }
+      blocks.push(table);
       continue;
     }
 
     const paragraphLines: string[] = [];
     while (index < lines.length) {
       const paragraphLine = lines[index] ?? "";
-      if (!paragraphLine.trim() || (paragraphLines.length > 0 && isMarkdownBoundary(paragraphLine))) break;
+      if (!paragraphLine.trim() || (paragraphLines.length > 0 && (isMarkdownBoundary(paragraphLine) || tableHeader(lines, index)))) break;
       paragraphLines.push(paragraphLine);
       index += 1;
     }
@@ -154,15 +191,24 @@ function renderPlainWithPathRefs(
   keyPrefix: string,
   onOpenPath: ((path: string, line?: number) => void) | undefined
 ): React.ReactNode[] {
-  if (!onOpenPath || !text) return [text];
+  if (!text) return [text];
   const nodes: React.ReactNode[] = [];
   let cursor = 0;
-  workspaceRefInTextPattern.lastIndex = 0;
+  const pattern = /https?:\/\/[^\s<>"`]+|(?<![A-Za-z0-9_./])([A-Za-z0-9_./\\-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|cs|json|md|css|html|vue|svelte|toml|ya?ml):(\d+))/gi;
   let match: RegExpExecArray | null;
-  while ((match = workspaceRefInTextPattern.exec(text))) {
+  while ((match = pattern.exec(text))) {
     if (match.index > cursor) nodes.push(text.slice(cursor, match.index));
+    if (/^https?:\/\//i.test(match[0])) {
+      let url = match[0].replace(/[.,;!?。，；！？、]+$/u, "");
+      while (url.endsWith(")") && (url.match(/\)/g)?.length ?? 0) > (url.match(/\(/g)?.length ?? 0)) url = url.slice(0, -1);
+      const href = safeMarkdownHref(url);
+      nodes.push(href ? <a key={`${keyPrefix}-url-${match.index}`} href={href} target="_blank" rel="noopener noreferrer">{url}</a> : url);
+      if (url.length < match[0].length) nodes.push(match[0].slice(url.length));
+      cursor = match.index + match[0].length;
+      continue;
+    }
     const ref = parseWorkspaceRef(match[1] ?? "");
-    if (ref) {
+    if (onOpenPath && ref) {
       nodes.push(renderPathButton(match[0], ref, `${keyPrefix}-ref-${match.index}`, onOpenPath));
     } else {
       nodes.push(match[0]);
@@ -179,7 +225,7 @@ function renderInlineMarkdown(
   onOpenPath?: ((path: string, line?: number) => void) | undefined
 ): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
-  const pattern = /(`([^`]+)`|\*\*([^*]+)\*\*|!\[([^\]]*)\]\(([^)\s]+)\)|\[([^\]]+)\]\(([^)\s]+)\))/g;
+  const pattern = /(`([^`]+)`|\*\*([^*]+)\*\*|!\[([^\]]*)\]\((<[^>\n]+>|(?:[^\s()]|\([^\s()]*\))+)\)|\[([^\]]+)\]\((<[^>\n]+>|(?:[^\s()]|\([^\s()]*\))+)\)|<(https?:\/\/[^<>\s]+)>)/g;
   let cursor = 0;
   let match: RegExpExecArray | null;
 
@@ -192,10 +238,13 @@ function renderInlineMarkdown(
       const code = match[2] ?? "";
       const ref = parseWorkspaceRef(code);
       nodes.push(ref ? renderPathButton(code, ref, `${keyPrefix}-code-${match.index}`, onOpenPath) : <code key={`${keyPrefix}-code-${match.index}`}>{code}</code>);
+    } else if (token.startsWith("<")) {
+      const href = safeMarkdownHref(match[8] ?? "");
+      nodes.push(href ? <a href={href} key={`${keyPrefix}-autolink-${match.index}`} target="_blank" rel="noopener noreferrer">{href}</a> : token);
     } else if (token.startsWith("**")) {
       nodes.push(<strong key={`${keyPrefix}-strong-${match.index}`}>{match[3] ?? ""}</strong>);
     } else if (token.startsWith("![")) {
-      const src = safeMarkdownImageSrc(match[5] ?? "");
+      const src = safeMarkdownImageSrc((match[5] ?? "").replace(/^<|>$/g, ""));
       const alt = match[4] ?? "";
       nodes.push(
         src ? (
@@ -205,7 +254,14 @@ function renderInlineMarkdown(
         )
       );
     } else {
-      const href = safeMarkdownHref(match[7] ?? "");
+      const destination = (match[7] ?? "").replace(/^<|>$/g, "");
+      const ref = parseWorkspaceRef(destination);
+      if (onOpenPath && ref) {
+        nodes.push(renderPathButton(match[6] ?? destination, ref, `${keyPrefix}-link-${match.index}`, onOpenPath));
+        cursor = match.index + token.length;
+        continue;
+      }
+      const href = safeMarkdownHref(destination);
       nodes.push(
         href ? (
           <a href={href} key={`${keyPrefix}-link-${match.index}`} rel="noreferrer" target={href.startsWith("/") || href.startsWith("#") ? undefined : "_blank"}>
@@ -303,12 +359,19 @@ function MarkdownContent({ content }: { content: string }) {
         if (block.type === "list") {
           const ListTag = block.ordered ? "ol" : "ul";
           return (
-            <ListTag key={index}>
+            <ListTag key={index} {...(block.ordered ? { start: block.start } : {})}>
               {block.items.map((item, itemIndex) => (
                 <li key={itemIndex}>{renderInlineLines(item, `list-${index}-${itemIndex}`, onOpenPath)}</li>
               ))}
             </ListTag>
           );
+        }
+        if (block.type === "table") {
+          return <div className="saki-md-table-scroll" key={index} tabIndex={0} role="region" aria-label="表格，可横向滚动">
+            <table><thead><tr>{block.headers.map((header, column) => <th key={column} style={{ textAlign: block.alignments[column] }}>{renderInlineMarkdown(header, `table-${index}-head-${column}`, onOpenPath)}</th>)}</tr></thead>
+              <tbody>{block.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, column) => <td key={column} style={{ textAlign: block.alignments[column] }}>{renderInlineMarkdown(cell, `table-${index}-${rowIndex}-${column}`, onOpenPath)}</td>)}</tr>)}</tbody>
+            </table>
+          </div>;
         }
         if (block.type === "code") {
           return <SakiCodeBlock key={index} language={block.language} code={block.code} />;
