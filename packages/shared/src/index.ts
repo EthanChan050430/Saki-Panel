@@ -639,7 +639,7 @@ export interface UpdateNodeRequest {
   name?: string;
   host?: string;
   port?: number;
-  protocol?: "http" | "https";
+  protocol?: "http" | "https" | "ssh";
   remarks?: string | null;
   groupName?: string | null;
   tags?: string | null;
@@ -733,6 +733,27 @@ export interface ConnectLocalNodeResponse {
   error?: string | undefined;
 }
 
+export interface ConnectSshNodeRequest {
+  name?: string | undefined;
+  host: string;
+  port: number;
+  username: string;
+  authType: "password" | "privateKey";
+  password?: string | undefined;
+  privateKey?: string | undefined;
+  passphrase?: string | undefined;
+  hostFingerprint?: string | undefined;
+}
+
+export interface TestSshNodeResponse {
+  hostFingerprint: string;
+  runtime: string;
+}
+
+export interface ConnectSshNodeResponse {
+  node: ManagedNode;
+}
+
 export interface UserAccessKeyInfo {
   id: string;
   name: string;
@@ -795,6 +816,8 @@ export interface ManagedInstance {
   id: string;
   nodeId: string;
   nodeName?: string | null | undefined;
+  nodeProtocol?: string | undefined;
+  nodeHost?: string | undefined;
   name: string;
   type: InstanceType;
   workingDirectory: string;
@@ -1528,6 +1551,69 @@ export function sakiAttachmentMentionToken(attachment: Pick<SakiInputAttachment,
   return `@${name}`;
 }
 
+export function sakiSkillMentionToken(skill: Pick<SakiSkillSummary, "id" | "name">): string {
+  const id = (skill.id || "").trim();
+  if (id && !/[\s@"'\\]/.test(id)) {
+    return `@skill:${id}`;
+  }
+  const name = (skill.name || "").trim() || id || "skill";
+  if (/[\s@"'\\]/.test(name)) {
+    return `@"skill:${name.replace(/"/g, "")}"`;
+  }
+  return `@skill:${name}`;
+}
+
+export function sakiWorkspaceFileMentionToken(path: string): string {
+  const clean = path.trim().replace(/^[/\\]+/, "");
+  if (/[\s@"'\\]/.test(clean)) {
+    return `@"file:${clean.replace(/"/g, "")}"`;
+  }
+  return `@file:${clean}`;
+}
+
+export interface SakiWorkspaceFileCandidate {
+  path: string;
+  name: string;
+  size?: number | undefined;
+  type?: string | undefined;
+  isDirectory?: boolean | undefined;
+}
+
+export interface SakiMentionCandidate {
+  kind: "attachment" | "skill" | "file";
+  id: string;
+  name: string;
+  token: string;
+  description?: string | null | undefined;
+  tags?: string[] | undefined;
+  attachment?: SakiInputAttachment | undefined;
+  skill?: SakiSkillSummary | undefined;
+  file?: SakiWorkspaceFileCandidate | undefined;
+}
+
+export function parseSakiWorkspaceFileMentions(message: string): string[] {
+  const files: string[] = [];
+  const pattern = /@(?:"file:([^"]+)"|file:([^\s@]+))/g;
+  for (const match of message.matchAll(pattern)) {
+    const file = (match[1] || match[2] || "").trim();
+    if (file) files.push(file);
+  }
+  return files;
+}
+
+export function filterSakiWorkspaceFileCandidates(
+  files: SakiWorkspaceFileCandidate[],
+  query: string,
+  limit: number = 20
+): SakiWorkspaceFileCandidate[] {
+  const rawNeedle = query.trim().toLowerCase();
+  const needle = rawNeedle.replace(/^file:\s*/i, "").trim();
+  if (!needle) return files.slice(0, limit);
+  return files
+    .filter((f) => f.name.toLowerCase().includes(needle) || f.path.toLowerCase().includes(needle))
+    .slice(0, limit);
+}
+
 export function parseSakiAttachmentMentionQueries(message: string): string[] {
   const queries: string[] = [];
   const pattern = /@(?:"([^"]+)"|([^\s@]+))/g;
@@ -1536,6 +1622,10 @@ export function parseSakiAttachmentMentionQueries(message: string): string[] {
     if (token) queries.push(token);
   }
   return queries;
+}
+
+export function parseSakiMentionQueries(message: string): string[] {
+  return parseSakiAttachmentMentionQueries(message);
 }
 
 function sakiAttachmentMentionKeys(attachment: Pick<SakiInputAttachment, "id" | "name">): string[] {
@@ -1565,6 +1655,55 @@ export function resolveSakiMentionedAttachments(
   return resolved;
 }
 
+export function resolveSakiMentionedSkills(
+  message: string,
+  skills: SakiSkillSummary[]
+): SakiSkillSummary[] {
+  const queries = parseSakiAttachmentMentionQueries(message).map((query) => query.toLowerCase());
+  if (queries.length === 0) return [];
+  const resolved: SakiSkillSummary[] = [];
+  const seen = new Set<string>();
+  for (const query of queries) {
+    const cleanQuery = query.replace(/^skill:\s*/i, "").trim();
+    const found = skills.find((skill) => {
+      const id = (skill.id || "").toLowerCase();
+      const name = (skill.name || "").toLowerCase();
+      const token = sakiSkillMentionToken(skill).replace(/^@/, "").replace(/^"|"$/g, "").toLowerCase();
+      return (
+        id === query ||
+        id === cleanQuery ||
+        name === query ||
+        name === cleanQuery ||
+        token === query ||
+        token === `skill:${query}`
+      );
+    });
+    if (!found) continue;
+    if (seen.has(found.id)) continue;
+    seen.add(found.id);
+    resolved.push(found);
+  }
+  return resolved;
+}
+
+export function filterSakiSkillMentionCandidates(
+  skills: SakiSkillSummary[],
+  query: string
+): SakiSkillSummary[] {
+  const rawNeedle = query.trim().toLowerCase();
+  const needle = rawNeedle.replace(/^skill:\s*/i, "").trim();
+  const sorted = [...skills].sort((a, b) => {
+    if (a.enabled && !b.enabled) return -1;
+    if (!a.enabled && b.enabled) return 1;
+    return a.name.localeCompare(b.name);
+  });
+  if (!needle) return sorted.slice(0, 20);
+  return sorted.filter((skill) => {
+    const haystack = `${skill.name} ${skill.id} ${skill.description ?? ""} ${(skill.tags ?? []).join(" ")}`.toLowerCase();
+    return haystack.includes(needle);
+  }).slice(0, 20);
+}
+
 export function sakiImageAttachmentsForMessage(
   message: string,
   attachments: SakiInputAttachment[]
@@ -1578,10 +1717,21 @@ export function sakiAttachmentsForMessage(
   message: string,
   attachments: SakiInputAttachment[]
 ): SakiInputAttachment[] {
-  const mentionedImages = resolveSakiMentionedAttachments(message, attachments).filter(isSakiImageAttachment);
-  if (mentionedImages.length === 0) return attachments;
-  const mentionedKeys = new Set(mentionedImages.map((attachment) => attachment.id ?? attachment.name));
-  return attachments.filter((attachment) => !isSakiImageAttachment(attachment) || mentionedKeys.has(attachment.id ?? attachment.name));
+  const mentioned = resolveSakiMentionedAttachments(message, attachments);
+  if (mentioned.length === 0) return attachments;
+  const mentionedKeys = new Set(mentioned.map((attachment) => attachment.id ?? attachment.name));
+  const hasMentionedFiles = mentioned.some((attachment) => !isSakiImageAttachment(attachment));
+  const hasMentionedImages = mentioned.some(isSakiImageAttachment);
+  return attachments.filter((attachment) => {
+    const isImg = isSakiImageAttachment(attachment);
+    if (isImg && hasMentionedImages) {
+      return mentionedKeys.has(attachment.id ?? attachment.name);
+    }
+    if (!isImg && hasMentionedFiles) {
+      return mentionedKeys.has(attachment.id ?? attachment.name);
+    }
+    return true;
+  });
 }
 
 export const sakiNvidiaBaseUrl = "https://integrate.api.nvidia.com/v1";
@@ -1635,10 +1785,13 @@ export function activeSakiMentionQuery(text: string, caret: number): { start: nu
 export function insertSakiMention(
   text: string,
   caret: number,
-  attachment: Pick<SakiInputAttachment, "id" | "name">
+  mentionTarget: Pick<SakiInputAttachment, "id" | "name"> | string
 ): { text: string; caret: number } {
   const active = activeSakiMentionQuery(text, caret);
-  const token = `${sakiAttachmentMentionToken(attachment)} `;
+  const rawToken = typeof mentionTarget === "string"
+    ? (mentionTarget.startsWith("@") ? mentionTarget : `@${mentionTarget}`)
+    : sakiAttachmentMentionToken(mentionTarget);
+  const token = `${rawToken} `;
   const start = active?.start ?? caret;
   const next = `${text.slice(0, start)}${token}${text.slice(caret)}`;
   return { text: next, caret: start + token.length };
@@ -1648,10 +1801,9 @@ export function filterSakiMentionCandidates(
   attachments: SakiInputAttachment[],
   query: string
 ): SakiInputAttachment[] {
-  const images = attachments.filter(isSakiImageAttachment);
   const needle = query.trim().toLowerCase();
-  if (!needle) return images;
-  return images.filter((attachment) => `${attachment.name} ${attachment.id ?? ""}`.toLowerCase().includes(needle));
+  if (!needle) return attachments;
+  return attachments.filter((attachment) => `${attachment.name} ${attachment.id ?? ""}`.toLowerCase().includes(needle));
 }
 
 export type SakiAgentActionStatus = "completed" | "failed" | "pending_approval" | "pending_input" | "rejected" | "rolled_back";
@@ -1714,6 +1866,8 @@ export interface SakiChatRequest {
   resumeTaskId?: string;
   history?: SakiChatMessage[];
   instanceId?: string | null;
+  /** Explicitly attached workspaces; instanceId is the default tool target. */
+  workspaceInstanceIds?: string[];
   panelError?: string | null;
   contextTitle?: string | null;
   contextText?: string | null;
@@ -1725,6 +1879,29 @@ export interface SakiChatRequest {
   attachments?: SakiInputAttachment[];
   model?: string | null;
   provider?: string | null;
+}
+
+export const maxSakiWorkspaces = 8;
+
+export function normalizeSakiWorkspaceIds(instanceId: string | null | undefined, values?: unknown): string[] {
+  if (values !== undefined && (!Array.isArray(values) || values.some(value => typeof value !== "string" || !value.trim() || value.length > 200))) {
+    throw new Error("工作区列表无效。");
+  }
+  const ids = [...new Set([...(instanceId ? [instanceId] : []), ...((values as string[] | undefined) ?? [])].map(value => value.trim()))];
+  if (ids.length > maxSakiWorkspaces) throw new Error(`最多同时添加 ${maxSakiWorkspaces} 个工作区。`);
+  return ids;
+}
+
+export function sakiWorkspaceContextKey(instanceId: string | null | undefined, ids?: string[]): string {
+  const selected = normalizeSakiWorkspaceIds(instanceId, ids);
+  return selected.length > 1 ? `workspaces:${JSON.stringify(selected)}` : selected[0] ? `instance:${selected[0]}` : "global";
+}
+
+export function sakiWorkspaceIdsFromContextKey(key: string, instanceId?: string | null): string[] {
+  if (key.startsWith("workspaces:")) {
+    try { return normalizeSakiWorkspaceIds(instanceId, JSON.parse(key.slice("workspaces:".length))); } catch { /* Legacy or malformed metadata. */ }
+  }
+  return normalizeSakiWorkspaceIds(instanceId);
 }
 
 export interface SakiChatResponse {

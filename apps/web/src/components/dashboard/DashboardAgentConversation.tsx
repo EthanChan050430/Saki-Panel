@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronRight, Copy, CornerUpLeft, FileDiff, Maximize2, Minimize2, MoreHorizontal, Pencil, Plus, Terminal, Trash2, X } from "lucide-react";
-import type { InstanceGitChangesSummary, ManagedInstance, SakiAgentAction } from "@webops/shared";
+import type { InstanceGitChangesSummary, ManagedInstance, SakiAgentAction, SakiInputAttachment } from "@webops/shared";
 import { MarkdownContent } from "../common/MarkdownContent.js";
 import { DashboardPopover } from "./DashboardPopover.js";
 import type { DashboardMessageOperation } from "./message-operations.js";
-import { parseThinkingContent, SakiThinkingActionCard, SakiToolActionCard, SakiToolIcon,
+import { parseThinkingContent, SakiAttachmentChip, SakiThinkingActionCard, SakiToolActionCard, SakiToolIcon,
   sakiActionTarget, sakiActionTitle, visibleSakiActions } from "../saki/SakiComponents.js";
 import { SakiCodeChangesDetails } from "../saki/chat/SakiCodeChanges.js";
 const DashboardWebTerminal = React.lazy(() => import("../terminal/WebTerminal.js").then((module) => ({ default: module.WebTerminal })));
@@ -25,6 +25,7 @@ export interface DashboardChatMessage {
   actions?: SakiAgentAction[] | undefined;
   isStreaming?: boolean | undefined;
   workflowMessage?: string | undefined;
+  attachments?: SakiInputAttachment[];
 }
 
 export type DashboardActionDecision = "approve" | "reject" | "rollback" | { selection?: string; customText?: string; skipped?: boolean };
@@ -216,12 +217,13 @@ function DashboardToolGroup({
   );
 }
 
-export function DashboardAgentMessage({ message, selectedActionId, busyId, onSelectAction, onDecide, onMessageOperation, copiedMessageId, canRollbackCode = false }: {
+export function DashboardAgentMessage({ message, selectedActionId, busyId, onSelectAction, onDecide, onMessageOperation, copiedMessageId, canRollbackCode = false, onPreviewAttachment }: {
   message: DashboardChatMessage; selectedActionId?: string | undefined; busyId: string | null;
   onSelectAction: (messageId: string, actionId: string) => void; onDecide: DecideAction;
   onMessageOperation?: (messageId: string, operation: DashboardMessageOperation) => Promise<void>;
   copiedMessageId?: string | null;
   canRollbackCode?: boolean;
+  onPreviewAttachment?: (attachment: SakiInputAttachment) => void;
 }) {
   const parsed = message.role === "assistant" ? parseThinkingContent(message.content, message.thinking) : { answer: message.content, thinking: "" };
   const menuRef = useRef<HTMLDivElement>(null);
@@ -230,9 +232,25 @@ export function DashboardAgentMessage({ message, selectedActionId, busyId, onSel
   const [editText, setEditText] = useState("");
   const disabled = Boolean(busyId || message.isStreaming);
   const operate = (operation: DashboardMessageOperation) => { setMenuOpen(false); void onMessageOperation?.(message.id, operation).catch(() => {}); };
+  const hasPendingAction = Boolean(
+    message.actions?.some((action) => action.status === "pending_approval" || action.status === "pending_input")
+  );
+  const isStreamingActive = Boolean(message.isStreaming && !hasPendingAction);
+  const isStreamingAnswer = Boolean(isStreamingActive && !message.isThinking && !message.workflowMessage);
   return <article className={`dashboard-message-row ${message.role}${editing ? " is-editing" : ""}${menuOpen ? " is-menu-open" : ""}`}>
     <div className="dashboard-message-meta">{message.role === "assistant" ? "Saki" : "你"}</div>
     <div className="dashboard-message-content">
+      {message.attachments && message.attachments.length > 0 ? (
+        <div className="saki-message-attachments" style={{ marginBottom: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {message.attachments.map((attachment, index) => (
+            <SakiAttachmentChip
+              attachment={attachment}
+              key={attachment.id ?? `${attachment.name}-${index}`}
+              onClick={() => onPreviewAttachment?.(attachment)}
+            />
+          ))}
+        </div>
+      ) : null}
       {parsed.thinking ? <SakiThinkingActionCard thinking={parsed.thinking} durationSec={message.thinkingDurationSec}
         streaming={Boolean(message.isStreaming && message.isThinking)} completedLabel="Think for" /> : null}
       {message.role === "assistant" && message.actions?.length ? <div className="dashboard-actions-container">
@@ -272,13 +290,21 @@ export function DashboardAgentMessage({ message, selectedActionId, busyId, onSel
           onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setEditing(false); } }} />
         <div><button type="button" disabled={disabled} onClick={() => setEditing(false)}>取消</button>
           <button type="submit" disabled={disabled || !editText.trim()}>{message.role === "user" ? "保存并重新发送" : "保存修改"}</button></div>
-      </form> : parsed.answer ? <div className="dashboard-markdown-body"><MarkdownContent content={parsed.answer} />
-        {message.isStreaming ? <span className="dashboard-streaming-cursor" /> : null}</div>
-        : message.isStreaming && !parsed.thinking && !message.actions?.length ? <div className="dashboard-streaming-placeholder">
-          <span className="dashboard-streaming-cursor" /><span>Saki 正在规划与执行...</span>
+      </form> : parsed.answer ? <div className="dashboard-markdown-body">
+        {isStreamingAnswer ? (
+          <div className="saki-stream-raw-wrap">
+            <span className="saki-stream-raw">{parsed.answer}</span>
+            <span className="dashboard-streaming-cursor" />
+          </div>
+        ) : (
+          <MarkdownContent content={parsed.answer} />
+        )}
+      </div>
+        : isStreamingActive && !parsed.thinking && !message.actions?.length && !message.workflowMessage ? <div className="dashboard-streaming-placeholder">
+          <span className="dashboard-streaming-pulse-dot" /><span>Saki 正在规划与执行...</span>
         </div> : null}
-      {message.isStreaming && message.workflowMessage ? <div className="dashboard-streaming-placeholder" role="status">
-        <span className="dashboard-streaming-cursor" /><span>{message.workflowMessage}</span>
+      {isStreamingActive && message.workflowMessage ? <div className="dashboard-streaming-placeholder" role="status">
+        <span className="dashboard-streaming-pulse-dot" /><span>{message.workflowMessage}</span>
       </div> : null}
     </div>
     {onMessageOperation && !message.isStreaming ? <div className="dashboard-message-actions">
@@ -301,11 +327,12 @@ export function DashboardAgentMessage({ message, selectedActionId, busyId, onSel
   </article>;
 }
 
-export function DashboardToolDetails({ messageId, action, busyId, onDecide, onClose, token, instance, terminals,
+export function DashboardToolDetails({ messageId, action, busyId, onDecide, onClose, token, instance, terminals, workspaceInstances,
   activeTerminalId, onSelectTerminal, onCreateTerminal, canCreateTerminal, terminalBusy,
   changesSummary, revertingChanges, onRevertAllChanges, onRestoreAllChanges, activeTab, onSelectTab }: {
   messageId?: string | undefined; action?: SakiAgentAction | undefined; busyId: string | null; onDecide: DecideAction; onClose: () => void;
   token: string; instance: ManagedInstance | null; terminals: DashboardTerminalSession[]; activeTerminalId: string | null;
+  workspaceInstances?: ManagedInstance[] | undefined;
   onSelectTerminal: (id: string | null) => void; onCreateTerminal: () => void; canCreateTerminal: boolean; terminalBusy: boolean;
   changesSummary?: InstanceGitChangesSummary | null | undefined;
   revertingChanges?: boolean | undefined;
@@ -319,7 +346,8 @@ export function DashboardToolDetails({ messageId, action, busyId, onDecide, onCl
   const [isTheater, setIsTheater] = useState(false);
   const onTerminalStatus = useCallback(() => {}, []);
   const isChanges = activeTab === "changes";
-  const terminal = !isChanges ? terminals.find((item) => item.shellId === activeTerminalId && item.instanceId === instance?.id) : undefined;
+  const terminal = !isChanges ? terminals.find((item) => `${item.instanceId}:${item.shellId}` === activeTerminalId) : undefined;
+  const terminalInstance = workspaceInstances?.find(item => item.id === terminal?.instanceId) ?? (instance?.id === terminal?.instanceId ? instance : null);
   useEffect(() => {
     const media = window.matchMedia("(max-width: 900px)");
     const update = () => setNarrow(media.matches);
@@ -403,14 +431,14 @@ export function DashboardToolDetails({ messageId, action, busyId, onDecide, onCl
             {terminals.map((item) => (
               <button
                 type="button"
-                key={item.shellId}
+                key={`${item.instanceId}:${item.shellId}`}
                 role="tab"
                 className="dashboard-tab-chip"
-                aria-selected={!isChanges && terminal?.shellId === item.shellId}
-                onClick={() => { onSelectTerminal(item.shellId); onSelectTab?.("terminal"); }}
+                aria-selected={!isChanges && terminal?.shellId === item.shellId && terminal?.instanceId === item.instanceId}
+                onClick={() => { onSelectTerminal(`${item.instanceId}:${item.shellId}`); onSelectTab?.("terminal"); }}
               >
                 <Terminal size={12} />
-                <span>{item.label || `终端 ${item.shellId.slice(0, 6)}`}</span>
+                <span>{workspaceInstances && workspaceInstances.length > 1 ? `${workspaceInstances.find(instance => instance.id === item.instanceId)?.name ?? item.instanceId} · ` : ""}{item.label || `终端 ${item.shellId.slice(0, 6)}`}</span>
               </button>
             ))}
           </div>
@@ -458,10 +486,10 @@ export function DashboardToolDetails({ messageId, action, busyId, onDecide, onCl
     {isChanges ? <div className="dashboard-tool-details-body" style={{ padding: 0 }}>
       <SakiCodeChangesDetails variant="drawer" summary={changesSummary ?? null} loading={Boolean(revertingChanges)} reverting={Boolean(revertingChanges)}
         onRevertAll={onRevertAllChanges ?? (async () => {})} onRestoreAll={onRestoreAllChanges ?? (async () => {})} onClose={onClose} />
-    </div> : terminal && instance ? <div className="dashboard-terminal-panel">
-      {action && dashboardActionTerminal(action, instance.id)?.shellId === terminal.shellId ? <details className="dashboard-terminal-call-output" open>
+    </div> : terminal && terminalInstance ? <div className="dashboard-terminal-panel">
+      {action && dashboardActionTerminal(action, terminalInstance.id)?.shellId === terminal.shellId ? <details className="dashboard-terminal-call-output" open>
         <summary>本次调用输出</summary><pre>{action.observation || "（无输出）"}</pre></details> : null}
-      <React.Suspense fallback={<p>正在连接终端…</p>}><DashboardWebTerminal key={`${instance.id}:${terminal.shellId}`} token={token} instance={instance} shellSessionId={terminal.shellId} onStatus={onTerminalStatus} /></React.Suspense>
+      <React.Suspense fallback={<p>正在连接终端…</p>}><DashboardWebTerminal key={`${terminalInstance.id}:${terminal.shellId}`} token={token} instance={terminalInstance} shellSessionId={terminal.shellId} onStatus={onTerminalStatus} /></React.Suspense>
     </div> : <div className="dashboard-tool-details-body">
       {action && messageId ? <><ActionControls action={action} messageId={messageId} busyId={busyId} onDecide={onDecide} expanded />
         <details className="dashboard-tool-raw"><summary>调用参数</summary><pre>{JSON.stringify(action.args, null, 2)}</pre></details>

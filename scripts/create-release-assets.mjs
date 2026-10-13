@@ -81,6 +81,7 @@ try {
   for (const item of [
     "apps/panel/dist",
     "apps/daemon/dist",
+    "apps/daemon/package.json",
     "apps/web/dist",
     "packages/shared/dist",
     "packages/shared/package.json",

@@ -43,6 +43,7 @@ import type {
   WriteInstanceFileRequest
 } from "@webops/shared";
 import { panelConfig } from "./config.js";
+import { resolveDaemonEndpoint } from "./ssh-nodes.js";
 
 export interface DaemonNodeCredentials {
   id: string;
@@ -118,29 +119,33 @@ function isPanelPublicHostname(hostname: string): boolean {
 }
 
 function shouldRetryDaemonRequestAsHttps(error: unknown, node: DaemonNodeCredentials): boolean {
+  if (node.protocol === "ssh") return false;
   if (node.protocol === "https") return false;
   const message = error instanceof Error ? error.message : String(error);
   return /Expected HTTP|HPE_INVALID_CONSTANT|wrong version number|EPROTO|socket hang up/i.test(message);
 }
 
 function shouldRetryDaemonRequestAsHttp(error: unknown, node: DaemonNodeCredentials): boolean {
+  if (node.protocol === "ssh") return false;
   if (node.protocol !== "https") return false;
   const message = error instanceof Error ? error.message : String(error);
   return /wrong version number|EPROTO|socket hang up|ECONNRESET/i.test(message);
 }
 
 function shouldRetryDaemonRequestOnLoopback(error: unknown, node: DaemonNodeCredentials): boolean {
+  if (node.protocol === "ssh") return false;
   if (isLoopbackHostname(node.host) || !isPanelPublicHostname(node.host)) return false;
   const message = error instanceof Error ? error.message : String(error);
   return /ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|ENOTFOUND|EPROTO|Expected HTTP|wrong version number|socket hang up/i.test(message);
 }
 
-function requestDaemonRaw(
+async function requestDaemonRaw(
   node: DaemonNodeCredentials,
   path: string,
   options: RequestInit = {},
   timeoutMs = 10000
 ): Promise<DaemonHttpResponse> {
+  node = await resolveDaemonEndpoint(node);
   return new Promise((resolve, reject) => {
     const url = new URL(`${node.protocol}://${node.host}:${node.port}${path}`);
     const body = requestBodyToString(options.body);
@@ -230,12 +235,13 @@ async function requestDaemonRawWithFallback(
   }
 }
 
-function requestDaemonRawBinary(
+async function requestDaemonRawBinary(
   node: DaemonNodeCredentials,
   path: string,
   options: RequestInit = {},
   timeoutMs = 0
 ): Promise<http.IncomingMessage> {
+  node = await resolveDaemonEndpoint(node);
   return new Promise((resolve, reject) => {
     const url = new URL(`${node.protocol}://${node.host}:${node.port}${path}`);
     const body = requestBodyToString(options.body);
@@ -579,6 +585,16 @@ export async function fetchDaemonStatus(
   node: DaemonNodeCredentials,
   timeoutMs = 6000
 ): Promise<FetchDaemonStatusResult> {
+  if (node.protocol === "ssh") {
+    try {
+      const response = await requestDaemonRaw(node, "/api/status", {}, timeoutMs);
+      return response.statusCode >= 200 && response.statusCode < 300
+        ? { ok: true, effectiveProtocol: "http", ...parseDaemonStatusBody(response.body) }
+        : { ok: false, effectiveProtocol: "http", error: `远程运行组件返回 ${response.statusCode}` };
+    } catch (error) {
+      return { ok: false, effectiveProtocol: "http", error: error instanceof Error ? error.message : String(error) };
+    }
+  }
   let effectiveProtocol: "http" | "https" = node.protocol === "https" ? "https" : "http";
   let effectiveHost = node.host;
   try {
@@ -750,7 +766,7 @@ export function uploadDaemonInstanceFile(
   });
 }
 
-export function streamUploadDaemonInstanceFile(
+export async function streamUploadDaemonInstanceFile(
   node: DaemonNodeCredentials,
   instanceId: string,
   workingDirectory: string,
@@ -759,6 +775,7 @@ export function streamUploadDaemonInstanceFile(
   overwrite = true,
   timeoutMs = 600000
 ): Promise<InstanceFileEntry> {
+  node = await resolveDaemonEndpoint(node);
   return new Promise((resolve, reject) => {
     const url = new URL(`${node.protocol}://${node.host}:${node.port}/api/instances/${instanceId}/files/upload-raw`);
     const headers: http.OutgoingHttpHeaders = {

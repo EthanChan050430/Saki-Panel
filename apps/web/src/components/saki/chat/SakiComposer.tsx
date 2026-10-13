@@ -13,6 +13,7 @@ import {
   Sparkles,
   Square,
   TextQuote,
+  Upload,
   Wrench,
   X,
   XOctagon,
@@ -29,12 +30,16 @@ import {
 } from "@webops/shared";
 import { compactContextText } from "../../../utils/path.js";
 import { SakiAttachmentChip } from "../SakiComponents.js";
-import { SakiMentionMenu } from "../SakiMentionMenu.js";
+import { SakiMentionMenu, type SakiMentionMenuCandidate } from "../SakiMentionMenu.js";
 import {
+  hasAnyFileDragData,
+  hasSakiInstanceFileDragData,
+  parseSakiInstanceFileDragPayload,
   sakiPermissionModeLabel,
   sakiPermissionModeTitle,
   type LocalSakiMessage
 } from "../sakiChatHelpers.js";
+import type { SakiInstanceFileDragPayload } from "../../../types/app.js";
 import { SakiMiniChat } from "./SakiMiniChat.js";
 import { LiquidGlassContainer } from "../../common/LiquidGlass.js";
 import { sampleLuminanceAtPoint } from "../sakiLuminance.js";
@@ -45,6 +50,8 @@ export interface SakiComposerProps {
   imageInputRef: React.RefObject<HTMLInputElement | null>;
   attachmentInputRef: React.RefObject<HTMLInputElement | null>;
   onAddFiles: (files: File[], kind: "image" | "file") => Promise<void> | void;
+  onAddInstanceFile?: (payload: SakiInstanceFileDragPayload) => Promise<void> | void;
+  onClearFileDragState?: () => void;
 
   // Expansion
   messagesExpanded: boolean;
@@ -63,10 +70,10 @@ export interface SakiComposerProps {
 
   // Mention menu
   mentionMenuOpen: boolean;
-  mentionCandidates: SakiInputAttachment[];
+  mentionCandidates: SakiMentionMenuCandidate[];
   mentionIndex: number;
   onMentionIndexChange: (idx: number | ((prev: number) => number)) => void;
-  onApplyMention: (candidate: SakiInputAttachment) => void;
+  onApplyMention: (candidate: SakiMentionMenuCandidate) => void;
   onSyncMentionCaret: (target: HTMLTextAreaElement) => void;
   onMentionDismissedStart: (start: number | null) => void;
   mentionCaret: number;
@@ -132,6 +139,8 @@ export const SakiComposer = React.memo(function SakiComposer({
   imageInputRef,
   attachmentInputRef,
   onAddFiles,
+  onAddInstanceFile,
+  onClearFileDragState,
   messagesExpanded,
   onToggleMessagesExpanded,
   messages,
@@ -191,8 +200,8 @@ export const SakiComposer = React.memo(function SakiComposer({
   hasActiveInstance,
   token
 }: SakiComposerProps) {
-  const placeholder = attachments.some(isSakiImageAttachment)
-    ? "输入 @ 引用已上传的参考图"
+  const placeholder = attachments.length > 0
+    ? "输入 @ 引用已上传的文件或 Skill"
     : mode === "agent" && permissionMode === "plan"
     ? "让 Saki 先阅读项目并给出执行计划"
     : contextText
@@ -204,9 +213,64 @@ export const SakiComposer = React.memo(function SakiComposer({
     : "问 Saki";
 
   const composerContainerRef = React.useRef<HTMLDivElement>(null);
+  const inputStackRef = React.useRef<HTMLDivElement>(null);
   const formRef = React.useRef<HTMLFormElement>(null);
   const backdropRef = React.useRef<"light" | "dark">("light");
   const [backdrop, setBackdrop] = React.useState<"light" | "dark">("light");
+
+  const [isDragOver, setIsDragOver] = React.useState(false);
+  const dragCounterRef = React.useRef(0);
+
+  const handleDragEnter = React.useCallback((event: React.DragEvent<HTMLElement>) => {
+    if (!hasAnyFileDragData(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
+    dragCounterRef.current += 1;
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragOver = React.useCallback((event: React.DragEvent<HTMLElement>) => {
+    if (!hasAnyFileDragData(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
+  }, []);
+
+  const handleDragLeave = React.useCallback((event: React.DragEvent<HTMLElement>) => {
+    if (!hasAnyFileDragData(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDrop = React.useCallback((event: React.DragEvent<HTMLElement>) => {
+    if (!hasAnyFileDragData(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDragOver(false);
+    onClearFileDragState?.();
+
+    if (hasSakiInstanceFileDragData(event.dataTransfer)) {
+      const payload = parseSakiInstanceFileDragPayload(event.dataTransfer);
+      if (payload && onAddInstanceFile) {
+        void onAddInstanceFile(payload);
+        return;
+      }
+    }
+
+    const files = Array.from(event.dataTransfer.files ?? []);
+    if (files.length > 0) {
+      const firstFile = files[0];
+      const preferredKind = firstFile?.type.startsWith("image/") ? "image" : "file";
+      void onAddFiles(files, preferredKind);
+    }
+  }, [onAddFiles, onAddInstanceFile, onClearFileDragState]);
 
   // Dynamic underlying backdrop luminance detection
   React.useLayoutEffect(() => {
@@ -325,7 +389,7 @@ export const SakiComposer = React.memo(function SakiComposer({
         </button>
       </div>
 
-      {!messagesExpanded && (
+      {!messagesExpanded && !mentionMenuOpen && (
         <SakiMiniChat
           messages={messages}
           loading={loading}
@@ -335,19 +399,21 @@ export const SakiComposer = React.memo(function SakiComposer({
         />
       )}
 
-      <div className="saki-input-stack">
+      <div ref={inputStackRef} className={`saki-input-stack ${mentionMenuOpen ? "has-mention-open" : ""}`}>
         {mentionMenuOpen ? (
           <SakiMentionMenu
             candidates={mentionCandidates}
             activeIndex={mentionIndex}
             onHover={(idx) => onMentionIndexChange(idx)}
             onSelect={onApplyMention}
+            anchorRef={inputStackRef}
+            variant="composer"
           />
         ) : null}
 
         {!messagesExpanded && (
           <div
-            className={`saki-input-peep ${loading ? "is-loading" : ""} ${sakiFileHoverActive ? "is-dropping" : ""}`}
+            className={`saki-input-peep ${loading ? "is-loading" : ""} ${sakiFileHoverActive || isDragOver ? "is-dropping" : ""}`}
             onClick={onToggleMessagesExpanded}
             title="点击展开与 Saki 的完整对话"
             role="button"
@@ -370,7 +436,7 @@ export const SakiComposer = React.memo(function SakiComposer({
 
         <LiquidGlassContainer
           ref={composerContainerRef}
-          className="saki-input-container saki-composer-glass"
+          className={`saki-input-container saki-composer-glass ${isDragOver ? "is-drag-over drop-ready" : ""}`}
           data-backdrop={backdrop}
           displacementScale={100}
           zoom={1.20}
@@ -379,7 +445,18 @@ export const SakiComposer = React.memo(function SakiComposer({
           saturation={108}
           cornerRadius={26}
           mode="shader"
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
         >
+          {/* Drop Overlay Hint */}
+          {isDragOver && (
+            <div className="saki-composer-drop-overlay" aria-hidden="true">
+              <Upload size={18} className="saki-drop-icon" />
+              <span>松开添加到附件</span>
+            </div>
+          )}
 
           {/* Attachment Dock Tray */}
           {attachments.length > 0 ? (
@@ -482,6 +559,16 @@ export const SakiComposer = React.memo(function SakiComposer({
                 }
               }}
               onPaste={onComposerPaste}
+              onDragOver={(event) => {
+                if (hasAnyFileDragData(event.dataTransfer)) {
+                  event.preventDefault();
+                }
+              }}
+              onDrop={(event) => {
+                if (hasAnyFileDragData(event.dataTransfer)) {
+                  event.preventDefault();
+                }
+              }}
               placeholder={placeholder}
               rows={1}
             />

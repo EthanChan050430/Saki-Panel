@@ -23,7 +23,8 @@ function startHeartbeatLoop(): NodeJS.Timeout {
 async function main(): Promise<void> {
   await fs.mkdir(daemonPaths.dataDir, { recursive: true });
 
-  setInstanceStatusPushHandler(async (event) => {
+  const sshManaged = process.env.DAEMON_SSH_MANAGED === "1";
+  if (!sshManaged) setInstanceStatusPushHandler(async (event) => {
     try {
       return await sendInstanceStatusEvent(event);
     } catch (error) {
@@ -42,7 +43,7 @@ async function main(): Promise<void> {
 
   // Attempt initial panel sync so node token matches panel database
   try {
-    await sendHeartbeat();
+    if (!sshManaged) await sendHeartbeat();
   } catch {
     // Panel might not be running yet; heartbeat loop will keep retrying
   }
@@ -51,7 +52,7 @@ async function main(): Promise<void> {
   console.log(`[+] Saki-Daemon listening at ${daemonConfig.protocol}://${daemonConfig.host}:${daemonConfig.port}`);
   console.log(`[+] 机器专属接入密钥 (Node Key): ${nodeKey}`);
 
-  const heartbeatTimer = startHeartbeatLoop();
+  const heartbeatTimer = sshManaged ? undefined : startHeartbeatLoop();
 
   const shutdown = async (signal: NodeJS.Signals) => {
     app.log.info({ signal }, "Shutting down daemon");

@@ -29,8 +29,8 @@ function probeCredentials(
 ): DaemonNodeCredentials {
   return {
     ...node,
-    protocol: status.effectiveProtocol || node.protocol,
-    host: status.effectiveHost || node.host
+    protocol: node.protocol === "ssh" ? "ssh" : status.effectiveProtocol || node.protocol,
+    host: node.protocol === "ssh" ? node.host : status.effectiveHost || node.host
   };
 }
 
@@ -148,7 +148,7 @@ export async function probeAndSyncNode(
         lastSeenAt: now
       };
 
-      if (statusResult.effectiveProtocol && statusResult.effectiveProtocol !== node.protocol) {
+      if (node.protocol !== "ssh" && statusResult.effectiveProtocol && statusResult.effectiveProtocol !== node.protocol) {
         updatedData.protocol = statusResult.effectiveProtocol;
       }
       if (statusResult.statusData) {

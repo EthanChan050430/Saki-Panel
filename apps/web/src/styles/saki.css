@@ -2355,31 +2355,77 @@
   left: 10px;
   right: 10px;
   bottom: calc(100% + 8px);
-  z-index: 24;
-  max-height: 220px;
-  overflow: auto;
+  z-index: 2147483640 !important;
+  max-height: 260px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
   min-width: 180px;
   background: rgba(255, 255, 255, 0.97);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 14px;
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.04);
   padding: 6px;
+}
+
+.saki-mention-menu.is-portal {
+  position: fixed !important;
+  box-sizing: border-box;
 }
 
 [data-theme="dark"] .saki-mention-menu {
   background: rgba(30, 41, 59, 0.98);
   border-color: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.saki-mention-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 6px 5px;
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="dark"] .saki-mention-header {
+  border-bottom-color: rgba(255, 255, 255, 0.07);
 }
 
 .saki-mention-title {
-  padding: 4px 8px 2px;
   color: #64748b;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.2px;
+}
+
+[data-theme="dark"] .saki-mention-title {
+  color: #94a3b8;
+}
+
+.saki-mention-count {
+  font-size: 10px;
+  font-weight: 700;
+  color: #64748b;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="dark"] .saki-mention-count {
+  background: rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+}
+
+.saki-mention-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-top: 4px;
 }
 
 .saki-mention-hint {
@@ -2465,6 +2511,97 @@
   font-size: 11px;
   font-style: normal;
   font-weight: 600;
+}
+
+.saki-mention-item.is-skill.active,
+.saki-mention-item.is-skill:hover {
+  background: rgba(139, 92, 246, 0.12);
+}
+
+[data-theme="dark"] .saki-mention-item.is-skill.active,
+[data-theme="dark"] .saki-mention-item.is-skill:hover {
+  background: rgba(139, 92, 246, 0.2);
+}
+
+.saki-mention-icon.is-skill {
+  color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.14);
+}
+
+[data-theme="dark"] .saki-mention-icon.is-skill {
+  color: #a78bfa;
+  background: rgba(139, 92, 246, 0.25);
+}
+
+.saki-mention-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.2;
+}
+
+.saki-mention-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(139, 92, 246, 0.16);
+  color: #7c3aed;
+  letter-spacing: 0.5px;
+}
+
+[data-theme="dark"] .saki-mention-badge {
+  background: rgba(167, 139, 250, 0.2);
+  color: #c4b5fd;
+}
+
+.saki-mention-item.is-file.active,
+.saki-mention-item.is-file:hover {
+  background: rgba(59, 130, 246, 0.12);
+}
+
+[data-theme="dark"] .saki-mention-item.is-file.active,
+[data-theme="dark"] .saki-mention-item.is-file:hover {
+  background: rgba(59, 130, 246, 0.2);
+}
+
+.saki-mention-icon.is-file {
+  color: #2563eb;
+  background: rgba(37, 99, 235, 0.12);
+}
+
+[data-theme="dark"] .saki-mention-icon.is-file {
+  color: #60a5fa;
+  background: rgba(96, 165, 250, 0.2);
+}
+
+.saki-mention-badge.is-file {
+  background: rgba(37, 99, 235, 0.14);
+  color: #2563eb;
+}
+
+[data-theme="dark"] .saki-mention-badge.is-file {
+  background: rgba(96, 165, 250, 0.18);
+  color: #93c5fd;
+}
+
+.saki-mention-desc {
+  display: block;
+  font-size: 11px;
+  color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+  margin-top: 1px;
+  line-height: 1.3;
+}
+
+[data-theme="dark"] .saki-mention-desc {
+  color: #94a3b8;
 }
 
 .saki-input-toolbar {
@@ -4317,4 +4454,71 @@ tbody tr:hover {
 
 .saki-failed-icon {
   flex-shrink: 0;
+}
+
+/* Floating Saki Composer Drag Over & Drop Overlay */
+.saki-input-container.is-drag-over {
+  border-color: rgba(255, 117, 172, 0.85) !important;
+  box-shadow:
+    0 16px 44px 0 rgba(255, 117, 172, 0.24),
+    0 0 0 2.5px rgba(255, 117, 172, 0.42),
+    inset 0 1.5px 2px 0 rgba(255, 255, 255, 1) !important;
+}
+
+[data-theme="dark"] .saki-input-container.is-drag-over {
+  border-color: rgba(255, 117, 172, 0.9) !important;
+  box-shadow:
+    0 18px 48px rgba(255, 117, 172, 0.3),
+    0 0 0 2.5px rgba(255, 117, 172, 0.48),
+    inset 0 1.5px 2px 0 rgba(255, 255, 255, 0.28) !important;
+}
+
+.saki-composer-drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-radius: inherit;
+  z-index: 50;
+  color: #ff75ac;
+  font-size: 13.5px;
+  font-weight: 600;
+  pointer-events: none;
+  border: 2px dashed rgba(255, 117, 172, 0.65);
+  animation: saki-composer-drop-enter 0.16s ease forwards;
+}
+
+[data-theme="dark"] .saki-composer-drop-overlay {
+  background: rgba(26, 32, 44, 0.88);
+  color: #ff8ab8;
+  border-color: rgba(255, 138, 184, 0.7);
+}
+
+.saki-composer-drop-overlay .saki-drop-icon {
+  animation: saki-composer-drop-bounce 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes saki-composer-drop-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes saki-composer-drop-bounce {
+  from {
+    transform: translateY(-3px);
+  }
+  to {
+    transform: translateY(3px);
+  }
 }

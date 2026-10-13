@@ -28,6 +28,7 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "../db.js";
 import { loadCurrentUser, requireAnyPermission, requireInstancePermission, requirePermission } from "../auth.js";
 import { canAccessNode } from "../node-access.js";
+import { sshInstanceDirectory } from "../ssh-nodes.js";
 import {
   assignmentPermissionsFor,
   classifyInstanceUser,
@@ -56,6 +57,7 @@ import {
   killDaemonInstance,
   listDaemonInstanceFiles,
   listDaemonInstanceShells,
+  makeDaemonInstanceDirectory,
   readDaemonInstanceFile,
   readDaemonInstanceLogs,
   readDaemonInstanceStatus,
@@ -146,6 +148,8 @@ function toManagedInstance(instance: InstanceWithAccess, viewer?: { profile: Ins
     id: instance.id,
     nodeId: instance.nodeId,
     nodeName: instance.node.name,
+    nodeProtocol: instance.node.protocol,
+    nodeHost: instance.node.host,
     name: instance.name,
     type: instance.type as InstanceType,
     workingDirectory: instance.workingDirectory,
@@ -1397,7 +1401,15 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     }
 
     const id = randomUUID();
-    const workingDirectory = body.workingDirectory?.trim() || `instances/${id}`;
+    let workingDirectory = body.workingDirectory?.trim() || `instances/${id}`;
+    if (node.protocol === "ssh") {
+      try {
+        workingDirectory = await sshInstanceDirectory(node.id, workingDirectory);
+        await makeDaemonInstanceDirectory(node, id, workingDirectory, { path: "." });
+      } catch (error) {
+        return reply.code(502).send({ message: `无法在远程服务器创建实例目录：${(error as Error).message}` });
+      }
+    }
     const initialAssignedUserIds = assignedUserIds ?? [];
     const instance = await prisma.instance.create({
       data: {

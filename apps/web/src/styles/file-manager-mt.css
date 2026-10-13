@@ -2516,3 +2516,183 @@ input.terminal-cmd-input:disabled {
   }
 
 }
+
+/* File Manager Desktop Drag Over & Drop Overlay */
+.file-workspace {
+  position: relative;
+}
+
+.file-workspace.is-drag-over {
+  outline: 2px dashed rgba(255, 117, 172, 0.8) !important;
+  outline-offset: -2px;
+}
+
+.file-manager-drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  z-index: 120;
+  pointer-events: none;
+  animation: file-manager-drop-enter 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+[data-theme="dark"] .file-manager-drop-overlay {
+  background: rgba(18, 22, 32, 0.88);
+}
+
+.file-manager-drop-modal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px 48px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 2px dashed rgba(255, 117, 172, 0.75);
+  box-shadow: 0 20px 48px rgba(255, 117, 172, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.6);
+  color: #ff75ac;
+  text-align: center;
+}
+
+[data-theme="dark"] .file-manager-drop-modal {
+  background: rgba(26, 32, 46, 0.95);
+  border-color: rgba(255, 138, 184, 0.8);
+  box-shadow: 0 20px 52px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1);
+  color: #ff8ab8;
+}
+
+.file-manager-drop-icon {
+  animation: file-manager-drop-bounce 0.8s ease-in-out infinite alternate;
+}
+
+.file-manager-drop-title {
+  font-size: 16px;
+  font-weight: 650;
+  color: inherit;
+}
+
+.file-manager-drop-target {
+  font-size: 13px;
+  font-weight: 500;
+  opacity: 0.85;
+  color: var(--text-secondary, #64748b);
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-theme="dark"] .file-manager-drop-target {
+  color: #94a3b8;
+}
+
+@keyframes file-manager-drop-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes file-manager-drop-bounce {
+  from { transform: translateY(-4px); }
+  to { transform: translateY(4px); }
+}
+
+/* File Manager Upload Toolbar Dropdown */
+.file-toolbar-upload-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.file-toolbar-upload-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.file-toolbar-upload-btn .upload-caret {
+  opacity: 0.7;
+  transition: transform 0.15s ease;
+}
+
+.file-toolbar-upload-btn.active .upload-caret {
+  transform: rotate(180deg);
+}
+
+.file-upload-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 150;
+  min-width: 140px;
+  padding: 6px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: file-upload-popover-in 0.16s ease forwards;
+}
+
+[data-theme="dark"] .file-upload-dropdown {
+  background: rgba(30, 36, 50, 0.94);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+}
+
+.file-upload-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+  text-align: left;
+}
+
+[data-theme="dark"] .file-upload-dropdown-item {
+  color: #f1f5f9;
+}
+
+.file-upload-dropdown-item:hover {
+  background: rgba(255, 117, 172, 0.14);
+  color: #ff75ac;
+}
+
+[data-theme="dark"] .file-upload-dropdown-item:hover {
+  background: rgba(255, 117, 172, 0.2);
+  color: #ff8ab8;
+}
+
+@keyframes file-upload-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+

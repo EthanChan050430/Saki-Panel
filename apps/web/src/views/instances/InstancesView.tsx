@@ -180,6 +180,7 @@ import {
 } from "../../components/terminal/WebTerminal.js";
 import { FileManager } from "../../components/file-manager/FileManager.js";
 import { InstanceLogs } from "./InstanceLogs.js";
+import { SshConnectModal } from "./SshConnectModal.js";
 import { InstanceProxyModal } from "./InstanceProxyModal.js";
 import { InstanceSettingsModal } from "./InstanceSettingsModal.js";
 import { InstanceTasksPanel } from "./InstanceTasksPanel.js";
@@ -320,6 +321,7 @@ export function InstancesView({
   const [creating, setCreating] = useState(false);
   const [suggestingStartCommand, setSuggestingStartCommand] = useState<"create" | "settings" | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showSshModal, setShowSshModal] = useState(false);
 
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncNodeId, setSyncNodeId] = useState("");
@@ -463,6 +465,7 @@ export function InstancesView({
   const [titlebarMorePos, setTitlebarMorePos] = useState<{ top: number; right: number } | null>(null);
 
   const isAnyModalOpen = Boolean(
+    showSshModal ||
     showCreateForm ||
     showTaskModal ||
     showFileManagerModal ||
@@ -1281,6 +1284,7 @@ export function InstancesView({
       payload.restartMaxRetries = form.restartMaxRetries;
 
       const instance = await api.createInstance(token, payload);
+      window.dispatchEvent(new Event("saki:instances_changed"));
       setInstances((current) => [instance, ...current]);
       setSelectedId(instance.id);
       setShowCreateForm(false);
@@ -1595,6 +1599,15 @@ export function InstancesView({
     </div>
   ) : null;
 
+  const sshDialog = showSshModal ? <SshConnectModal token={token} onClose={() => setShowSshModal(false)} onConnected={node => {
+    setNodes(current => [node, ...current.filter(item => item.id !== node.id)]);
+    setForm(current => ({ ...current, nodeId: node.id, workingDirectory: "", startCommand: "npm start" }));
+    setShowSshModal(false);
+    setCreateModalType("instance");
+    setShowCreateForm(true);
+    window.dispatchEvent(new Event("saki:instances_changed"));
+  }} /> : null;
+
   const createDialog = showCreateForm ? (
     <div
       className="modal-backdrop"
@@ -1664,10 +1677,11 @@ export function InstancesView({
                     </option>
                     {nodes.map((node) => (
                       <option value={node.id} key={node.id}>
-                        {node.name}
+                        {node.name}{node.protocol === "ssh" ? ` · SSH (${node.host})` : ""}
                       </option>
                     ))}
                   </select>
+                  {user.permissions.includes("node.create") && <button type="button" className="ghost-button" onClick={() => { setShowCreateForm(false); setShowSshModal(true); }}><Server size={14} />连接远程 SSH 服务器</button>}
                 </label>
                 <label>
                   名称
@@ -1922,6 +1936,7 @@ export function InstancesView({
             ) : null
           }
         />
+        {typeof document !== "undefined" && sshDialog ? createPortal(sshDialog, document.body) : null}
         {typeof document !== "undefined" && createDialog ? createPortal(createDialog, document.body) : null}
         {typeof document !== "undefined" && syncDialog ? createPortal(syncDialog, document.body) : null}
         {typeof document !== "undefined" && databaseVisualizerDialog ? createPortal(databaseVisualizerDialog, document.body) : null}
@@ -2576,6 +2591,7 @@ export function InstancesView({
           ) : null
         }
       />
+      {typeof document !== "undefined" && sshDialog ? createPortal(sshDialog, document.body) : null}
       {typeof document !== "undefined" && createDialog ? createPortal(createDialog, document.body) : null}
       {typeof document !== "undefined" && syncDialog ? createPortal(syncDialog, document.body) : null}
       {typeof document !== "undefined" && databaseVisualizerDialog ? createPortal(databaseVisualizerDialog, document.body) : null}
@@ -2594,6 +2610,7 @@ export function InstancesView({
           </div>
 
           <div className="instance-command-actions">
+            {user.permissions.includes("node.create") && <button className="secondary-button" type="button" title="连接远程 SSH 服务器" onClick={() => setShowSshModal(true)}><Server size={16} /><span>SSH 连接</span></button>}
             <div className="instance-view-switcher" role="group" aria-label="实例视图">
               {instanceViewOptions.map((option) => (
                 <button

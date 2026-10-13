@@ -1,6 +1,7 @@
 import { prisma } from "../../db.js";
 import { RouteError, type SakiActiveTask } from "./types.js";
 import type { SakiChatResponse } from "@webops/shared";
+import { sakiWorkspaceContextKey } from "@webops/shared";
 
 const writes = new Map<string, Promise<unknown>>();
 export async function withSakiConversationLock<T>(id: string, work: () => Promise<T>): Promise<T> {
@@ -23,6 +24,10 @@ export async function saveClientSakiConversation(userId: string, id: string, bod
       instanceId: typeof body.instanceId === "string" ? body.instanceId : body.instanceId === null ? null : existing?.instanceId ?? null,
       messages: JSON.stringify(body.messages)
     };
+    if (body.workspaceInstanceIds !== undefined) {
+      try { data.contextKey = sakiWorkspaceContextKey(data.instanceId, body.workspaceInstanceIds as string[]); }
+      catch (error) { throw new RouteError((error as Error).message, 400); }
+    }
     if (!existing) {
       if (body.baseUpdatedAt) throw new RouteError("Conversation was deleted. Refresh before saving.", 409);
       try {
@@ -58,9 +63,9 @@ export async function persistSakiTaskConversation(task: SakiActiveTask, response
     upsert({ id: assistantId, role: "assistant", content: response?.message ?? "", createdAt: task.startedAt,
       source: response?.source ?? "direct-model", streaming: !response, taskId: task.id,
       ...(response ? { actions: response.actions ?? [], thinking: response.thinking, usage: response.usage, retry: response.retry, attachments: response.attachments ?? [] } : {}) });
-    const data = { messages: JSON.stringify(messages), updatedAt: new Date(Math.max(Date.now(), (existing?.updatedAt.getTime() ?? 0) + 1)) };
+    const data = { messages: JSON.stringify(messages), contextKey: sakiWorkspaceContextKey(task.instanceId, task.input.workspaceInstanceIds), instanceId: task.instanceId, updatedAt: new Date(Math.max(Date.now(), (existing?.updatedAt.getTime() ?? 0) + 1)) };
     await prisma.sakiConversation.upsert({ where: { id },
-      create: { id, userId: task.userId, contextKey: task.instanceId ? `instance:${task.instanceId}` : "global", title: task.input.message.slice(0, 80), label: "Saki", detail: "", instanceId: task.instanceId, ...data }, update: data });
+      create: { id, userId: task.userId, title: task.input.message.slice(0, 80), label: "Saki", detail: "", ...data }, update: data });
   });
 }
 

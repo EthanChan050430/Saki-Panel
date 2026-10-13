@@ -37,6 +37,8 @@ Saki Panel 把实例、节点、终端、文件、数据库与权限管理放在
 
 Saki 可连接本地 Ollama、LM Studio，也支持在设置中配置云端模型。本地模型可以避免将模型推理请求发送到云端；使用云端模型、在线插件或运维包时，相应功能仍会访问外部服务。
 
+概述页 Agent 的「添加工作区」支持同时勾选最多 8 个实例，包含本地与 SSH 远程实例。可以指定默认工作区，并在同一段对话中读取、修改和比较多个工作区；每个目标分别校验权限。工作区选择会随会话保存，执行任务或等待审批、回答时暂时锁定。
+
 ## 快速开始
 
 ### 从源码在本机运行
@@ -73,6 +75,16 @@ docker compose -f docker-compose.ghcr.yml up -d
 默认 Web 地址是 `http://localhost:5478`。跨主机或公网部署时，按实际域名配置 `WEB_ORIGIN`、`PANEL_PUBLIC_URL` 和 `PANEL_CORS_ORIGINS`，为 Web、Panel 与远程 Daemon 配置 HTTPS，并限制暴露端口。节点令牌用于身份认证；默认 HTTP 连接不提供传输加密。Compose 文件会将 Docker socket 挂载到 Daemon，部署前应确认该节点的权限范围。
 
 需要源码构建镜像时，使用仓库中的 [docker-compose.yml](docker-compose.yml)，将上述密钥写入 `.env` 后运行 `docker compose up -d --build`。更多可配置项见 [.env.example](.env.example)。
+
+## 通过 SSH 管理远程实例
+
+在“实例与数据库”页点击 **SSH 连接**，填写服务器地址、SSH 端口、用户名，以及密码或 SSH 私钥（支持带口令的私钥）。先测试连接并核对主机指纹，再连接服务器。此操作需要 `node.create` 权限。
+
+远程服务器需要 Linux、Node.js ≥ 22.13、npm，以及可用的 SFTP、SSH TCP 转发和 npm 仓库访问权限。首次连接会把当前版本的 Daemon 自动安装到 SSH 用户主目录的 `.saki-panel/nodes/<节点编号>`。运行组件仅监听远程回环地址，面板通过 SSH 隧道访问，无需开放额外的 Daemon 公网端口。从源码开发时，请先运行 `npm run build -w @webops/daemon`，准备远程部署文件。
+
+连接成功会自动打开创建实例窗口并选中远程服务器。工作目录留空时会在该服务器上自动创建目录，也可以填写 Linux 绝对路径。创建后，在 SakiAgent 的工作区选择器中选择带 **SSH** 标记的实例，即可在既有权限范围内操作远程文件、命令和服务；可以用服务器名称或地址搜索实例。
+
+SSH 凭据加密保存在面板的 `data/panel/ssh-nodes` 中，备份面板时需同时备份该目录及其中的加密密钥。面板重启或 SSH 断线后会按需重连，并校验已保存的主机指纹。删除节点会移除面板保存的凭据；远程运行组件和工作目录保留。服务器重启后，运行组件会在面板恢复 SSH 连接时启动。
 
 ## Saki 如何协助排障
 

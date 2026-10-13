@@ -28,6 +28,7 @@ import {
   FolderOpen,
   FolderPlus,
   FolderTree,
+  FolderUp,
   GitBranch,
   HardDrive,
   History,
@@ -45,6 +46,7 @@ import {
   Scissors,
   Search,
   Settings,
+  Sparkles,
   Trash2,
   Upload,
   X
@@ -97,6 +99,70 @@ import { GitManager } from "./GitManager.js";
 
 const sakiInstanceFileDragMime = "application/x-webops-instance-file";
 
+async function getFilesFromDataTransfer(
+  dataTransfer: DataTransfer
+): Promise<Array<{ file: File; relativePath?: string }>> {
+  const result: Array<{ file: File; relativePath?: string }> = [];
+  const items = Array.from(dataTransfer.items ?? []);
+
+  const entries: any[] = [];
+  for (const item of items) {
+    if (typeof (item as any).webkitGetAsEntry === "function") {
+      const entry = (item as any).webkitGetAsEntry();
+      if (entry) entries.push(entry);
+    }
+  }
+
+  if (entries.length > 0) {
+    async function traverseEntry(entry: any, path = ""): Promise<void> {
+      if (entry.isFile) {
+        await new Promise<void>((resolve) => {
+          entry.file(
+            (file: File) => {
+              result.push({
+                file,
+                ...(path ? { relativePath: `${path}/${file.name}` } : {})
+              });
+              resolve();
+            },
+            () => resolve()
+          );
+        });
+      } else if (entry.isDirectory) {
+        const dirReader = entry.createReader();
+        const readEntries = async (): Promise<any[]> => {
+          return new Promise((resolve) => {
+            dirReader.readEntries(
+              (entriesBatch: any[]) => resolve(entriesBatch),
+              () => resolve([])
+            );
+          });
+        };
+        let batch = await readEntries();
+        while (batch.length > 0) {
+          for (const child of batch) {
+            await traverseEntry(child, path ? `${path}/${entry.name}` : entry.name);
+          }
+          batch = await readEntries();
+        }
+      }
+    }
+
+    for (const entry of entries) {
+      await traverseEntry(entry);
+    }
+    if (result.length > 0) {
+      return result;
+    }
+  }
+
+  const files = Array.from(dataTransfer.files ?? []);
+  return files.map((file) => ({
+    file,
+    ...((file as any).webkitRelativePath ? { relativePath: (file as any).webkitRelativePath } : {})
+  }));
+}
+
 export function FileManager({
   token,
   instance,
@@ -122,6 +188,32 @@ export function FileManager({
   const [gitExcludedPaths, setGitExcludedPaths] = useState<string[]>([]);
   useEffect(() => { setGitOpen(false); setGitVisited(false); setGitExcludedPaths([]); }, [instanceId]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadBtnRef = useRef<HTMLButtonElement | null>(null);
+  const uploadMenuRef = useRef<HTMLDivElement | null>(null);
+  const [desktopUploadMenuOpen, setDesktopUploadMenuOpen] = useState(false);
+  const [isExternalDragOver, setIsExternalDragOver] = useState(false);
+  const [dragTargetDir, setDragTargetDir] = useState<string | null>(null);
+  const externalDragCounterRef = useRef(0);
+
+  useEffect(() => {
+    if (!desktopUploadMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (
+        uploadBtnRef.current &&
+        !uploadBtnRef.current.contains(target) &&
+        uploadMenuRef.current &&
+        !uploadMenuRef.current.contains(target)
+      ) {
+        setDesktopUploadMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [desktopUploadMenuOpen]);
+
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const codeEditorRef = useRef<CodeEditorHandle | null>(null);
   const pendingRevealLineRef = useRef<number | null>(null);
@@ -1451,7 +1543,7 @@ export function FileManager({
     return isMobileFileLayout() ? (activePane === "left" ? leftPath : rightPath) : currentPath;
   }
 
-  function existingEntryByName(name: string, targetDir?: string): InstanceFileEntry | null {
+  function existingEntryByName(name: string): InstanceFileEntry | null {
     const normalized = name.toLocaleLowerCase();
     const targetEntries = isMobileFileLayout()
       ? (activePane === "left" ? leftEntries : rightEntries)
@@ -1461,10 +1553,14 @@ export function FileManager({
 
   async function chooseTargetName(action: FileConflictPrompt["action"], name: string, baseDir?: string) {
     const targetDir = baseDir !== undefined ? baseDir : getActiveTargetDir();
-    const existing = existingEntryByName(name, targetDir);
-    const targetEntries = isMobileFileLayout()
+    // Uploads can target a folder that is not currently displayed. Refresh its
+    // entries for each file so earlier files in the same batch count as well.
+    const targetEntries = action === "upload" && instanceId
+      ? (await api.listInstanceFiles(token, instanceId, targetDir)).entries
+      : isMobileFileLayout()
       ? (activePane === "left" ? leftEntries : rightEntries)
       : entries;
+    const existing = targetEntries.find((entry) => entry.name.toLocaleLowerCase() === name.toLocaleLowerCase());
     if (!existing) {
       return { name, path: joinFilePath(targetDir, name), overwrite: false };
     }
@@ -1486,6 +1582,22 @@ export function FileManager({
       overwrite: false
     };
   }
+
+  const handleAnalyzeFile = useCallback((entry: InstanceFileEntry) => {
+    if (!instanceId || !instance) return;
+    const payload: SakiInstanceFileDragPayload = {
+      source: "webops-instance-file",
+      instanceId,
+      instanceName: instance.name,
+      path: entry.path,
+      name: entry.name,
+      size: entry.size,
+      modifiedAt: entry.modifiedAt
+    };
+    window.dispatchEvent(new CustomEvent("saki:attach_instance_file", { detail: payload }));
+    onSakiInstanceFileDrop?.(payload);
+    onClose?.();
+  }, [instance, instanceId, onClose, onSakiInstanceFileDrop]);
 
   async function openEntry(entry: InstanceFileEntry) {
     const requestId = fileOpenRequestRef.current + 1;
@@ -1722,32 +1834,40 @@ export function FileManager({
 
   async function uploadFile(
     file: File,
-    options: { clearInput?: boolean; batchIndex?: number; batchTotal?: number } = {}
+    options: {
+      clearInput?: boolean;
+      batchIndex?: number;
+      batchTotal?: number;
+      targetDir?: string;
+      relativePath?: string;
+    } = {}
   ) {
     if (!instanceId) return;
     const clearInput = options.clearInput ?? true;
-    const targetDir = getActiveTargetDir();
-    const target = await chooseTargetName("upload", file.name, targetDir);
-    if (!target) {
-      if (clearInput && fileInputRef.current) {
-        fileInputRef.current.value = "";
+    const baseTargetDir = options.targetDir !== undefined ? options.targetDir : getActiveTargetDir();
+    const targetDir = options.relativePath && parentFilePath(options.relativePath)
+      ? joinFilePath(baseTargetDir, parentFilePath(options.relativePath))
+      : baseTargetDir;
+    let progressFileName: string | undefined;
+    setError("");
+    try {
+      if (options.relativePath && parentFilePath(options.relativePath)) {
+        await api.makeInstanceDirectory(token, instanceId, targetDir);
       }
-      return;
-    }
-    const progressFileName =
-      options.batchTotal && options.batchTotal > 1
+      const target = await chooseTargetName("upload", file.name, targetDir);
+      if (!target) return;
+      progressFileName = options.batchTotal && options.batchTotal > 1
         ? `${target.name} (${options.batchIndex ?? 1}/${options.batchTotal})`
         : target.name;
-    setError("");
-    setUploadProgress({ fileName: progressFileName, percent: 1, label: "读取文件" });
-    try {
+      const uploadName = progressFileName;
+      setUploadProgress({ fileName: uploadName, percent: 1, label: "读取文件" });
       const response = await api.uploadInstanceFileWithProgress(
         token,
         instanceId,
         target.path,
         file,
         target.overwrite,
-        (progress) => setUploadProgress({ ...progress, fileName: progressFileName })
+        (progress) => setUploadProgress({ ...progress, fileName: uploadName })
       );
       await loadDirectory(currentPath);
       await loadPaneDirectory("left", leftPath);
@@ -1775,25 +1895,86 @@ export function FileManager({
     }
   }
 
-  async function uploadFiles(files: File[]) {
+  async function uploadFiles(
+    files: Array<File | { file: File; relativePath?: string }>,
+    targetDir?: string
+  ) {
     if (files.length === 0) return;
-    if (files.length === 1) {
-      await uploadFile(files[0]!);
+    const normalized = files.map((item) => (item instanceof File ? { file: item } : item));
+    if (normalized.length === 1) {
+      await uploadFile(normalized[0]!.file, {
+        ...(targetDir !== undefined ? { targetDir } : {}),
+        ...(normalized[0]!.relativePath ? { relativePath: normalized[0]!.relativePath } : {})
+      });
       return;
     }
 
-    for (let index = 0; index < files.length; index += 1) {
-      await uploadFile(files[index]!, {
+    for (let index = 0; index < normalized.length; index += 1) {
+      const item = normalized[index]!;
+      await uploadFile(item.file, {
         clearInput: false,
         batchIndex: index + 1,
-        batchTotal: files.length
+        batchTotal: normalized.length,
+        ...(targetDir !== undefined ? { targetDir } : {}),
+        ...(item.relativePath ? { relativePath: item.relativePath } : {})
       });
     }
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
-    showFileToast("批量上传完成", `已处理 ${files.length} 个文件`);
+    if (folderInputRef.current) {
+      folderInputRef.current.value = "";
+    }
+    if (imageInputRef.current) {
+      imageInputRef.current.value = "";
+    }
+    showFileToast("批量上传完成", `已处理 ${normalized.length} 个文件`);
   }
+
+  const handleWorkspaceDragEnter = useCallback((e: React.DragEvent<HTMLElement>) => {
+    if (!e.dataTransfer.types.includes("Files") || draggingFilePath) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "copy";
+    externalDragCounterRef.current += 1;
+    setIsExternalDragOver(true);
+  }, [draggingFilePath]);
+
+  const handleWorkspaceDragOver = useCallback((e: React.DragEvent<HTMLElement>) => {
+    if (!e.dataTransfer.types.includes("Files") || draggingFilePath) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "copy";
+  }, [draggingFilePath]);
+
+  const handleWorkspaceDragLeave = useCallback((e: React.DragEvent<HTMLElement>) => {
+    if (!e.dataTransfer.types.includes("Files") || draggingFilePath) return;
+    e.preventDefault();
+    e.stopPropagation();
+    externalDragCounterRef.current -= 1;
+    if (externalDragCounterRef.current <= 0) {
+      externalDragCounterRef.current = 0;
+      setIsExternalDragOver(false);
+      setDragTargetDir(null);
+    }
+  }, [draggingFilePath]);
+
+  const handleWorkspaceDrop = useCallback((e: React.DragEvent<HTMLElement>) => {
+    if (!e.dataTransfer.types.includes("Files") || draggingFilePath) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const target = dragTargetDir ?? currentPath;
+    externalDragCounterRef.current = 0;
+    setIsExternalDragOver(false);
+    setDragTargetDir(null);
+
+    void (async () => {
+      const files = await getFilesFromDataTransfer(e.dataTransfer);
+      if (files.length > 0) {
+        void uploadFiles(files, target);
+      }
+    })();
+  }, [currentPath, dragTargetDir, draggingFilePath]);
 
   async function downloadEntry(entry: InstanceFileEntry) {
     if (!instanceId) return;
@@ -2184,15 +2365,36 @@ export function FileManager({
               onDragOver={isDir ? (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                e.currentTarget.classList.add("drag-over");
+                if (e.dataTransfer.types.includes("Files") && !draggingFilePath) {
+                  e.dataTransfer.dropEffect = "copy";
+                  setDragTargetDir(entry.path);
+                  e.currentTarget.classList.add("drag-over");
+                } else {
+                  e.currentTarget.classList.add("drag-over");
+                }
               } : undefined}
               onDragLeave={isDir ? (e) => {
                 e.currentTarget.classList.remove("drag-over");
+                if (dragTargetDir === entry.path) {
+                  setDragTargetDir(null);
+                }
               } : undefined}
               onDrop={isDir ? (e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 e.currentTarget.classList.remove("drag-over");
+                setDragTargetDir(null);
+                setIsExternalDragOver(false);
+                externalDragCounterRef.current = 0;
+
+                if (e.dataTransfer.types.includes("Files") && !draggingFilePath) {
+                  void (async () => {
+                    const files = await getFilesFromDataTransfer(e.dataTransfer);
+                    if (files.length > 0) void uploadFiles(files, entry.path);
+                  })();
+                  return;
+                }
+
                 const dragDataStr = e.dataTransfer.getData("text/plain");
                 if (dragDataStr && dragDataStr !== entry.path) {
                   void moveFileToFolder(dragDataStr, entry.path);
@@ -2436,6 +2638,21 @@ export function FileManager({
                           </div>
                           <span className="win-menu-item-shortcut">Enter</span>
                         </button>
+                        <button
+                          className="win-menu-item"
+                          type="button"
+                          onClick={() => {
+                            setDesktopContextMenu(null);
+                            handleAnalyzeFile(entry);
+                          }}
+                        >
+                          <div className="win-menu-item-left">
+                            <span className="win-menu-item-icon">
+                              <Sparkles size={14} />
+                            </span>
+                            <span className="win-menu-item-text">智能体分析</span>
+                          </div>
+                        </button>
                         <div className="win-menu-separator" />
                         <button
                           className="win-menu-item"
@@ -2529,7 +2746,38 @@ export function FileManager({
                               <span className="win-menu-item-text">下载文件</span>
                             </div>
                           </button>
-                        ) : null}
+                        ) : (
+                          <>
+                            <button
+                              className="win-menu-item"
+                              type="button"
+                              onClick={() => {
+                                setDesktopContextMenu(null);
+                                setDragTargetDir(entry.path);
+                                fileInputRef.current?.click();
+                              }}
+                            >
+                              <div className="win-menu-item-left">
+                                <span className="win-menu-item-icon"><FileUp size={14} /></span>
+                                <span className="win-menu-item-text">上传文件到此目录</span>
+                              </div>
+                            </button>
+                            <button
+                              className="win-menu-item"
+                              type="button"
+                              onClick={() => {
+                                setDesktopContextMenu(null);
+                                setDragTargetDir(entry.path);
+                                folderInputRef.current?.click();
+                              }}
+                            >
+                              <div className="win-menu-item-left">
+                                <span className="win-menu-item-icon"><FolderUp size={14} /></span>
+                                <span className="win-menu-item-text">上传文件夹到此目录</span>
+                              </div>
+                            </button>
+                          </>
+                        )}
                         <div className="win-menu-separator" />
                         <button
                           className="win-menu-item danger-action"
@@ -2602,8 +2850,21 @@ export function FileManager({
                   }}
                 >
                   <div className="win-menu-item-left">
-                    <span className="win-menu-item-icon"><Upload size={14} /></span>
+                    <span className="win-menu-item-icon"><FileUp size={14} /></span>
                     <span className="win-menu-item-text">上传文件</span>
+                  </div>
+                </button>
+                <button
+                  className="win-menu-item"
+                  type="button"
+                  onClick={() => {
+                    setDesktopContextMenu(null);
+                    folderInputRef.current?.click();
+                  }}
+                >
+                  <div className="win-menu-item-left">
+                    <span className="win-menu-item-icon"><FolderUp size={14} /></span>
+                    <span className="win-menu-item-text">上传文件夹</span>
                   </div>
                 </button>
                 <div className="win-menu-separator" />
@@ -2671,15 +2932,36 @@ export function FileManager({
                 onDragOver={folder.type === "directory" ? (e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  e.currentTarget.classList.add("drag-over");
+                  if (e.dataTransfer.types.includes("Files") && !draggingFilePath) {
+                    e.dataTransfer.dropEffect = "copy";
+                    setDragTargetDir(folder.path);
+                    e.currentTarget.classList.add("drag-over");
+                  } else {
+                    e.currentTarget.classList.add("drag-over");
+                  }
                 } : undefined}
                 onDragLeave={folder.type === "directory" ? (e) => {
                   e.currentTarget.classList.remove("drag-over");
+                  if (dragTargetDir === folder.path) {
+                    setDragTargetDir(null);
+                  }
                 } : undefined}
                 onDrop={folder.type === "directory" ? (e) => {
                   e.preventDefault();
                   e.stopPropagation();
                   e.currentTarget.classList.remove("drag-over");
+                  setDragTargetDir(null);
+                  setIsExternalDragOver(false);
+                  externalDragCounterRef.current = 0;
+
+                  if (e.dataTransfer.types.includes("Files") && !draggingFilePath) {
+                    void (async () => {
+                      const files = await getFilesFromDataTransfer(e.dataTransfer);
+                      if (files.length > 0) void uploadFiles(files, folder.path);
+                    })();
+                    return;
+                  }
+
                   const dragDataStr = e.dataTransfer.getData("text/plain");
                   if (dragDataStr && dragDataStr !== folder.path) {
                     void moveFileToFolder(dragDataStr, folder.path);
@@ -2761,6 +3043,11 @@ export function FileManager({
                             <span>压缩</span>
                           </button>
                         )}
+                        <button type="button" role="menuitem"
+                          onClick={() => { setOpenFileActionMenuPath(null); handleAnalyzeFile(folder); }}>
+                          <Sparkles size={14} />
+                          <span>智能体分析</span>
+                        </button>
                         <button type="button" role="menuitem"
                           onClick={() => { setOpenFileActionMenuPath(null); handleClipboardAction("copy", folder.path); }}>
                           <ClipboardList size={14} />
@@ -2930,6 +3217,20 @@ export function FileManager({
               </div>
 
               <div className="mt-sheet-actions-grid">
+                {/* 智能体分析 */}
+                <button
+                  className="mt-action-grid-btn highlight"
+                  type="button"
+                  onClick={() => {
+                    const entry = mobileActionEntry;
+                    setMobileActionEntry(null);
+                    handleAnalyzeFile(entry);
+                  }}
+                >
+                  <Sparkles size={20} className="action-icon" />
+                  <span>智能体分析</span>
+                </button>
+
                 {/* 复制到另一侧窗口 */}
                 <button
                   className="mt-action-grid-btn highlight"
@@ -3679,7 +3980,24 @@ export function FileManager({
             </div>
           </div>
         ) : null}
-        <div className="file-workspace">
+        <div
+          className={`file-workspace ${isExternalDragOver ? "is-drag-over" : ""}`}
+          onDragEnter={handleWorkspaceDragEnter}
+          onDragOver={handleWorkspaceDragOver}
+          onDragLeave={handleWorkspaceDragLeave}
+          onDrop={handleWorkspaceDrop}
+        >
+          {isExternalDragOver && (
+            <div className="file-manager-drop-overlay" aria-hidden="true">
+              <div className="file-manager-drop-modal">
+                <Upload size={32} className="file-manager-drop-icon" />
+                <span className="file-manager-drop-title">松开鼠标上传文件</span>
+                <span className="file-manager-drop-target">
+                  上传到: {dragTargetDir ? `/${dragTargetDir}` : currentPath ? `/${currentPath}` : "/ (根目录)"}
+                </span>
+              </div>
+            </div>
+          )}
           <div className="file-tree-sidebar">
             <div className="file-tree-sidebar-header">
               {desktopEditingPath ? (
@@ -3784,17 +4102,103 @@ export function FileManager({
               <button className="icon-button mini" title="新建目录" onClick={() => void createDirectory()}>
                 <FolderPlus size={14} />
               </button>
-              <button className="icon-button mini" title="上传" onClick={() => fileInputRef.current?.click()}>
-                <Upload size={14} />
-              </button>
+              <div className="file-toolbar-upload-wrap">
+                <button
+                  ref={uploadBtnRef}
+                  className={`icon-button mini file-toolbar-upload-btn ${desktopUploadMenuOpen ? "active" : ""}`}
+                  title="上传文件或文件夹"
+                  type="button"
+                  onClick={() => setDesktopUploadMenuOpen((v) => !v)}
+                >
+                  <Upload size={14} />
+                  <ChevronDown size={11} className="upload-caret" />
+                </button>
+                {desktopUploadMenuOpen && (
+                  <div ref={uploadMenuRef} className="file-upload-dropdown glass-panel">
+                    <button
+                      type="button"
+                      className="file-upload-dropdown-item"
+                      onClick={() => {
+                        setDesktopUploadMenuOpen(false);
+                        fileInputRef.current?.click();
+                      }}
+                    >
+                      <FileUp size={14} />
+                      <span>上传文件</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="file-upload-dropdown-item"
+                      onClick={() => {
+                        setDesktopUploadMenuOpen(false);
+                        folderInputRef.current?.click();
+                      }}
+                    >
+                      <FolderUp size={14} />
+                      <span>上传文件夹</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="file-upload-dropdown-item"
+                      onClick={() => {
+                        setDesktopUploadMenuOpen(false);
+                        imageInputRef.current?.click();
+                      }}
+                    >
+                      <ImageIcon size={14} />
+                      <span>上传图片</span>
+                    </button>
+                  </div>
+                )}
+              </div>
               <input
                 ref={fileInputRef}
                 className="hidden-file-input"
                 type="file"
                 multiple
+                style={{ display: "none" }}
                 onChange={(event) => {
                   const files = Array.from(event.target.files ?? []);
-                  if (files.length > 0) void uploadFiles(files);
+                  const target = dragTargetDir ?? getActiveTargetDir();
+                  setDragTargetDir(null);
+                  if (files.length > 0) void uploadFiles(files, target);
+                  event.target.value = "";
+                }}
+              />
+              <input
+                ref={folderInputRef}
+                className="hidden-file-input"
+                type="file"
+                multiple
+                {...({ webkitdirectory: "", directory: "" } as any)}
+                style={{ display: "none" }}
+                onChange={(event) => {
+                  const files = Array.from(event.target.files ?? []);
+                  const target = dragTargetDir ?? getActiveTargetDir();
+                  setDragTargetDir(null);
+                  if (files.length > 0) {
+                    const items = files.map((file) => ({
+                      file,
+                      relativePath: (file as any).webkitRelativePath || file.name
+                    }));
+                    void uploadFiles(items, target);
+                  }
+                  event.target.value = "";
+                }}
+              />
+              <input
+                ref={imageInputRef}
+                className="hidden-file-input"
+                type="file"
+                accept="image/*"
+                multiple
+                style={{ display: "none" }}
+                onChange={(event) => {
+                  const files = Array.from(event.target.files ?? []);
+                  const target = dragTargetDir ?? getActiveTargetDir();
+                  setDragTargetDir(null);
+                  if (files.length > 0) void uploadFiles(files, target);
+                  event.target.value = "";
                 }}
               />
               <label className="tree-search-box">

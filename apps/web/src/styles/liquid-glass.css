@@ -350,6 +350,10 @@
   overflow: visible !important;
 }
 
+.saki-input-stack.has-mention-open {
+  z-index: 600 !important;
+}
+
 .saki-input-container.liquid-glass-container {
   min-width: 0;
   display: flex;

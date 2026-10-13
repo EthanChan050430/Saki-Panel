@@ -55,14 +55,14 @@ async function runtimeForSakiActionDecision(
   const mode = pending.kind === "chat" || pending.resume?.input.mode === "chat" ? "chat" : "agent";
   const authorized = await assertSakiSessionAccess(user.id, pending.contextInstanceId, mode);
   await assertSakiApprovalBindings(user.id, pending.resourceBindings);
-  const context = await resolveSakiContext(user.id, pending.contextInstanceId, false, mode);
-  if (pending.contextInstanceId && !context.instance) throw new RouteError("Instance not found.", 404);
   const input = pending.resume?.input ?? {
     message: "approved Saki action",
     history: [],
     instanceId: pending.contextInstanceId,
     mode: "agent" as const
   };
+  const context = await resolveSakiContext(user.id, pending.contextInstanceId, false, mode, input.workspaceInstanceIds);
+  if (pending.contextInstanceId && !context.instance) throw new RouteError("Instance not found.", 404);
   const config = withRequestedSakiModel(await readEffectiveSakiConfig(), input);
   const task = pending.resume?.taskId ? getActiveSakiTaskById(pending.resume.taskId) : null;
   if (task?.status === "cancelled" || task?.abortController?.signal.aborted) throw new RouteError("Task was cancelled. This action will not execute.", 409);
@@ -95,6 +95,8 @@ async function withTrackedActionDecision(pending: PendingSakiAction, userId: str
   const controller = new AbortController();
   if (task) restartActiveSakiTask(taskId, controller);
   else task = createActiveSakiTask(taskId, userId, pending.contextInstanceId, pending.resume!.input, controller);
+  if (pending.resume?.workspaceBinding) task.workspaceBinding = pending.resume.workspaceBinding;
+  if (pending.resume?.workspaceBindings) task.workspaceBindings = pending.resume.workspaceBindings;
   task.decisionInFlight = true;
   const trackedTask = task;
   let background = false;

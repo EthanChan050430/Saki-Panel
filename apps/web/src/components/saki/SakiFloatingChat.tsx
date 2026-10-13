@@ -136,13 +136,21 @@ import type {
 import {
   activeSakiMentionQuery,
   filterSakiMentionCandidates,
+  filterSakiSkillMentionCandidates,
+  filterSakiWorkspaceFileCandidates,
   insertSakiMention,
   isSakiImageAttachment,
   parseSakiModelSelection,
+  resolveSakiMentionedSkills,
+  sakiAttachmentMentionToken,
   sakiListedModelSupportsVision,
   sakiModelMatchesSelection,
   sakiModelSelectionKey,
-  sakiModelSupportsVision
+  sakiModelSupportsVision,
+  sakiSkillMentionToken,
+  sakiWorkspaceFileMentionToken,
+  type SakiMentionCandidate,
+  type SakiWorkspaceFileCandidate
 } from "@webops/shared";
 import type {
   BrowserSpeechRecognition,
@@ -243,7 +251,7 @@ import {
 import { SakiDessertDropGame } from "./SakiDessertDropGame.js";
 import { getFavorabilityLevelInfo as getFavorabilityLevelInfoHelper } from "./sakiChatHelpers.js";
 import { SakiAttachmentModal } from "./SakiAttachmentModal.js";
-import { SakiMentionMenu } from "./SakiMentionMenu.js";
+import { SakiMentionMenu, type SakiMentionMenuCandidate } from "./SakiMentionMenu.js";
 import { ChatLauncher } from "./chat/ChatLauncher.js";
 import { SakiVideoPane } from "./chat/SakiVideoPane.js";
 import { SakiHistoryDrawer } from "./chat/SakiHistoryDrawer.js";
@@ -553,6 +561,12 @@ export function SakiFloatingChat({
       setInstancesLoading(false);
     }
   }, [token]);
+
+  useEffect(() => {
+    const onInstancesChanged = () => { void loadInstances(); };
+    window.addEventListener("saki:instances_changed", onInstancesChanged);
+    return () => window.removeEventListener("saki:instances_changed", onInstancesChanged);
+  }, [loadInstances]);
 
   useEffect(() => {
     if (open && token && availableInstances.length === 0) {
@@ -1073,15 +1087,139 @@ export function SakiFloatingChat({
   const currentModelSupportsVision = currentListedModel
     ? sakiListedModelSupportsVision(currentListedModel)
     : sakiModelSupportsVision(parseSakiModelSelection(currentModelId).model, parseSakiModelSelection(currentModelId).provider);
-  const mentionCandidates = useMemo(() => {
+
+  const [workspaceFiles, setWorkspaceFiles] = useState<SakiWorkspaceFileCandidate[]>([]);
+  const workspaceFilesCacheRef = useRef<Map<string, SakiWorkspaceFileCandidate[]>>(new Map());
+  const workspaceFilesLoadingRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const instanceId = activeInstance?.id;
+    if (!instanceId) {
+      setWorkspaceFiles([]);
+      return;
+    }
+    const cached = workspaceFilesCacheRef.current.get(instanceId);
+    if (cached) {
+      setWorkspaceFiles(cached);
+      return;
+    }
+
+    let active = true;
+    if (workspaceFilesLoadingRef.current.has(instanceId)) return;
+    workspaceFilesLoadingRef.current.add(instanceId);
+
+    const JUNK_DIR_PATTERN = /^(node_modules|\.git|dist|build|\.next|out|target|bin|obj|__pycache__|\.venv|venv|\.cache|\.turbo|\.gradle|coverage|\.output|\.idea|\.vscode)$/i;
+
+    void (async () => {
+      try {
+        const rootResp = await api.listInstanceFiles(token, instanceId, "");
+        if (!active) return;
+        const entries = rootResp.entries || [];
+        const collected: SakiWorkspaceFileCandidate[] = [];
+        const subdirsToFetch: string[] = [];
+
+        for (const entry of entries) {
+          const isDir = entry.type === "directory";
+          if (isDir) {
+            if (!JUNK_DIR_PATTERN.test(entry.name)) {
+              collected.push({
+                path: entry.path,
+                name: entry.name,
+                isDirectory: true,
+                size: entry.size
+              });
+              subdirsToFetch.push(entry.path);
+            }
+          } else {
+            collected.push({
+              path: entry.path,
+              name: entry.name,
+              isDirectory: false,
+              size: entry.size
+            });
+          }
+        }
+
+        const maxSubdirs = 6;
+        for (const dirPath of subdirsToFetch.slice(0, maxSubdirs)) {
+          if (!active || collected.length >= 250) break;
+          try {
+            const subResp = await api.listInstanceFiles(token, instanceId, dirPath);
+            for (const sub of subResp.entries || []) {
+              if (sub.type === "directory" && JUNK_DIR_PATTERN.test(sub.name)) continue;
+              collected.push({
+                path: sub.path,
+                name: sub.name,
+                isDirectory: sub.type === "directory",
+                size: sub.size
+              });
+              if (collected.length >= 250) break;
+            }
+          } catch {
+            // Silently ignore subfolder errors
+          }
+        }
+
+        if (active) {
+          workspaceFilesCacheRef.current.set(instanceId, collected);
+          setWorkspaceFiles(collected);
+        }
+      } catch {
+        // Fall back gracefully
+      } finally {
+        workspaceFilesLoadingRef.current.delete(instanceId);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [activeInstance?.id, token]);
+
+  const mentionCandidates = useMemo((): SakiMentionCandidate[] => {
     const active = activeSakiMentionQuery(draft, mentionCaret);
     if (!active || mentionDismissedStart === active.start) return [];
-    return filterSakiMentionCandidates(attachments, active.query);
-  }, [attachments, draft, mentionCaret, mentionDismissedStart]);
+    const query = active.query;
+
+    const matchedAttachments = filterSakiMentionCandidates(attachments, query);
+    const matchedSkills = filterSakiSkillMentionCandidates(skills, query);
+    const matchedFiles = activeInstance?.id
+      ? filterSakiWorkspaceFileCandidates(workspaceFiles, query, 15)
+      : [];
+
+    const attachmentItems: SakiMentionCandidate[] = matchedAttachments.map((att) => ({
+      kind: "attachment" as const,
+      id: att.id ?? att.name,
+      name: att.name,
+      token: sakiAttachmentMentionToken(att),
+      attachment: att
+    }));
+
+    const fileItems: SakiMentionCandidate[] = matchedFiles.map((file) => ({
+      kind: "file" as const,
+      id: `file-${file.path}`,
+      name: file.name,
+      token: sakiWorkspaceFileMentionToken(file.path),
+      file
+    }));
+
+    const skillItems: SakiMentionCandidate[] = matchedSkills.map((skill) => ({
+      kind: "skill" as const,
+      id: skill.id,
+      name: skill.name,
+      token: sakiSkillMentionToken(skill),
+      description: skill.description,
+      tags: skill.tags,
+      skill: skill
+    }));
+
+    return [...attachmentItems, ...fileItems, ...skillItems].slice(0, 25);
+  }, [activeInstance?.id, attachments, draft, mentionCaret, mentionDismissedStart, skills, workspaceFiles]);
+
   const mentionMenuOpen =
     Boolean(activeSakiMentionQuery(draft, mentionCaret)) &&
     mentionDismissedStart !== activeSakiMentionQuery(draft, mentionCaret)?.start &&
-    attachments.some(isSakiImageAttachment);
+    (attachments.length > 0 || skills.length > 0 || (activeInstance ? workspaceFiles.length > 0 : false));
 
   useEffect(() => {
     setMentionIndex(0);
@@ -1091,13 +1229,29 @@ export function SakiFloatingChat({
     setMentionCaret(target.selectionStart);
   }
 
-  function applyMention(attachment: SakiInputAttachment) {
+  function applyMention(candidate: SakiMentionMenuCandidate) {
     const textarea = composerTextareaRef.current;
     const caret = textarea?.selectionStart ?? mentionCaret;
-    const next = insertSakiMention(draft, caret, attachment);
+    const token = "token" in candidate
+      ? candidate.token
+      : sakiAttachmentMentionToken(candidate);
+    const next = insertSakiMention(draft, caret, token);
     setDraft(next.text);
     setMentionCaret(next.caret);
     setMentionDismissedStart(null);
+
+    if ("kind" in candidate && candidate.kind === "file" && "file" in candidate && candidate.file && !candidate.file.isDirectory && activeInstance) {
+      void addInstanceFileToComposer({
+        source: "webops-instance-file",
+        instanceId: activeInstance.id,
+        instanceName: activeInstance.name,
+        path: candidate.file.path,
+        name: candidate.file.name,
+        size: candidate.file.size ?? 0,
+        modifiedAt: new Date().toISOString()
+      });
+    }
+
     window.requestAnimationFrame(() => {
       const element = composerTextareaRef.current;
       if (!element) return;
@@ -1106,6 +1260,22 @@ export function SakiFloatingChat({
       setMentionCaret(next.caret);
     });
   }
+
+  // Listen for instance file attachment events from FileManager
+  useEffect(() => {
+    const handleAttach = (e: Event) => {
+      const customEvent = e as CustomEvent<SakiInstanceFileDragPayload>;
+      const payload = customEvent.detail;
+      if (!payload || !payload.path) return;
+      void addInstanceFileToComposer(payload);
+      const token = sakiWorkspaceFileMentionToken(payload.path);
+      setDraft((prev) => prev ? `${prev} ${token} ` : `${token} `);
+      setOpen(true);
+      setMessagesExpanded(true);
+    };
+    window.addEventListener("saki:attach_instance_file", handleAttach);
+    return () => window.removeEventListener("saki:attach_instance_file", handleAttach);
+  }, [activeInstance]);
 
   useEffect(() => {
     const element = sakiMessagesRef.current;
@@ -2234,6 +2404,8 @@ export function SakiFloatingChat({
       (inst) =>
         inst.name.toLowerCase().includes(query) ||
         inst.id.toLowerCase().includes(query) ||
+        (inst.nodeName ?? "").toLowerCase().includes(query) ||
+        (inst.nodeHost ?? "").toLowerCase().includes(query) ||
         (inst.workingDirectory && inst.workingDirectory.toLowerCase().includes(query))
     );
   }, [availableInstances, workspaceSearch]);
@@ -3307,6 +3479,10 @@ export function SakiFloatingChat({
     }
     const abortController = new AbortController();
     sakiStreamAbortRef.current = abortController;
+    const mentionedSkills = resolveSakiMentionedSkills(value, skills);
+    const effectiveSelectedSkillIds = [
+      ...new Set([...selectedSkillIds, ...mentionedSkills.map((s) => s.id)])
+    ];
     const history = historySource.filter((message) => message.id !== "saki-welcome" && !message.rollbackJournal).slice(-12).map(toSakiHistoryMessage);
     const request = {
       message: value,
@@ -3323,7 +3499,7 @@ export function SakiFloatingChat({
       auditSearch: !activeInstance && activePanelContext.auditSearch ? value : null,
       mode: requestMode,
       ...(requestMode === "agent" ? { agentPermissionMode: permissionMode, terminalSandbox } : { terminalSandbox }),
-      selectedSkillIds,
+      selectedSkillIds: effectiveSelectedSkillIds,
       attachments: submittedAttachments,
       ...(currentModelId.trim() ? parseSakiModelSelection(currentModelId) : {})
     };
@@ -4368,7 +4544,7 @@ export function SakiFloatingChat({
                                       <span>{inst.name}</span>
                                     </div>
                                     <div className="saki-workspace-item-subtitle" title={inst.workingDirectory || inst.id}>
-                                      {inst.workingDirectory ? formatSakiContextPath(inst.workingDirectory, 20) : inst.id}
+                                      {inst.nodeProtocol === "ssh" ? "SSH · " : ""}{inst.nodeName ? `${inst.nodeName} · ` : ""}{inst.workingDirectory ? formatSakiContextPath(inst.workingDirectory, 20) : inst.id}
                                     </div>
                                   </div>
                                   <div className="saki-workspace-item-actions">
@@ -4544,6 +4720,12 @@ export function SakiFloatingChat({
         imageInputRef={imageInputRef}
         attachmentInputRef={attachmentInputRef}
         onAddFiles={addFilesToComposer}
+        onAddInstanceFile={addInstanceFileToComposer}
+        onClearFileDragState={() => {
+          sakiFileDragDepthRef.current = 0;
+          setSakiFileHoverActive(false);
+          onClearFileDrag?.();
+        }}
         messagesExpanded={messagesExpanded}
         onToggleMessagesExpanded={() => setMessagesExpanded((current) => !current)}
         messages={messages}

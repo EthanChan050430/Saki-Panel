@@ -4,6 +4,7 @@ import type { DashboardChatMessage } from "./DashboardAgentConversation.js";
 export interface DashboardSession {
   id: string;
   instanceId: string | null;
+  workspaceInstanceIds?: string[] | undefined;
   updatedAt?: string;
   title: string;
   category: string;

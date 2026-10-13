@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
+import { closeSshTunnels } from "./ssh-nodes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import jwt from "@fastify/jwt";
@@ -50,6 +51,7 @@ export async function createPanelServer() {
     }
   });
 
+  app.addHook("onClose", closeSshTunnels);
   app.addHook("onRequest", (request, reply, done) => {
     applyPanelCorsHeaders(request, reply);
     if (request.method === "OPTIONS") {

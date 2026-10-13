@@ -703,6 +703,7 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
   const createResumeState = (): SakiAgentResumeState => ({
     input: resume ? { ...runtime.input, message: resume.input.message, attachments: resume.input.attachments ?? [] } : runtime.input,
     workspaceBinding,
+    ...(runtime.context.instances ? { workspaceBindings: runtime.context.instances.map(bindSakiWorkspace) } : {}),
     skills: runtime.skills,
     actions: [...actions],
     scratchpadEntries: [...agentScratchpadEntries],

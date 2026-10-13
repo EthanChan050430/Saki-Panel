@@ -1,6 +1,6 @@
 import { isAuthDisabled, loadAuthDisabledCurrentUser, loadCurrentUser } from "../../auth.js";
 import type { CurrentUser, PermissionCode } from "@webops/shared";
-import { isInstanceAssignablePermission } from "@webops/shared";
+import { isInstanceAssignablePermission, normalizeSakiWorkspaceIds } from "@webops/shared";
 import { instanceAssignedUserIds, instancePermissionOverride, loadVisibleInstance, type InstanceWithAccess } from "../../instance-access.js";
 import { RouteError, type SakiActiveTask } from "./types.js";
 import { assertSakiWorkspaceBinding } from "./workspace-binding.js";
@@ -36,4 +36,19 @@ export async function assertSakiTaskAccess(userId: string, task: SakiActiveTask 
   if (!task || task.userId !== userId) throw new RouteError("Task not found.", 404);
   const { instance } = await assertSakiSessionAccess(userId, task.instanceId, task.input.mode === "chat" ? "chat" : "agent");
   if (instance && task.workspaceBinding) assertSakiWorkspaceBinding(instance, task.workspaceBinding);
+  const selected = await assertSakiSelectedWorkspaces(userId, task.instanceId, task.input.workspaceInstanceIds, task.input.mode === "chat" ? "chat" : "agent");
+  for (const binding of task.workspaceBindings ?? []) {
+    const target = selected?.find(item => item.id === binding.instanceId);
+    if (!target) throw new RouteError("Workspace selection changed.", 409);
+    assertSakiWorkspaceBinding(target, binding);
+  }
+}
+
+export async function assertSakiSelectedWorkspaces(userId: string, instanceId: string | null | undefined, values: unknown, mode: "agent" | "chat" = "agent") {
+  if (values === undefined) return undefined;
+  let ids: string[];
+  try { ids = normalizeSakiWorkspaceIds(instanceId, values); }
+  catch (error) { throw new RouteError((error as Error).message, 400); }
+  const selected = await Promise.all(ids.map(id => assertSakiSessionAccess(userId, id, mode)));
+  return selected.map(item => item.instance!);
 }

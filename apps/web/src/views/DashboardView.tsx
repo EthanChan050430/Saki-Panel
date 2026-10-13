@@ -9,12 +9,14 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
+  ClipboardList,
   Cpu,
   FileCode,
   Folder,
   GitBranch,
   HardDrive,
   HeartPulse,
+  Image as ImageIcon,
   Lock,
   Loader2,
   MemoryStick,
@@ -24,6 +26,7 @@ import {
   Network,
   PanelLeftClose,
   PanelLeftOpen,
+  Paperclip,
   Plus,
   Puzzle,
   RefreshCw,
@@ -39,6 +42,7 @@ import {
   SquarePen,
   Terminal,
   Trash2,
+  Upload,
   Users,
   Wifi,
   Zap
@@ -57,8 +61,21 @@ import {
 } from "recharts";
 import {
   parseSakiModelSelection,
+  maxSakiWorkspaces,
+  normalizeSakiWorkspaceIds,
+  sakiWorkspaceContextKey,
+  sakiWorkspaceIdsFromContextKey,
   sakiModelMatchesSelection,
   sakiModelSelectionKey,
+  activeSakiMentionQuery,
+  filterSakiMentionCandidates,
+  filterSakiSkillMentionCandidates,
+  filterSakiWorkspaceFileCandidates,
+  insertSakiMention,
+  resolveSakiMentionedSkills,
+  sakiAttachmentMentionToken,
+  sakiSkillMentionToken,
+  sakiWorkspaceFileMentionToken,
   type DashboardOverview,
   type ManagedInstance,
   type ManagedNode,
@@ -67,7 +84,11 @@ import {
   type SakiActionDecisionResponse,
   type SakiChatMessage,
   type SakiChatRequest,
-  type SakiModelOption
+  type SakiInputAttachment,
+  type SakiMentionCandidate,
+  type SakiModelOption,
+  type SakiSkillSummary,
+  type SakiWorkspaceFileCandidate
 } from "@webops/shared";
 import { api, ApiError, type SakiActiveTaskSummary, type SakiChatStreamEvent } from "../api.js";
 import { usePanelLanguage } from "../i18n/index.js";
@@ -88,7 +109,7 @@ import { DashboardAgentMessage, DashboardToolDetails, dashboardActionTerminal, t
 import { SakiChangedFilesPill, useCodeChanges, filterGitChangesForSession } from "../components/saki/chat/SakiCodeChanges.js";
 import { dashboardDeleteTurn, dashboardHasUntrackedTerminalChanges, dashboardHistoryMatches, dashboardIsCodeChange, dashboardRecordAction, dashboardRollbackActions, dashboardStoredActions, dashboardTurnRange, type DashboardMessageOperation } from "../components/dashboard/message-operations.js";
 import { dashboardTaskIsPending, dashboardTaskMessages, dashboardTaskNeedsSync, dashboardTaskSessionId, type DashboardSession, type DashboardStreamRun } from "../components/dashboard/task-runtime.js";
-import { formatDate, formatNumber, resourcesFromNodes } from "../utils/path.js";
+import { formatDate, formatNumber, resourcesFromNodes, isImageFile, imageMimeTypeFromPath, base64ToBlob, compactContextText } from "../utils/path.js";
 import { readRecentInstances } from "../utils/recentInstances.js";
 import { newClientId } from "../utils/id.js";
 import { useGlobalEvent } from "../GlobalEventContext.js";
@@ -96,9 +117,22 @@ import { LiquidGlassContainer } from "../components/common/LiquidGlass.js";
 import {
   readSakiConversations,
   parseThinkingContent,
+  SakiAttachmentChip,
   visibleSakiActions,
   writeSakiConversations
 } from "../components/saki/SakiComponents.js";
+import { SakiAttachmentModal } from "../components/saki/SakiAttachmentModal.js";
+import { SakiMentionMenu } from "../components/saki/SakiMentionMenu.js";
+import {
+  fileToSakiAttachment,
+  imageFileToSakiAttachment,
+  sakiMimeTypeFromPath,
+  sakiTextAttachmentLimit,
+  parseSakiInstanceFileDragPayload,
+  sakiMaxInputAttachments,
+  hasAnyFileDragData
+} from "../components/saki/sakiChatHelpers.js";
+import type { SakiInstanceFileDragPayload } from "../types/app.js";
 
 const RECENT_INSTANCE_LIMIT = 8;
 
@@ -215,14 +249,29 @@ export function DashboardView({
   const selectSession = (id: string | null) => {
     activeSessionIdRef.current = id;
     setActiveSessionId(id);
+    setAttachments([]);
+    setAddMenuOpen(false);
     try {
       if (id) window.sessionStorage.setItem(`dashboard:active-session:${userId}`, id);
       else window.sessionStorage.removeItem(`dashboard:active-session:${userId}`);
     } catch { /* Session restoration is optional when storage is unavailable. */ }
   };
   const [activeInstanceId, setActiveInstanceId] = useState<string | null>(null);
+  const [workspaceInstanceIds, setWorkspaceInstanceIds] = useState<string[]>([]);
+  const [workspaceSelectionBusy, setWorkspaceSelectionBusy] = useState(false);
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const [promptText, setPromptText] = useState("");
+  const [attachments, setAttachments] = useState<SakiInputAttachment[]>([]);
+  const [previewingAttachment, setPreviewingAttachment] = useState<{ attachment: SakiInputAttachment; editable: boolean } | null>(null);
+  const [composerBusy, setComposerBusy] = useState<"image" | "file" | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragCounterRef = useRef(0);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const activeAddAnchorRef = useRef<HTMLElement | null>(null);
+  const heroAddBtnRef = useRef<HTMLButtonElement | null>(null);
+  const sessionAddBtnRef = useRef<HTMLButtonElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [modelMode, setModelMode] = useState<"high" | "standard">("high");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -256,6 +305,281 @@ export function DashboardView({
   const isSessionRunning = (id: string) => streamingSessions.has(id) || latestTasks.get(id)?.status === "running";
   const isStreaming = Boolean(activeSessionId && isSessionRunning(activeSessionId));
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const dockedTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const activeTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const heroInputWrapperRef = useRef<HTMLDivElement | null>(null);
+  const dockedInputWrapperRef = useRef<HTMLDivElement | null>(null);
+
+  const [skills, setSkills] = useState<SakiSkillSummary[]>([]);
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const result = await api.sakiAllSkills(token);
+        if (active && Array.isArray(result)) {
+          setSkills(result);
+        }
+      } catch {
+        // Fall back gracefully if offline or permissions restricted
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [token]);
+
+  const [workspaceFiles, setWorkspaceFiles] = useState<SakiWorkspaceFileCandidate[]>([]);
+  const workspaceFilesCacheRef = useRef<Map<string, SakiWorkspaceFileCandidate[]>>(new Map());
+  const workspaceFilesLoadingRef = useRef<Set<string>>(new Set());
+
+  // Load shallow workspace file tree when activeInstanceId changes
+  useEffect(() => {
+    if (!activeInstanceId) {
+      setWorkspaceFiles([]);
+      return;
+    }
+
+    const cached = workspaceFilesCacheRef.current.get(activeInstanceId);
+    if (cached) {
+      setWorkspaceFiles(cached);
+      return;
+    }
+
+    let active = true;
+    const instanceId = activeInstanceId;
+    if (workspaceFilesLoadingRef.current.has(instanceId)) return;
+    workspaceFilesLoadingRef.current.add(instanceId);
+
+    const JUNK_DIR_PATTERN = /^(node_modules|\.git|dist|build|\.next|out|target|bin|obj|__pycache__|\.venv|venv|\.cache|\.turbo|\.gradle|coverage|\.output|\.idea|\.vscode)$/i;
+
+    void (async () => {
+      try {
+        const rootResp = await api.listInstanceFiles(token, instanceId, "");
+        if (!active) return;
+        const entries = rootResp.entries || [];
+        const collected: SakiWorkspaceFileCandidate[] = [];
+        const subdirsToFetch: string[] = [];
+
+        for (const entry of entries) {
+          const isDir = entry.type === "directory";
+          if (isDir) {
+            if (!JUNK_DIR_PATTERN.test(entry.name)) {
+              collected.push({
+                path: entry.path,
+                name: entry.name,
+                isDirectory: true,
+                size: entry.size
+              });
+              subdirsToFetch.push(entry.path);
+            }
+          } else {
+            collected.push({
+              path: entry.path,
+              name: entry.name,
+              isDirectory: false,
+              size: entry.size
+            });
+          }
+        }
+
+        // Fetch top subdirectories up to limit (shallow indexing to avoid huge repos freezing)
+        const maxSubdirs = 6;
+        for (const dirPath of subdirsToFetch.slice(0, maxSubdirs)) {
+          if (!active || collected.length >= 250) break;
+          try {
+            const subResp = await api.listInstanceFiles(token, instanceId, dirPath);
+            for (const sub of subResp.entries || []) {
+              if (sub.type === "directory" && JUNK_DIR_PATTERN.test(sub.name)) continue;
+              collected.push({
+                path: sub.path,
+                name: sub.name,
+                isDirectory: sub.type === "directory",
+                size: sub.size
+              });
+              if (collected.length >= 250) break;
+            }
+          } catch {
+            // Silently ignore subfolder failures
+          }
+        }
+
+        if (active) {
+          workspaceFilesCacheRef.current.set(instanceId, collected);
+          setWorkspaceFiles(collected);
+        }
+      } catch {
+        // Fall back gracefully if instance is stopped or offline
+      } finally {
+        workspaceFilesLoadingRef.current.delete(instanceId);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [activeInstanceId, token]);
+
+  const [mentionCaret, setMentionCaret] = useState(0);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [mentionDismissedStart, setMentionDismissedStart] = useState<number | null>(null);
+
+  const mentionCandidates = useMemo((): SakiMentionCandidate[] => {
+    const active = activeSakiMentionQuery(promptText, mentionCaret);
+    if (!active || mentionDismissedStart === active.start) return [];
+    const query = active.query;
+
+    const matchedAttachments = filterSakiMentionCandidates(attachments, query);
+    const matchedSkills = filterSakiSkillMentionCandidates(skills, query);
+    const matchedFiles = activeInstanceId
+      ? filterSakiWorkspaceFileCandidates(workspaceFiles, query, 15)
+      : [];
+
+    const attachmentItems: SakiMentionCandidate[] = matchedAttachments.map((att) => ({
+      kind: "attachment" as const,
+      id: att.id ?? att.name,
+      name: att.name,
+      token: sakiAttachmentMentionToken(att),
+      attachment: att
+    }));
+
+    const fileItems: SakiMentionCandidate[] = matchedFiles.map((file) => ({
+      kind: "file" as const,
+      id: `file-${file.path}`,
+      name: file.name,
+      token: sakiWorkspaceFileMentionToken(file.path),
+      file
+    }));
+
+    const skillItems: SakiMentionCandidate[] = matchedSkills.map((skill) => ({
+      kind: "skill" as const,
+      id: skill.id,
+      name: skill.name,
+      token: sakiSkillMentionToken(skill),
+      description: skill.description,
+      tags: skill.tags,
+      skill: skill
+    }));
+
+    return [...attachmentItems, ...fileItems, ...skillItems].slice(0, 25);
+  }, [activeInstanceId, attachments, mentionCaret, mentionDismissedStart, promptText, skills, workspaceFiles]);
+
+  const mentionMenuOpen =
+    Boolean(activeSakiMentionQuery(promptText, mentionCaret)) &&
+    mentionDismissedStart !== activeSakiMentionQuery(promptText, mentionCaret)?.start &&
+    (attachments.length > 0 || skills.length > 0 || (activeInstanceId ? workspaceFiles.length > 0 : false));
+
+  useEffect(() => {
+    setMentionIndex(0);
+  }, [promptText, mentionCaret, mentionDismissedStart]);
+
+  const handleSyncMentionCaret = useCallback((target: HTMLTextAreaElement) => {
+    activeTextareaRef.current = target;
+    setMentionCaret(target.selectionStart);
+  }, []);
+
+  const handleApplyMention = useCallback((targetItem: SakiMentionCandidate | SakiInputAttachment) => {
+    const target = activeTextareaRef.current ?? textareaRef.current ?? dockedTextareaRef.current;
+    const caret = target?.selectionStart ?? mentionCaret;
+    const token = "token" in targetItem
+      ? targetItem.token
+      : sakiAttachmentMentionToken(targetItem);
+    const next = insertSakiMention(promptText, caret, token);
+    setPromptText(next.text);
+    setMentionCaret(next.caret);
+    setMentionDismissedStart(null);
+
+    // If a workspace file is selected, read it and add to attachments tray if not already attached
+    if ("kind" in targetItem && targetItem.kind === "file" && "file" in targetItem && targetItem.file && !targetItem.file.isDirectory && activeInstanceId) {
+      const fileCandidate = targetItem.file;
+      const filePath = fileCandidate.path;
+      const fileName = fileCandidate.name;
+      if (!attachments.some((a) => a.name === fileName || a.name === filePath)) {
+        void (async () => {
+          try {
+            if (isImageFile(filePath)) {
+              const resp = await api.downloadInstanceFile(token, activeInstanceId, filePath, { base64: true });
+              const mime = imageMimeTypeFromPath(resp.path || fileName) ?? "image/png";
+              const fileObj = new File([base64ToBlob(resp.contentBase64, mime)], resp.fileName || fileName, { type: mime });
+              const att = await imageFileToSakiAttachment(fileObj, "image");
+              setAttachments((curr) => curr.some((a) => a.name === att.name) ? curr : [...curr, att]);
+            } else {
+              const resp = await api.readInstanceFile(token, activeInstanceId, filePath);
+              const att: SakiInputAttachment = {
+                id: newClientId(),
+                kind: "file",
+                name: resp.path || fileName,
+                mimeType: sakiMimeTypeFromPath(resp.path || fileName),
+                size: resp.size,
+                text: compactContextText(resp.content, sakiTextAttachmentLimit)
+              };
+              setAttachments((curr) => curr.some((a) => a.name === att.name) ? curr : [...curr, att]);
+            }
+          } catch {
+            // Silently allow token to remain if file reading fails
+          }
+        })();
+      }
+    }
+
+    window.requestAnimationFrame(() => {
+      const el = activeTextareaRef.current ?? textareaRef.current ?? dockedTextareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(next.caret, next.caret);
+      setMentionCaret(next.caret);
+    });
+  }, [activeInstanceId, attachments, mentionCaret, promptText, token]);
+
+  // Listen for instance file attachment events from FileManager or Saki
+  useEffect(() => {
+    const handleAttachInstanceFile = (e: Event) => {
+      const customEvent = e as CustomEvent<SakiInstanceFileDragPayload>;
+      const payload = customEvent.detail;
+      if (!payload || !payload.path) return;
+
+      if (payload.instanceId && payload.instanceId !== activeInstanceId) {
+        setActiveInstanceId(payload.instanceId);
+      }
+
+      // Add to attachments
+      void (async () => {
+        try {
+          if (isImageFile(payload.path || payload.name)) {
+            const resp = await api.downloadInstanceFile(token, payload.instanceId, payload.path, { base64: true });
+            const mime = imageMimeTypeFromPath(resp.path || payload.name) ?? "image/png";
+            const fileObj = new File([base64ToBlob(resp.contentBase64, mime)], resp.fileName || payload.name, { type: mime });
+            const att = await imageFileToSakiAttachment(fileObj, "image");
+            setAttachments((curr) => curr.some((a) => a.name === att.name) ? curr : [...curr, att]);
+          } else {
+            const resp = await api.readInstanceFile(token, payload.instanceId, payload.path);
+            const att: SakiInputAttachment = {
+              id: newClientId(),
+              kind: "file",
+              name: resp.path || payload.name,
+              mimeType: sakiMimeTypeFromPath(resp.path || payload.name),
+              size: resp.size,
+              text: compactContextText(resp.content, sakiTextAttachmentLimit)
+            };
+            setAttachments((curr) => curr.some((a) => a.name === att.name) ? curr : [...curr, att]);
+          }
+        } catch {
+          // fallback
+        }
+      })();
+
+      // Insert mention token into promptText
+      const fileMention = sakiWorkspaceFileMentionToken(payload.path);
+      setPromptText((prev) => prev ? `${prev} ${fileMention} ` : `${fileMention} `);
+
+      const target = textareaRef.current ?? dockedTextareaRef.current;
+      if (target) {
+        window.requestAnimationFrame(() => target.focus());
+      }
+    };
+
+    window.addEventListener("saki:attach_instance_file", handleAttachInstanceFile);
+    return () => window.removeEventListener("saki:attach_instance_file", handleAttachInstanceFile);
+  }, [activeInstanceId, token]);
   const taskRefreshSeq = useRef(0);
   const refreshTasks = useCallback(async () => {
     const seq = ++taskRefreshSeq.current;
@@ -354,14 +678,21 @@ export function DashboardView({
   const [interactionMode, setInteractionMode] = useState<"agent" | "chat">(canUseAgent ? "agent" : "chat");
   const authorizedProjects = instances.filter((instance) =>
     isSuperAdmin || instance.createdByUserId === userId || instance.assignedToUserId === userId || instance.assignees?.some((assignee) => assignee.userId === userId));
-  const currentProject = authorizedProjects.find((instance) => instance.id === activeInstanceId);
-  const canUseProjectMode = (mode: "agent" | "chat") => !activeInstanceId || Boolean(currentProject && (currentProject.myPermissions == null || currentProject.myPermissions.includes(mode === "agent" ? "saki.agent" : "saki.chat")));
+  const selectedWorkspaceIds = normalizeSakiWorkspaceIds(activeInstanceId, workspaceInstanceIds);
+  const canUseProjectMode = (mode: "agent" | "chat") => selectedWorkspaceIds.every(id => {
+    const project = authorizedProjects.find(instance => instance.id === id);
+    return Boolean(project && (project.myPermissions == null || project.myPermissions.includes(mode === "agent" ? "saki.agent" : "saki.chat")));
+  });
   const agentProjects = authorizedProjects.filter((instance) => instance.myPermissions == null || instance.myPermissions.includes(interactionMode === "agent" ? "saki.agent" : "saki.chat"));
   const selectedProject = agentProjects.find((instance) => instance.id === activeInstanceId);
+  const workspaceLabel = selectedWorkspaceIds.length > 1 ? `${selectedWorkspaceIds.length} 个工作区` : selectedProject?.name ?? (activeInstanceId ? "实例不可用" : "添加工作区");
+  const workspaceNames = selectedWorkspaceIds.map(id => instances.find(instance => instance.id === id)?.name ?? "实例不可用").join("、");
+  const workspaceSelectionLocked = workspaceSelectionBusy || isStreaming || Boolean(actionBusyId) || messages.some(message => message.actions?.some(action => action.status === "pending_approval" || action.status === "pending_input"));
   const canCreateTerminal = Boolean(isSuperAdmin && canUseTerminal && canUseAgent && selectedProject);
   const projectPermissionHint = !activeInstanceId
     ? isSuperAdmin ? "未关联项目；项目操作仍按工具权限校验" : "仅可对话、规划和搜索；使用项目工具前请选择已授权项目"
-    : !selectedProject ? "当前项目不可用或未授权，请重新选择项目"
+    : !selectedProject || !canUseProjectMode(interactionMode) ? "已选工作区不可用或未授权，请重新选择工作区"
+    : selectedWorkspaceIds.length > 1 ? `已添加 ${selectedWorkspaceIds.length} 个工作区：${workspaceNames}；按各工作区权限执行`
     : selectedProject.myPermissions
       ? `当前项目权限：${[
           selectedProject.myPermissions.includes("file.read") && "读取",
@@ -414,9 +745,10 @@ export function DashboardView({
     setSelectedTool({ messageId, actionId });
     setTerminalPanelOpen(true);
     setDetailsTab("action");
-    const terminal = canCreateTerminal && action && action.status !== "pending_approval" ? dashboardActionTerminal(action, activeInstanceId) : undefined;
-    if (terminal) setTerminals((current) => [...current.filter((item) => item.shellId !== terminal.shellId), terminal]);
-    setActiveTerminalId(terminal?.shellId ?? null);
+    const targetId = action?.terminal?.instanceId ?? (typeof action?.args.instanceId === "string" ? action.args.instanceId : activeInstanceId);
+    const terminal = isSuperAdmin && canUseTerminal && action && action.status !== "pending_approval" && targetId && selectedWorkspaceIds.includes(targetId) ? dashboardActionTerminal(action, targetId) : undefined;
+    if (terminal) setTerminals((current) => [...current.filter((item) => item.shellId !== terminal.shellId || item.instanceId !== terminal.instanceId), terminal]);
+    setActiveTerminalId(terminal ? `${terminal.instanceId}:${terminal.shellId}` : null);
   }
 
   async function createTerminal() {
@@ -428,8 +760,8 @@ export function DashboardView({
       if (terminalInstanceRef.current !== instanceId) return;
       const terminal = dashboardActionTerminal(result.action, instanceId);
       if (!result.action.ok || !terminal) throw new Error(result.action.observation || "终端创建失败。");
-      setTerminals((current) => [...current.filter((item) => item.shellId !== terminal.shellId), terminal]);
-      setActiveTerminalId(terminal.shellId); setTerminalPanelOpen(true);
+      setTerminals((current) => [...current.filter((item) => item.shellId !== terminal.shellId || item.instanceId !== terminal.instanceId), terminal]);
+      setActiveTerminalId(`${terminal.instanceId}:${terminal.shellId}`); setTerminalPanelOpen(true);
       setDetailsTab("terminal");
     } catch (err) { setError(err instanceof Error ? err.message : "终端创建失败。"); }
     finally { setTerminalBusy(false); }
@@ -443,14 +775,41 @@ export function DashboardView({
   }, []);
 
   function selectWorkspace(instanceId: string | null) {
-    if (actionBusyId) return;
+    if (actionBusyId || workspaceSelectionBusy) return;
     if (instanceId && !agentProjects.some((instance) => instance.id === instanceId)) return;
     setActiveInstanceId(instanceId);
+    setWorkspaceInstanceIds(instanceId ? [instanceId] : []);
     selectSession(null);
     setMessages([]);
     setSelectedTool(null);
     setViewMode("workspace");
     if (window.matchMedia("(max-width: 768px)").matches) setSidebarCollapsed(true);
+  }
+
+  async function updateWorkspaceSelection(ids: string[]) {
+    if (workspaceSelectionLocked) return;
+    if (ids.length > maxSakiWorkspaces) { setError(`最多可同时添加 ${maxSakiWorkspaces} 个工作区。`); return; }
+    const primaryId = ids[0] ?? null;
+    const nextIds = normalizeSakiWorkspaceIds(primaryId, ids);
+    setWorkspaceSelectionBusy(true);
+    try {
+      if (activeSessionId) {
+        const write = await prepareMessageHistoryWrite();
+        const updatedAt = write.localOnly ? new Date().toISOString() : (await api.sakiSaveConversation(token, {
+          id: activeSessionId, instanceId: primaryId, workspaceInstanceIds: nextIds,
+          baseUpdatedAt: write.baseUpdatedAt, messages: messages.map(message => ({ ...message, streaming: false }))
+        })).updatedAt;
+        historyVersionsRef.current.set(activeSessionId, updatedAt);
+        setSessions(current => current.map(session => session.id === activeSessionId ? { ...session, instanceId: primaryId, workspaceInstanceIds: nextIds, updatedAt } : session));
+        const stored = readSakiConversations(userId);
+        writeSakiConversations(stored.map(conversation => conversation.id === activeSessionId ? {
+          ...conversation, instanceId: primaryId, workspaceInstanceIds: nextIds, contextKey: sakiWorkspaceContextKey(primaryId, nextIds), updatedAt
+        } : conversation), userId);
+      }
+      setActiveInstanceId(primaryId);
+      setWorkspaceInstanceIds(nextIds);
+    } catch (err) { setError(err instanceof Error ? err.message : "保存工作区选择失败。"); }
+    finally { setWorkspaceSelectionBusy(false); }
   }
 
   useEffect(() => {
@@ -482,40 +841,47 @@ export function DashboardView({
 
   const renderInstanceAndPagePopover = (onClose: () => void, anchorRef: React.RefObject<HTMLDivElement | null>) => (
     <DashboardPopover anchorRef={anchorRef} onClose={onClose} className="dashboard-project-popover">
-      <div className="dashboard-dropdown-section-title">项目与实例</div>
+      <div className="dashboard-dropdown-section-title">工作区 · {selectedWorkspaceIds.length}/{maxSakiWorkspaces}</div>
+      <p className="dashboard-workspace-hint">可添加多个工作区一起使用，默认工作区用于未指定目标的操作。</p>
+      {workspaceSelectionLocked && <p className="dashboard-workspace-hint">任务执行或等待决定时暂时不能更改工作区。</p>}
       <button
         className={`dashboard-dropdown-item ${!activeInstanceId ? "is-selected" : ""}`}
         type="button"
+        disabled={workspaceSelectionLocked}
         onClick={() => {
-          selectWorkspace(null);
+          void updateWorkspaceSelection([]);
           onClose();
         }}
       >
         <Folder size={13} className="dashboard-dropdown-icon-blue" />
         <div className="dashboard-dropdown-item-text">
-          <span className="dashboard-dropdown-item-title">无项目</span>
-          <span className="dashboard-dropdown-item-desc">未关联项目</span>
+          <span className="dashboard-dropdown-item-title">无工作区</span>
+          <span className="dashboard-dropdown-item-desc">清空当前选择</span>
         </div>
         {!activeInstanceId && <Check size={13} className="dashboard-dropdown-check" />}
       </button>
 
       {agentProjects.map((inst) => (
-        <button
+        <div className="dashboard-workspace-option"
           key={inst.id}
-          className={`dashboard-dropdown-item ${activeInstanceId === inst.id ? "is-selected" : ""}`}
+        ><button
+          className={`dashboard-dropdown-item ${selectedWorkspaceIds.includes(inst.id) ? "is-selected" : ""}`}
           type="button"
+          role="checkbox"
+          aria-checked={selectedWorkspaceIds.includes(inst.id)}
+          disabled={workspaceSelectionLocked || (!selectedWorkspaceIds.includes(inst.id) && selectedWorkspaceIds.length >= maxSakiWorkspaces)}
           onClick={() => {
-            selectWorkspace(inst.id);
-            onClose();
+            void updateWorkspaceSelection(selectedWorkspaceIds.includes(inst.id) ? selectedWorkspaceIds.filter(id => id !== inst.id) : [...selectedWorkspaceIds, inst.id]);
           }}
         >
           <Server size={13} className="dashboard-dropdown-icon-green" />
           <div className="dashboard-dropdown-item-text">
             <span className="dashboard-dropdown-item-title">{inst.name}</span>
-            <span className="dashboard-dropdown-item-desc">{inst.nodeName || "独立运行实例"}</span>
+            <span className="dashboard-dropdown-item-desc">{inst.nodeName || "独立运行实例"}{activeInstanceId === inst.id ? " · 默认工作区" : ""}</span>
           </div>
-          {activeInstanceId === inst.id && <Check size={13} className="dashboard-dropdown-check" />}
-        </button>
+          {selectedWorkspaceIds.includes(inst.id) && <Check size={13} className="dashboard-dropdown-check" />}
+        </button>{selectedWorkspaceIds.includes(inst.id) && activeInstanceId !== inst.id && <button type="button" className="dashboard-workspace-default-btn"
+          disabled={workspaceSelectionLocked} onClick={() => void updateWorkspaceSelection([inst.id, ...selectedWorkspaceIds.filter(id => id !== inst.id)])} title={`将 ${inst.name} 设为默认工作区`}>设为默认</button>}</div>
       ))}
 
       {onNavigateView && (
@@ -855,6 +1221,190 @@ export function DashboardView({
     );
   };
 
+  const handleAddFiles = useCallback(async (files: File[], preferredKind: "image" | "file") => {
+    if (files.length === 0 || composerBusy) return;
+    const available = Math.max(0, sakiMaxInputAttachments - attachments.length);
+    if (available <= 0) {
+      setError(`最多只能附加 ${sakiMaxInputAttachments} 个项目。`);
+      return;
+    }
+
+    setComposerBusy(preferredKind);
+    try {
+      const selected = files.slice(0, available);
+      const nextAttachments: SakiInputAttachment[] = [];
+      for (const file of selected) {
+        nextAttachments.push(await fileToSakiAttachment(file, preferredKind));
+      }
+      setAttachments((current) => [...current, ...nextAttachments].slice(0, sakiMaxInputAttachments));
+      if (files.length > selected.length) {
+        setError(`最多只能附加 ${sakiMaxInputAttachments} 个项目，已自动忽略多余文件。`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "附件读取失败");
+    } finally {
+      setComposerBusy(null);
+    }
+  }, [attachments.length, composerBusy]);
+
+  const handlePasteClipboardImage = useCallback(async () => {
+    if (composerBusy) return;
+    const clipboard = navigator.clipboard as Clipboard | undefined;
+    if (!clipboard?.read) {
+      imageInputRef.current?.click();
+      return;
+    }
+    setComposerBusy("image");
+    try {
+      const items = await clipboard.read();
+      const imageFiles: File[] = [];
+      for (const item of items) {
+        const imageType = item.types.find((type) => type.startsWith("image/"));
+        if (!imageType) continue;
+        const blob = await item.getType(imageType);
+        const ext = imageType.split("/")[1]?.replace("jpeg", "jpg") || "png";
+        imageFiles.push(new File([blob], `screenshot-${Date.now()}.${ext}`, { type: imageType }));
+      }
+      if (imageFiles.length > 0) {
+        await handleAddFiles(imageFiles, "image");
+      } else {
+        setError("剪贴板中未找到可用图片，已打开本地图片选择。");
+        imageInputRef.current?.click();
+      }
+    } catch {
+      imageInputRef.current?.click();
+    } finally {
+      setComposerBusy(null);
+    }
+  }, [composerBusy, handleAddFiles]);
+
+  const handleToggleAddMenu = useCallback((btnRef: React.RefObject<HTMLButtonElement | null>) => {
+    if (addMenuOpen && activeAddAnchorRef.current === btnRef.current) {
+      setAddMenuOpen(false);
+    } else {
+      activeAddAnchorRef.current = btnRef.current;
+      setAddMenuOpen(true);
+    }
+  }, [addMenuOpen]);
+
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current += 1;
+    if (e.dataTransfer.types.includes("Files") || hasAnyFileDragData(e.dataTransfer)) {
+      setIsDragOver(true);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "copy";
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDragOver(false);
+
+    // 1. Check if dropped from instance file manager
+    const instancePayload = parseSakiInstanceFileDragPayload(e.dataTransfer);
+    if (instancePayload) {
+      window.dispatchEvent(new CustomEvent("saki:attach_instance_file", { detail: instancePayload }));
+      return;
+    }
+
+    // 2. Otherwise handle native OS files
+    const files = Array.from(e.dataTransfer.files ?? []);
+    if (files.length > 0) {
+      const first = files[0];
+      const preferredKind = first?.type.startsWith("image/") ? "image" : "file";
+      void handleAddFiles(files, preferredKind);
+    }
+  }, [handleAddFiles]);
+
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const clipboardData = e.clipboardData;
+    if (!clipboardData) return;
+    const files = Array.from(clipboardData.files ?? []);
+    if (files.length > 0) {
+      e.preventDefault();
+      const first = files[0];
+      const preferredKind = first?.type.startsWith("image/") ? "image" : "file";
+      void handleAddFiles(files, preferredKind);
+    }
+  }, [handleAddFiles]);
+
+  const renderAddPopover = () => {
+    if (!addMenuOpen || !activeAddAnchorRef.current) return null;
+    return (
+      <DashboardPopover
+        anchorRef={activeAddAnchorRef}
+        onClose={() => setAddMenuOpen(false)}
+        className="dashboard-model-popover dashboard-add-popover"
+        width={220}
+      >
+        <div className="dashboard-dropdown-section-title">添加内容</div>
+        <button
+          className="dashboard-dropdown-item"
+          type="button"
+          disabled={Boolean(composerBusy)}
+          onClick={() => {
+            setAddMenuOpen(false);
+            imageInputRef.current?.click();
+          }}
+        >
+          <ImageIcon size={15} style={{ color: "#0071e3" }} />
+          <div className="dashboard-dropdown-item-text">
+            <span className="dashboard-dropdown-item-title">上传图片</span>
+            <span className="dashboard-dropdown-item-desc">PNG, JPG, WebP 图像</span>
+          </div>
+        </button>
+        <button
+          className="dashboard-dropdown-item"
+          type="button"
+          disabled={Boolean(composerBusy)}
+          onClick={() => {
+            setAddMenuOpen(false);
+            fileInputRef.current?.click();
+          }}
+        >
+          <Paperclip size={15} style={{ color: "#10b981" }} />
+          <div className="dashboard-dropdown-item-text">
+            <span className="dashboard-dropdown-item-title">上传文件</span>
+            <span className="dashboard-dropdown-item-desc">文档、配置、日志或代码</span>
+          </div>
+        </button>
+        <button
+          className="dashboard-dropdown-item"
+          type="button"
+          disabled={Boolean(composerBusy)}
+          onClick={() => {
+            setAddMenuOpen(false);
+            void handlePasteClipboardImage();
+          }}
+        >
+          <ClipboardList size={15} style={{ color: "#8b5cf6" }} />
+          <div className="dashboard-dropdown-item-text">
+            <span className="dashboard-dropdown-item-title">粘贴图片</span>
+            <span className="dashboard-dropdown-item-desc">读取剪贴板最新图片</span>
+          </div>
+        </button>
+      </DashboardPopover>
+    );
+  };
+
   // Sync stored conversations on mount (remote Saki conversations + local storage)
   useEffect(() => {
     let isCancelled = false;
@@ -869,6 +1419,7 @@ export function DashboardView({
             const loaded = remote.map((c) => ({
               id: c.id,
               instanceId: c.instanceId ?? null,
+              workspaceInstanceIds: c.workspaceInstanceIds ?? sakiWorkspaceIdsFromContextKey(c.contextKey, c.instanceId),
               updatedAt: c.updatedAt,
               title: c.title || "历史会话",
               category: c.instanceId ? c.label || "实例会话" : "无项目",
@@ -884,7 +1435,8 @@ export function DashboardView({
                 rollbackJournal: m.rollbackJournal,
                 thinking: m.thinking,
                 actions: dashboardStoredActions(m),
-                thinkingDurationSec: m.thinkingDurationSec
+                thinkingDurationSec: m.thinkingDurationSec,
+                attachments: m.attachments
               }))
             }));
             return [...loaded.map((session) => streamRunsRef.current.has(session.id) ? current.find((item) => item.id === session.id) ?? session : session),
@@ -904,6 +1456,7 @@ export function DashboardView({
           const loaded = stored.map((c) => ({
             id: c.id,
             instanceId: c.instanceId ?? null,
+              workspaceInstanceIds: c.workspaceInstanceIds ?? sakiWorkspaceIdsFromContextKey(c.contextKey, c.instanceId),
             title: c.title || "历史会话",
             category: c.label || "历史记录",
             time: formatRelativeTime(c.updatedAt, language),
@@ -918,7 +1471,8 @@ export function DashboardView({
               rollbackJournal: m.rollbackJournal,
               thinking: m.thinking,
               actions: dashboardStoredActions(m),
-              thinkingDurationSec: m.thinkingDurationSec
+              thinkingDurationSec: m.thinkingDurationSec,
+              attachments: m.attachments
             }))
           }));
           return [...loaded.map((session) => current.find((item) => item.id === session.id) ?? session),
@@ -943,7 +1497,7 @@ export function DashboardView({
         if (streamRunsRef.current.has(id)) continue;
         const session = next.find((item) => item.id === id);
         if (!dashboardTaskNeedsSync(session?.messages ?? [], task)) continue;
-        const updated = { ...session, id, instanceId: task.instanceId, title: session?.title ?? task.message.slice(0, 24),
+        const updated = { ...session, id, instanceId: task.instanceId, workspaceInstanceIds: task.workspaceInstanceIds, title: session?.title ?? task.message.slice(0, 24),
           category: session?.category ?? "智能体运维", time: session?.time ?? "刚刚", messages: dashboardTaskMessages(session?.messages ?? [], task) };
         next = session ? next.map((item) => item.id === id ? updated : item) : [updated, ...next];
       }
@@ -952,7 +1506,6 @@ export function DashboardView({
     const task = activeSessionId ? latestTasks.get(activeSessionId) : undefined;
     if (task && !streamRunsRef.current.has(activeSessionId!)) {
       setMessages((current) => dashboardTaskMessages(current, task));
-      setActiveInstanceId(task.instanceId);
     }
   }, [conversationsLoaded, latestTasks, activeSessionId]);
 
@@ -962,6 +1515,7 @@ export function DashboardView({
     if (session) {
       setMessages(session.messages ?? []);
       setActiveInstanceId(session.instanceId);
+      setWorkspaceInstanceIds(normalizeSakiWorkspaceIds(session.instanceId, session.workspaceInstanceIds));
     }
   }, [conversationsLoaded, activeSessionId, sessions]);
 
@@ -984,7 +1538,8 @@ export function DashboardView({
         else if (event.type === "delta") { content += event.text; patch({ content, isThinking: false }); }
         else if (event.type === "thinking") { thinking += event.text; patch({ thinking, isThinking: true }); }
         else if (event.type === "action") {
-          patch({ actions: [event.action], isThinking: false });
+          const isPending = event.action.status === "pending_approval" || event.action.status === "pending_input";
+          patch({ actions: [event.action], isThinking: false, ...(isPending ? { workflowMessage: undefined } : {}) });
         } else if (event.type === "workflow") patch({ workflowMessage: event.message });
         else if (event.type === "done") {
           settled = true;
@@ -992,7 +1547,7 @@ export function DashboardView({
             ...(event.response.actions ? { actions: event.response.actions } : {}), isStreaming: false, isThinking: false, workflowMessage: undefined });
         } else if (event.type === "error") {
           settled = true;
-          patch({ content: content || event.message, isStreaming: false, isThinking: false });
+          patch({ content: content || event.message, isStreaming: false, isThinking: false, workflowMessage: undefined });
         }
       }, run.controller.signal);
     } catch {
@@ -1189,13 +1744,16 @@ export function DashboardView({
 
   // Handle Send Message with Real Backend Streaming
   const handleSendMessage = useCallback(
-    async (textToSend?: string, historyOverride?: ChatMessage[]) => {
-      const prompt = (textToSend ?? promptText).trim();
-      if (!prompt || isStreaming || (activeSessionId && streamRunsRef.current.has(activeSessionId)) || (actionBusyId && !historyOverride) || !(interactionMode === "agent" ? canUseAgent : canUseChat)) return;
-      if (activeInstanceId && !selectedProject) {
-        setError("当前项目不可用或未授权，请重新选择项目。");
+    async (textToSend?: string, historyOverride?: ChatMessage[], attachmentOverride?: SakiInputAttachment[]) => {
+      const trimmedPrompt = (textToSend ?? promptText).trim();
+      const currentAttachments = [...(attachmentOverride ?? attachments)];
+      if ((!trimmedPrompt && currentAttachments.length === 0) || workspaceSelectionBusy || isStreaming || (activeSessionId && streamRunsRef.current.has(activeSessionId)) || (actionBusyId && !historyOverride) || !(interactionMode === "agent" ? canUseAgent : canUseChat)) return;
+      if (!canUseProjectMode(interactionMode)) {
+        setError("已选工作区不可用或未授权，请重新选择工作区。");
         return;
       }
+
+      const prompt = trimmedPrompt || (currentAttachments.length === 1 ? `查看附件：${currentAttachments[0]?.name}` : `查看已上传的 ${currentAttachments.length} 个附件`);
 
       const userMsgId = `u-${newClientId()}`;
       const assistantMsgId = `a-${newClientId()}`;
@@ -1207,7 +1765,8 @@ export function DashboardView({
         id: userMsgId,
         role: "user",
         content: prompt,
-        time: "刚刚", createdAt
+        time: "刚刚", createdAt,
+        ...(currentAttachments.length > 0 ? { attachments: currentAttachments } : {})
       };
 
       const assistantMsg: ChatMessage = {
@@ -1220,9 +1779,13 @@ export function DashboardView({
 
       setMessages([...sourceMessages, userMsg, assistantMsg]);
       setPromptText("");
+      setAttachments([]);
+      setMentionCaret(0);
+      setMentionDismissedStart(null);
+      setAddMenuOpen(false);
       selectSession(convId);
       const sessionTitle = prompt.length > 24 ? `${prompt.slice(0, 24)}...` : prompt;
-      const initialSession: SessionItem = { id: convId, instanceId: activeInstanceId, title: sessions.find((session) => session.id === convId)?.title ?? sessionTitle,
+      const initialSession: SessionItem = { id: convId, instanceId: activeInstanceId, workspaceInstanceIds: selectedWorkspaceIds, title: sessions.find((session) => session.id === convId)?.title ?? sessionTitle,
         category: interactionMode === "agent" ? "智能体运维" : "聊天问答", time: "刚刚", messages: [...sourceMessages, userMsg, assistantMsg] };
       setSessions((current) => [initialSession, ...current.filter((session) => session.id !== convId)]);
       const run = startStream(convId, interactionMode);
@@ -1234,11 +1797,20 @@ export function DashboardView({
       const persistLocal = (next: ChatMessage[]) => {
         const stored = readSakiConversations(userId);
         const previous = stored.find((session) => session.id === convId);
-        writeSakiConversations([{ id: convId, contextKey: activeInstanceId ? `instance:${activeInstanceId}` : "global",
+        writeSakiConversations([{ id: convId, contextKey: sakiWorkspaceContextKey(activeInstanceId, selectedWorkspaceIds),
           title: sessionTitle, label: interactionMode === "agent" ? "Agent" : "Chat", detail: currentModelDisplayName || "",
-          instanceId: activeInstanceId, createdAt: previous?.createdAt ?? createdAt, updatedAt: new Date().toISOString(),
-          messages: next.map((message) => ({ ...message, thinking: message.thinking ?? "", actions: message.actions ?? [],
-            createdAt: message.createdAt ?? createdAt, streaming: Boolean(message.isStreaming) }))
+          instanceId: activeInstanceId, workspaceInstanceIds: selectedWorkspaceIds, createdAt: previous?.createdAt ?? createdAt, updatedAt: new Date().toISOString(),
+          messages: next.map((message) => {
+            const { attachments: msgAttachments, ...rest } = message;
+            return {
+              ...rest,
+              thinking: rest.thinking ?? "",
+              actions: rest.actions ?? [],
+              createdAt: rest.createdAt ?? createdAt,
+              streaming: Boolean(rest.isStreaming),
+              ...(msgAttachments && msgAttachments.length > 0 ? { attachments: msgAttachments } : {})
+            };
+          })
         }, ...stored.filter((session) => session.id !== convId)], userId);
       };
       persistLocal(initialSession.messages!);
@@ -1257,6 +1829,9 @@ export function DashboardView({
 
       const { model: requestedModel, provider: requestedProvider } = parseSakiModelSelection(activeModelKey);
 
+      const mentionedSkills = resolveSakiMentionedSkills(prompt, skills);
+      const mentionedSkillIds = mentionedSkills.map((s) => s.id);
+
       const requestPayload: SakiChatRequest = {
         message: prompt,
         clientRequestId: newClientId(),
@@ -1265,11 +1840,13 @@ export function DashboardView({
         assistantMessageId: assistantMsgId,
         mode: interactionMode,
         agentPermissionMode: permMode,
-        instanceId: activeInstanceId,
+        instanceId: activeInstanceId, workspaceInstanceIds: selectedWorkspaceIds,
         terminalSandbox: true,
         model: requestedModel || null,
         provider: requestedProvider || null,
-        history: historyPayload
+        history: historyPayload,
+        ...(mentionedSkillIds.length > 0 ? { selectedSkillIds: mentionedSkillIds } : {}),
+        ...(currentAttachments.length > 0 ? { attachments: currentAttachments } : {})
       };
 
       let finalContent = "";
@@ -1329,9 +1906,18 @@ export function DashboardView({
                 finalActions.push(act);
               }
               const updatedActions = [...finalActions];
+              const isPending = act.status === "pending_approval" || act.status === "pending_input";
               updateMessages((prev) =>
                 prev.map((msg) =>
-                  msg.id === assistantMsgId ? { ...msg, actions: updatedActions, isThinking: false, thinkingDurationSec } : msg
+                  msg.id === assistantMsgId
+                    ? {
+                        ...msg,
+                        actions: updatedActions,
+                        isThinking: false,
+                        thinkingDurationSec,
+                        ...(isPending ? { workflowMessage: undefined } : {})
+                      }
+                    : msg
                 )
               );
             } else if (event.type === "done") {
@@ -1349,7 +1935,8 @@ export function DashboardView({
                         actions: finalActions,
                         thinkingDurationSec: finishThinking(),
                         isThinking: false,
-                        isStreaming: false
+                        isStreaming: false,
+                        workflowMessage: undefined
                       }
                     : msg
                 )
@@ -1362,7 +1949,7 @@ export function DashboardView({
               updateMessages((prev) =>
                 prev.map((msg) =>
                   msg.id === assistantMsgId
-                    ? { ...msg, content: finalContent, isStreaming: false }
+                    ? { ...msg, content: finalContent, isStreaming: false, workflowMessage: undefined }
                     : msg
                 )
               );
@@ -1416,7 +2003,7 @@ export function DashboardView({
 
         const updatedSession: SessionItem = {
           id: convId,
-          instanceId: activeInstanceId,
+          instanceId: activeInstanceId, workspaceInstanceIds: selectedWorkspaceIds,
           title: sessionTitle,
           category: interactionMode === "agent" ? "智能体运维" : "聊天问答",
           time: "刚刚",
@@ -1440,8 +2027,8 @@ export function DashboardView({
               title: sessionTitle,
               label: "Chat",
               detail: currentModelDisplayName || requestedModel || undefined,
-              instanceId: activeInstanceId,
-              contextKey: activeInstanceId ? `instance:${activeInstanceId}` : "global",
+              instanceId: activeInstanceId, workspaceInstanceIds: selectedWorkspaceIds,
+              contextKey: sakiWorkspaceContextKey(activeInstanceId, selectedWorkspaceIds),
               baseUpdatedAt: historyVersionsRef.current.get(convId) ?? sessions.find((session) => session.id === convId)?.updatedAt,
               messages: completedMessages.map((m) => ({
                 id: m.id,
@@ -1452,6 +2039,7 @@ export function DashboardView({
                 actions: m.actions ?? [],
                 taskId: m.taskId,
                 rollbackJournal: m.rollbackJournal,
+                attachments: m.attachments,
                 createdAt: m.createdAt ?? createdAt
               }))
             });
@@ -1469,6 +2057,9 @@ export function DashboardView({
       activeModelKey,
       activeSessionId,
       activeInstanceId,
+      workspaceInstanceIds,
+      workspaceSelectionBusy,
+      authorizedProjects,
       selectedProject,
       actionBusyId,
       canUseAgent,
@@ -1479,6 +2070,7 @@ export function DashboardView({
       isStreaming,
       messages,
       promptText,
+      attachments,
       token,
       userId,
       sessions,
@@ -1487,6 +2079,37 @@ export function DashboardView({
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionMenuOpen && mentionCandidates.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionIndex((current) => (current + 1) % mentionCandidates.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionIndex((current) => (current - 1 + mentionCandidates.length) % mentionCandidates.length);
+        return;
+      }
+      if (
+        (e.key === "Enter" || e.key === "Tab") &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.nativeEvent.isComposing
+      ) {
+        const selected = mentionCandidates[mentionIndex] ?? mentionCandidates[0];
+        if (selected) {
+          e.preventDefault();
+          handleApplyMention(selected);
+          return;
+        }
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMentionDismissedStart(activeSakiMentionQuery(promptText, mentionCaret)?.start ?? null);
+        return;
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void handleSendMessage();
@@ -1494,11 +2117,15 @@ export function DashboardView({
   };
 
   const handleNewChat = () => {
-    if (actionBusyId) return;
+    if (actionBusyId || workspaceSelectionBusy) return;
     selectSession(null);
     setMessages([]);
     setSelectedTool(null);
     setPromptText("");
+    setAttachments([]);
+    setMentionCaret(0);
+    setMentionDismissedStart(null);
+    setAddMenuOpen(false);
     setViewMode("workspace");
     setGreetingSentence(getGreetingSentence());
     if (typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches) {
@@ -1510,7 +2137,7 @@ export function DashboardView({
   };
 
   const handleSelectSession = (sessionId: string) => {
-    if (actionBusyId) return;
+    if (actionBusyId || workspaceSelectionBusy) return;
     selectSession(sessionId);
     setSelectedTool(null);
     setViewMode("workspace");
@@ -1519,6 +2146,7 @@ export function DashboardView({
     }
     const found = sessions.find((s) => s.id === sessionId);
     setActiveInstanceId(found?.instanceId ?? null);
+    setWorkspaceInstanceIds(normalizeSakiWorkspaceIds(found?.instanceId, found?.workspaceInstanceIds));
     if (found?.messages && found.messages.length > 0) {
       setMessages(found.messages);
       return;
@@ -1526,6 +2154,7 @@ export function DashboardView({
     const stored = readSakiConversations(userId).find((c) => c.id === sessionId);
     if (stored?.messages && Array.isArray(stored.messages)) {
       setActiveInstanceId(stored.instanceId ?? null);
+      setWorkspaceInstanceIds(stored.workspaceInstanceIds ?? sakiWorkspaceIdsFromContextKey(stored.contextKey, stored.instanceId));
       setMessages(
         stored.messages.map((m: any, idx: number) => ({
           id: m.id || `m-${idx}`,
@@ -1538,7 +2167,8 @@ export function DashboardView({
           rollbackJournal: m.rollbackJournal,
           thinking: m.thinking,
           actions: dashboardStoredActions(m),
-          thinkingDurationSec: m.thinkingDurationSec
+          thinkingDurationSec: m.thinkingDurationSec,
+          attachments: m.attachments
         }))
       );
     } else {
@@ -1586,12 +2216,13 @@ export function DashboardView({
     const previous = cached.find((conversation) => conversation.id === activeSessionId);
     const title = next.find((message) => message.role === "user")?.content.slice(0, 24) || "新对话";
     const conversation = {
-      id: activeSessionId, contextKey: activeInstanceId ? `instance:${activeInstanceId}` : "global", title,
+      id: activeSessionId, contextKey: sakiWorkspaceContextKey(activeInstanceId, selectedWorkspaceIds), title,
       label: previous?.label ?? (interactionMode === "agent" ? "Agent" : "Chat"), detail: previous?.detail ?? "",
-      instanceId: activeInstanceId, createdAt: previous?.createdAt ?? updatedAt, updatedAt,
+      instanceId: activeInstanceId, workspaceInstanceIds: selectedWorkspaceIds, createdAt: previous?.createdAt ?? updatedAt, updatedAt,
       messages: next.map((message) => ({ id: message.id, role: message.role, content: message.content,
         thinking: message.thinking ?? "", thinkingDurationSec: message.thinkingDurationSec, actions: message.actions ?? [],
-        taskId: message.taskId, rollbackJournal: message.rollbackJournal, createdAt: message.createdAt ?? updatedAt }))
+        taskId: message.taskId, rollbackJournal: message.rollbackJournal,
+        ...(message.attachments ? { attachments: message.attachments } : {}), createdAt: message.createdAt ?? updatedAt }))
     };
     writeSakiConversations([conversation, ...cached.filter((item) => item.id !== activeSessionId)], userId);
     setSessions((current) => current.map((session) => session.id === activeSessionId ? { ...session, title, messages: next, updatedAt, time: "刚刚" } : session));
@@ -1604,7 +2235,7 @@ export function DashboardView({
     let updatedAt = new Date().toISOString();
     if (!write.localOnly) {
       const saved = await api.sakiSaveConversation(token, {
-        id: activeSessionId, instanceId: activeInstanceId, contextKey: activeInstanceId ? `instance:${activeInstanceId}` : "global",
+        id: activeSessionId, instanceId: activeInstanceId, workspaceInstanceIds: selectedWorkspaceIds, contextKey: sakiWorkspaceContextKey(activeInstanceId, selectedWorkspaceIds),
         title: next.find((message) => message.role === "user")?.content.slice(0, 24) || "新对话",
         baseUpdatedAt: write.baseUpdatedAt,
         messages: next.map((message) => ({ ...message, createdAt: message.createdAt ?? updatedAt, streaming: false }))
@@ -1632,7 +2263,7 @@ export function DashboardView({
     setActionBusyId(`message:${messageId}`);
     let working = messages;
     let changedActions = false;
-    let resend: { content: string; history: ChatMessage[] } | undefined;
+    let resend: { content: string; history: ChatMessage[]; attachments: SakiInputAttachment[] } | undefined;
     try {
       const write = await prepareMessageHistoryWrite();
       const turn = dashboardTurnRange(messages, messageId)!;
@@ -1669,10 +2300,11 @@ export function DashboardView({
         }
         const next = operation === "rollback_files" ? working : working.slice(0, undoIndex);
         await saveMessageHistory(next, write);
-        if (editUser && typeof operation === "object") resend = { content: operation.edit, history: next };
+        if (editUser && typeof operation === "object") resend = { content: operation.edit, history: next, attachments: target.attachments ?? [] };
         else if (operation === "rollback_files") setMessageNotice(restored ? `已撤回 ${restored} 次代码更改，对话记录已保留。` : "此处没有可撤回的代码更改。");
         else {
           setPromptText(messages[turn.start]?.role === "user" ? messages[turn.start]!.content : "");
+          setAttachments(messages[turn.start]?.attachments ?? []);
           setMessageNotice(restored ? `已撤回到此处，并还原 ${restored} 次修改。` : "已撤回对话到此处；此处没有可回滚的文件检查点。");
           textareaRef.current?.focus();
         }
@@ -1698,7 +2330,7 @@ export function DashboardView({
       messageMutationRef.current = false;
       setActionBusyId(null);
     }
-    if (resend) await handleSendMessage(resend.content, resend.history);
+    if (resend) await handleSendMessage(resend.content, resend.history, resend.attachments);
   }
 
   async function decideAction(messageId: string, action: SakiAgentAction, decision: "approve" | "reject" | "rollback" | { selection?: string; customText?: string; skipped?: boolean }) {
@@ -1752,7 +2384,8 @@ export function DashboardView({
               publish({ thinking, isThinking: true });
             } else if (event.type === "action") {
               actions = [...new Map([...actions, event.action].map((item) => [item.id, item])).values()];
-              publish({ actions, isThinking: false });
+              const isPending = event.action.status === "pending_approval" || event.action.status === "pending_input";
+              publish({ actions, isThinking: false, ...(isPending ? { workflowMessage: undefined } : {}) });
             } else if (event.type === "workflow") {
               publish({ workflowMessage: event.message });
             } else if (event.type === "done") {
@@ -1760,6 +2393,7 @@ export function DashboardView({
                 actions: event.response.actions ?? actions, isStreaming: false, isThinking: false, workflowMessage: undefined });
             } else if (event.type === "error") {
               setError(event.message);
+              publish({ isStreaming: false, isThinking: false, workflowMessage: undefined });
             }
           }, controller.signal);
         } finally {
@@ -1920,7 +2554,8 @@ export function DashboardView({
         <main className="dashboard-workspace">
           {/* Top Unified Navigation Bar - Borderless Cupertino / Saki */}
           <div className="dashboard-workspace-topbar">
-            <div className={`dashboard-topbar-left ${!sidebarCollapsed ? "is-hidden" : ""}`}>
+            <div className="dashboard-topbar-left">
+              <div className={`dashboard-topbar-navigation ${!sidebarCollapsed ? "is-hidden" : ""}`}>
               {/* Sleek Ghost Sidebar Toggle Button */}
               <button
                 className="dashboard-nav-toggle-btn"
@@ -1942,6 +2577,7 @@ export function DashboardView({
               >
                 <SquarePen size={15} />
               </button>
+              </div>
 
               {/* During active chat sessions, keep the instance/page breadcrumb selector in topbar */}
               {messages.some((message) => !message.rollbackJournal) && (
@@ -1957,10 +2593,8 @@ export function DashboardView({
                       ) : (
                         <Folder size={14} className="dashboard-project-icon" />
                       )}
-                      <span className="dashboard-project-name">
-                        {activeInstanceId
-                          ? instances.find((i) => i.id === activeInstanceId)?.name || "实例不可用"
-                          : "无项目"}
+                      <span className="dashboard-project-name" title={workspaceNames}>
+                        {workspaceLabel}
                       </span>
                       <ChevronDown size={12} className={`dashboard-project-arrow ${topbarDropdownOpen ? "is-open" : ""}`} />
                     </button>
@@ -1981,7 +2615,7 @@ export function DashboardView({
                       ) : (
                         <GitBranch size={13} className="dashboard-context-icon-purple" />
                       )}
-                      <span className="dashboard-project-name">
+                      <span className="dashboard-project-name" title={workspaceNames}>
                         {activeEnvironment === "local" ? "Local" : "New Worktree"}
                       </span>
                       <ChevronDown size={11} className={`dashboard-project-arrow ${worktreeShelfOpen ? "is-open" : ""}`} />
@@ -2239,10 +2873,8 @@ export function DashboardView({
                         ) : (
                           <Folder size={14} className="dashboard-project-icon" />
                         )}
-                        <span className="dashboard-project-name">
-                          {activeInstanceId
-                            ? instances.find((i) => i.id === activeInstanceId)?.name || "实例不可用"
-                            : "无项目"}
+                        <span className="dashboard-project-name" title={workspaceNames}>
+                          {workspaceLabel}
                         </span>
                         <ChevronDown size={12} className={`dashboard-project-arrow ${contextDropdownOpen ? "is-open" : ""}`} />
                       </button>
@@ -2263,7 +2895,7 @@ export function DashboardView({
                         ) : (
                           <GitBranch size={13} className="dashboard-context-icon-purple" />
                         )}
-                        <span className="dashboard-project-name">
+                        <span className="dashboard-project-name" title={workspaceNames}>
                           {activeEnvironment === "local" ? "Local" : "New Worktree"}
                         </span>
                         <ChevronDown size={11} className={`dashboard-project-arrow ${worktreeShelfOpen ? "is-open" : ""}`} />
@@ -2274,9 +2906,26 @@ export function DashboardView({
                   </div>
 
                   {/* Refractive Liquid Glass Input Bar (Real Shader Refraction Lens) */}
-                  <div className="dashboard-liquid-input-wrapper">
+                  <div
+                    ref={heroInputWrapperRef}
+                    className={`dashboard-liquid-input-wrapper ${mentionMenuOpen ? "has-mention-open" : ""}`}
+                    onDragEnter={handleDragEnter}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                  >
+                    {mentionMenuOpen && (
+                      <SakiMentionMenu
+                        candidates={mentionCandidates}
+                        activeIndex={mentionIndex}
+                        onHover={setMentionIndex}
+                        onSelect={handleApplyMention}
+                        anchorRef={heroInputWrapperRef}
+                        variant="dashboard"
+                      />
+                    )}
                     <LiquidGlassContainer
-                      className="saki-input-container liquid-glass-container dashboard-liquid-input"
+                      className={`saki-input-container liquid-glass-container dashboard-liquid-input ${isDragOver ? "is-drag-over" : ""}`}
                       displacementScale={100}
                       zoom={1.20}
                       refractionIntensity={1.2}
@@ -2285,29 +2934,68 @@ export function DashboardView({
                       cornerRadius={24}
                       mode="shader"
                     >
+                      {/* Drag & drop overlay hint */}
+                      {isDragOver && (
+                        <div className="dashboard-input-drop-overlay">
+                          <Upload size={20} className="dashboard-drop-overlay-icon" />
+                          <span>松开鼠标添加图片或文件</span>
+                        </div>
+                      )}
+
+                      {/* Attachment Tray */}
+                      {attachments.length > 0 && (
+                        <div className="dashboard-attachment-tray saki-attachment-tray">
+                          {attachments.map((attachment, index) => (
+                            <SakiAttachmentChip
+                              attachment={attachment}
+                              key={attachment.id ?? `${attachment.name}-${index}`}
+                              removable
+                              onClick={() => setPreviewingAttachment({ attachment, editable: true })}
+                              onRemove={() => setAttachments((curr) => curr.filter((a) => a !== attachment))}
+                            />
+                          ))}
+                        </div>
+                      )}
+
                       <div className="dashboard-input-main-row">
                         <textarea
                           ref={textareaRef}
                           className="dashboard-input-textarea"
                           rows={1}
                           placeholder={
-                            interactionMode === "agent"
+                            attachments.length > 0 || skills.length > 0
+                              ? "输入 @ 引用文件或 Skill，或直接下达运维指令..."
+                              : interactionMode === "agent"
                               ? `输入 Agent 自动化运维指令 (${agentPermission === "ask" ? "需确认模式" : agentPermission === "auto" ? "自主执行模式" : "只读安全模式"})...`
                               : "向 AI 咨询集群架构、配置或运维知识 (问答聊天模式)..."
                           }
                           value={promptText}
-                          onChange={(e) => setPromptText(e.target.value)}
+                          onChange={(e) => {
+                            setPromptText(e.target.value);
+                            setMentionDismissedStart(null);
+                            handleSyncMentionCaret(e.currentTarget);
+                          }}
+                          onClick={(e) => handleSyncMentionCaret(e.currentTarget)}
+                          onSelect={(e) => handleSyncMentionCaret(e.currentTarget)}
+                          onKeyUp={(e) => handleSyncMentionCaret(e.currentTarget)}
+                          onFocus={(e) => handleSyncMentionCaret(e.currentTarget)}
+                          onBlur={() => {
+                            const active = activeSakiMentionQuery(promptText, mentionCaret);
+                            if (active) setMentionDismissedStart(active.start);
+                          }}
                           onKeyDown={handleKeyDown}
+                          onPaste={handlePaste}
                         />
                       </div>
 
                       <div className="dashboard-input-toolbar">
                         <div className="dashboard-toolbar-left">
                           <button
-                            className="dashboard-glass-action-btn"
+                            ref={heroAddBtnRef}
+                            className={`dashboard-glass-action-btn ${addMenuOpen && activeAddAnchorRef.current === heroAddBtnRef.current ? "is-active" : ""}`}
                             type="button"
-                            title="附加上下文"
-                            onClick={() => setPromptText((p) => (p ? `${p} [关联在线节点]` : "检查全节点连通性"))}
+                            title="上传图片或文件"
+                            onClick={() => handleToggleAddMenu(heroAddBtnRef)}
                           >
                             <Plus size={15} />
                           </button>
@@ -2322,7 +3010,7 @@ export function DashboardView({
                             <Mic size={14} />
                           </button>
                           <button
-                            className={`dashboard-send-circle-btn ${promptText.trim() ? "has-input" : ""} ${isStreaming ? "is-streaming" : ""}`}
+                            className={`dashboard-send-circle-btn ${(promptText.trim() || attachments.length > 0) ? "has-input" : ""} ${isStreaming ? "is-streaming" : ""}`}
                             type="button"
                             title={isStreaming ? "停止生成" : "发送指令"}
                             onClick={isStreaming ? handleStopGeneration : () => void handleSendMessage()}
@@ -2510,7 +3198,8 @@ export function DashboardView({
                         <DashboardAgentMessage key={msg.id} message={msg} busyId={isStreaming ? "streaming" : actionBusyId}
                           selectedActionId={selectedTool?.messageId === msg.id ? selectedTool.actionId : undefined}
                           onSelectAction={selectTool} onDecide={decideAction} onMessageOperation={handleMessageOperation} copiedMessageId={copiedMessageId}
-                          canRollbackCode={dashboardRollbackActions(messages.slice(dashboardTurnRange(messages, msg.id)!.start)).some(dashboardIsCodeChange)} />
+                          canRollbackCode={dashboardRollbackActions(messages.slice(dashboardTurnRange(messages, msg.id)!.start)).some(dashboardIsCodeChange)}
+                          onPreviewAttachment={(attachment) => setPreviewingAttachment({ attachment, editable: false })} />
                       ))}
                       {!isStreaming && gitChangesSummary && (gitChangesSummary.filesCount > 0 || gitChangesSummary.canRestore) ? (
                         <div className="dashboard-session-bottom-changes">
@@ -2522,62 +3211,123 @@ export function DashboardView({
                   </div>
 
                   {/* Docked Liquid Glass Input */}
-                  <div className="dashboard-docked-input">
+                  <div
+                    className="dashboard-docked-input"
+                    onDragEnter={handleDragEnter}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                  >
                     {isStreaming && gitChangesSummary && (gitChangesSummary.filesCount > 0 || gitChangesSummary.canRestore) ? (
                       <div className="dashboard-docked-changes-pill-wrap">
                         <SakiChangedFilesPill summary={gitChangesSummary} onClick={handleOpenChangesDetails} />
                       </div>
                     ) : null}
-                    <LiquidGlassContainer
-                      className="saki-input-container liquid-glass-container dashboard-liquid-input"
-                      displacementScale={100}
-                      zoom={1.20}
-                      refractionIntensity={1.2}
-                      blurAmount={0}
-                      saturation={108}
-                      cornerRadius={22}
-                      mode="shader"
+                    <div
+                      ref={dockedInputWrapperRef}
+                      className={`dashboard-liquid-input-wrapper dashboard-docked-liquid-wrapper ${mentionMenuOpen ? "has-mention-open" : ""}`}
                     >
-                      <div className="dashboard-input-main-row">
-                        <textarea
-                          className="dashboard-input-textarea"
-                          rows={1}
-                          placeholder={
-                            interactionMode === "agent"
-                              ? `继续下达 Agent 自动化运维指令 (${agentPermission === "ask" ? "需确认" : agentPermission === "auto" ? "自主执行" : "只读安全"})...`
-                              : "继续向 AI 咨询集群知识 (问答聊天模式)..."
-                          }
-                          value={promptText}
-                          onChange={(e) => setPromptText(e.target.value)}
-                          onKeyDown={handleKeyDown}
+                      {mentionMenuOpen && (
+                        <SakiMentionMenu
+                          candidates={mentionCandidates}
+                          activeIndex={mentionIndex}
+                          onHover={setMentionIndex}
+                          onSelect={handleApplyMention}
+                          anchorRef={dockedInputWrapperRef}
+                          variant="dashboard"
                         />
-                      </div>
-                      <div className="dashboard-input-toolbar">
-                        <div className="dashboard-toolbar-left">
-                          <button
-                            className="dashboard-glass-action-btn"
-                            type="button"
-                            title="附加上下文"
-                            onClick={() => setPromptText((p) => `${p} [当前环境]`)}
-                          >
-                            <Plus size={14} />
-                          </button>
-                          {renderModelSelector()}
-                          {renderModeSelector()}
-                          {renderPermissionSelector()}
+                      )}
+                      <LiquidGlassContainer
+                        className={`saki-input-container liquid-glass-container dashboard-liquid-input ${isDragOver ? "is-drag-over" : ""}`}
+                        displacementScale={100}
+                        zoom={1.20}
+                        refractionIntensity={1.2}
+                        blurAmount={0}
+                        saturation={108}
+                        cornerRadius={22}
+                        mode="shader"
+                      >
+                        {/* Drag & drop overlay hint */}
+                        {isDragOver && (
+                          <div className="dashboard-input-drop-overlay">
+                            <Upload size={20} className="dashboard-drop-overlay-icon" />
+                            <span>松开鼠标添加图片或文件</span>
+                          </div>
+                        )}
+
+                        {/* Attachment Tray */}
+                        {attachments.length > 0 && (
+                          <div className="dashboard-attachment-tray saki-attachment-tray">
+                            {attachments.map((attachment, index) => (
+                              <SakiAttachmentChip
+                                attachment={attachment}
+                                key={attachment.id ?? `${attachment.name}-${index}`}
+                                removable
+                                onClick={() => setPreviewingAttachment({ attachment, editable: true })}
+                                onRemove={() => setAttachments((curr) => curr.filter((a) => a !== attachment))}
+                              />
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="dashboard-input-main-row">
+                          <textarea
+                            ref={dockedTextareaRef}
+                            className="dashboard-input-textarea"
+                            rows={1}
+                            placeholder={
+                              attachments.length > 0 || skills.length > 0
+                                ? "输入 @ 引用文件或 Skill，或继续发送指令..."
+                                : interactionMode === "agent"
+                                ? `继续下达 Agent 自动化运维指令 (${agentPermission === "ask" ? "需确认" : agentPermission === "auto" ? "自主执行" : "只读安全"})...`
+                                : "继续向 AI 咨询集群知识 (问答聊天模式)..."
+                            }
+                            value={promptText}
+                            onChange={(e) => {
+                              setPromptText(e.target.value);
+                              setMentionDismissedStart(null);
+                              handleSyncMentionCaret(e.currentTarget);
+                            }}
+                            onClick={(e) => handleSyncMentionCaret(e.currentTarget)}
+                            onSelect={(e) => handleSyncMentionCaret(e.currentTarget)}
+                            onKeyUp={(e) => handleSyncMentionCaret(e.currentTarget)}
+                            onFocus={(e) => handleSyncMentionCaret(e.currentTarget)}
+                            onBlur={() => {
+                              const active = activeSakiMentionQuery(promptText, mentionCaret);
+                              if (active) setMentionDismissedStart(active.start);
+                            }}
+                            onKeyDown={handleKeyDown}
+                            onPaste={handlePaste}
+                          />
                         </div>
-                        <div className="dashboard-toolbar-right">
-                          <button
-                            className={`dashboard-send-circle-btn ${promptText.trim() ? "has-input" : ""} ${isStreaming ? "is-streaming" : ""}`}
-                            type="button"
-                            title={isStreaming ? "停止生成" : "发送指令"}
-                            onClick={isStreaming ? handleStopGeneration : () => void handleSendMessage()}
-                          >
-                            {isStreaming ? <Square size={12} fill="currentColor" /> : <ArrowUp size={14} />}
-                          </button>
+                        <div className="dashboard-input-toolbar">
+                          <div className="dashboard-toolbar-left">
+                            <button
+                              ref={sessionAddBtnRef}
+                              className={`dashboard-glass-action-btn ${addMenuOpen && activeAddAnchorRef.current === sessionAddBtnRef.current ? "is-active" : ""}`}
+                              type="button"
+                              title="上传图片或文件"
+                              onClick={() => handleToggleAddMenu(sessionAddBtnRef)}
+                            >
+                              <Plus size={14} />
+                            </button>
+                            {renderModelSelector()}
+                            {renderModeSelector()}
+                            {renderPermissionSelector()}
+                          </div>
+                          <div className="dashboard-toolbar-right">
+                            <button
+                              className={`dashboard-send-circle-btn ${(promptText.trim() || attachments.length > 0) ? "has-input" : ""} ${isStreaming ? "is-streaming" : ""}`}
+                              type="button"
+                              title={isStreaming ? "停止生成" : "发送指令"}
+                              onClick={isStreaming ? handleStopGeneration : () => void handleSendMessage()}
+                            >
+                              {isStreaming ? <Square size={12} fill="currentColor" /> : <ArrowUp size={14} />}
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    </LiquidGlassContainer>
+                      </LiquidGlassContainer>
+                    </div>
                   </div>
                 </>
               )}
@@ -2590,6 +3340,7 @@ export function DashboardView({
             token={token}
             instance={selectedProject ?? null}
             terminals={terminals}
+            workspaceInstances={agentProjects.filter(instance => selectedWorkspaceIds.includes(instance.id))}
             activeTerminalId={activeTerminalId}
             onSelectTerminal={(id) => {
               setActiveTerminalId(id);
@@ -2626,6 +3377,51 @@ export function DashboardView({
           testingNodeId={testingNodeId}
         />
       ) : null}
+
+      {/* Attachment Preview & Editor Modal */}
+      {previewingAttachment ? (
+        <SakiAttachmentModal
+          attachment={previewingAttachment.attachment}
+          editable={previewingAttachment.editable}
+          onClose={() => setPreviewingAttachment(null)}
+          onSave={(updated) => {
+            setAttachments((curr) => curr.map((item) => (item === previewingAttachment.attachment ? updated : item)));
+            setPreviewingAttachment(null);
+          }}
+          onRemove={() => {
+            setAttachments((curr) => curr.filter((item) => item !== previewingAttachment.attachment));
+            setPreviewingAttachment(null);
+          }}
+        />
+      ) : null}
+
+      {/* Hidden File Inputs for Attachment Upload */}
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          if (files.length > 0) void handleAddFiles(files, "image");
+          e.target.value = "";
+        }}
+      />
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          if (files.length > 0) void handleAddFiles(files, "file");
+          e.target.value = "";
+        }}
+      />
+
+      {/* Upload Dropdown Popover */}
+      {renderAddPopover()}
     </>
   );
 }

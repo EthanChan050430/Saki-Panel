@@ -10,10 +10,10 @@ import type {
   SakiWorkspaceContext,
   UpdateSakiConfigRequest
 } from "@webops/shared";
-import { sakiListedModelSupportsVision } from "@webops/shared";
+import { sakiListedModelSupportsVision, normalizeSakiWorkspaceIds, resolveSakiMentionedSkills, parseSakiWorkspaceFileMentions } from "@webops/shared";
 import { writeAuditLog } from "../../audit.js";
 import { readDaemonInstanceFile, readDaemonInstanceLogs } from "../../daemon-client.js";
-import { assertSakiSessionAccess, sakiProjectPermissions } from "./session-access.js";
+import { assertSakiSessionAccess, assertSakiSelectedWorkspaces, sakiProjectPermissions } from "./session-access.js";
 import { buildDirectSystemPrompt, buildPrompt } from "./prompt.js";
 import { estimateModelCallTokens } from "../../tokenizer.js";
 import {
@@ -67,10 +67,13 @@ export async function resolveSakiContext(
   userId: string,
   instanceId: string | null | undefined,
   includeLogs = false,
-  mode: "agent" | "chat" = "agent"
+  mode: "agent" | "chat" = "agent",
+  workspaceInstanceIds?: string[]
 ): Promise<ResolvedSakiContext> {
   const { user, instance, permissions } = await assertSakiSessionAccess(userId, instanceId ?? null, mode);
   const context: ResolvedSakiContext = { instance, workspace: toWorkspaceContext(instance), logs: [], access: { isSuperAdmin: user.isSuperAdmin, permissions } };
+  const instances = await assertSakiSelectedWorkspaces(userId, instanceId, workspaceInstanceIds, mode);
+  if (instances) context.instances = instances;
   if (includeLogs && instance && permissions.includes("instance.logs")) {
     try { context.logs = (await readDaemonInstanceLogs(instance.node, instance.id, 180)).lines; } catch { /* optional logs */ }
   }
@@ -354,14 +357,21 @@ export async function prepareSakiChatInvocation(
   // Reject stale credentials, revoked assignments and foreign projects before
   // touching project context or sending attachments to an OCR/model provider.
   const mode = body.mode === "agent" ? "agent" : "chat";
-  const instanceId = trimString(body.instanceId) || null;
+  const selectedInstances = await assertSakiSelectedWorkspaces(request.user.sub, trimString(body.instanceId) || null, body.workspaceInstanceIds, mode);
+  const instanceId = trimString(body.instanceId) || selectedInstances?.[0]?.id || null;
   requireSakiModePermission(request.user.permissions, mode);
   const authorized = await assertSakiSessionAccess(request.user.sub, instanceId, mode);
   const permissions = sakiProjectPermissions(authorized.user, authorized.instance, request.user.permissions);
   requireSakiModePermission(permissions, mode);
   if (instanceId) requireUserPermission(permissions, "instance.view");
+  for (const instance of selectedInstances ?? []) {
+    const scoped = sakiProjectPermissions(authorized.user, instance, request.user.permissions);
+    requireSakiModePermission(scoped, mode);
+    requireUserPermission(scoped, "instance.view");
+  }
   const context: ResolvedSakiContext = {
     instance: authorized.instance, workspace: toWorkspaceContext(authorized.instance), logs: [],
+    ...(selectedInstances ? { instances: selectedInstances } : {}),
     access: { isSuperAdmin: authorized.user.isSuperAdmin, permissions }
   };
 
@@ -385,6 +395,7 @@ export async function prepareSakiChatInvocation(
     ...(trimString(body.resumeTaskId) ? { resumeTaskId: trimString(body.resumeTaskId).slice(0, 200) } : {}),
     history: Array.isArray(body.history) ? body.history : [],
     instanceId,
+    ...(selectedInstances ? { workspaceInstanceIds: normalizeSakiWorkspaceIds(instanceId, selectedInstances.map(item => item.id)) } : {}),
     panelError: trimString(body.panelError) || null,
     contextTitle: trimString(body.contextTitle) || null,
     contextText: trimContextText(body.contextText) || null,
@@ -425,15 +436,40 @@ export async function prepareSakiChatInvocation(
     `${message} ${modelInput.panelError ?? ""} ${modelInput.contextTitle ?? ""} ${combinedSakiContextText(modelInput).slice(0, 1200)}`.trim() ||
     "coding";
   const skillState = await loadSakiSkills(skillQuery, false, input.mode === "agent" ? 20 : 12);
-  const skills = input.selectedSkillIds?.length
-    ? await readSakiSkillsByIds(input.selectedSkillIds)
+  const mentionedSkills = resolveSakiMentionedSkills(message, skillState.skills);
+  const effectiveSkillIds = [
+    ...new Set([...(input.selectedSkillIds ?? []), ...mentionedSkills.map((s) => s.id)])
+  ];
+  const skills = effectiveSkillIds.length
+    ? await readSakiSkillsByIds(effectiveSkillIds)
     : skillState.skills;
-  const autoAppliedSkillContext = await buildAutoAppliedSakiSkillContext(skills, skillQuery, input.selectedSkillIds ?? []);
+  const autoAppliedSkillContext = await buildAutoAppliedSakiSkillContext(skills, skillQuery, effectiveSkillIds);
+
+  const mentionedFilePaths = parseSakiWorkspaceFileMentions(message);
+  let mentionedFilesContext = "";
+  if (includeInstanceFiles && context.instance && mentionedFilePaths.length > 0) {
+    const fileChunks: string[] = [];
+    for (const filePath of mentionedFilePaths.slice(0, 5)) {
+      try {
+        const file = await readDaemonInstanceFile(context.instance.node, context.instance.id, context.instance.workingDirectory, filePath);
+        if (file?.content) {
+          recordInstanceFileRead(context.instance.id, filePath, { content: file.content, size: file.size, modifiedAt: file.modifiedAt });
+          fileChunks.push(`[Referenced Workspace File: ${filePath}]\n${file.content.slice(0, 4000)}`);
+        }
+      } catch {
+        // Silently ignore missing or unreadable files
+      }
+    }
+    if (fileChunks.length > 0) {
+      mentionedFilesContext = fileChunks.join("\n\n");
+    }
+  }
 
   const combinedContextParts = [
     modelInput.contextText,
     memoryContext,
-    autoAppliedSkillContext
+    autoAppliedSkillContext,
+    mentionedFilesContext
   ].filter(Boolean);
 
   const enhancedModelInput: SakiChatRequest = combinedContextParts.length > 0

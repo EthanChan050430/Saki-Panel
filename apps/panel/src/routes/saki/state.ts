@@ -674,6 +674,7 @@ export function toSakiActiveTaskSummary(task: SakiActiveTask): SakiActiveTaskSum
     userId: task.userId,
     instanceId: task.instanceId,
     status: task.status,
+    ...(task.input.workspaceInstanceIds ? { workspaceInstanceIds: task.input.workspaceInstanceIds } : {}),
     startedAt: task.startedAt,
     updatedAt: task.updatedAt,
     message: task.input.message,

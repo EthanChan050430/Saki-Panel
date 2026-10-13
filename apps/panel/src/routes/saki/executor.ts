@@ -6,6 +6,7 @@ import { renderAgentFileWindow } from "./file-window.js";
 import type { CreateScheduledTaskRequest, PermissionCode, SakiAgentAction, SakiAgentRiskLevel, SakiChatRequest, SakiInputAttachment, UpdateScheduledTaskRequest } from "@webops/shared";
 import { prisma } from "../../db.js";
 import { assertSakiSessionAccess, hasSakiProjectAccess, sakiProjectPermissions } from "./session-access.js";
+import { selectedWorkspaceTarget } from "./selected-workspaces.js";
 import { writeAuditLog } from "../../audit.js";
 import { classifyCommandRisk, findCrossInstanceCommandEscape, findDangerousCommandReason } from "../../security.js";
 import { instanceAccessInclude, listVisibleInstances, loadInstanceAccessProfile, loadVisibleInstance } from "../../instance-access.js";
@@ -513,6 +514,10 @@ function isAgentSandboxEnabled(runtime: SakiAgentRuntime): boolean {
 }
 
 function assertCrossInstanceAccessAllowed(runtime: SakiAgentRuntime, instance: InstanceWithNode): void {
+  if (runtime.context.instances) {
+    selectedWorkspaceTarget(runtime.context, instance.id);
+    return;
+  }
   if (!isAgentSandboxEnabled(runtime)) return;
   const contextInstance = runtime.context.instance;
   if (!contextInstance) return;
@@ -523,6 +528,11 @@ function assertCrossInstanceAccessAllowed(runtime: SakiAgentRuntime, instance: I
 
 async function resolveAgentInstance(runtime: SakiAgentRuntime, args: Record<string, unknown>): Promise<InstanceWithNode> {
   const lookup = stringArg(args, "instanceId") || stringArg(args, "id") || stringArg(args, "instance");
+  if (runtime.context.instances) {
+    const target = selectedWorkspaceTarget(runtime.context, lookup);
+    if (!target) throw new RouteError("请先添加工作区。", 400);
+    return target;
+  }
   if (lookup) {
     requireUserPermission(runtime.permissions, "instance.view");
     const instance = await findInstanceByLookup(runtime.userId, lookup);
@@ -926,6 +936,7 @@ async function createPendingApprovalAction(
   const id = call.id || actionId();
   const args = normalizeToolArgs(call.name.toLowerCase(), call);
   const bindings = new Map<string, ReturnType<typeof bindSakiWorkspace>>();
+  for (const instance of runtime.context.instances ?? []) bindings.set(instance.id, bindSakiWorkspace(instance));
   if (runtime.context.instance) bindings.set(runtime.context.instance.id, bindSakiWorkspace(runtime.context.instance));
   const properties = canonicalToolSchema(call.name)?.parameters.properties as Record<string, unknown> | undefined;
   if (properties?.instanceId && (runtime.context.instance || stringArg(args, "instanceId"))
@@ -999,7 +1010,7 @@ async function createPendingQuestionAction(
   const createdAt = new Date().toISOString();
   await savePendingSakiAction({
     id, call: { ...call, name: "askUser", args: { question: text, options } }, userId: runtime.userId, contextInstanceId: runtime.context.instance?.id ?? null, createdAt,
-    resourceBindings: runtime.context.instance ? [bindSakiWorkspace(runtime.context.instance)] : [],
+    resourceBindings: (runtime.context.instances ?? (runtime.context.instance ? [runtime.context.instance] : [])).map(bindSakiWorkspace),
     approval: { required: false, reason: "Waiting for user input.", risk: "low" },
     ...(resume ? { resume } : {}),
     ...(runtime.kind ? { kind: runtime.kind } : {}),
@@ -1091,7 +1102,8 @@ export async function executeSakiAgentTool(
 ): Promise<SakiAgentAction> {
   if (!options.mutationLocked && /^(writefile|replaceinfile|editlines|batchedit|applypatch|uploadbase64|deletepath|renamepath|mkdir|generateimage|archivepaths|extractarchive|runcommand|runinshell|sendshellinput)$/.test(normalizedAgentToolName(call.name))) {
     const args = toolArgs(call);
-    return withSakiWorkspaceMutation(runtime.context.instance?.id ?? String(args.instanceId ?? "global"),
+    const selected = runtime.context.instances ? selectedWorkspaceTarget(runtime.context, stringArg(args, "instanceId") || stringArg(args, "instance") || stringArg(args, "id")) : null;
+    return withSakiWorkspaceMutation(selected?.id ?? runtime.context.instance?.id ?? String(args.instanceId ?? "global"),
       () => executeSakiAgentTool(runtime, call, { ...options, mutationLocked: true }));
   }
   const initiatingRuntime = runtime;
@@ -1142,11 +1154,11 @@ export async function executeSakiAgentTool(
         const query = stringArg(args, "query").toLowerCase();
         const limit = numericArg(args.limit, 50, 1, 100);
         const { user } = await assertSakiSessionAccess(runtime.userId, runtime.context.instance?.id ?? null, runtime.toolProfile === "chat" ? "chat" : "agent");
-        const instances = (await listVisibleInstances(runtime.userId)).filter((instance) => {
-          const permissions = sakiProjectPermissions(user, instance, runtime.permissions);
+        const instances = (runtime.context.instances ?? await listVisibleInstances(runtime.userId)).filter((instance) => {
+          const permissions = sakiProjectPermissions(user, instance, initiatingRuntime.permissions);
           return permissions.includes("instance.view") && permissions.includes(runtime.toolProfile === "chat" ? "saki.chat" : "saki.agent");
         });
-        const scoped = (!user.isSuperAdmin || isAgentSandboxEnabled(runtime)) && runtime.context.instance
+        const scoped = !runtime.context.instances && (!user.isSuperAdmin || isAgentSandboxEnabled(runtime)) && runtime.context.instance
           ? instances.filter((instance) => instance.id === runtime.context.instance?.id)
           : instances;
         const filtered = query
@@ -1477,7 +1489,7 @@ export async function executeSakiAgentTool(
         const commandRisk = classifyCommandRisk(command);
         if (commandRisk.risk === "critical") throw new RouteError(commandRisk.reason, 400);
         if (isAgentSandboxEnabled(runtime)) {
-          const escapeToken = findCrossInstanceCommandEscape(command);
+          const escapeToken = findCrossInstanceCommandEscape(command, instance.workingDirectory);
           if (escapeToken) {
             throw new RouteError(`沙箱安全拦截：终端命令包含越界目录或路径（${escapeToken}），已阻止访问工作区外部文件。`, 403);
           }
@@ -1612,11 +1624,12 @@ export async function executeSakiAgentTool(
       } else if (toolName === "listtasks") {
         requireUserPermission(runtime.permissions, "task.view");
         const lookup = stringArg(args, "instanceId");
-        const instance = lookup ? await findInstanceByLookup(runtime.userId, lookup) : isAgentSandboxEnabled(runtime) ? runtime.context.instance : null;
+        const instance = runtime.context.instances ? await resolveAgentInstance(runtime, args) : lookup ? await findInstanceByLookup(runtime.userId, lookup) : isAgentSandboxEnabled(runtime) ? runtime.context.instance : null;
         if (lookup && !instance) throw new RouteError("Instance not found.", 404);
         const tasks = await listScheduledTasks(instance?.id);
         const visibleTasks = (await filterAccessibleScheduledTasks(runtime.userId, tasks)).filter((task) =>
-          !isAgentSandboxEnabled(runtime) || !runtime.context.instance || task.instanceId === runtime.context.instance.id);
+          runtime.context.instances ? runtime.context.instances.some(instance => instance.id === task.instanceId)
+            : !isAgentSandboxEnabled(runtime) || !runtime.context.instance || task.instanceId === runtime.context.instance.id);
         observation = visibleTasks.map((task) => `${task.id} | ${task.name} | ${task.type} | cron=${task.cron} | enabled=${task.enabled} | instance=${task.instanceName ?? task.instanceId ?? "-"}`).join("\n") || "No scheduled tasks found.";
       } else if (toolName === "createscheduledtask") {
         requireUserPermission(runtime.permissions, "task.create");
@@ -1625,7 +1638,7 @@ export async function executeSakiAgentTool(
         if (taskInput.instanceId && !(await loadVisibleInstance(runtime.userId, taskInput.instanceId))) {
           throw new RouteError("Instance not found.", 404);
         }
-        if (isAgentSandboxEnabled(runtime)) {
+        if (!runtime.context.instances && isAgentSandboxEnabled(runtime)) {
           const contextId = runtime.context.instance?.id;
           if (contextId && taskInput.instanceId !== contextId) {
             throw new RouteError("沙箱安全拦截：已启用工作区沙箱，只能为当前实例创建定时任务。", 403);
@@ -1640,7 +1653,7 @@ export async function executeSakiAgentTool(
         const taskId = stringArg(args, "taskId");
         if (!taskId) throw new RouteError("updateScheduledTask requires a task id.", 400);
         const existing = await ensureAgentVisibleTask(runtime.userId, taskId, "task.update");
-        if (isAgentSandboxEnabled(runtime)) {
+        if (!runtime.context.instances && isAgentSandboxEnabled(runtime)) {
           const contextId = runtime.context.instance?.id;
           if (contextId && (existing.instanceId && existing.instanceId !== contextId)) {
             throw new RouteError("沙箱安全拦截：已启用工作区沙箱，只能操作当前实例的定时任务。", 403);
@@ -1660,7 +1673,7 @@ export async function executeSakiAgentTool(
           throw new RouteError("Instance not found.", 404);
         }
         if (next.instanceId !== undefined) await assertScheduledTaskAccess(runtime.userId, { instanceId: next.instanceId, createdBy: existing.createdBy }, "task.update");
-        if (isAgentSandboxEnabled(runtime) && next.instanceId && next.instanceId !== runtime.context.instance?.id) {
+        if (!runtime.context.instances && isAgentSandboxEnabled(runtime) && next.instanceId && next.instanceId !== runtime.context.instance?.id) {
           throw new RouteError("沙箱安全拦截：已启用工作区沙箱，只能操作当前实例的定时任务。", 403);
         }
         const task = await updateScheduledTask(taskId, next, runtime.userId);
@@ -1677,7 +1690,7 @@ export async function executeSakiAgentTool(
         const taskId = stringArg(args, "taskId");
         if (!taskId) throw new RouteError("runTask requires a task id.", 400);
         const task = await ensureAgentVisibleTask(runtime.userId, taskId, "task.run");
-        if (isAgentSandboxEnabled(runtime)) {
+        if (!runtime.context.instances && isAgentSandboxEnabled(runtime)) {
           const contextId = runtime.context.instance?.id;
           if (contextId && (task.instanceId && task.instanceId !== contextId)) {
             throw new RouteError("沙箱安全拦截：已启用工作区沙箱，只能运行当前实例的定时任务。", 403);

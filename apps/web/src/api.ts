@@ -28,6 +28,9 @@ import type {
   ConnectNodeByKeyRequest,
   ConnectNodeByKeyResponse,
   ConnectLocalNodeResponse,
+  ConnectSshNodeRequest,
+  ConnectSshNodeResponse,
+  TestSshNodeResponse,
   LocalDaemonStatusResponse,
   UserAccessKeyInfo,
   CreateUserAccessKeyResponse,
@@ -385,6 +388,7 @@ export interface SakiActiveTaskSummary {
   id: string;
   userId: string;
   instanceId: string | null;
+  workspaceInstanceIds?: string[] | undefined;
   status: "running" | "completed" | "failed" | "pending_approval" | "pending_input" | "cancelled";
   startedAt: string;
   updatedAt: string;
@@ -408,6 +412,7 @@ export interface SakiActiveTaskSummary {
 export interface SakiSavedConversation {
   id: string;
   contextKey: string;
+  workspaceInstanceIds?: string[] | undefined;
   label: string;
   detail: string;
   instanceId?: string | null | undefined;
@@ -829,6 +834,12 @@ export const api = {
   },
   connectLocalNode(token: string) {
     return requestJson<ConnectLocalNodeResponse>("/api/nodes/connect-local", { method: "POST", body: JSON.stringify({}) }, token);
+  },
+  testSshNode(token: string, input: ConnectSshNodeRequest) {
+    return requestJson<TestSshNodeResponse>("/api/nodes/ssh/test", { method: "POST", body: JSON.stringify(input) }, token);
+  },
+  connectSshNode(token: string, input: ConnectSshNodeRequest) {
+    return requestJson<ConnectSshNodeResponse>("/api/nodes/connect-ssh", { method: "POST", body: JSON.stringify(input) }, token);
   },
   createNode(token: string, input: CreateNodeRequest) {
     return requestJson<CreateNodeResponse>(
@@ -1718,6 +1729,7 @@ export const api = {
     conversation: {
       id: string;
       contextKey?: string | undefined;
+      workspaceInstanceIds?: string[] | undefined;
       title?: string | undefined;
       label?: string | undefined;
       detail?: string | undefined;

@@ -317,6 +317,7 @@ export const sakiConversationStorageKey = "webops.saki.conversations.v1";
 export interface StoredSakiConversation {
   id: string;
   contextKey: string;
+  workspaceInstanceIds?: string[] | undefined;
   label: string;
   detail: string;
   instanceId?: string | null;
@@ -371,6 +372,7 @@ export function readSakiConversations(userId?: string): StoredSakiConversation[]
           return {
             id: value.id,
             contextKey: value.contextKey,
+            workspaceInstanceIds: value.workspaceInstanceIds,
             label: value.label ?? "Saki",
             detail: value.detail ?? "",
             instanceId: value.instanceId ?? null,

@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { CurrentUser, TerminalClientMessage, TerminalServerMessage } from "@webops/shared";
 import { WebSocket } from "ws";
+import { resolveDaemonEndpoint } from "../ssh-nodes.js";
 import { isAuthDisabled, loadAuthDisabledCurrentUser, loadCurrentUser, type JwtUser } from "../auth.js";
 import { writeAuditLog } from "../audit.js";
 import { instancePermissionOverride, loadVisibleInstance } from "../instance-access.js";
@@ -301,11 +302,13 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
           return;
         }
 
+        const endpoint = await resolveDaemonEndpoint(instance.node);
+        if (browserSocket.readyState !== WebSocket.OPEN) return;
         user = authenticatedUser;
         instanceId = instance.id;
         authInProgress = false;
         daemonConnectAttempts.add(`${instance.node.protocol}://${instance.node.host}:${instance.node.port}`);
-        connectDaemonSocket(undefined, undefined, sessionId, instance);
+        connectDaemonSocket(undefined, undefined, sessionId, { ...instance, node: endpoint });
       } catch (e) {
         authInProgress = false;
         pendingMessages.length = 0;

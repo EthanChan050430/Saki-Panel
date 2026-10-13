@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { sakiWorkspaceContextKey, sakiWorkspaceIdsFromContextKey } from "@webops/shared";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type {
@@ -124,20 +125,31 @@ async function sakiGitTarget(request: FastifyRequest, instanceId: string, mutati
 
 export async function startSakiTaskInvocation(request: FastifyRequest, prepared: Awaited<ReturnType<typeof prepareSakiChatInvocation>>) {
   const { modelInput, context, skills } = prepared;
+  const scopeKey = sakiWorkspaceContextKey(modelInput.instanceId, modelInput.workspaceInstanceIds);
+  const matchesScope = (input: SakiChatRequest) => scopeKey === sakiWorkspaceContextKey(input.instanceId, input.workspaceInstanceIds);
   await Promise.all([sessionAgentMemoriesReady, sakiActionsReady]);
   const previous = findSakiTaskByRequest(request.user.sub, modelInput.clientRequestId);
   if (previous) {
     await assertSakiTaskAccess(request.user.sub, previous);
-    if (previous.instanceId !== (context.workspace?.instanceId ?? null) || previous.input.conversationId !== modelInput.conversationId) throw new RouteError("Client request belongs to another workspace or conversation.", 409);
+    if (!matchesScope(previous.input) || previous.input.conversationId !== modelInput.conversationId) throw new RouteError("Client request belongs to another workspace or conversation.", 409);
     return previous;
   }
   const instanceId = context.workspace?.instanceId ?? null;
   let memory = getSessionAgentMemory(request.user.sub, instanceId);
   const continuation = Boolean(modelInput.resumeTaskId) || isSakiContinuationMessage(modelInput.message);
+  if (memory && !matchesScope(memory.resumeState.input)) {
+    if (continuation) throw new RouteError("工作区选择已改变，请描述一个新任务。", 409);
+    memory = null;
+  }
   if (memory && context.instance) {
     try {
       if (!memory.resumeState.workspaceBinding) throw new RouteError("Resume record has no workspace binding.", 409);
       assertSakiWorkspaceBinding(context.instance, memory.resumeState.workspaceBinding);
+      for (const binding of memory.resumeState.workspaceBindings ?? []) {
+        const target = context.instances?.find(item => item.id === binding.instanceId);
+        if (!target) throw new RouteError("Workspace selection changed.", 409);
+        assertSakiWorkspaceBinding(target, binding);
+      }
     } catch {
       if (continuation) throw new RouteError("Workspace or node changed, or this resume record predates workspace binding. Describe a new task.", 409);
       memory = null;
@@ -151,13 +163,14 @@ export async function startSakiTaskInvocation(request: FastifyRequest, prepared:
   // No await between this second deduplication check and claiming the context.
   const concurrent = findSakiTaskByRequest(request.user.sub, modelInput.clientRequestId);
   if (concurrent) {
-    if (concurrent.instanceId !== instanceId || concurrent.input.conversationId !== modelInput.conversationId) throw new RouteError("Client request belongs to another workspace or conversation.", 409);
+    if (!matchesScope(concurrent.input) || concurrent.input.conversationId !== modelInput.conversationId) throw new RouteError("Client request belongs to another workspace or conversation.", 409);
     return concurrent;
   }
   assertSakiTaskContextAvailable(request.user.sub, instanceId);
   const abortController = new AbortController();
   const task = createActiveSakiTask(randomUUID(), request.user.sub, instanceId, modelInput, abortController);
   if (context.instance) task.workspaceBinding = bindSakiWorkspace(context.instance);
+  if (context.instances) task.workspaceBindings = context.instances.map(bindSakiWorkspace);
   void runTrackedSakiTask(task, async () => {
     const response = await runSakiAgent({ request, input, context, skills, userId: request.user.sub, permissions: request.user.permissions, config, abortController, taskId: task.id }, trackedSakiTaskEvents(task.id), resume, executeSakiAgentTool);
     try { await auditSakiChatResponse(request, prepared, response); }
@@ -829,6 +842,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
       return {
         id: r.id,
         contextKey: r.contextKey,
+        workspaceInstanceIds: sakiWorkspaceIdsFromContextKey(r.contextKey, r.instanceId),
         label: r.label,
         detail: r.detail,
         instanceId: r.instanceId,

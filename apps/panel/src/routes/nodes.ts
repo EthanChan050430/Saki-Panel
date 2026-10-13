@@ -1,8 +1,11 @@
 import fs from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import type {
   ConnectLocalNodeResponse,
+  ConnectSshNodeRequest,
   ConnectNodeByKeyRequest,
   ConnectNodeByKeyResponse,
   CreateEnrollmentTokenRequest,
@@ -25,6 +28,7 @@ import { fetchDaemonStatus, testDaemonHealth } from "../daemon-client.js";
 import { generateSecretToken, hashToken, tokenLast4 } from "../security.js";
 import { writeAuditLog } from "../audit.js";
 import { canAccessNode, nodeVisibilityWhere } from "../node-access.js";
+import { provisionSshNode, removeSshNode, testSshConnection, validateSshInput } from "../ssh-nodes.js";
 
 function normalizeProtocol(value: unknown): "http" | "https" | null {
   return value === "http" || value === "https" ? value : null;
@@ -162,6 +166,47 @@ export function toManagedNode(node: {
 import { ensureNodesFresh } from "../node-health.js";
 
 export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
+  app.post("/api/nodes/ssh/test", { preHandler: requirePermission("node.create"), bodyLimit: 150000 }, async (request, reply) => {
+    const input = request.body as ConnectSshNodeRequest;
+    try { validateSshInput(input); }
+    catch (error) { return reply.code(400).send({ message: (error as Error).message }); }
+    try { return await testSshConnection(input); }
+    catch (error) { return reply.code(502).send({ message: `SSH 测试失败：${(error as Error).message}` }); }
+  });
+
+  app.post("/api/nodes/connect-ssh", { preHandler: requirePermission("node.create"), bodyLimit: 150000 }, async (request, reply) => {
+    const input = request.body as ConnectSshNodeRequest;
+    try {
+      validateSshInput(input);
+      if (!input.hostFingerprint) throw new Error("请先测试 SSH 连接并核对主机指纹");
+    } catch (error) { return reply.code(400).send({ message: (error as Error).message }); }
+    const id = randomUUID();
+    const nodeToken = generateSecretToken();
+    let created = false;
+    try {
+      await provisionSshNode(id, nodeToken, input);
+      const credentials = { id, host: input.host.trim(), port: input.port, protocol: "ssh", tokenHash: hashToken(nodeToken) };
+      let status = await fetchDaemonStatus(credentials, 3000);
+      for (let attempt = 0; !status.ok && attempt < 20; attempt++) {
+        await delay(500);
+        status = await fetchDaemonStatus(credentials, 3000);
+      }
+      if (!status.ok) throw new Error(`远程组件未能启动：${status.error || "请检查服务器上的 daemon.log"}`);
+      const node = await prisma.node.create({ data: {
+        ...credentials, name: input.name?.trim() || `${input.username.trim()}@${input.host.trim()}`,
+        tokenLast4: tokenLast4(nodeToken), status: "ONLINE", lastSeenAt: new Date(), createdById: request.user.sub,
+        os: status.statusData?.os ?? "Linux", arch: status.statusData?.arch ?? null, version: status.statusData?.version ?? null
+      } });
+      created = true;
+      await writeAuditLog({ request, userId: request.user.sub, action: "node.connect_ssh", resourceType: "node", resourceId: id,
+        payload: { host: node.host, port: node.port, username: input.username, hostFingerprint: input.hostFingerprint } });
+      return { node: toManagedNode(node) };
+    } catch (error) {
+      if (!created) await removeSshNode(id).catch(() => undefined);
+      return reply.code(502).send({ message: `SSH 连接失败：${(error as Error).message}` });
+    }
+  });
+
   app.get("/api/nodes", { preHandler: requirePermission("node.view") }, async (request) => {
     const user = await loadCurrentUser(request.user.sub);
     if (!user) return [];
@@ -473,7 +518,10 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const body = request.body as UpdateNodeRequest;
-    const protocol = body.protocol === undefined ? undefined : normalizeProtocol(body.protocol);
+    if (existing.protocol === "ssh" && ((body.host !== undefined && body.host !== existing.host) || (body.port !== undefined && body.port !== existing.port) || (body.protocol !== undefined && body.protocol !== "ssh"))) {
+      return reply.code(400).send({ message: "SSH 节点的连接地址由 SSH 配置管理，请重新连接服务器以更换地址" });
+    }
+    const protocol = body.protocol === undefined ? undefined : existing.protocol === "ssh" && body.protocol === "ssh" ? "ssh" : normalizeProtocol(body.protocol);
     if (body.protocol !== undefined && !protocol) {
       reply.code(400).send({ message: "protocol must be http or https" });
       return;
@@ -548,6 +596,7 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
     }
 
     await prisma.node.delete({ where: { id } });
+    if (node.protocol === "ssh") await removeSshNode(id);
     await writeAuditLog({
       request,
       userId: request.user.sub,
@@ -721,6 +770,10 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       return;
     }
 
+    if (node.protocol === "ssh") {
+      reply.code(400).send({ message: "SSH 节点使用独立运行组件身份，请重新连接服务器以更换凭据" });
+      return;
+    }
     const newToken = generateSecretToken();
     await prisma.node.update({
       where: { id },
@@ -755,6 +808,10 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       return;
     }
 
+    if (node.protocol === "ssh") {
+      reply.code(400).send({ message: "SSH 节点通过已保存的 SSH 配置自动重连，无需运行接入命令" });
+      return;
+    }
     const defaultUrl = panelConfig.publicUrl || `http://${request.hostname}:${panelConfig.port}`;
     const tempToken = generateSecretToken();
     await prisma.nodeEnrollmentToken.create({

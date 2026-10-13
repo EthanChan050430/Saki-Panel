@@ -595,6 +595,7 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
                 地址 (IP 或 域名)
                 <input
                   value={form.host}
+                  disabled={nodes.find(node => node.id === editingNodeId)?.protocol === "ssh"}
                   onChange={(event) => setForm((current) => ({ ...current, host: event.target.value }))}
                   required
                 />
@@ -606,6 +607,7 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
                   min={1}
                   max={65535}
                   value={form.port}
+                  disabled={nodes.find(node => node.id === editingNodeId)?.protocol === "ssh"}
                   onChange={(event) => setForm((current) => ({ ...current, port: event.target.value }))}
                   required
                 />
@@ -614,11 +616,13 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
                 协议
                 <select
                   value={form.protocol}
+                  disabled={nodes.find(node => node.id === editingNodeId)?.protocol === "ssh"}
                   onChange={(event) =>
                     setForm((current) => ({ ...current, protocol: event.target.value as CreateNodeRequest["protocol"] }))
                   }
                 >
                   <option value="http">HTTP</option>
+                  {nodes.find(node => node.id === editingNodeId)?.protocol === "ssh" && <option value="ssh">SSH 隧道</option>}
                   <option value="https">HTTPS</option>
                 </select>
               </label>
@@ -739,11 +743,11 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
                           </button>
                           <button
                             className="icon-button mini"
-                            disabled={busy}
-                            title="查看连接凭据与重连命令"
+                            disabled={busy || node.protocol === "ssh"}
+                            title={node.protocol === "ssh" ? "SSH 节点会自动重连" : "查看连接凭据与重连命令"}
                             aria-label="查看连接凭据与重连命令"
                             type="button"
-                            onClick={() => void openKeyModal(node)}
+                            onClick={() => { if (node.protocol !== "ssh") void openKeyModal(node); }}
                           >
                             <KeyRound size={14} />
                           </button>
@@ -1014,7 +1018,7 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
                   type="button"
                   className="secondary-button mini"
                   style={{ color: "#ef4444" }}
-                  disabled={rotatingSecret}
+                  disabled={rotatingSecret || keyModalNode.protocol === "ssh"}
                   onClick={() => void handleRotateSecret(keyModalNode)}
                 >
                   <RotateCw size={12} style={{ marginRight: 4 }} className={rotatingSecret ? "spin" : ""} />

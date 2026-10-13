@@ -50,6 +50,8 @@ export interface PanelSakiSettings {
 
 export interface ResolvedSakiContext {
   instance: InstanceWithNode | null;
+  /** Server-validated explicit workspace scope. Undefined keeps legacy single-workspace behavior. */
+  instances?: InstanceWithNode[];
   workspace: SakiWorkspaceContext | null;
   logs: InstanceLogLine[];
   /** Server-derived authority; never accepted from request context text. */
@@ -428,6 +430,8 @@ export function formatInstanceSummary(instance: InstanceWithNode): string {
     `id=${instance.id}`,
     `name=${instance.name}`,
     `node=${instance.node.name}`,
+    `nodeTransport=${instance.node.protocol}`,
+    `nodeHost=${instance.node.host}`,
     instance.node.os ? `nodeOs=${instance.node.os}` : null,
     instance.node.arch ? `nodeArch=${instance.node.arch}` : null,
     `status=${instance.status}`,
@@ -677,6 +681,7 @@ export interface SakiAgentRuntime {
 export interface SakiAgentResumeState {
   input: SakiChatRequest;
   workspaceBinding?: import("./workspace-binding.js").SakiWorkspaceBinding | null;
+  workspaceBindings?: import("./workspace-binding.js").SakiWorkspaceBinding[];
   skills: SakiAgentRuntime["skills"];
   actions: SakiAgentAction[];
   scratchpadEntries: string[];
@@ -716,6 +721,7 @@ export interface SakiActiveTask {
   instanceId: string | null;
   input: SakiChatRequest;
   workspaceBinding?: import("./workspace-binding.js").SakiWorkspaceBinding;
+  workspaceBindings?: import("./workspace-binding.js").SakiWorkspaceBinding[];
   status: "running" | "completed" | "failed" | "pending_approval" | "pending_input" | "cancelled";
   startedAt: string;
   updatedAt: string;
@@ -736,6 +742,7 @@ export interface SakiActiveTaskSummary {
   id: string;
   userId: string;
   instanceId: string | null;
+  workspaceInstanceIds?: string[];
   status: SakiActiveTask["status"];
   startedAt: string;
   updatedAt: string;
