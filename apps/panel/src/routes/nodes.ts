@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { setTimeout as delay } from "node:timers/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import type {
@@ -28,7 +27,7 @@ import { fetchDaemonStatus, testDaemonHealth } from "../daemon-client.js";
 import { generateSecretToken, hashToken, tokenLast4 } from "../security.js";
 import { writeAuditLog } from "../audit.js";
 import { canAccessNode, nodeVisibilityWhere } from "../node-access.js";
-import { provisionSshNode, removeSshNode, testSshConnection, validateSshInput } from "../ssh-nodes.js";
+import { saveSshConnection, removeSshNode, probeSshConnection, testSshConnection, validateSshInput } from "../ssh-nodes.js";
 
 function normalizeProtocol(value: unknown): "http" | "https" | null {
   return value === "http" || value === "https" ? value : null;
@@ -164,6 +163,7 @@ export function toManagedNode(node: {
 }
 
 import { ensureNodesFresh } from "../node-health.js";
+import { withLatestNodeMetrics } from "../node-metrics.js";
 
 export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/nodes/ssh/test", { preHandler: requirePermission("node.create"), bodyLimit: 150000 }, async (request, reply) => {
@@ -184,18 +184,12 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
     const nodeToken = generateSecretToken();
     let created = false;
     try {
-      await provisionSshNode(id, nodeToken, input);
+      await saveSshConnection(id, nodeToken, input);
       const credentials = { id, host: input.host.trim(), port: input.port, protocol: "ssh", tokenHash: hashToken(nodeToken) };
-      let status = await fetchDaemonStatus(credentials, 3000);
-      for (let attempt = 0; !status.ok && attempt < 20; attempt++) {
-        await delay(500);
-        status = await fetchDaemonStatus(credentials, 3000);
-      }
-      if (!status.ok) throw new Error(`远程组件未能启动：${status.error || "请检查服务器上的 daemon.log"}`);
       const node = await prisma.node.create({ data: {
         ...credentials, name: input.name?.trim() || `${input.username.trim()}@${input.host.trim()}`,
         tokenLast4: tokenLast4(nodeToken), status: "ONLINE", lastSeenAt: new Date(), createdById: request.user.sub,
-        os: status.statusData?.os ?? "Linux", arch: status.statusData?.arch ?? null, version: status.statusData?.version ?? null
+        os: null, arch: null, version: null
       } });
       created = true;
       await writeAuditLog({ request, userId: request.user.sub, action: "node.connect_ssh", resourceType: "node", resourceId: id,
@@ -221,10 +215,6 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       include: {
         createdBy: {
           select: { id: true, username: true, displayName: true }
-        },
-        metrics: {
-          orderBy: { createdAt: "desc" },
-          take: 1
         }
       }
     });
@@ -237,17 +227,13 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
         include: {
           createdBy: {
             select: { id: true, username: true, displayName: true }
-          },
-          metrics: {
-            orderBy: { createdAt: "desc" },
-            take: 1
           }
         }
       });
-      return refreshedNodes.map(toManagedNode);
+      return (await withLatestNodeMetrics(refreshedNodes)).map(toManagedNode);
     }
 
-    return nodes.map(toManagedNode);
+    return (await withLatestNodeMetrics(nodes)).map(toManagedNode);
   });
 
 
@@ -278,7 +264,8 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
     const existingNode = await prisma.node.findFirst({
       where: {
         host: { in: ["127.0.0.1", "localhost", "::1"] },
-        port: localPort
+        port: localPort,
+        ...nodeVisibilityWhere(user)
       }
     });
 
@@ -288,9 +275,10 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       running: true,
       port: localPort,
       connected: isConnected,
-      nodeId: existingNode?.id ?? null,
-      nodeName: existingNode?.name ?? "Local Daemon",
-      canConnect: true
+      nodeId: isConnected ? existingNode?.id ?? null : null,
+      nodeName: isConnected ? existingNode?.name ?? "本地机器" : "本地机器",
+      canConnect: user.isSuperAdmin && user.permissions.includes("node.create"),
+      ...(!isConnected && !user.isSuperAdmin ? { message: "本机接入需要超级管理员操作。" } : {})
     };
   });
 
@@ -301,6 +289,7 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       reply.code(401).send({ message: "Unauthorized" });
       return;
     }
+    if (!user.isSuperAdmin) return reply.code(403).send({ message: "本机接入需要超级管理员操作。" });
 
     const localPort = Number(process.env.DAEMON_PORT) || 5480;
     const health = await testDaemonHealth({
@@ -317,8 +306,9 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
     }
 
     // Try reading local daemon identity file from data/daemon
-    const daemonDataDir = path.resolve(panelPaths.dataDir, "../daemon");
+    const daemonDataDir = process.env.DAEMON_DATA_DIR ? path.resolve(process.env.DAEMON_DATA_DIR) : path.resolve(panelPaths.dataDir, "../daemon");
     const candidatePaths = [
+      ...(process.env.DAEMON_IDENTITY_FILE ? [path.resolve(process.env.DAEMON_IDENTITY_FILE)] : []),
       path.resolve(daemonDataDir, `identity-${localPort}.json`),
       path.resolve(daemonDataDir, "identity.json")
     ];
@@ -328,19 +318,22 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       try {
         const raw = await fs.readFile(filePath, "utf8");
         const parsed = JSON.parse(raw);
-        if (parsed.nodeId && parsed.nodeToken) {
+        if (typeof parsed.nodeId === "string" && parsed.nodeId.trim() && typeof parsed.nodeToken === "string" && parsed.nodeToken.trim()) {
           foundIdentity = parsed;
           break;
         }
       } catch {}
     }
 
-    let existingNode = await prisma.node.findFirst({
+    const identityNode = foundIdentity ? await prisma.node.findUnique({ where: { id: foundIdentity.nodeId } }) : null;
+    const existingNode = identityNode ?? await prisma.node.findFirst({
       where: {
         host: { in: ["127.0.0.1", "localhost", "::1"] },
         port: localPort
       }
     });
+
+    if (existingNode && !canAccessNode(user, existingNode)) return reply.code(409).send({ message: "本机节点已归属其他账号，无法直接重新绑定。" });
 
     let effectiveToken = foundIdentity?.nodeToken;
     let effectiveNodeId = foundIdentity?.nodeId || existingNode?.id || "local_node";
@@ -355,9 +348,7 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       tokenHashValue = existingNode.tokenHash;
       tokenLast4Value = existingNode.tokenLast4 ?? "0000";
     } else {
-      const gen = generateSecretToken();
-      tokenHashValue = hashToken(gen);
-      tokenLast4Value = tokenLast4(gen);
+      return reply.code(503).send({ message: "未找到本机 Daemon 身份文件，请确认 DAEMON_IDENTITY_FILE 或 DAEMON_DATA_DIR 与运行中的服务一致。" });
     }
 
     const testResult = await fetchDaemonStatus({
@@ -367,6 +358,8 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       port: localPort,
       tokenHash: tokenHashValue
     }, 4000);
+
+    if (!testResult.ok) return reply.code(502).send({ message: "本机 Daemon 凭据验证失败，未保存节点；请确认使用了当前端口对应的身份文件。" });
 
     const nodeStatusData = testResult.statusData ?? {};
     const nodeName = existingNode?.name || "Local Daemon";
@@ -383,7 +376,7 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
           tokenLast4: tokenLast4Value,
           status: "ONLINE",
           lastSeenAt: new Date(),
-          createdById: request.user.sub,
+          createdById: existingNode.createdById ?? request.user.sub,
           os: nodeStatusData.os ?? existingNode.os,
           arch: nodeStatusData.arch ?? existingNode.arch,
           version: nodeStatusData.version ?? existingNode.version
@@ -396,6 +389,7 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
     } else {
       savedNode = await prisma.node.create({
         data: {
+          id: effectiveNodeId,
           name: nodeName,
           host: "127.0.0.1",
           port: localPort,
@@ -419,6 +413,7 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
     await writeAuditLog({
       request,
       action: "node.connect_local",
+      userId: user.id,
       resourceType: "node",
       resourceId: savedNode.id,
       payload: { name: savedNode.name, host: savedNode.host, port: savedNode.port }
@@ -624,7 +619,9 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
     }
 
     try {
-      const response = await testDaemonHealth(node);
+      const response = node.protocol === "ssh"
+        ? await probeSshConnection(node.id).then(() => ({ ok: true, statusCode: 200, error: undefined }))
+        : await testDaemonHealth(node);
       const ok = response.ok;
       await prisma.node.update({
         where: { id: node.id },

@@ -853,7 +853,8 @@ async function buildApproval(runtime: SakiAgentRuntime, call: ParsedToolCall): P
     rollbackAvailable = true;
   } else if (toolName === "runcommand" || toolName === "runinshell") {
     requireUserPermission(runtime.permissions, "terminal.input");
-    const commandRisk = classifyCommandRisk(stringArg(args, "command"));
+    const instance = await resolveAgentInstance(runtime, args);
+    const commandRisk = classifyCommandRisk(stringArg(args, "command"), instance.workingDirectory);
     if (commandRisk.risk === "critical") throw new RouteError(commandRisk.reason, 400);
     const cwd = commandCwdArg(args);
     normalizeCommandRelativeCwd(cwd);
@@ -1486,16 +1487,17 @@ export async function executeSakiAgentTool(
         const instance = await resolveAgentInstance(runtime, args);
         const command = stringArg(args, "command");
         if (!command) throw new RouteError("runCommand requires a command.", 400);
-        const commandRisk = classifyCommandRisk(command);
+        const commandRisk = classifyCommandRisk(command, instance.workingDirectory);
         if (commandRisk.risk === "critical") throw new RouteError(commandRisk.reason, 400);
         if (isAgentSandboxEnabled(runtime)) {
           const escapeToken = findCrossInstanceCommandEscape(command, instance.workingDirectory);
           if (escapeToken) {
-            throw new RouteError(`沙箱安全拦截：终端命令包含越界目录或路径（${escapeToken}），已阻止访问工作区外部文件。`, 403);
+            throw new RouteError(`沙箱安全拦截：终端命令包含越界目录或路径（${escapeToken}），当前实例工作目录为 ${instance.workingDirectory}，已阻止访问工作区外部文件。`, 403);
           }
         }
         const checkpointEnabled = ["file.read", "file.write", "file.delete"].every((code) => runtime.permissions.includes(code as PermissionCode));
-        const snapshot = checkpointEnabled ? await captureDaemonWorkspaceCheckpoint(instance.node, instance.id, instance.workingDirectory) : undefined;
+        const readOnlyCommand = commandRisk.risk === "low" && commandRisk.readOnly && !optionalCommandInputArg(args);
+        const snapshot = checkpointEnabled && !readOnlyCommand ? await captureDaemonWorkspaceCheckpoint(instance.node, instance.id, instance.workingDirectory) : undefined;
         if (snapshot) {
           checkpoint = { id: checkpointId(), type: "workspace", instanceId: instance.id, workspaceBinding: bindSakiWorkspace(instance), snapshotId: snapshot.snapshotId, actionId: currentActionId, createdAt: new Date().toISOString() };
           await persistCheckpoint(runtime, checkpoint);
@@ -1527,7 +1529,8 @@ export async function executeSakiAgentTool(
             if (finalized.changedCount === 0 && checkpoint) { await removeCheckpoint(checkpoint.id); checkpoint = null; terminalNoFileChanges = true; }
           }
         }
-        if (!checkpointEnabled) observation += "\nFile undo is unavailable for this terminal call: the account lacks workspace read/write/delete permissions.";
+        if (readOnlyCommand && ok) terminalNoFileChanges = true;
+        if (!checkpointEnabled && !readOnlyCommand) observation += "\nFile undo is unavailable for this terminal call: the account lacks workspace read/write/delete permissions.";
       } else if (toolName === "listshells") {
         requireUserPermission(runtime.permissions, "terminal.view");
         const instance = await resolveAgentInstance(runtime, args);

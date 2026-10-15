@@ -181,6 +181,7 @@ import {
 import { FileManager } from "../../components/file-manager/FileManager.js";
 import { InstanceLogs } from "./InstanceLogs.js";
 import { SshConnectModal } from "./SshConnectModal.js";
+import { SshServerWorkspace } from "./SshServerWorkspace.js";
 import { InstanceProxyModal } from "./InstanceProxyModal.js";
 import { InstanceSettingsModal } from "./InstanceSettingsModal.js";
 import { InstanceTasksPanel } from "./InstanceTasksPanel.js";
@@ -233,17 +234,25 @@ export function InstancesView({
   const [selectedId, setSelectedIdState] = useState<string | null>(() => {
     return initialInstanceId ?? parseHashRoute().instanceId ?? null;
   });
+  const [selectedSshNodeId, setSelectedSshNodeId] = useState<string | null>(() => {
+    try { return initialInstanceId || parseHashRoute().instanceId ? null : sessionStorage.getItem(`ssh-server:${user.id}`); } catch { return null; }
+  });
+  useEffect(() => {
+    try { if (selectedSshNodeId) sessionStorage.setItem(`ssh-server:${user.id}`, selectedSshNodeId); else sessionStorage.removeItem(`ssh-server:${user.id}`); } catch { /* Optional restoration. */ }
+  }, [selectedSshNodeId, user.id]);
 
   const prevInitialIdRef = useRef(initialInstanceId);
   useEffect(() => {
     if (initialInstanceId !== prevInitialIdRef.current) {
       prevInitialIdRef.current = initialInstanceId;
       setSelectedIdState(initialInstanceId ?? null);
+      setSelectedSshNodeId(null);
     }
   }, [initialInstanceId]);
 
   const setSelectedId = useCallback(
     (idOrUpdater: string | null | ((prev: string | null) => string | null)) => {
+      setSelectedSshNodeId(null);
       setSelectedIdState((prev) => {
         const nextId = typeof idOrUpdater === "function" ? idOrUpdater(prev) : idOrUpdater;
         prevInitialIdRef.current = nextId;
@@ -1601,10 +1610,11 @@ export function InstancesView({
 
   const sshDialog = showSshModal ? <SshConnectModal token={token} onClose={() => setShowSshModal(false)} onConnected={node => {
     setNodes(current => [node, ...current.filter(item => item.id !== node.id)]);
-    setForm(current => ({ ...current, nodeId: node.id, workingDirectory: "", startCommand: "npm start" }));
     setShowSshModal(false);
-    setCreateModalType("instance");
-    setShowCreateForm(true);
+    setShowCreateForm(false);
+    setSelectedId(null);
+    setSelectedDatabaseId(null);
+    setSelectedSshNodeId(node.id);
     window.dispatchEvent(new Event("saki:instances_changed"));
   }} /> : null;
 
@@ -1665,6 +1675,7 @@ export function InstancesView({
           <>
             <div className="modal-body">
               <form id="create-instance-form" className="instance-form modal-form" onSubmit={createInstance}>
+                {nodes.find(node => node.id === form.nodeId)?.protocol === "ssh" && <p className="muted wide-field">托管实例用于单独管理进程，需要启动命令。仅使用 SSH 终端无需创建实例。首次创建托管实例会安装运行组件，远程服务器需要 Linux、Node.js 22.13+ 和 npm。</p>}
                 <label>
                   节点
                   <select
@@ -1881,6 +1892,19 @@ export function InstancesView({
       </div>
     );
   }
+
+  const selectedSshNode = nodes.find(node => node.id === selectedSshNodeId && node.protocol === "ssh");
+  if (selectedSshNode) return <>
+    <PageErrorToast error={error} onDismiss={() => setError("")} />
+    {typeof document !== "undefined" && sshDialog ? createPortal(sshDialog, document.body) : null}
+    {typeof document !== "undefined" && createDialog ? createPortal(createDialog, document.body) : null}
+    <SshServerWorkspace key={selectedSshNode.id} token={token} node={selectedSshNode} canViewTerminal={user.permissions.includes("terminal.view") && user.permissions.includes("node.view")}
+      onBack={() => setSelectedSshNodeId(null)}
+      onCreateInstance={user.permissions.includes("instance.create") ? () => {
+        setForm(current => ({ ...current, nodeId: selectedSshNode.id, name: "", workingDirectory: "", startCommand: "" }));
+        setCreateModalType("instance"); setShowCreateForm(true);
+      } : undefined} />
+  </>;
 
   const selectedDatabase = databases.find((db) => db.id === selectedDatabaseId) ?? null;
   if (selectedDatabase) {
@@ -2644,6 +2668,15 @@ export function InstancesView({
             </button>
           </div>
         </div>
+
+        {nodes.some(node => node.protocol === "ssh") && <section className="ssh-server-directory" aria-label="远程 SSH 服务器">
+          <div className="ssh-server-directory-heading"><Server size={17} /><h3>远程服务器</h3><span>直接连接 SSH 终端</span></div>
+          <div className="ssh-server-cards">{nodes.filter(node => node.protocol === "ssh").map(node => <button key={node.id} type="button" className="ssh-server-card" onClick={() => {
+            setSelectedId(null); setSelectedDatabaseId(null); setSelectedSshNodeId(node.id);
+          }}>
+            <Server size={22} /><div><strong>{node.name}</strong><span>{node.host}:{node.port}</span></div><span className="ssh-server-card-action"><TerminalIcon size={15} />打开终端</span>
+          </button>)}</div>
+        </section>}
 
         {directoryView === "cards" ? (
           <div className="instance-card-grid">

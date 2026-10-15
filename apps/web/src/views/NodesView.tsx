@@ -29,6 +29,7 @@ import type {
   CreateUserAccessKeyResponse,
   DaemonNodeKeyPayload,
   ManagedNode,
+  LocalDaemonStatusResponse,
   NodeJoinCommandResponse,
   RotateNodeTokenResponse,
   UpdateNodeRequest,
@@ -61,6 +62,33 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [createdSecret, setCreatedSecret] = useState<{ nodeId: string; nodeName: string; nodeToken: string } | null>(null);
   const [addMode, setAddMode] = useState<"connect_key" | "daemon_install" | "manual">("connect_key");
+  const [localDaemon, setLocalDaemon] = useState<LocalDaemonStatusResponse | null>(null);
+  const [checkingLocal, setCheckingLocal] = useState(false);
+  const [connectingLocal, setConnectingLocal] = useState(false);
+  const [localError, setLocalError] = useState("");
+
+  const refreshLocalDaemon = useCallback(async () => {
+    setCheckingLocal(true); setLocalError("");
+    try { setLocalDaemon(await api.checkLocalDaemonStatus(token)); }
+    catch (err) {
+      if (err instanceof ApiError && err.status === 401) { onLogout(); return; }
+      setLocalError(err instanceof Error ? err.message : "本机检测失败，请重试。");
+    } finally { setCheckingLocal(false); }
+  }, [token, onLogout]);
+
+  async function handleConnectLocal() {
+    if (connectingLocal) return;
+    setConnectingLocal(true); setLocalError("");
+    try {
+      const result = await api.connectLocalNode(token);
+      if (!result.ok || !result.node) throw new Error(result.error || "接入本地机器失败。");
+      setNodes(current => [result.node!, ...current.filter(node => node.id !== result.node!.id)]);
+      setMessage(result.message || "本地机器已接入。");
+      await refreshLocalDaemon();
+      window.dispatchEvent(new Event("saki:instances_changed"));
+    } catch (err) { setLocalError(err instanceof Error ? err.message : "接入本地机器失败。"); }
+    finally { setConnectingLocal(false); }
+  }
 
   const [keyInput, setKeyInput] = useState("");
   const [keyNodeName, setKeyNodeName] = useState("");
@@ -135,6 +163,8 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
     void refresh();
     void refreshUserKeys();
   }, [refresh, refreshUserKeys, refreshTick]);
+
+  useEffect(() => { void refreshLocalDaemon(); }, [refreshLocalDaemon, refreshTick]);
 
   useGlobalEvent("node.status_changed", (event) => {
     const data = event.data as { nodeId?: string; status?: ManagedNode["status"]; lastSeenAt?: string | null } | undefined;
@@ -407,6 +437,23 @@ export function NodesView({ token, onLogout, refreshTick }: { token: string; onL
               </button>
             ) : null}
           </div>
+
+          {!editingNodeId ? (
+            <div className="local-daemon-card">
+              <div className="local-daemon-card-heading"><Server size={17} /><strong>本地机器</strong>
+                <button type="button" className="icon-button mini" aria-label="重新检测本地机器" title="重新检测本地机器" disabled={checkingLocal || connectingLocal} onClick={() => void refreshLocalDaemon()}>
+                  <RefreshCw size={14} className={checkingLocal ? "spin" : ""} />
+                </button>
+              </div>
+              <p role="status">{localDaemon ? localDaemon.connected ? `${localDaemon.nodeName || "本地节点"} · ${localDaemon.running ? "已连接" : "暂时离线"}` : localDaemon.running ? `已检测到本机运行组件 · 端口 ${localDaemon.port}` : `本机运行组件未启动 · 端口 ${localDaemon.port}` : checkingLocal ? "正在检测本地机器…" : "本地机器状态不可用"}</p>
+              {localDaemon && !localDaemon.running && <p className="muted">服务器上的 Daemon 服务运行后，可在这里接入本地机器。</p>}
+              {localDaemon?.running && !localDaemon.connected && <button type="button" className="primary-button" disabled={!localDaemon.canConnect || connectingLocal} onClick={() => void handleConnectLocal()}>
+                {connectingLocal ? <Loader2 size={14} className="spin" /> : <Link2 size={14} />}{connectingLocal ? "正在接入…" : "接入本地机器"}
+              </button>}
+              {localDaemon?.message && !localDaemon.connected && <p className="muted">{localDaemon.message}</p>}
+              {localError && <p role="alert" className="error-text">{localError}</p>}
+            </div>
+          ) : null}
 
           {!editingNodeId ? (
             <div style={{ padding: "14px 18px 0" }}>

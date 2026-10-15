@@ -1,6 +1,6 @@
 import { timingSafeEqual, randomBytes, createHash } from "node:crypto";
 import bcrypt from "bcryptjs";
-import path from "node:path";
+import { isAbsolutePathInsideWorkspace } from "./workspace-path.js";
 export { classifyCommandRisk, findDangerousCommandReason } from "./command-policy.js";
 
 export async function hashPassword(password: string): Promise<string> {
@@ -42,24 +42,12 @@ export function verifyToken(token: string, hash: string): boolean {
  * false positives on benign commands.
  */
 export function findCrossInstanceCommandEscape(command: string, workingDirectory?: string): string | null {
-  const windows = Boolean(workingDirectory && (/^[A-Za-z]:[\\/]/.test(workingDirectory) || workingDirectory.startsWith("\\\\")));
-  const paths = windows ? path.win32 : path.posix;
-  const root = workingDirectory && paths.isAbsolute(workingDirectory) ? paths.resolve(workingDirectory) : null;
-  const insideWorkspace = (value: string) => {
-    if (!root || !paths.isAbsolute(value)) return false;
-    // Use the remote path's semantics, independent of the panel host OS.
-    // POSIX backslashes and shell expansion cannot be treated as path separators.
-    if (!windows && value.includes("\\")) return false;
-    if (/[`$*?\[\]{}~]/.test(value)) return false;
-    const relative = paths.relative(root, paths.resolve(value));
-    return !paths.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${paths.sep}`);
-  };
   const tokens = command.match(/"[^"]*"|'[^']*'|[^\s"'|&;<>()]+/g) ?? [];
   for (const rawToken of tokens) {
     let token = rawToken.replace(/^["']+|["']+$/g, "");
     if (!token) continue;
     token = token.replace(/^--?[a-zA-Z0-9_-]+[:=]|^--?/, "");
-    if (insideWorkspace(token)) continue;
+    if (isAbsolutePathInsideWorkspace(token, workingDirectory)) continue;
     if (/^[A-Za-z]:[\\/]/.test(token)) return rawToken;
     if (token.startsWith("\\\\")) return rawToken;
     if (token.startsWith("/") && (token.length > 3 || token.slice(1).includes("/") || token.includes("\\"))) return rawToken;

@@ -724,6 +724,7 @@ export interface LocalDaemonStatusResponse {
   nodeId?: string | null | undefined;
   nodeName?: string | null | undefined;
   canConnect?: boolean | undefined;
+  message?: string | undefined;
 }
 
 export interface ConnectLocalNodeResponse {
@@ -753,6 +754,19 @@ export interface TestSshNodeResponse {
 export interface ConnectSshNodeResponse {
   node: ManagedNode;
 }
+
+export type SshTerminalClientMessage =
+  | { type: "auth"; token: string; nodeId: string; cols: number; rows: number }
+  | { type: "input"; data: string }
+  | { type: "resize"; cols: number; rows: number }
+  | { type: "ping" };
+
+/** Terminal output travels as binary UTF-8 frames; these are control frames. */
+export type SshTerminalServerMessage =
+  | { type: "ready"; canInput: boolean }
+  | { type: "error"; message: string }
+  | { type: "exit"; code: number | null }
+  | { type: "pong" };
 
 export interface UserAccessKeyInfo {
   id: string;
@@ -1831,6 +1845,7 @@ export interface SakiExternalFileSnapshot {
 }
 
 export interface SakiAgentAction {
+  workflowId?: string;
   id: string;
   tool: string;
   args: Record<string, unknown>;
@@ -1904,10 +1919,18 @@ export function sakiWorkspaceIdsFromContextKey(key: string, instanceId?: string 
   return normalizeSakiWorkspaceIds(instanceId);
 }
 
+export interface SakiTimelineEvent {
+  id: string;
+  type: "workflow" | "action" | "delta" | "thinking";
+  payload: Record<string, unknown>;
+  ts: number;
+}
+
 export interface SakiChatResponse {
   message: string;
   retry?: { reason: string; taskId?: string } | undefined;
   thinking?: string;
+  timelineEvents?: SakiTimelineEvent[];
   source: "direct-model" | "local-fallback";
   workspace?: SakiWorkspaceContext | null;
   agentPermissionMode?: SakiAgentPermissionMode;

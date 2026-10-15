@@ -60,7 +60,7 @@ import {
   XOctagon,
   Zap
 } from "lucide-react";
-import type { SakiAgentAction, SakiChatMessage, SakiInputAttachment } from "@webops/shared";
+import type { SakiAgentAction, SakiChatMessage, SakiInputAttachment, SakiChatResponse, SakiTimelineEvent } from "@webops/shared";
 import type {
   LocalSakiMessage,
   LocalSakiTimelineItem,
@@ -1417,7 +1417,7 @@ export function appendSakiTimelineThinking(timeline: LocalSakiTimelineItem[] | u
   if (!text) return timeline ?? [];
   const current = timeline ?? [];
   const last = current.at(-1);
-  if (last?.kind === "text" && last.source === "delta") {
+  if (last?.kind === "text" && last.source === "delta" && !last.content.trim()) {
     return [
       ...current.slice(0, -1),
       {
@@ -1485,16 +1485,10 @@ export function settleSakiTimelinePending(
   action: SakiAgentAction
 ): LocalSakiTimelineItem[] {
   const current = timeline ?? [];
-  const toolName = action.tool.toLowerCase();
-  let removed = false;
-  const withoutPending = current.filter((entry) => {
-    if (entry.kind !== "pending") return true;
-    if (removed) return true;
-    if (entry.tool.toLowerCase() !== toolName) return true;
-    removed = true;
-    return false;
-  });
-  return upsertSakiTimelineAction(withoutPending, action);
+  if (current.some(entry => entry.kind === "action" && entry.action.id === action.id)) return upsertSakiTimelineAction(current, action);
+  const index = current.findIndex(entry => entry.kind === "pending" && (action.workflowId ? entry.id === `pending:${action.workflowId}` : entry.tool.toLowerCase() === action.tool.toLowerCase()));
+  if (index < 0) return upsertSakiTimelineAction(current, action);
+  return current.map((entry, position) => position === index ? { kind: "action", id: `action:${action.id}`, action, createdAt: entry.createdAt } : entry);
 }
 
 export function upsertSakiTimelineAction(timeline: LocalSakiTimelineItem[] | undefined, action: SakiAgentAction): LocalSakiTimelineItem[] {
@@ -1505,14 +1499,21 @@ export function upsertSakiTimelineAction(timeline: LocalSakiTimelineItem[] | und
     kind: "action",
     id,
     action,
-    createdAt: current[index]?.createdAt ?? new Date().toISOString()
+    createdAt: current[index]?.createdAt ?? action.createdAt
   };
   if (index < 0) return [...current, nextItem];
   return current.map((entry, entryIndex) => (entryIndex === index ? nextItem : entry));
 }
 
 export function mergeSakiTimelineActions(timeline: LocalSakiTimelineItem[] | undefined, actions: SakiAgentAction[] | undefined): LocalSakiTimelineItem[] {
-  return (actions ?? []).reduce<LocalSakiTimelineItem[]>((current, action) => settleSakiTimelinePending(current, action), timeline ?? []);
+  return (actions ?? []).reduce<LocalSakiTimelineItem[]>((current, action) => {
+    const settled = settleSakiTimelinePending(current, action);
+    if (settled.length === current.length) return settled;
+    const timestamp = Date.parse(action.createdAt);
+    const before = current.findIndex(entry => Date.parse(entry.createdAt) > timestamp);
+    const item = settled.at(-1)!;
+    return before < 0 ? settled : [...current.slice(0, before), item, ...current.slice(before)];
+  }, timeline ?? []);
 }
 
 export function mergeSakiActionList(
@@ -1545,6 +1546,7 @@ export function mergeSakiFinalTimeline(timeline: LocalSakiTimelineItem[] | undef
   );
   if (!text) return current;
   const textItems = current.filter((entry): entry is Extract<LocalSakiTimelineItem, { kind: "text" }> => entry.kind === "text");
+  if ([textItems.map(item => item.content).join(""), textItems.map(item => item.content.trim()).filter(Boolean).join("\n\n")].some(content => content.trim() === text)) return current;
   if (textItems.some((entry) => entry.content.trim() === text || entry.content.includes(text))) return current;
   const last = current.at(-1);
   if (last?.kind === "text" && (last.source === "delta" || last.source === "final")) {
@@ -1594,11 +1596,42 @@ function timelineTextIsVisible(entry: Extract<LocalSakiTimelineItem, { kind: "te
   return Boolean(visible.trim() || entry.thinking?.trim());
 }
 
+export function recordedSakiTimeline(events: SakiTimelineEvent[] | undefined): LocalSakiTimelineItem[] {
+  let result: LocalSakiTimelineItem[] = [];
+  for (const event of events ?? []) {
+    const payload = event.payload;
+    const previousIds = new Set(result.map(item => item.id));
+    if (event.type === "delta" && typeof payload.text === "string") result = appendSakiTimelineDelta(result, payload.text);
+    else if (event.type === "thinking" && typeof payload.text === "string") result = appendSakiTimelineThinking(result, payload.text);
+    else if (event.type === "action" && payload.action) result = settleSakiTimelinePending(sealSakiTimelineDelta(result), payload.action as SakiAgentAction);
+    else if (event.type === "workflow") {
+      const workflow = { type: "workflow", ...payload } as Extract<SakiChatStreamEvent, { type: "workflow" }>;
+      const text = workflowEventChatText(workflow);
+      if (text) result = upsertSakiTimelineText(sealSakiTimelineDelta(result), { id: `workflow:${workflow.id}`, content: text, source: "workflow", createdAt: new Date(event.ts).toISOString() });
+      else if (workflow.tool && workflow.stage === "tool" && workflow.status === "running") result = upsertSakiTimelinePending(result, { id: workflow.id, tool: workflow.tool, ...(workflow.call ? { call: workflow.call } : {}), message: workflow.message, createdAt: new Date(event.ts).toISOString() });
+    }
+    result = result.map(item => !previousIds.has(item.id) && item.kind === "text" && item.source === "delta" ? {
+      ...item, id: `recorded:${event.id}`, createdAt: new Date(event.ts).toISOString(), ...(item.thinking ? { thinkingStartedAt: event.ts } : {})
+    } : item);
+  }
+  return sealSakiTimelineDelta(result).map((item, index) => {
+    if (item.kind !== "text" || !item.thinking || !item.thinkingStartedAt) return item;
+    const next = result[index + 1];
+    const end = next ? Date.parse(next.createdAt) : events?.at(-1)?.ts ?? item.thinkingStartedAt;
+    return { ...item, thinkingDurationSec: Math.max(1, Math.round((end - item.thinkingStartedAt) / 1000)) };
+  });
+}
+
+export function mergeSakiResponseTimeline(timeline: LocalSakiTimelineItem[] | undefined, response: SakiChatResponse, actions = response.actions): LocalSakiTimelineItem[] {
+  const recorded = response.timelineEvents?.length ? recordedSakiTimeline(response.timelineEvents) : sealSakiTimelineDelta(timeline);
+  return mergeSakiFinalTimeline(mergeSakiTimelineActions(recorded, actions), response.message);
+}
+
 export function renderableSakiTimeline(message: LocalSakiMessage): LocalSakiTimelineItem[] {
   const visibleActions = visibleSakiActions(message.actions);
   const latestActions = new Map(visibleActions.map((action) => [action.id, action]));
   const seenActions = new Set<string>();
-  let timeline = (message.timeline ?? []).filter((entry) => {
+  let timeline = (message.timeline ?? recordedSakiTimeline(message.timelineEvents)).filter((entry) => {
     if (entry.kind === "action") {
       if (seenActions.has(entry.action.id)) return false;
       seenActions.add(entry.action.id);
@@ -1607,15 +1640,17 @@ export function renderableSakiTimeline(message: LocalSakiMessage): LocalSakiTime
     if (entry.kind === "pending") return true;
     return timelineTextIsVisible(entry);
   }).map((entry) => entry.kind === "action" ? { ...entry, action: latestActions.get(entry.action.id) ?? entry.action } : entry);
+  // Older cloud restores wrote a final-answer row before attaching tools.
+  // Repair that known fallback layout; recorded events keep their actual order.
+  if (!message.streaming && !message.timelineEvents?.length && !timeline.some(entry => entry.id.startsWith("recorded:"))) {
+    const misplaced = timeline.findIndex((entry, index) => entry.kind === "text" && entry.source === "final" && entry.content.trim() === message.content.trim() && entry.content.trim() && timeline.slice(index + 1).some(item => item.kind === "action"));
+    if (misplaced >= 0) timeline = [...timeline.slice(0, misplaced), ...timeline.slice(misplaced + 1), timeline[misplaced]!];
+  }
   const existingText = timeline.filter((entry): entry is Extract<LocalSakiTimelineItem, { kind: "text" }> => entry.kind === "text").map((entry) => entry.content.trim()).filter(Boolean).join("\n\n");
   if (timeline.length && message.content.trim() && existingText !== message.content.trim()) {
     if (!message.streaming) timeline = mergeSakiFinalTimeline(timeline, message.content, `${message.id}:final`);
     else if (!existingText) timeline = [...timeline, { kind: "text", id: `${message.id}:stream`, content: message.content, source: "delta", createdAt: message.createdAt ?? "" }];
   }
-  const latestTodoId = [...visibleActions].reverse().find((action) => action.tool.toLowerCase() === "managetodos" && action.todos?.length)?.id;
-  const currentTodoTimeline = (items: LocalSakiTimelineItem[]) => items.filter((entry) =>
-    entry.kind !== "action" || entry.action.tool.toLowerCase() !== "managetodos" || !latestTodoId || entry.action.id === latestTodoId
-  );
   if (timeline.length) {
     const hasThinkingItem = timeline.some((entry) => entry.kind === "text" && entry.thinking?.trim());
     if (!hasThinkingItem && message.thinking?.trim()) {
@@ -1640,15 +1675,15 @@ export function renderableSakiTimeline(message: LocalSakiMessage): LocalSakiTime
         action,
         createdAt: action.createdAt
       }));
-    return currentTodoTimeline(missingActionItems.length ? [...timeline, ...missingActionItems] : timeline);
+    return mergeSakiTimelineActions(timeline, missingActionItems.map(item => item.kind === "action" ? item.action : null).filter((action): action is SakiAgentAction => action !== null));
   }
   const fallback: LocalSakiTimelineItem[] = [];
   const fallbackContent = stripDsmlMarkup(message.content).trim();
-  if (fallbackContent || message.thinking?.trim()) {
+  if (message.thinking?.trim()) {
     fallback.push({
       kind: "text",
       id: `${message.id}:content`,
-      content: fallbackContent,
+      content: "",
       ...(message.thinking?.trim() ? { thinking: message.thinking } : {}),
       source: "final",
       createdAt: message.createdAt ?? new Date().toISOString()
@@ -1662,7 +1697,8 @@ export function renderableSakiTimeline(message: LocalSakiMessage): LocalSakiTime
       createdAt: action.createdAt
     });
   }
-  return currentTodoTimeline(fallback);
+  if (fallbackContent) fallback.push({ kind: "text", id: `${message.id}:content`, content: fallbackContent, source: "final", createdAt: message.createdAt ?? new Date().toISOString() });
+  return fallback;
 }
 
 export function SakiActivityTrace({ steps }: { steps: LocalSakiWorkflowStep[]; streaming: boolean }) {

@@ -1,19 +1,24 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import net from "node:net";
+import http from "node:http";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import ssh2, { type Client, type SFTPWrapper } from "ssh2";
+import ssh2, { type Client, type ClientChannel, type SFTPWrapper } from "ssh2";
 import type { ConnectSshNodeRequest } from "@webops/shared";
 import { panelPaths } from "./config.js";
 
 interface SshSettings extends ConnectSshNodeRequest {
   hostFingerprint: string;
-  remoteRoot: string;
-  daemonPort: number;
+  remoteRoot?: string;
+  daemonPort?: number;
+  daemonToken?: string;
 }
 interface Tunnel { client: Client; server: net.Server; port: number; close: () => void }
 const tunnels = new Map<string, Promise<Tunnel>>();
+const provisioning = new Map<string, Promise<void>>();
+const shellConnections = new Map<string, Set<Client>>();
 const settingsDir = path.join(panelPaths.dataDir, "ssh-nodes");
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 let keyPending: Promise<Buffer> | undefined;
@@ -38,12 +43,18 @@ function encryptionKey(): Promise<Buffer> {
   return keyPending;
 }
 
-async function saveSettings(id: string, settings: SshSettings): Promise<void> {
+async function saveSettings(id: string, settings: SshSettings, replace = false): Promise<void> {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", await encryptionKey(), iv);
   cipher.setAAD(Buffer.from(id));
   const data = Buffer.concat([cipher.update(JSON.stringify(settings), "utf8"), cipher.final()]);
-  await fs.writeFile(settingsPath(id), JSON.stringify({ iv: iv.toString("base64"), tag: cipher.getAuthTag().toString("base64"), data: data.toString("base64") }), { mode: 0o600, flag: "wx" });
+  const serialized = JSON.stringify({ iv: iv.toString("base64"), tag: cipher.getAuthTag().toString("base64"), data: data.toString("base64") });
+  if (!replace) await fs.writeFile(settingsPath(id), serialized, { mode: 0o600, flag: "wx" });
+  else {
+    const temporary = `${settingsPath(id)}.${randomBytes(8).toString("hex")}.tmp`;
+    try { await fs.writeFile(temporary, serialized, { mode: 0o600, flag: "wx" }); await fs.rename(temporary, settingsPath(id)); }
+    finally { await fs.rm(temporary, { force: true }); }
+  }
 }
 
 async function readSettings(id: string): Promise<SshSettings> {
@@ -66,10 +77,18 @@ export function validateSshInput(input: ConnectSshNodeRequest): void {
   if (input.hostFingerprint !== undefined && !/^[a-f0-9]{64}$/.test(input.hostFingerprint)) throw new Error("SSH 主机指纹无效，请重新测试连接");
 }
 
-async function connect(input: ConnectSshNodeRequest): Promise<{ client: Client; fingerprint: string }> {
+function sshCredentials(input: ConnectSshNodeRequest): ConnectSshNodeRequest {
+  return { host: input.host.trim(), port: input.port, username: input.username.trim(), authType: input.authType,
+    ...(input.name ? { name: input.name.trim() } : {}),
+    ...(input.hostFingerprint ? { hostFingerprint: input.hostFingerprint } : {}),
+    ...(input.authType === "password" ? { password: input.password } : { privateKey: input.privateKey, ...(input.passphrase ? { passphrase: input.passphrase } : {}) }) };
+}
+
+async function connect(input: ConnectSshNodeRequest, onClient?: (client: Client) => void): Promise<{ client: Client; fingerprint: string }> {
   validateSshInput(input);
   return new Promise((resolve, reject) => {
     const client = new ssh2.Client();
+    onClient?.(client);
     let fingerprint = "";
     client.on("error", (error) => { client.destroy(); reject(error); });
     client.once("close", () => reject(new Error("SSH connection closed")));
@@ -109,8 +128,57 @@ const runtimeCheck = `node -e 'const [major,minor]=process.versions.node.split("
 
 export async function testSshConnection(input: ConnectSshNodeRequest) {
   const { client, fingerprint } = await connect(input);
-  try { return { hostFingerprint: fingerprint, runtime: await execSsh(client, runtimeCheck) }; }
+  try { return { hostFingerprint: fingerprint, runtime: "SSH 认证成功" }; }
   finally { client.end(); }
+}
+
+/** Saving a server connection never installs software or creates an instance. */
+export async function saveSshConnection(id: string, token: string, input: ConnectSshNodeRequest): Promise<void> {
+  if (!input.hostFingerprint) throw new Error("请先测试 SSH 连接并核对主机指纹");
+  const { client } = await connect(input);
+  try { await saveSettings(id, { ...sshCredentials(input), hostFingerprint: input.hostFingerprint, daemonToken: token }); }
+  finally { client.end(); }
+}
+
+export async function hasSshRuntime(id: string): Promise<boolean> {
+  const settings = await readSettings(id);
+  return Boolean(settings.remoteRoot && settings.daemonPort);
+}
+
+export async function probeSshConnection(id: string): Promise<void> {
+  const { client } = await connect(await readSettings(id));
+  client.end();
+}
+
+/** A real SSH PTY in the account's login directory, independent of Daemon. */
+export async function openSshShell(id: string, cols: number, rows: number): Promise<{ client: Client; stream: ClientChannel }> {
+  const { client } = await connect(await readSettings(id), pendingClient => {
+    const connections = shellConnections.get(id) ?? new Set<Client>();
+    shellConnections.set(id, connections); connections.add(pendingClient);
+    pendingClient.once("close", () => { connections.delete(pendingClient); if (!connections.size) shellConnections.delete(id); });
+  });
+  try {
+    const stream = await new Promise<ClientChannel>((resolve, reject) => {
+      client.shell({ term: "xterm-256color", cols, rows, width: 0, height: 0 }, (error, channel) => error ? reject(error) : resolve(channel));
+    });
+    return { client, stream };
+  } catch (error) { client.end(); throw error; }
+}
+
+// Managed instances opt in to runtime installation; plain terminals never do.
+export async function ensureSshRuntime(id: string): Promise<void> {
+  let pending = provisioning.get(id);
+  if (!pending) {
+    pending = (async () => {
+      const settings = await readSettings(id);
+      if (settings.remoteRoot && settings.daemonPort) return;
+      if (!settings.daemonToken) throw new Error("缺少远程实例凭据，请重新连接 SSH 服务器");
+      await provisionSshNode(id, settings.daemonToken, settings, true);
+    })();
+    provisioning.set(id, pending);
+  }
+  try { await pending; }
+  finally { if (provisioning.get(id) === pending) provisioning.delete(id); }
 }
 
 function sftpSession(client: Client): Promise<SFTPWrapper> {
@@ -135,7 +203,7 @@ const req=http.get({host:'127.0.0.1',port:Number(config.DAEMON_PORT),path:'/heal
 req.on('timeout',()=>req.destroy(new Error('timeout')));req.on('error',error=>{if(error.code==='ECONNREFUSED')start();else {console.error(error.message);process.exitCode=1;}});
 `;
 
-export async function provisionSshNode(id: string, token: string, input: ConnectSshNodeRequest): Promise<void> {
+export async function provisionSshNode(id: string, token: string, input: ConnectSshNodeRequest, replace = false): Promise<void> {
   if (!input.hostFingerprint) throw new Error("请先测试 SSH 连接并核对主机指纹");
   // Verify build assets before changing the remote server.
   await fs.access(path.join(projectRoot, "apps/daemon/dist/index.js")).catch(() => { throw new Error("缺少远程运行组件，请先构建 Daemon（npm run build -w @webops/daemon）"); });
@@ -163,19 +231,21 @@ export async function provisionSshNode(id: string, token: string, input: Connect
     await writeRemote(sftp, remoteRoot + "/runtime.json", JSON.stringify({ DAEMON_HOST: "127.0.0.1", DAEMON_PORT: String(daemonPort), DAEMON_DATA_DIR: remoteRoot + "/data/daemon", DAEMON_IDENTITY_FILE: remoteRoot + "/data/daemon/identity.json", DAEMON_WORKSPACE_ROOT: remoteRoot + "/workspace", DAEMON_SSH_MANAGED: "1" }));
     await writeRemote(sftp, remoteRoot + "/launch.cjs", launcher);
     await execSsh(client, `node ${shellQuote(remoteRoot + "/launch.cjs")}`);
-    await saveSettings(id, { ...input, hostFingerprint: input.hostFingerprint, remoteRoot, daemonPort });
+    await saveSettings(id, { ...sshCredentials(input), hostFingerprint: input.hostFingerprint, remoteRoot, daemonPort }, replace);
   } finally { sftp?.end(); client.end(); }
 }
 
 async function openTunnel(id: string): Promise<Tunnel> {
   const settings = await readSettings(id);
+  if (!settings.remoteRoot || !settings.daemonPort) throw new Error("SSH 服务器尚未启用实例管理；服务器终端可直接使用，创建托管实例后才会安装运行组件。");
+  const daemonPort = settings.daemonPort;
   const { client } = await connect(settings);
   const sockets = new Set<net.Socket>();
   const server = net.createServer((socket) => {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
     socket.on("error", () => socket.destroy());
-    client.forwardOut("127.0.0.1", 0, "127.0.0.1", settings.daemonPort, (error, channel) => {
+    client.forwardOut("127.0.0.1", 0, "127.0.0.1", daemonPort, (error, channel) => {
       if (error) { socket.destroy(); return; }
       channel.on("error", () => socket.destroy());
       socket.on("close", () => channel.destroy());
@@ -196,7 +266,24 @@ async function openTunnel(id: string): Promise<Tunnel> {
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
     server.on("error", close);
     server.unref();
-    return { client, server, port: (server.address() as net.AddressInfo).port, close };
+    const port = (server.address() as net.AddressInfo).port;
+    // The launcher returns before Daemon has finished starting. Wait before
+    // forwarding the first instance operation, including after server reboot.
+    const deadline = Date.now() + 20000;
+    let ready = false;
+    while (!closed && Date.now() < deadline) {
+      ready = await new Promise<boolean>(resolve => {
+        const request = http.get({ host: "127.0.0.1", port, path: "/health", timeout: 1000 }, response => {
+          response.resume(); resolve(response.statusCode === 200);
+        });
+        request.on("timeout", () => request.destroy(new Error("Daemon startup timeout")));
+        request.on("error", () => resolve(false));
+      });
+      if (ready) break;
+      await delay(250);
+    }
+    if (!ready || closed) throw new Error("远程实例运行组件未能就绪，请检查服务器上的 daemon.log 后重试；SSH 终端仍可单独使用。");
+    return { client, server, port, close };
   } catch (error) { close(); throw error; }
 }
 
@@ -209,6 +296,8 @@ export async function resolveDaemonEndpoint<T extends { id: string; protocol: st
 }
 
 export async function removeSshNode(id: string): Promise<void> {
+  try { await provisioning.get(id); } catch { /* Failed installation still needs local cleanup. */ }
+  for (const client of shellConnections.get(id) ?? []) client.end();
   const pending = tunnels.get(id);
   if (pending) { try { (await pending).close(); } catch { /* Already disconnected. */ } }
   await fs.rm(settingsPath(id), { force: true });
@@ -216,10 +305,12 @@ export async function removeSshNode(id: string): Promise<void> {
 
 export async function sshInstanceDirectory(id: string, directory: string): Promise<string> {
   if (/^[a-zA-Z]:|\\/.test(directory)) throw new Error("远程 Linux 实例请使用 Linux 路径，例如 /home/ubuntu/app");
+  await ensureSshRuntime(id);
   const settings = await readSettings(id);
-  return path.posix.resolve(settings.remoteRoot, "workspace", directory);
+  return path.posix.resolve(settings.remoteRoot!, "workspace", directory);
 }
 
 export async function closeSshTunnels(): Promise<void> {
+  for (const clients of shellConnections.values()) for (const client of clients) client.end();
   await Promise.allSettled([...tunnels.values()].map(async (pending) => (await pending).close()));
 }

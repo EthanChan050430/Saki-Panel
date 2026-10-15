@@ -4,6 +4,7 @@ import { classifyCommandRisk, findDangerousCommandReason } from "../../security.
 import { sakiModelProfile } from "./model-profile.js";
 import { requiredSakiToolPermissions, sakiHostExecutionTools } from "./resource-policy.js";
 import { parseWorkspacePatch } from "./patch.js";
+import { selectedWorkspaceTarget } from "./selected-workspaces.js";
 import type { InstanceWithNode, JsonSchema, ParsedToolCall, SakiAgentRuntime, SakiToolSchema } from "./types.js";
 import {
   booleanArg,
@@ -1352,6 +1353,15 @@ export function assertWatchToolAllowed(runtime: SakiAgentRuntime, toolName: stri
   }
 }
 
+function commandWorkingDirectory(runtime: SakiAgentRuntime, args: Record<string, unknown>): string | undefined {
+  const lookup = stringArg(args, "instanceId") || stringArg(args, "instance") || stringArg(args, "id");
+  if (runtime.context.instances) return selectedWorkspaceTarget(runtime.context, lookup)?.workingDirectory;
+  const instance = runtime.context.instance;
+  // An explicitly selected target that has not been resolved yet stays conservative.
+  if (lookup && lookup !== instance?.id && lookup !== instance?.name) return undefined;
+  return instance?.workingDirectory;
+}
+
 export function assertSakiPermissionModeAllowsTool(
   runtime: SakiAgentRuntime,
   toolName: string,
@@ -1366,7 +1376,7 @@ export function assertSakiPermissionModeAllowsTool(
   }
 
   if (lower === "runcommand" || lower === "runinshell") {
-    const commandRisk = classifyCommandRisk(stringArg(args, "command"));
+    const commandRisk = classifyCommandRisk(stringArg(args, "command"), commandWorkingDirectory(runtime, args));
     if (commandRisk.risk !== "low" || !commandRisk.readOnly || rawStringArg(args, "input") || rawStringArg(args, "stdin")) {
       throw new RouteError("Plan mode only permits low-risk inspection commands. Switch permission mode before running commands that can modify state.", 403);
     }
@@ -1399,7 +1409,7 @@ export function shouldRequestSakiApproval(runtime: SakiAgentRuntime, toolName: s
   if (lower === "runcommand" || lower === "runinshell") {
     // stdin can carry a program or answers that change the command's behavior.
     if (rawStringArg(args, "input") || rawStringArg(args, "stdin")) return true;
-    const commandRisk = classifyCommandRisk(stringArg(args, "command"));
+    const commandRisk = classifyCommandRisk(stringArg(args, "command"), commandWorkingDirectory(runtime, args));
     return permissionMode === "ask" ? commandRisk.risk !== "low" : !commandRisk.autoApprove;
   }
   // Normal workspace edits are allowed in both modes. File tools retain their

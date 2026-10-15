@@ -8,6 +8,7 @@
 @import "./styles/layout.css";
 @import "./styles/instances.css";
 @import "./styles/terminal.css";
+@import "./styles/ssh-terminal.css";
 @import "./styles/users-roles.css";
 @import "./styles/file-manager.css";
 @import "./styles/saki.css";

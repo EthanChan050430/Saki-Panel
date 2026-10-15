@@ -1,3 +1,4 @@
+import { sakiChatErrorMessage } from "./components/saki/chat-error.js";
 import type {
   InstanceGitStatus,
   InstanceGitHistory,
@@ -477,7 +478,7 @@ async function requestSakiChatStream(
   const response = await fetch(new URL("/api/saki/chat/stream", API_BASE), requestInit);
 
   if (!response.ok) {
-    throw new ApiError(await responseErrorMessage(response), response.status);
+    throw new ApiError(sakiChatErrorMessage(await responseErrorMessage(response), response.status), response.status);
   }
   if (!response.body) {
     throw new ApiError("Saki stream response is not readable", 0);
@@ -1484,6 +1485,9 @@ export const api = {
   },
   terminalUrl() {
     return webSocketUrl("/ws/terminal", {});
+  },
+  sshTerminalUrl() {
+    return webSocketUrl("/ws/ssh-terminal", {});
   },
   eventsUrl() {
     const token = localStorage.getItem("saki-panel-token") ?? "";

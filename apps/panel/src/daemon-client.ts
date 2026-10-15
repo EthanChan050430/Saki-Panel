@@ -724,8 +724,16 @@ export function statDaemonInstancePath(
   return readDaemonInstanceFile(node, instanceId, workingDirectory, relativePath, { stat: true });
 }
 
-export function captureDaemonWorkspaceCheckpoint(node: DaemonNodeCredentials, instanceId: string, workingDirectory: string) {
-  return requestDaemon<{ snapshotId: string }>(node, `/api/instances/${instanceId}/files/checkpoints/capture`, { method: "POST", body: JSON.stringify({ workingDirectory }) });
+export async function captureDaemonWorkspaceCheckpoint(node: DaemonNodeCredentials, instanceId: string, workingDirectory: string) {
+  try {
+    return await requestDaemon<{ snapshotId: string }>(node, `/api/instances/${instanceId}/files/checkpoints/capture`, { method: "POST", body: JSON.stringify({ workingDirectory }) });
+  } catch (error) {
+    if (error instanceof DaemonRequestError && error.statusCode === 404
+      && (error.code === "FST_ERR_NOT_FOUND" || /Route POST:.*\/files\/checkpoints\/capture.*not found/i.test(error.message))) {
+      throw new DaemonRequestError(409, "WORKSPACE_CHECKPOINT_UNSUPPORTED", "节点守护进程缺少工作区检查点接口。请更新并重启该节点守护进程后重试；此命令尚未执行。");
+    }
+    throw error;
+  }
 }
 
 export function finalizeDaemonWorkspaceCheckpoint(node: DaemonNodeCredentials, instanceId: string, workingDirectory: string, snapshotId: string) {

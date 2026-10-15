@@ -449,8 +449,10 @@ export function findSakiTaskByRequest(userId: string, clientRequestId?: string):
 }
 
 export function assertSakiTaskContextAvailable(userId: string, instanceId: string | null, exceptTaskId?: string): void {
-  const conflict = [...activeSakiTasks.values()].find((task) => task.userId === userId && task.instanceId === instanceId && task.id !== exceptTaskId && (isSakiTaskUnfinished(task) || task.execution || task.decisionInFlight));
-  if (conflict) throw new RouteError("此工作区已有运行中或等待处理的任务，请先连接、处理或停止该任务。", 409);
+  // An idle approval retains its action and resume record, but does not hold
+  // the workspace. Approving it later still checks for an executing task.
+  const conflict = [...activeSakiTasks.values()].find((task) => task.userId === userId && task.instanceId === instanceId && task.id !== exceptTaskId && (task.status === "running" || task.status === "pending_input" || task.execution || task.decisionInFlight));
+  if (conflict) throw new RouteError("此工作区已有正在执行或等待回答的任务，请先连接、处理或停止该任务。", 409);
 }
 
 export function getLatestSakiTask(userId: string, instanceId: string | null): SakiActiveTask | null {
@@ -467,6 +469,7 @@ export function restartActiveSakiTask(taskId: string, abortController: AbortCont
   task.acceptingSteers = true;
   task.abortController = abortController;
   task.updatedAt = new Date().toISOString();
+  task.historyEvents = [...(task.historyEvents ?? []), ...task.eventsBuffer.filter(event => event.type !== "done" && event.type !== "error")];
   task.eventsBuffer = [];
   delete task.pendingHistorySync;
   delete task.response;
@@ -492,7 +495,6 @@ export function emitActiveSakiTaskEvent(
     const last = task.eventsBuffer[task.eventsBuffer.length - 1];
     if (last && last.type === type && typeof last.payload.text === "string") {
       last.payload = { ...last.payload, text: `${last.payload.text}${payload.text}` };
-      last.ts = Date.now();
       for (const subscriber of task.subscribers) {
         try {
           subscriber({ type, payload, ts: last.ts });
@@ -502,13 +504,15 @@ export function emitActiveSakiTaskEvent(
     }
   }
   const event: SakiActiveTaskEvent = {
+    id: randomUUID(),
     type,
     payload,
     ts: Date.now()
   };
   task.eventsBuffer.push(event);
   if (task.eventsBuffer.length > 500) {
-    task.eventsBuffer.shift();
+    const evicted = task.eventsBuffer.shift()!;
+    if (evicted.type !== "done" && evicted.type !== "error") (task.historyEvents ??= []).push(evicted);
   }
   for (const subscriber of task.subscribers) {
     try {

@@ -212,6 +212,7 @@ import {
   mergeSakiFinalText,
   mergeSakiFinalTimeline,
   mergeSakiTimelineActions,
+  mergeSakiResponseTimeline,
   persistableSakiMessages,
   readSakiConversations,
   sortSakiConversationsByTime,
@@ -1459,7 +1460,7 @@ export function SakiFloatingChat({
                   if (message.id !== assistantId) return message;
                   const nextActions = response.actions?.length ? response.actions : message.actions;
                   const sealedTimeline = sealSakiTimelineDelta(message.timeline);
-                  const finalTimeline = mergeSakiTimelineActions(mergeSakiFinalTimeline(sealedTimeline, response.message), nextActions);
+                  const finalTimeline = mergeSakiResponseTimeline(sealedTimeline, response, nextActions);
                   const durationSec =
                     message.thinkingStartedAt && !message.thinkingDurationSec
                       ? Math.max(1, Math.round((Date.now() - message.thinkingStartedAt) / 1000))
@@ -1538,7 +1539,7 @@ export function SakiFloatingChat({
                 if (message.id !== assistantId) return message;
                 const nextActions = finalResp.actions?.length ? finalResp.actions : message.actions;
                 const sealedTimeline = sealSakiTimelineDelta(message.timeline);
-                const finalTimeline = mergeSakiTimelineActions(mergeSakiFinalTimeline(sealedTimeline, finalResp.message), nextActions);
+                const finalTimeline = mergeSakiResponseTimeline(sealedTimeline, finalResp, nextActions);
                 const durationSec =
                   message.thinkingStartedAt && !message.thinkingDurationSec
                     ? Math.max(1, Math.round((Date.now() - message.thinkingStartedAt) / 1000))
@@ -1830,7 +1831,7 @@ export function SakiFloatingChat({
           restoringContextRef.current = true;
           setMessages((current) => active.messages.map((remote: LocalSakiMessage) => {
             const local = current.find((message) => message.id === remote.id);
-            return { ...local, ...remote, timeline: mergeSakiTimelineActions(mergeSakiFinalTimeline(sealSakiTimelineDelta(local?.timeline), remote.content), remote.actions) };
+            return { ...local, ...remote, timeline: mergeSakiResponseTimeline(remote.timeline ?? local?.timeline, { message: remote.content, source: remote.source ?? "direct-model", ...(remote.actions ? { actions: remote.actions } : {}), ...(remote.timelineEvents ? { timelineEvents: remote.timelineEvents } : {}) }) };
           }));
         }
       } catch {
@@ -2436,7 +2437,7 @@ export function SakiFloatingChat({
         const nextMessage: LocalSakiMessage = {
           ...message,
           content: mergeSakiFinalText(message.content, response.message),
-          timeline: mergeSakiTimelineActions(mergeSakiFinalTimeline(message.timeline, response.message), nextActions),
+          timeline: mergeSakiResponseTimeline(message.timeline, response, nextActions),
           source: response.source,
           retry: response.retry,
           workflowExpanded: false,
@@ -3558,7 +3559,7 @@ export function SakiFloatingChat({
             ? (() => {
                 const nextActions = response.actions?.length ? response.actions : message.actions;
                 const sealedTimeline = sealSakiTimelineDelta(message.timeline);
-                const finalTimeline = mergeSakiTimelineActions(mergeSakiFinalTimeline(sealedTimeline, response.message), nextActions);
+                const finalTimeline = mergeSakiResponseTimeline(sealedTimeline, response, nextActions);
                 const textParts = finalTimeline
                   .filter((item): item is Extract<LocalSakiTimelineItem, { kind: "text" }> => item.kind === "text")
                   .map((item) => item.content.trim())

@@ -5,6 +5,7 @@ import { panelConfig } from "../config.js";
 import { prisma } from "../db.js";
 import { loadCurrentUser, requirePermission } from "../auth.js";
 import { nodeVisibilityWhere } from "../node-access.js";
+import { withLatestNodeMetrics } from "../node-metrics.js";
 
 function average(values: number[]): number {
   if (values.length === 0) return 0;
@@ -25,13 +26,7 @@ export async function registerDashboardRoutes(app: FastifyInstance): Promise<voi
 
     const [rawNodes, historyMetrics, recentOperations, recentLogins] = await Promise.all([
       prisma.node.findMany({
-        where: nodeWhere,
-        include: {
-          metrics: {
-            orderBy: { createdAt: "desc" },
-            take: 1
-          }
-        }
+        where: nodeWhere
       }),
       prisma.nodeMetric.findMany({
         orderBy: { createdAt: "desc" },
@@ -59,18 +54,12 @@ export async function registerDashboardRoutes(app: FastifyInstance): Promise<voi
     if (rawNodes.length > 0) {
       await ensureNodesFresh(rawNodes);
       nodes = await prisma.node.findMany({
-        where: nodeWhere,
-        include: {
-          metrics: {
-            orderBy: { createdAt: "desc" },
-            take: 1
-          }
-        }
+        where: nodeWhere
       });
     }
 
     const onlineNodes = nodes.filter((node) => lastSeenIsOnline(node.lastSeenAt));
-    const latestMetrics = nodes
+    const latestMetrics = (await withLatestNodeMetrics(nodes))
       .map((node) => node.metrics[0])
       .filter((metric): metric is NonNullable<typeof metric> => Boolean(metric));
 

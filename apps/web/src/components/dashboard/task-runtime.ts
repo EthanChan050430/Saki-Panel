@@ -1,5 +1,6 @@
 import type { SakiActiveTaskSummary } from "../../api.js";
 import type { DashboardChatMessage } from "./DashboardAgentConversation.js";
+import { dashboardStreamTimeline } from "./timeline.js";
 
 export interface DashboardSession {
   id: string;
@@ -46,6 +47,8 @@ export function dashboardTaskMessages(current: DashboardChatMessage[], task: Sak
     content: response?.message ?? (task.error ? [existing?.content, task.error].filter(Boolean).join("\n\n") : existing?.content ?? ""),
     thinking: response?.thinking ?? existing?.thinking,
     actions: response?.actions ?? existing?.actions,
+    timeline: response && task.status !== "running" ? dashboardStreamTimeline(existing?.timeline, { type: "done", response }) : existing?.timeline,
+    timelineEvents: response?.timelineEvents ?? existing?.timelineEvents,
     createdAt: existing?.createdAt ?? task.startedAt, time: existing?.time ?? "刚刚",
     isStreaming: task.status === "running", isThinking: false,
     workflowMessage: task.status === "running" ? task.progress?.message : undefined

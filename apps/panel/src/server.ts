@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import { closeSshTunnels } from "./ssh-nodes.js";
+import { clientErrorMessage } from "./client-error.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import jwt from "@fastify/jwt";
@@ -21,6 +22,7 @@ import { registerNodeRoutes } from "./routes/nodes.js";
 import { registerTaskRoutes } from "./routes/tasks.js";
 import { registerTemplateRoutes } from "./routes/templates.js";
 import { registerTerminalRoutes } from "./routes/terminal.js";
+import { registerSshTerminalRoutes } from "./routes/ssh-terminal.js";
 import { registerAuditRoutes } from "./routes/audit.js";
 import { registerUserRoutes } from "./routes/users.js";
 import { registerSakiRoutes } from "./routes/saki.js";
@@ -103,6 +105,7 @@ export async function createPanelServer() {
   await registerWatchRoutes(app);
   await registerIngestRoutes(app);
   await registerTerminalRoutes(app);
+  await registerSshTerminalRoutes(app);
   await registerDatabaseRoutes(app);
   await registerJoinScriptRoutes(app);
   await registerUserKeyRoutes(app);
@@ -119,15 +122,9 @@ export async function createPanelServer() {
       typeof error === "object" && error !== null && "statusCode" in error && typeof error.statusCode === "number"
         ? error.statusCode
         : 500;
-    // In production, do not leak raw exception messages (SQL, file paths, internal stack frames, etc.).
-    const message =
-      isProduction
-        ? statusCode >= 500
-          ? "Internal Server Error"
-          : "Bad Request"
-        : error instanceof Error
-          ? error.message
-          : "Internal Server Error";
+    // Deliberate client-facing errors explain conflicts; unexpected exceptions
+    // still hide SQL, internal paths and stack frames in production.
+    const message = clientErrorMessage(error, statusCode, isProduction);
     reply.code(statusCode).send({ message });
   });
 

@@ -11,6 +11,7 @@ import {
   type FetchDaemonStatusResult
 } from "./daemon-client.js";
 import { globalEventBus } from "./global-events.js";
+import { hasSshRuntime, probeSshConnection } from "./ssh-nodes.js";
 import { hasRecentDaemonHeartbeat, ingestHeartbeatSnapshots } from "./watch/events.js";
 
 export interface NodeProbeResult {
@@ -22,6 +23,7 @@ export interface NodeProbeResult {
 }
 
 const watchIngestInFlight = new Set<string>();
+const nodeProbes = new Map<string, Promise<NodeProbeResult>>();
 
 function probeCredentials(
   node: DaemonNodeCredentials,
@@ -114,7 +116,7 @@ function scheduleWatchIngest(nodeId: string, task: () => Promise<void>): void {
 /**
  * Probe a single node's health and update its status / lastSeenAt in the database.
  */
-export async function probeAndSyncNode(
+async function probeAndSyncNodeOnce(
   node: {
     id: string;
     name: string;
@@ -140,6 +142,13 @@ export async function probeAndSyncNode(
   };
 
   try {
+    if (node.protocol === "ssh" && !(await hasSshRuntime(node.id))) {
+      await probeSshConnection(node.id);
+      const now = new Date();
+      await prisma.node.update({ where: { id: node.id }, data: { status: "ONLINE", lastSeenAt: now } });
+      if (node.status !== "ONLINE") globalEventBus.broadcast("node.status_changed", { nodeId: node.id, status: "ONLINE", lastSeenAt: now.toISOString() });
+      return { nodeId: node.id, ok: true, status: "ONLINE" };
+    }
     const statusResult = await fetchDaemonStatus(creds, timeoutMs);
     if (statusResult.ok) {
       const now = new Date();
@@ -258,6 +267,17 @@ export async function probeAndSyncNode(
   }
 }
 
+// Polling, page refreshes and explicit checks share one probe per node.
+export function probeAndSyncNode(node: Parameters<typeof probeAndSyncNodeOnce>[0], timeoutMs = 3000): Promise<NodeProbeResult> {
+  const current = nodeProbes.get(node.id);
+  if (current) return current;
+  const pending = probeAndSyncNodeOnce(node, timeoutMs).finally(() => {
+    if (nodeProbes.get(node.id) === pending) nodeProbes.delete(node.id);
+  });
+  nodeProbes.set(node.id, pending);
+  return pending;
+}
+
 /**
  * Probes all nodes currently registered in the database.
  */
@@ -315,8 +335,10 @@ export async function ensureNodesFresh<T extends {
 
   if (staleNodes.length === 0) return;
 
-  // Run quick parallel probe (timeout 1800ms) so users don't wait long
-  await Promise.allSettled(staleNodes.map((node) => probeAndSyncNode(node, 1800)));
+  // An SSH reconnect can take much longer than an HTTP health check. Return
+  // saved nodes immediately and let the event stream deliver SSH status changes.
+  for (const node of staleNodes.filter(node => node.protocol === "ssh")) void probeAndSyncNode(node, 1800).catch(() => {});
+  await Promise.allSettled(staleNodes.filter(node => node.protocol !== "ssh").map(node => probeAndSyncNode(node, 1800)));
 }
 
 /**

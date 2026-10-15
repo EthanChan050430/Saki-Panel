@@ -29,7 +29,7 @@ export function SshConnectModal({ token, onClose, onConnected }: { token: string
       </div>
       <form onSubmit={submit}>
         <div className="modal-body">
-          <p className="muted">连接后可在服务器上创建实例，并在 SakiAgent 中选择这些实例。支持 Linux、Node.js 22.13+ 和 npm；首次连接会在 SSH 用户目录中安装运行组件，需要访问 npm 仓库。</p>
+          <p className="muted">连接后直接打开远程服务器终端，像 SSH 客户端一样使用。不需要启动命令或安装运行组件；需要管理独立进程时，可在连接后创建托管实例。</p>
           <fieldset disabled={busy !== null} style={{ border: 0, padding: 0, margin: 0 }}>
             <div className="instance-form modal-form">
               <label>服务器名称<input value={form.name} placeholder="例如：生产服务器" onChange={e => update({ name: e.target.value })} maxLength={128} /></label>
@@ -43,13 +43,13 @@ export function SshConnectModal({ token, onClose, onConnected }: { token: string
               </>}
             </div>
           </fieldset>
-          {tested && <div role="status"><p>连接测试通过：{tested.runtime}</p><p>请核对服务器主机指纹，确认后连接并安装：</p><code style={{ overflowWrap: "anywhere" }}>SHA256:{btoa(String.fromCharCode(...tested.hostFingerprint.match(/../g)!.map(byte => parseInt(byte, 16)))).replace(/=+$/, "")}</code></div>}
-          {busy === "connect" && <p role="status">正在安装远程组件并建立连接，首次安装可能需要几分钟…</p>}
+          {tested && <div role="status"><p>连接测试通过：{tested.runtime}</p><p>请核对服务器主机指纹，确认后连接：</p><code style={{ overflowWrap: "anywhere" }}>SHA256:{btoa(String.fromCharCode(...tested.hostFingerprint.match(/../g)!.map(byte => parseInt(byte, 16)))).replace(/=+$/, "")}</code></div>}
+          {busy === "connect" && <p role="status">正在连接远程 SSH 服务器…</p>}
           {error && <p role="alert" className="error-text">{error}</p>}
         </div>
         <div className="modal-footer">
           <button type="button" className="ghost-button" disabled={busy !== null} onClick={onClose}>取消</button>
-          <button type="submit" className="primary-button" disabled={busy !== null}>{busy ? <Loader2 size={15} className="spin" /> : <Server size={15} />}{busy ? "正在处理…" : tested ? "连接并创建实例" : "测试 SSH 连接"}</button>
+          <button type="submit" className="primary-button" disabled={busy !== null}>{busy ? <Loader2 size={15} className="spin" /> : <Server size={15} />}{busy ? "正在处理…" : tested ? "连接并打开终端" : "测试 SSH 连接"}</button>
         </div>
       </form>
     </div>

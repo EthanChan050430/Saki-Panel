@@ -1,3 +1,5 @@
+import { isAbsolutePathInsideWorkspace } from "./workspace-path.js";
+
 export interface CommandRisk {
   risk: "low" | "medium" | "high" | "critical";
   reason: string;
@@ -101,12 +103,15 @@ const projectCommands = new Set(["tsc", "eslint", "prettier", "vitest", "jest", 
 const projectScripts = /^(?:build|check|typecheck|type-check|lint|test|format|dev|start)(?::[\w.-]+)?$/i;
 const packageManagers = new Set(["npm", "pnpm", "yarn", "pip", "pip3", "uv"]);
 
-function classifySegment(tokens: string[]): CommandRisk {
+function classifySegment(tokens: string[], workingDirectory?: string): CommandRisk {
   // A path-qualified binary may be a local executable with the name of a trusted utility.
   const executable = tokens[0]!.toLowerCase().replace(/\.(?:exe|cmd|bat)$/, "");
   const args = tokens.slice(1);
   const lower = args.map((arg) => arg.toLowerCase());
   const verb = lower[0] ?? "";
+  if (executable === "find" && lower.some((arg) => /^-(?:exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)(?:=|$)/.test(arg))) {
+    return result("high", "Find actions can execute commands, delete files, or write output files");
+  }
   if ((packageManagers.has(executable) || executable === "npx") && lower.some((arg) => /^(?:-g|--global|--prefix|--user|--target|--root|--registry|--index-url|--extra-index-url)(?:=|$)/.test(arg))) {
     return result("high", "Package command changes global/external locations or registry settings");
   }
@@ -129,6 +134,7 @@ function classifySegment(tokens: string[]): CommandRisk {
   const external = tokens.find((token) => {
     const value = pathValue(token);
     if (/^https?:\/\//i.test(value)) return false;
+    if (isAbsolutePathInsideWorkspace(value, workingDirectory)) return false;
     return /^(?:[a-z]:|\\\\|~|\/)|(?:^|[\\/])\.\.(?:[\\/]|$)/i.test(value);
   });
   if (external) return result("high", "Command references an absolute, home, or parent path outside the relative workspace boundary");
@@ -168,13 +174,13 @@ function classifySegment(tokens: string[]): CommandRisk {
   return result("high", "Unrecognized command or executable script requires review before execution");
 }
 
-export function classifyCommandRisk(command: string): CommandRisk {
+export function classifyCommandRisk(command: string, workingDirectory?: string): CommandRisk {
   if (!command.trim()) return result("critical", "Command is required");
   const blocked = findDangerousCommandReason(command);
   if (blocked || command.length > 4000 || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(command)) return result("critical", blocked ?? "Command was blocked by the panel safety policy");
   const segments = splitCommands(command);
   if (!segments) return result("high", "Shell expansion, redirection, executable syntax, or ambiguous composition requires review");
-  const risks = segments.map(classifySegment);
+  const risks = segments.map((segment) => classifySegment(segment, workingDirectory));
   const highest = risks.find((risk) => risk.risk === "high") ?? risks.find((risk) => risk.risk === "medium") ?? risks[0]!;
   return { ...highest, readOnly: risks.every((risk) => risk.readOnly), autoApprove: risks.every((risk) => risk.autoApprove) };
 }

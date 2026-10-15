@@ -1,6 +1,6 @@
 import { prisma } from "../../db.js";
 import { RouteError, type SakiActiveTask } from "./types.js";
-import type { SakiChatResponse } from "@webops/shared";
+import type { SakiChatResponse, SakiTimelineEvent } from "@webops/shared";
 import { sakiWorkspaceContextKey } from "@webops/shared";
 
 const writes = new Map<string, Promise<unknown>>();
@@ -55,13 +55,23 @@ export async function persistSakiTaskConversation(task: SakiActiveTask, response
     try { const parsed: unknown = JSON.parse(existing?.messages ?? "[]"); if (Array.isArray(parsed)) messages = parsed; } catch {}
     const userId = task.input.userMessageId ?? `${task.id}-user`;
     const assistantId = task.input.assistantMessageId ?? `${task.id}-assistant`;
+    const previousAssistant = messages.find(message => message.id === assistantId);
+    const timelineEvents = new Map<string, SakiTimelineEvent>((Array.isArray(previousAssistant?.timelineEvents) ? previousAssistant.timelineEvents as SakiTimelineEvent[] : []).map(event => [event.id, event]));
+    for (const [index, event] of [...(task.historyEvents ?? []), ...task.eventsBuffer].entries()) {
+      if (event.type === "done" || event.type === "error") continue;
+      const id = event.id ?? `${task.id}:${task.runVersion ?? 1}:${index}:${event.ts}`;
+      timelineEvents.set(id, { id, type: event.type, payload: event.payload, ts: event.ts });
+    }
+    const recordedEvents = [...timelineEvents.values()];
+    if (response) response.timelineEvents = recordedEvents;
     const upsert = (message: Record<string, unknown>) => {
       const index = messages.findIndex((item) => item?.id === message.id);
       if (index < 0) messages.push(message); else messages[index] = { ...messages[index], ...message };
     };
     upsert({ id: userId, role: "user", content: task.input.message, createdAt: task.startedAt, attachments: task.input.attachments ?? [] });
     upsert({ id: assistantId, role: "assistant", content: response?.message ?? "", createdAt: task.startedAt,
-      source: response?.source ?? "direct-model", streaming: !response, taskId: task.id,
+      source: response?.source ?? "direct-model", streaming: !response, taskId: task.id, timelineEvents: recordedEvents,
+      ...(recordedEvents.length ? { timeline: undefined, timelineBase: undefined } : {}),
       ...(response ? { actions: response.actions ?? [], thinking: response.thinking, usage: response.usage, retry: response.retry, attachments: response.attachments ?? [] } : {}) });
     const data = { messages: JSON.stringify(messages), contextKey: sakiWorkspaceContextKey(task.instanceId, task.input.workspaceInstanceIds), instanceId: task.instanceId, updatedAt: new Date(Math.max(Date.now(), (existing?.updatedAt.getTime() ?? 0) + 1)) };
     await prisma.sakiConversation.upsert({ where: { id },

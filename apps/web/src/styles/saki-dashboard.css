@@ -1131,9 +1131,11 @@
 
 .dashboard-permission-btn.is-ask,
 .dashboard-permission-btn.is-auto,
+.dashboard-permission-btn.is-full,
 .dashboard-permission-btn.is-readonly,
 [data-theme="dark"] .dashboard-permission-btn.is-ask,
 [data-theme="dark"] .dashboard-permission-btn.is-auto,
+[data-theme="dark"] .dashboard-permission-btn.is-full,
 [data-theme="dark"] .dashboard-permission-btn.is-readonly {
   border: none !important;
   background: transparent !important;
@@ -1177,6 +1179,14 @@
 
 [data-theme="dark"] .dashboard-perm-icon.is-auto {
   color: #34c759;
+}
+
+.dashboard-perm-icon.is-full {
+  color: #dc2626;
+}
+
+[data-theme="dark"] .dashboard-perm-icon.is-full {
+  color: #f87171;
 }
 
 .dashboard-perm-icon.is-readonly {
@@ -1747,7 +1757,7 @@
   overflow-y: auto;
   overflow-x: hidden;
   box-sizing: border-box;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
   scrollbar-width: thin;
   scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
 }
@@ -2157,6 +2167,16 @@
   gap: 5px;
   margin-bottom: 10px;
   width: 100%;
+}
+
+.dashboard-message-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dashboard-message-timeline .dashboard-actions-container {
+  margin-bottom: 0;
 }
 
 /* Collapsible Routine Action Groups (same as Saki Agent) */

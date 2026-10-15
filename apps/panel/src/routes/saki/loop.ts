@@ -1046,6 +1046,7 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
       const finalMessage = safeAgentFinalText(action.observation || stringArg(toolArgs(call), "text") || "");
       return finishAgentResponse(correction ? "incomplete" : "respond_tool", correction ? `任务尚未确认完成，已保存进度，可重试继续。\n\n${finalMessage}` : finalMessage);
     }
+    action.workflowId = toolStepId;
     actions.push(action);
     events?.action?.(action);
     emitSakiWorkflow(events, {

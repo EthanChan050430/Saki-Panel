@@ -710,6 +710,7 @@ export function isSakiContinuationMessage(text: string): boolean {
 }
 
 export interface SakiActiveTaskEvent {
+  id?: string;
   type: "workflow" | "action" | "delta" | "thinking" | "done" | "error";
   payload: Record<string, unknown>;
   ts: number;
@@ -726,6 +727,7 @@ export interface SakiActiveTask {
   startedAt: string;
   updatedAt: string;
   eventsBuffer: SakiActiveTaskEvent[];
+  historyEvents?: SakiActiveTaskEvent[];
   response?: SakiChatResponse;
   error?: string;
   abortController?: AbortController;

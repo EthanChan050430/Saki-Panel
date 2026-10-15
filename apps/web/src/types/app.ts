@@ -6,7 +6,8 @@ import type {
   SakiChatMessage,
   SakiChatMode,
   SakiChatResponse,
-  SakiInputAttachment
+  SakiInputAttachment,
+  SakiTimelineEvent
 } from "@webops/shared";
 import type { SakiChatWorkflowStatus } from "../api.js";
 
@@ -91,6 +92,8 @@ export interface LocalSakiMessage extends SakiChatMessage {
   attachments?: SakiInputAttachment[];
   workflow?: LocalSakiWorkflowStep[];
   timeline?: LocalSakiTimelineItem[];
+  timelineEvents?: SakiTimelineEvent[] | undefined;
+  timelineBase?: LocalSakiTimelineItem[] | undefined;
   workflowExpanded?: boolean;
   rollbackGroupExpanded?: boolean;
   streaming?: boolean | undefined;

@@ -6,8 +6,9 @@ import { MarkdownContent } from "../common/MarkdownContent.js";
 import { DashboardPopover } from "./DashboardPopover.js";
 import type { DashboardMessageOperation } from "./message-operations.js";
 import { parseThinkingContent, SakiAttachmentChip, SakiThinkingActionCard, SakiToolActionCard, SakiToolIcon,
-  sakiActionTarget, sakiActionTitle, visibleSakiActions } from "../saki/SakiComponents.js";
+  sakiActionTarget, sakiActionTitle, visibleSakiActions, renderableSakiTimeline } from "../saki/SakiComponents.js";
 import { SakiCodeChangesDetails } from "../saki/chat/SakiCodeChanges.js";
+import type { LocalSakiTimelineItem } from "../../types/app.js";
 const DashboardWebTerminal = React.lazy(() => import("../terminal/WebTerminal.js").then((module) => ({ default: module.WebTerminal })));
 
 export interface DashboardChatMessage {
@@ -23,6 +24,10 @@ export interface DashboardChatMessage {
   thinkingDurationSec?: number | undefined;
   isThinking?: boolean | undefined;
   actions?: SakiAgentAction[] | undefined;
+  timeline?: LocalSakiTimelineItem[] | undefined;
+  timelineEvents?: import("@webops/shared").SakiTimelineEvent[] | undefined;
+  /** Earlier execution runs, retained when an approved task starts a new stream. */
+  timelineBase?: LocalSakiTimelineItem[] | undefined;
   isStreaming?: boolean | undefined;
   workflowMessage?: string | undefined;
   attachments?: SakiInputAttachment[];
@@ -97,6 +102,18 @@ export function compactDashboardActions(actions: SakiAgentAction[]): PresentedDa
       flush();
       result.push({ kind: "action", id: action.id, action });
     }
+  }
+  flush();
+  return result;
+}
+
+export function compactDashboardTimeline(timeline: LocalSakiTimelineItem[]): (PresentedDashboardAction | Exclude<LocalSakiTimelineItem, { kind: "action" }>)[] {
+  const result: (PresentedDashboardAction | Exclude<LocalSakiTimelineItem, { kind: "action" }>)[] = [];
+  let actions: SakiAgentAction[] = [];
+  const flush = () => { result.push(...compactDashboardActions(actions)); actions = []; };
+  for (const item of timeline) {
+    if (item.kind === "action") actions.push(item.action);
+    else { flush(); result.push(item); }
   }
   flush();
   return result;
@@ -237,6 +254,18 @@ export function DashboardAgentMessage({ message, selectedActionId, busyId, onSel
   );
   const isStreamingActive = Boolean(message.isStreaming && !hasPendingAction);
   const isStreamingAnswer = Boolean(isStreamingActive && !message.isThinking && !message.workflowMessage);
+  const timeline = compactDashboardTimeline(message.role === "assistant" ? renderableSakiTimeline({
+    id: message.id, role: message.role, content: message.content, ...(message.timeline ? { timeline: message.timeline } : {}), timelineEvents: message.timelineEvents,
+    ...(message.actions ? { actions: message.actions } : {}), thinking: message.thinking, ...(message.createdAt ? { createdAt: message.createdAt } : {}), streaming: message.isStreaming
+  }) : []);
+  const lastTimelineId = timeline.at(-1)?.id;
+  const renderAction = (item: PresentedDashboardAction) => item.kind === "group" ? (
+    <DashboardToolGroup key={item.id} group={item} messageId={message.id} selectedActionId={selectedActionId}
+      busyId={busyId} onSelectAction={onSelectAction} onDecide={onDecide} />
+  ) : (
+    <DashboardToolEntry key={item.id} action={item.action} messageId={message.id} selected={selectedActionId === item.action.id}
+      busyId={busyId} onSelectAction={onSelectAction} onDecide={onDecide} />
+  );
   return <article className={`dashboard-message-row ${message.role}${editing ? " is-editing" : ""}${menuOpen ? " is-menu-open" : ""}`}>
     <div className="dashboard-message-meta">{message.role === "assistant" ? "Saki" : "你"}</div>
     <div className="dashboard-message-content">
@@ -251,35 +280,27 @@ export function DashboardAgentMessage({ message, selectedActionId, busyId, onSel
           ))}
         </div>
       ) : null}
-      {parsed.thinking ? <SakiThinkingActionCard thinking={parsed.thinking} durationSec={message.thinkingDurationSec}
+      {parsed.thinking && !timeline.some((item) => item.kind === "text" && (item.thinking || parseThinkingContent(item.content).thinking)) ? <SakiThinkingActionCard thinking={parsed.thinking} durationSec={message.thinkingDurationSec}
         streaming={Boolean(message.isStreaming && message.isThinking)} completedLabel="Think for" /> : null}
-      {message.role === "assistant" && message.actions?.length ? <div className="dashboard-actions-container">
-        {compactDashboardActions(message.actions).map((item) => {
-          if (item.kind === "group") {
-            return (
-              <DashboardToolGroup
-                key={item.id}
-                group={item}
-                messageId={message.id}
-                selectedActionId={selectedActionId}
-                busyId={busyId}
-                onSelectAction={onSelectAction}
-                onDecide={onDecide}
-              />
-            );
-          }
-          return (
-            <DashboardToolEntry
-              key={item.id}
-              action={item.action}
-              messageId={message.id}
-              selected={selectedActionId === item.action.id}
-              busyId={busyId}
-              onSelectAction={onSelectAction}
-              onDecide={onDecide}
-            />
-          );
+      {message.role === "assistant" && timeline.length > 0 && !editing ? <div className="dashboard-message-timeline">
+        {timeline.map((item) => {
+          if (item.kind === "action" || item.kind === "group") return <div className="dashboard-actions-container" key={item.id}>{renderAction(item)}</div>;
+          if (item.kind === "pending") return <div key={item.id} className="dashboard-streaming-placeholder" role="status">
+            <span className="dashboard-streaming-pulse-dot" /><span>{item.message}</span>
+          </div>;
+          const text = parseThinkingContent(item.content, item.thinking);
+          const live = isStreamingActive && item.id === lastTimelineId && item.source === "delta";
+          return <div key={item.id}>
+            {text.thinking ? <SakiThinkingActionCard thinking={text.thinking} durationSec={item.thinkingDurationSec}
+              streaming={Boolean(live && message.isThinking)} completedLabel="Think for" /> : null}
+            {text.answer ? <div className="dashboard-markdown-body">{live && isStreamingAnswer ? (
+              <div className="saki-stream-raw-wrap"><span className="saki-stream-raw">{text.answer}</span><span className="dashboard-streaming-cursor" /></div>
+            ) : <MarkdownContent content={text.answer} />}</div> : null}
+          </div>;
         })}
+      </div> : null}
+      {message.role === "assistant" && !timeline.length && message.actions?.length ? <div className="dashboard-actions-container">
+        {compactDashboardActions(message.actions).map(renderAction)}
       </div> : null}
       {editing ? <form className="dashboard-message-editor" onSubmit={(event) => {
         event.preventDefault();
@@ -290,7 +311,7 @@ export function DashboardAgentMessage({ message, selectedActionId, busyId, onSel
           onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setEditing(false); } }} />
         <div><button type="button" disabled={disabled} onClick={() => setEditing(false)}>取消</button>
           <button type="submit" disabled={disabled || !editText.trim()}>{message.role === "user" ? "保存并重新发送" : "保存修改"}</button></div>
-      </form> : parsed.answer ? <div className="dashboard-markdown-body">
+      </form> : parsed.answer && !timeline.length ? <div className="dashboard-markdown-body">
         {isStreamingAnswer ? (
           <div className="saki-stream-raw-wrap">
             <span className="saki-stream-raw">{parsed.answer}</span>
@@ -300,10 +321,10 @@ export function DashboardAgentMessage({ message, selectedActionId, busyId, onSel
           <MarkdownContent content={parsed.answer} />
         )}
       </div>
-        : isStreamingActive && !parsed.thinking && !message.actions?.length && !message.workflowMessage ? <div className="dashboard-streaming-placeholder">
+        : isStreamingActive && !timeline.length && !parsed.thinking && !message.actions?.length && !message.workflowMessage ? <div className="dashboard-streaming-placeholder">
           <span className="dashboard-streaming-pulse-dot" /><span>Saki 正在规划与执行...</span>
         </div> : null}
-      {isStreamingActive && message.workflowMessage ? <div className="dashboard-streaming-placeholder" role="status">
+      {isStreamingActive && message.workflowMessage && !timeline.some((item) => item.kind === "pending") ? <div className="dashboard-streaming-placeholder" role="status">
         <span className="dashboard-streaming-pulse-dot" /><span>{message.workflowMessage}</span>
       </div> : null}
     </div>

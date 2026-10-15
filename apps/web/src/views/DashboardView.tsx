@@ -45,6 +45,7 @@ import {
   Upload,
   Users,
   Wifi,
+  XOctagon,
   Zap
 } from "lucide-react";
 import type { ViewMode } from "../types/app.js";
@@ -109,6 +110,8 @@ import { DashboardAgentMessage, DashboardToolDetails, dashboardActionTerminal, t
 import { SakiChangedFilesPill, useCodeChanges, filterGitChangesForSession } from "../components/saki/chat/SakiCodeChanges.js";
 import { dashboardDeleteTurn, dashboardHasUntrackedTerminalChanges, dashboardHistoryMatches, dashboardIsCodeChange, dashboardRecordAction, dashboardRollbackActions, dashboardStoredActions, dashboardTurnRange, type DashboardMessageOperation } from "../components/dashboard/message-operations.js";
 import { dashboardTaskIsPending, dashboardTaskMessages, dashboardTaskNeedsSync, dashboardTaskSessionId, type DashboardSession, type DashboardStreamRun } from "../components/dashboard/task-runtime.js";
+import { dashboardMergeTimeline, dashboardStreamTimeline } from "../components/dashboard/timeline.js";
+import { DashboardChatStream } from "../components/dashboard/DashboardChatStream.js";
 import { formatDate, formatNumber, resourcesFromNodes, isImageFile, imageMimeTypeFromPath, base64ToBlob, compactContextText } from "../utils/path.js";
 import { readRecentInstances } from "../utils/recentInstances.js";
 import { newClientId } from "../utils/id.js";
@@ -135,6 +138,13 @@ import {
 import type { SakiInstanceFileDragPayload } from "../types/app.js";
 
 const RECENT_INSTANCE_LIMIT = 8;
+
+const AGENT_PERMISSION_OPTIONS = [
+  { id: "ask", label: "需确认", menuLabel: "需确认", description: "常规工作区编辑直接执行，风险操作需确认", icon: ShieldAlert, color: "ask" },
+  { id: "acceptEdits", label: "自主执行", menuLabel: "自主执行（默认）", description: "自动批准规则允许的操作，风险操作仍需确认", icon: ShieldCheck, color: "auto" },
+  { id: "bypassPermissions", label: "完全访问权限", menuLabel: "完全访问权限", description: "无需逐项批准，仍遵守账号与安全策略；外部文件仍需单次审批", icon: XOctagon, color: "full" },
+  { id: "plan", label: "只读模式", menuLabel: "只读观察", description: "只读探索和规划，不修改文件", icon: Lock, color: "readonly" }
+] as const satisfies ReadonlyArray<{ id: SakiAgentPermissionMode; label: string; menuLabel: string; description: string; icon: typeof ShieldAlert; color: string }>;
 
 type ChatMessage = DashboardChatMessage;
 
@@ -653,7 +663,6 @@ export function DashboardView({
       if (!run?.detached && activeSessionIdRef.current === sessionId) setError(err instanceof Error ? err.message : "停止任务失败，请重试。");
     }
   }, [token, publishSessionMessages, finishStream, refreshTasks]);
-  const chatStreamEndRef = useRef<HTMLDivElement | null>(null);
 
   // Single Clean Greeting Sentence State
   const [greetingSentence, setGreetingSentence] = useState(() => getGreetingSentence());
@@ -702,7 +711,9 @@ export function DashboardView({
           selectedProject.myPermissions.includes("task.view") && "查看任务"
         ].filter(Boolean).join("、") || "仅对话"}`
       : isSuperAdmin ? "按当前账号与项目权限执行" : "仅限当前项目，按账号权限执行；外部文件需单次审批";
-  const [agentPermission, setAgentPermission] = useState<"ask" | "auto" | "readonly">("auto");
+  const [agentPermission, setAgentPermission] = useState<SakiAgentPermissionMode>("acceptEdits");
+  const activePermission = AGENT_PERMISSION_OPTIONS.find((option) => option.id === agentPermission)!;
+  const PermissionIcon = activePermission.icon;
   const [detailsTab, setDetailsTab] = useState<"action" | "terminal" | "changes">("action");
   const {
     summary: rawGitChangesSummary,
@@ -1144,25 +1155,15 @@ export function DashboardView({
     return (
       <div className="dashboard-model-dropdown-wrapper" ref={permissionDropdownRef}>
         <button
-          className={`dashboard-model-btn dashboard-permission-btn is-${agentPermission}`}
+          className={`dashboard-model-btn dashboard-permission-btn is-${activePermission.color}`}
           type="button"
           onClick={() => setPermissionDropdownOpen((v) => !v)}
-          title={projectPermissionHint}
+          title={`${activePermission.description}。${projectPermissionHint}`}
+          aria-expanded={permissionDropdownOpen}
+          aria-label={`智能体权限策略：${activePermission.label}`}
         >
-          {agentPermission === "ask" ? (
-            <ShieldAlert size={12} className="dashboard-perm-icon is-ask" />
-          ) : agentPermission === "auto" ? (
-            <ShieldCheck size={12} className="dashboard-perm-icon is-auto" />
-          ) : (
-            <Lock size={12} className="dashboard-perm-icon is-readonly" />
-          )}
-          <span>
-            {agentPermission === "ask"
-              ? "需确认"
-              : agentPermission === "auto"
-              ? "自主执行"
-              : "只读模式"}
-          </span>
+          <PermissionIcon size={12} className={`dashboard-perm-icon is-${activePermission.color}`} />
+          <span>{activePermission.label}</span>
           <ChevronDown size={11} className={`dashboard-model-chevron ${permissionDropdownOpen ? "is-open" : ""}`} />
         </button>
 
@@ -1170,51 +1171,29 @@ export function DashboardView({
           <DashboardPopover anchorRef={permissionDropdownRef} onClose={() => setPermissionDropdownOpen(false)} className="dashboard-model-popover dashboard-permission-popover">
             <div className="dashboard-dropdown-section-title">智能体权限策略</div>
             <div className="dashboard-project-permission-note">{projectPermissionHint}。审批方式不会增加账号权限。</div>
-            <button
-              className={`dashboard-dropdown-item ${agentPermission === "ask" ? "is-selected" : ""}`}
-              type="button"
-              onClick={() => {
-                setAgentPermission("ask");
-                setPermissionDropdownOpen(false);
-              }}
-            >
-              <ShieldAlert size={14} className="dashboard-perm-icon is-ask" />
-              <div className="dashboard-dropdown-item-text">
-                <span className="dashboard-dropdown-item-title">需确认</span>
-                <span className="dashboard-dropdown-item-desc">常规工作区编辑直接执行，风险操作需确认</span>
-              </div>
-              {agentPermission === "ask" && <Check size={13} className="dashboard-dropdown-check" />}
-            </button>
-            <button
-              className={`dashboard-dropdown-item ${agentPermission === "auto" ? "is-selected" : ""}`}
-              type="button"
-              onClick={() => {
-                setAgentPermission("auto");
-                setPermissionDropdownOpen(false);
-              }}
-            >
-              <ShieldCheck size={14} className="dashboard-perm-icon is-auto" />
-              <div className="dashboard-dropdown-item-text">
-                <span className="dashboard-dropdown-item-title">自主执行（默认）</span>
-                <span className="dashboard-dropdown-item-desc">自动批准规则允许的操作，风险操作仍需确认</span>
-              </div>
-              {agentPermission === "auto" && <Check size={13} className="dashboard-dropdown-check" />}
-            </button>
-            <button
-              className={`dashboard-dropdown-item ${agentPermission === "readonly" ? "is-selected" : ""}`}
-              type="button"
-              onClick={() => {
-                setAgentPermission("readonly");
-                setPermissionDropdownOpen(false);
-              }}
-            >
-              <Lock size={14} className="dashboard-perm-icon is-readonly" />
-              <div className="dashboard-dropdown-item-text">
-                <span className="dashboard-dropdown-item-title">只读观察</span>
-                <span className="dashboard-dropdown-item-desc">仅查询指标与状态，禁止任何写改动</span>
-              </div>
-              {agentPermission === "readonly" && <Check size={13} className="dashboard-dropdown-check" />}
-            </button>
+            {AGENT_PERMISSION_OPTIONS.map((option) => {
+              const Icon = option.icon;
+              const isSelected = agentPermission === option.id;
+              return (
+                <button
+                  key={option.id}
+                  className={`dashboard-dropdown-item ${isSelected ? "is-selected" : ""}`}
+                  type="button"
+                  aria-pressed={isSelected}
+                  onClick={() => {
+                    setAgentPermission(option.id);
+                    setPermissionDropdownOpen(false);
+                  }}
+                >
+                  <Icon size={14} className={`dashboard-perm-icon is-${option.color}`} />
+                  <div className="dashboard-dropdown-item-text">
+                    <span className="dashboard-dropdown-item-title">{option.menuLabel}</span>
+                    <span className="dashboard-dropdown-item-desc">{option.description}</span>
+                  </div>
+                  {isSelected && <Check size={13} className="dashboard-dropdown-check" />}
+                </button>
+              );
+            })}
           </DashboardPopover>
         )}
       </div>
@@ -1409,6 +1388,7 @@ export function DashboardView({
   useEffect(() => {
     let isCancelled = false;
     async function loadConversations() {
+      const cachedMessages = new Map(readSakiConversations(userId).flatMap((conversation) => conversation.messages.map((message) => [`${conversation.id}:${message.id}`, message] as const)));
       try {
         const remote = await api.sakiListConversations(token);
         if (isCancelled) return;
@@ -1435,6 +1415,9 @@ export function DashboardView({
                 rollbackJournal: m.rollbackJournal,
                 thinking: m.thinking,
                 actions: dashboardStoredActions(m),
+                timeline: m.timeline ?? (m.timelineEvents?.length ? undefined : cachedMessages.get(`${c.id}:${m.id}`)?.content === m.content ? cachedMessages.get(`${c.id}:${m.id}`)?.timeline : undefined),
+                timelineEvents: m.timelineEvents,
+                timelineBase: m.timelineBase ?? (cachedMessages.get(`${c.id}:${m.id}`)?.content === m.content ? cachedMessages.get(`${c.id}:${m.id}`)?.timelineBase : undefined),
                 thinkingDurationSec: m.thinkingDurationSec,
                 attachments: m.attachments
               }))
@@ -1471,6 +1454,9 @@ export function DashboardView({
               rollbackJournal: m.rollbackJournal,
               thinking: m.thinking,
               actions: dashboardStoredActions(m),
+              timeline: m.timeline,
+              timelineEvents: m.timelineEvents,
+              timelineBase: m.timelineBase,
               thinkingDurationSec: m.thinkingDurationSec,
               attachments: m.attachments
             }))
@@ -1526,21 +1512,24 @@ export function DashboardView({
     const assistantId = task.assistantMessageId ?? `${task.id}-assistant`;
     let content = "";
     let thinking = "";
+    let timeline: ChatMessage["timeline"] = [];
     let settled = false;
     const patch = (update: Partial<ChatMessage>) => publishSessionMessages(sessionId, (current) =>
       dashboardTaskMessages(current, task).map((message) => message.id === assistantId ? { ...message, ...update,
+        ...(update.timeline ? { timeline: dashboardMergeTimeline(message.timelineBase, update.timeline) } : {}),
         ...(update.actions && update.isStreaming !== false ? { actions: [...new Map([...(message.actions ?? []), ...update.actions].map((action) => [action.id, action])).values()] } : {}) } : message));
     patch({ isStreaming: true, isThinking: false, workflowMessage: task.progress?.message ?? "正在恢复任务连接…" });
     try {
       await api.sakiStreamTaskReconnect(token, task.id, (event) => {
         if (run.detached || run.controller.signal.aborted) return;
+        timeline = dashboardStreamTimeline(timeline, event);
+        patch({ timeline });
         if (event.type === "meta") patch({ content: "", thinking: "" });
-        else if (event.type === "delta") { content += event.text; patch({ content, isThinking: false }); }
+        else if (event.type === "delta") { content += event.text; patch({ content, isThinking: false, workflowMessage: undefined }); }
         else if (event.type === "thinking") { thinking += event.text; patch({ thinking, isThinking: true }); }
         else if (event.type === "action") {
-          const isPending = event.action.status === "pending_approval" || event.action.status === "pending_input";
-          patch({ actions: [event.action], isThinking: false, ...(isPending ? { workflowMessage: undefined } : {}) });
-        } else if (event.type === "workflow") patch({ workflowMessage: event.message });
+          patch({ actions: [event.action], isThinking: false, workflowMessage: undefined });
+        } else if (event.type === "workflow") patch({ workflowMessage: event.stage === "narration" || event.status !== "running" ? undefined : event.message });
         else if (event.type === "done") {
           settled = true;
           patch({ content: event.response.message, thinking: event.response.thinking ?? thinking,
@@ -1717,13 +1706,6 @@ export function DashboardView({
     loading && !displayStats ? "-" : `${displayStats?.online ?? 0}/${displayStats?.total ?? 0}`;
   const formatMetricValue = (value: number) => (loading && !displayStats ? "-" : formatNumber(value));
 
-  // Auto-scroll chat stream to bottom on update
-  useEffect(() => {
-    if (messages.length > 0 && chatStreamEndRef.current) {
-      chatStreamEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [messages]);
-
   // Stop Generation Handler
   const handleStopGeneration = useCallback(() => {
     const sessionId = activeSessionIdRef.current;
@@ -1806,6 +1788,7 @@ export function DashboardView({
               ...rest,
               thinking: rest.thinking ?? "",
               actions: rest.actions ?? [],
+              timeline: rest.timeline ?? [],
               createdAt: rest.createdAt ?? createdAt,
               streaming: Boolean(rest.isStreaming),
               ...(msgAttachments && msgAttachments.length > 0 ? { attachments: msgAttachments } : {})
@@ -1814,13 +1797,6 @@ export function DashboardView({
         }, ...stored.filter((session) => session.id !== convId)], userId);
       };
       persistLocal(initialSession.messages!);
-
-      const permMode: SakiAgentPermissionMode =
-        agentPermission === "ask"
-          ? "ask"
-          : agentPermission === "auto"
-          ? "acceptEdits"
-          : "plan";
 
       const historyPayload: SakiChatMessage[] = sourceMessages.filter((message) => !message.rollbackJournal).map((m) => ({
         role: m.role,
@@ -1839,7 +1815,7 @@ export function DashboardView({
         userMessageId: userMsgId,
         assistantMessageId: assistantMsgId,
         mode: interactionMode,
-        agentPermissionMode: permMode,
+        agentPermissionMode: agentPermission,
         instanceId: activeInstanceId, workspaceInstanceIds: selectedWorkspaceIds,
         terminalSandbox: true,
         model: requestedModel || null,
@@ -1852,6 +1828,7 @@ export function DashboardView({
       let finalContent = "";
       let finalThinking = "";
       let finalActions: SakiAgentAction[] = [];
+      let finalTimeline: ChatMessage["timeline"] = [];
       let finalTaskId: string | undefined;
       let streamSettled = false;
       let thinkingSegmentStartedAt: number | undefined;
@@ -1880,12 +1857,15 @@ export function DashboardView({
               return;
             }
             if (run.detached || abortController.signal.aborted) return;
+            finalTimeline = dashboardStreamTimeline(finalTimeline, event);
+            const timeline = finalTimeline;
+            updateMessages((current) => current.map((message) => message.id === assistantMsgId ? { ...message, timeline } : message));
             if (event.type === "delta") {
               const thinkingDurationSec = finishThinking();
               finalContent += event.text;
               updateMessages((prev) =>
                 prev.map((msg) =>
-                  msg.id === assistantMsgId ? { ...msg, content: finalContent, isThinking: false, thinkingDurationSec } : msg
+                  msg.id === assistantMsgId ? { ...msg, content: finalContent, isThinking: false, workflowMessage: undefined, thinkingDurationSec } : msg
                 )
               );
             } else if (event.type === "thinking") {
@@ -1906,7 +1886,6 @@ export function DashboardView({
                 finalActions.push(act);
               }
               const updatedActions = [...finalActions];
-              const isPending = act.status === "pending_approval" || act.status === "pending_input";
               updateMessages((prev) =>
                 prev.map((msg) =>
                   msg.id === assistantMsgId
@@ -1915,11 +1894,14 @@ export function DashboardView({
                         actions: updatedActions,
                         isThinking: false,
                         thinkingDurationSec,
-                        ...(isPending ? { workflowMessage: undefined } : {})
+                        workflowMessage: undefined
                       }
                     : msg
                 )
               );
+            } else if (event.type === "workflow") {
+              updateMessages((current) => current.map((message) => message.id === assistantMsgId
+                ? { ...message, workflowMessage: event.stage === "narration" || event.status !== "running" ? undefined : event.message } : message));
             } else if (event.type === "done") {
               streamSettled = true;
               if (event.response.message) finalContent = event.response.message;
@@ -1966,10 +1948,12 @@ export function DashboardView({
           }
           const errMsg = err instanceof Error ? err.message : String(err || "连接异常");
           finalContent = finalContent ? `${finalContent}\n\n[连接中断: ${errMsg}]` : `请求失败: ${errMsg}`;
+          finalTimeline = dashboardStreamTimeline(finalTimeline, { type: "error", message: errMsg });
+          const timeline = finalTimeline;
           updateMessages((prev) =>
             prev.map((msg) =>
               msg.id === assistantMsgId
-                ? { ...msg, content: finalContent, isStreaming: false }
+                ? { ...msg, content: finalContent, timeline, isStreaming: false }
                 : msg
             )
           );
@@ -1996,6 +1980,7 @@ export function DashboardView({
             thinking: finalThinking,
             thinkingDurationSec,
             actions: finalActions,
+            timeline: finalTimeline,
             taskId: finalTaskId,
             isStreaming: false
           }
@@ -2037,6 +2022,8 @@ export function DashboardView({
                 thinking: m.thinking ?? "",
                 thinkingDurationSec: m.thinkingDurationSec,
                 actions: m.actions ?? [],
+                timeline: m.timeline,
+                timelineEvents: m.timelineEvents,
                 taskId: m.taskId,
                 rollbackJournal: m.rollbackJournal,
                 attachments: m.attachments,
@@ -2167,6 +2154,9 @@ export function DashboardView({
           rollbackJournal: m.rollbackJournal,
           thinking: m.thinking,
           actions: dashboardStoredActions(m),
+          timeline: m.timeline,
+          timelineEvents: m.timelineEvents,
+          timelineBase: m.timelineBase,
           thinkingDurationSec: m.thinkingDurationSec,
           attachments: m.attachments
         }))
@@ -2220,7 +2210,7 @@ export function DashboardView({
       label: previous?.label ?? (interactionMode === "agent" ? "Agent" : "Chat"), detail: previous?.detail ?? "",
       instanceId: activeInstanceId, workspaceInstanceIds: selectedWorkspaceIds, createdAt: previous?.createdAt ?? updatedAt, updatedAt,
       messages: next.map((message) => ({ id: message.id, role: message.role, content: message.content,
-        thinking: message.thinking ?? "", thinkingDurationSec: message.thinkingDurationSec, actions: message.actions ?? [],
+        thinking: message.thinking ?? "", thinkingDurationSec: message.thinkingDurationSec, actions: message.actions ?? [], timeline: message.timeline ?? [], timelineBase: message.timelineBase,
         taskId: message.taskId, rollbackJournal: message.rollbackJournal,
         ...(message.attachments ? { attachments: message.attachments } : {}), createdAt: message.createdAt ?? updatedAt }))
     };
@@ -2312,7 +2302,7 @@ export function DashboardView({
         await saveMessageHistory(dashboardDeleteTurn(working, turn), write);
         setMessageNotice("已删除这轮对话记录，文件改动已保留。");
       } else {
-        await saveMessageHistory(working.map((message) => message.id === messageId ? { ...message, content: operation.edit } : message), write);
+        await saveMessageHistory(working.map((message) => message.id === messageId ? { ...message, content: operation.edit, timeline: undefined, timelineEvents: undefined } : message), write);
         setMessageNotice("对话已修改。");
       }
       setSelectedTool(null); setTerminalPanelOpen(false);
@@ -2357,6 +2347,11 @@ export function DashboardView({
         thinking: result.response?.thinking ?? message.thinking ?? "",
         actions: [...new Map([...(message.actions ?? []), ...(result.response?.actions ?? []), result.action].map((item) => [item.id, item])).values()]
       } : message);
+      updated = updated.map((message) => message.id === messageId && message.timeline?.length ? {
+        ...message, timeline: result.response
+          ? dashboardStreamTimeline(dashboardStreamTimeline(message.timeline, { type: "action", action: result.action }), { type: "done", response: result.response })
+          : dashboardStreamTimeline(message.timeline, { type: "action", action: result.action })
+      } : message);
       const publish = (patch?: Partial<ChatMessage>) => {
         if (patch) updated = updated.map((message) => message.id === messageId ? { ...message, ...patch } : message);
         const target = updated.find((message) => message.id === messageId);
@@ -2372,22 +2367,25 @@ export function DashboardView({
         let content = "";
         let thinking = "";
         let actions = updated.find((message) => message.id === messageId)?.actions ?? [];
-        publish({ taskId: result.taskId, isStreaming: true, workflowMessage: "指令已执行，正在继续任务…" });
+        const timelineBase = updated.find((message) => message.id === messageId)?.timeline ?? [];
+        let timeline: ChatMessage["timeline"] = timelineBase;
+        publish({ taskId: result.taskId, timelineBase, isStreaming: true, workflowMessage: "指令已执行，正在继续任务…" });
         try {
           await api.sakiStreamTaskReconnect(token, result.taskId, (event) => {
             if (streamRun?.detached || controller.signal.aborted) return;
+            if (event.type !== "meta") timeline = dashboardStreamTimeline(timeline, event);
+            publish({ timeline });
             if (event.type === "delta") {
               content += event.text;
-              publish({ content, isThinking: false });
+              publish({ content, isThinking: false, workflowMessage: undefined });
             } else if (event.type === "thinking") {
               thinking += event.text;
               publish({ thinking, isThinking: true });
             } else if (event.type === "action") {
               actions = [...new Map([...actions, event.action].map((item) => [item.id, item])).values()];
-              const isPending = event.action.status === "pending_approval" || event.action.status === "pending_input";
-              publish({ actions, isThinking: false, ...(isPending ? { workflowMessage: undefined } : {}) });
+              publish({ actions, isThinking: false, workflowMessage: undefined });
             } else if (event.type === "workflow") {
-              publish({ workflowMessage: event.message });
+              publish({ workflowMessage: event.stage === "narration" || event.status !== "running" ? undefined : event.message });
             } else if (event.type === "done") {
               publish({ content: event.response.message, thinking: event.response.thinking ?? thinking,
                 actions: event.response.actions ?? actions, isStreaming: false, isThinking: false, workflowMessage: undefined });
@@ -2408,7 +2406,7 @@ export function DashboardView({
       writeSakiConversations(cached.map((conversation) => conversation.id === activeSessionId ? {
         ...conversation, updatedAt: new Date().toISOString(), messages: conversation.messages.map((message) => {
           const latest = updated.find((item) => item.id === message.id);
-          return latest ? { ...message, content: latest.content, thinking: latest.thinking ?? "", actions: latest.actions ?? [] } : message;
+          return latest ? { ...message, content: latest.content, thinking: latest.thinking ?? "", actions: latest.actions ?? [], timeline: latest.timeline ?? [], timelineBase: latest.timelineBase } : message;
         })
       } : conversation), userId);
     } catch (err) {
@@ -2966,7 +2964,7 @@ export function DashboardView({
                             attachments.length > 0 || skills.length > 0
                               ? "输入 @ 引用文件或 Skill，或直接下达运维指令..."
                               : interactionMode === "agent"
-                              ? `输入 Agent 自动化运维指令 (${agentPermission === "ask" ? "需确认模式" : agentPermission === "auto" ? "自主执行模式" : "只读安全模式"})...`
+                              ? `输入 Agent 自动化运维指令 (${activePermission.label})...`
                               : "向 AI 咨询集群架构、配置或运维知识 (问答聊天模式)..."
                           }
                           value={promptText}
@@ -3192,7 +3190,7 @@ export function DashboardView({
               ) : (
                 /* In-Conversation Stream Mode */
                 <>
-                  <div className="dashboard-chat-stream">
+                  <DashboardChatStream resetKey={`${activeSessionId}:${messages.filter((message) => message.role === "user").at(-1)?.id}`}>
                     <div className="dashboard-chat-stream-inner">
                       {messages.filter((message) => !message.rollbackJournal).map((msg) => (
                         <DashboardAgentMessage key={msg.id} message={msg} busyId={isStreaming ? "streaming" : actionBusyId}
@@ -3206,9 +3204,8 @@ export function DashboardView({
                           <SakiChangedFilesPill summary={gitChangesSummary} onClick={handleOpenChangesDetails} />
                         </div>
                       ) : null}
-                      <div ref={chatStreamEndRef} />
                     </div>
-                  </div>
+                  </DashboardChatStream>
 
                   {/* Docked Liquid Glass Input */}
                   <div
@@ -3279,7 +3276,7 @@ export function DashboardView({
                               attachments.length > 0 || skills.length > 0
                                 ? "输入 @ 引用文件或 Skill，或继续发送指令..."
                                 : interactionMode === "agent"
-                                ? `继续下达 Agent 自动化运维指令 (${agentPermission === "ask" ? "需确认" : agentPermission === "auto" ? "自主执行" : "只读安全"})...`
+                                ? `继续下达 Agent 自动化运维指令 (${activePermission.label})...`
                                 : "继续向 AI 咨询集群知识 (问答聊天模式)..."
                             }
                             value={promptText}

@@ -181,7 +181,7 @@ export const SakiChatDropdowns = React.memo(function SakiChatDropdowns({
                   [
                     { id: "ask", label: "请求批准", desc: "终端联网、越界访问和风险操作询问", icon: Shield, colorClass: "ask" },
                     { id: "acceptEdits", label: "帮我批准", desc: "仅对检测到的风险操作请求批准", icon: CheckCircle2, colorClass: "accept" },
-                    { id: "bypassPermissions", label: "完全访问权限", desc: "无需逐项批准，仍遵守账号与安全策略", icon: XOctagon, colorClass: "bypass" },
+                    { id: "bypassPermissions", label: "完全访问权限", desc: "无需逐项批准，仍遵守账号与安全策略；外部文件仍需单次审批", icon: XOctagon, colorClass: "bypass" },
                     { id: "plan", label: "仅规划", desc: "只读探索和规划，不修改文件", icon: Eye, colorClass: "plan" }
                   ] as const
                 ).map((opt) => {

@@ -4837,3 +4837,8 @@ html.perf-lite[data-theme="dark"] .settings-actions,
 html.perf-lite[data-theme="dark"] .topbar-inner {
   background: rgba(24, 28, 38, 0.92);
 }
+.local-daemon-card { margin: 14px 18px 0; padding: 13px; border: 1px solid rgba(127, 160, 190, .25); border-radius: 12px; background: rgba(127, 160, 190, .07); }
+.local-daemon-card-heading { display: flex; gap: 8px; align-items: center; }
+.local-daemon-card-heading > button { margin-left: auto; }
+.local-daemon-card p { margin: 8px 0 0; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.local-daemon-card .primary-button { margin-top: 10px; }
