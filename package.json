@@ -8,6 +8,7 @@
     "packages/*"
   ],
   "scripts": {
+    "test:regressions": "node --test scripts/ssh-files.test.mjs scripts/dashboard-history.test.mjs",
     "build": "npm run build -w @webops/shared && npm run build -w @webops/panel && npm run build -w @webops/daemon && npm run build -w @webops/web",
     "check": "npm run build -w @webops/shared && npm run typecheck -w @webops/panel && npm run typecheck -w @webops/daemon && npm run typecheck -w @webops/web",
     "db:generate": "prisma generate",

@@ -57,12 +57,30 @@ async function saveSettings(id: string, settings: SshSettings, replace = false):
   }
 }
 
-async function readSettings(id: string): Promise<SshSettings> {
+export async function readSettings(id: string): Promise<SshSettings> {
   const saved = JSON.parse(await fs.readFile(settingsPath(id), "utf8"));
   const decipher = createDecipheriv("aes-256-gcm", await encryptionKey(), Buffer.from(saved.iv, "base64"));
   decipher.setAAD(Buffer.from(id));
   decipher.setAuthTag(Buffer.from(saved.tag, "base64"));
   return JSON.parse(Buffer.concat([decipher.update(Buffer.from(saved.data, "base64")), decipher.final()]).toString("utf8"));
+}
+
+export async function updateSshSettings(id: string, updates: Partial<ConnectSshNodeRequest>): Promise<void> {
+  const current = await readSettings(id);
+  const next: SshSettings = {
+    ...current,
+    ...(updates.name !== undefined ? { name: updates.name.trim() } : {}),
+    ...(updates.host !== undefined ? { host: updates.host.trim() } : {}),
+    ...(updates.port !== undefined ? { port: updates.port } : {}),
+    ...(updates.username !== undefined ? { username: updates.username.trim() } : {}),
+    ...(updates.authType !== undefined ? { authType: updates.authType } : {}),
+    ...(updates.password !== undefined ? { password: updates.password } : {}),
+    ...(updates.privateKey !== undefined ? { privateKey: updates.privateKey } : {}),
+    ...(updates.passphrase !== undefined ? { passphrase: updates.passphrase } : {}),
+    ...(updates.hostFingerprint !== undefined ? { hostFingerprint: updates.hostFingerprint } : {})
+  };
+  validateSshInput(next);
+  await saveSettings(id, next, true);
 }
 
 export function validateSshInput(input: ConnectSshNodeRequest): void {
@@ -84,7 +102,7 @@ function sshCredentials(input: ConnectSshNodeRequest): ConnectSshNodeRequest {
     ...(input.authType === "password" ? { password: input.password } : { privateKey: input.privateKey, ...(input.passphrase ? { passphrase: input.passphrase } : {}) }) };
 }
 
-async function connect(input: ConnectSshNodeRequest, onClient?: (client: Client) => void): Promise<{ client: Client; fingerprint: string }> {
+export async function connect(input: ConnectSshNodeRequest, onClient?: (client: Client) => void): Promise<{ client: Client; fingerprint: string }> {
   validateSshInput(input);
   return new Promise((resolve, reject) => {
     const client = new ssh2.Client();

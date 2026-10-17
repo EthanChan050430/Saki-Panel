@@ -392,13 +392,29 @@ export function readSakiConversations(userId?: string): StoredSakiConversation[]
 
 export function writeSakiConversations(conversations: StoredSakiConversation[], userId?: string) {
   if (!userId) return;
+  const sorted = sortSakiConversationsByTime(conversations);
   try {
     globalThis.localStorage?.setItem(
       `${sakiConversationStorageKey}:user:${encodeURIComponent(userId)}`,
-      JSON.stringify(sortSakiConversationsByTime(conversations).slice(0, 80))
+      JSON.stringify(sorted.slice(0, 80))
     );
   } catch {
-    // Storage may be unavailable in private or restricted browser contexts.
+    // If storage is constrained (e.g. quota exceeded), try persisting fewer recent conversations
+    try {
+      globalThis.localStorage?.setItem(
+        `${sakiConversationStorageKey}:user:${encodeURIComponent(userId)}`,
+        JSON.stringify(sorted.slice(0, 30))
+      );
+    } catch {
+      try {
+        globalThis.localStorage?.setItem(
+          `${sakiConversationStorageKey}:user:${encodeURIComponent(userId)}`,
+          JSON.stringify(sorted.slice(0, 10))
+        );
+      } catch {
+        // Storage is completely unavailable or quota exhausted
+      }
+    }
   }
 }
 

@@ -3155,7 +3155,9 @@ export function FileManager({
         <div className="file-manager-mode-bar">
           <div role="group" aria-label="文件管理功能">
             <button type="button" className={!gitOpen ? "active" : ""} aria-pressed={!gitOpen} onClick={() => setGitOpen(false)}><FolderOpen size={15} />文件</button>
-            <button type="button" className={gitOpen ? "active" : ""} aria-pressed={gitOpen} onClick={() => { setGitVisited(true); setGitOpen(true); }}><GitBranch size={15} />Git</button>
+            {!instanceId?.startsWith("node:") && (
+              <button type="button" className={gitOpen ? "active" : ""} aria-pressed={gitOpen} onClick={() => { setGitVisited(true); setGitOpen(true); }}><GitBranch size={15} />Git</button>
+            )}
           </div>
           {!gitOpen && (selectedPaths.size > 0 || mobileSelectedPaths.size > 0 || selectedPath) ? <button type="button" className="file-git-exclude-shortcut" onClick={() => {
             const paths = isMobileFileLayout() && mobileSelectedPaths.size ? [...mobileSelectedPaths] : selectedPaths.size ? [...selectedPaths] : selectedPath ? [selectedPath] : [];

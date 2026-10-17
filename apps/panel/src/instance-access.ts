@@ -170,6 +170,57 @@ export function filterVisibleInstances(
 }
 
 export async function loadVisibleInstance(userId: string, instanceId: string): Promise<InstanceWithAccess | null> {
+  if (instanceId.startsWith("node:")) {
+    const nodeId = instanceId.slice(5);
+    const [profile, node] = await Promise.all([
+      loadInstanceAccessProfile(userId),
+      prisma.node.findUnique({
+        where: { id: nodeId },
+        include: {
+          createdBy: {
+            include: instanceUserInclude
+          }
+        }
+      })
+    ]);
+    if (!profile || !node) return null;
+    if (profile.role !== "super_admin" && node.createdById && node.createdById !== profile.userId) {
+      return null;
+    }
+    const synthetic = {
+      id: `node:${node.id}`,
+      name: node.name,
+      nodeId: node.id,
+      node: node as any,
+      workingDirectory: "/",
+      status: (node.status === "ONLINE" ? "RUNNING" : "STOPPED") as any,
+      createdAt: node.createdAt,
+      updatedAt: node.updatedAt,
+      processId: null,
+      startCommand: "",
+      stopCommand: null,
+      autoRestart: false,
+      autoStart: false,
+      runAsUser: null,
+      memoryLimit: null,
+      cpuLimit: null,
+      description: null,
+      proxyConfig: null,
+      lastStartedAt: null,
+      lastStoppedAt: null,
+      lastExitCode: null,
+      type: "custom",
+      restartPolicy: "never",
+      restartMaxRetries: 3,
+      createdById: node.createdById,
+      createdBy: node.createdBy as any,
+      assignedTo: null,
+      assignedToId: null,
+      assignedUsers: []
+    } as unknown as InstanceWithAccess;
+    return synthetic;
+  }
+
   const [profile, instance] = await Promise.all([
     loadInstanceAccessProfile(userId),
     prisma.instance.findUnique({

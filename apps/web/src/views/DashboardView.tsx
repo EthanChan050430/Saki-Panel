@@ -91,7 +91,7 @@ import {
   type SakiSkillSummary,
   type SakiWorkspaceFileCandidate
 } from "@webops/shared";
-import { api, ApiError, type SakiActiveTaskSummary, type SakiChatStreamEvent } from "../api.js";
+import { api, ApiError, type SakiActiveTaskSummary, type SakiChatStreamEvent, type SakiSavedConversation } from "../api.js";
 import { usePanelLanguage } from "../i18n/index.js";
 import type { PanelLanguage } from "../i18n/translations.js";
 import {
@@ -136,6 +136,7 @@ import {
   hasAnyFileDragData
 } from "../components/saki/sakiChatHelpers.js";
 import type { SakiInstanceFileDragPayload } from "../types/app.js";
+import { createNodeSyntheticInstance } from "./instances/SshServerWorkspace.js";
 
 const RECENT_INSTANCE_LIMIT = 8;
 
@@ -160,6 +161,26 @@ function formatRelativeTime(value: string | null | undefined, language: PanelLan
   if (abs < 3_600_000) return rtf.format(Math.round(diff / 60_000), "minute");
   if (abs < 86_400_000) return rtf.format(Math.round(diff / 3_600_000), "hour");
   return rtf.format(Math.round(diff / 86_400_000), "day");
+}
+
+function formatStoredChatMessage(m: any, idx: number, updatedAt: string, language: PanelLanguage): ChatMessage {
+  return {
+    id: m.id || `m-${idx}`,
+    role: m.role || "user",
+    content: m.content || "",
+    time: formatRelativeTime(m.createdAt || updatedAt, language),
+    createdAt: m.createdAt,
+    taskId: m.taskId,
+    isStreaming: Boolean(m.streaming ?? m.isStreaming),
+    rollbackJournal: m.rollbackJournal,
+    thinking: m.thinking,
+    actions: dashboardStoredActions(m),
+    timeline: m.timeline,
+    timelineEvents: m.timelineEvents,
+    timelineBase: m.timelineBase,
+    thinkingDurationSec: m.thinkingDurationSec,
+    attachments: m.attachments
+  };
 }
 
 function instanceActivityAt(instance: ManagedInstance, openedAt?: string): string {
@@ -256,7 +277,11 @@ export function DashboardView({
     try { return window.sessionStorage.getItem(`dashboard:active-session:${userId}`); } catch { return null; }
   });
   const activeSessionIdRef = useRef(activeSessionId);
+  const sessionRequestGenerationRef = useRef(0);
+  const hydratedSessionIdsRef = useRef(new Set<string>());
+  const sessionLoadingRef = useRef(false);
   const selectSession = (id: string | null) => {
+    sessionRequestGenerationRef.current++;
     activeSessionIdRef.current = id;
     setActiveSessionId(id);
     setAttachments([]);
@@ -284,6 +309,27 @@ export function DashboardView({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [modelMode, setModelMode] = useState<"high" | "standard">("high");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const [sessionLoadError, setSessionLoadError] = useState<string | null>(null);
+  const rollbackCodeMessageIds = useMemo(() => {
+    const result = new Set<string>();
+    const turnCache = new Map<number, boolean>();
+    for (const msg of messages) {
+      if (msg.rollbackJournal) continue;
+      const turn = dashboardTurnRange(messages, msg.id);
+      if (!turn) continue;
+      if (!turnCache.has(turn.start)) {
+        turnCache.set(
+          turn.start,
+          dashboardRollbackActions(messages.slice(turn.start)).some(dashboardIsCodeChange)
+        );
+      }
+      if (turnCache.get(turn.start)) {
+        result.add(msg.id);
+      }
+    }
+    return result;
+  }, [messages]);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [messageNotice, setMessageNotice] = useState("");
   const messageMutationRef = useRef(false);
@@ -298,6 +344,8 @@ export function DashboardView({
   const terminalInstanceRef = useRef(activeInstanceId);
   terminalInstanceRef.current = activeInstanceId;
   const [sessions, setSessions] = useState<SessionItem[]>([]);
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
   const [conversationsLoaded, setConversationsLoaded] = useState(false);
   const [tasks, setTasks] = useState<SakiActiveTaskSummary[]>([]);
   const streamRunsRef = useRef(new Map<string, DashboardStreamRun>());
@@ -685,8 +733,13 @@ export function DashboardView({
   const [availableModels, setAvailableModels] = useState<SakiModelOption[]>([]);
   const [activeModelKey, setActiveModelKey] = useState<string>("");
   const [interactionMode, setInteractionMode] = useState<"agent" | "chat">(canUseAgent ? "agent" : "chat");
-  const authorizedProjects = instances.filter((instance) =>
-    isSuperAdmin || instance.createdByUserId === userId || instance.assignedToUserId === userId || instance.assignees?.some((assignee) => assignee.userId === userId));
+  const authorizedProjects = useMemo(() => {
+    const list = instances.filter((instance) =>
+      isSuperAdmin || instance.createdByUserId === userId || instance.assignedToUserId === userId || instance.assignees?.some((assignee) => assignee.userId === userId));
+    const sshNodes = nodes.filter(node => node.protocol === "ssh");
+    const syntheticServers: ManagedInstance[] = sshNodes.map(node => createNodeSyntheticInstance(node));
+    return [...list, ...syntheticServers];
+  }, [instances, nodes, isSuperAdmin, userId]);
   const selectedWorkspaceIds = normalizeSakiWorkspaceIds(activeInstanceId, workspaceInstanceIds);
   const canUseProjectMode = (mode: "agent" | "chat") => selectedWorkspaceIds.every(id => {
     const project = authorizedProjects.find(instance => instance.id === id);
@@ -694,9 +747,9 @@ export function DashboardView({
   });
   const agentProjects = authorizedProjects.filter((instance) => instance.myPermissions == null || instance.myPermissions.includes(interactionMode === "agent" ? "saki.agent" : "saki.chat"));
   const selectedProject = agentProjects.find((instance) => instance.id === activeInstanceId);
-  const workspaceLabel = selectedWorkspaceIds.length > 1 ? `${selectedWorkspaceIds.length} 个工作区` : selectedProject?.name ?? (activeInstanceId ? "实例不可用" : "添加工作区");
-  const workspaceNames = selectedWorkspaceIds.map(id => instances.find(instance => instance.id === id)?.name ?? "实例不可用").join("、");
-  const workspaceSelectionLocked = workspaceSelectionBusy || isStreaming || Boolean(actionBusyId) || messages.some(message => message.actions?.some(action => action.status === "pending_approval" || action.status === "pending_input"));
+  const workspaceLabel = selectedWorkspaceIds.length > 1 ? `${selectedWorkspaceIds.length} 个工作区` : selectedProject?.name ?? (activeInstanceId ? "工作区不可用" : "添加工作区");
+  const workspaceNames = selectedWorkspaceIds.map(id => authorizedProjects.find(instance => instance.id === id)?.name ?? "工作区不可用").join("、");
+  const workspaceSelectionLocked = sessionLoading || Boolean(sessionLoadError) || workspaceSelectionBusy || isStreaming || Boolean(actionBusyId) || messages.some(message => message.actions?.some(action => action.status === "pending_approval" || action.status === "pending_input"));
   const canCreateTerminal = Boolean(isSuperAdmin && canUseTerminal && canUseAgent && selectedProject);
   const projectPermissionHint = !activeInstanceId
     ? isSuperAdmin ? "未关联项目；项目操作仍按工具权限校验" : "仅可对话、规划和搜索；使用项目工具前请选择已授权项目"
@@ -850,50 +903,123 @@ export function DashboardView({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const renderInstanceAndPagePopover = (onClose: () => void, anchorRef: React.RefObject<HTMLDivElement | null>) => (
-    <DashboardPopover anchorRef={anchorRef} onClose={onClose} className="dashboard-project-popover">
-      <div className="dashboard-dropdown-section-title">工作区 · {selectedWorkspaceIds.length}/{maxSakiWorkspaces}</div>
-      <p className="dashboard-workspace-hint">可添加多个工作区一起使用，默认工作区用于未指定目标的操作。</p>
-      {workspaceSelectionLocked && <p className="dashboard-workspace-hint">任务执行或等待决定时暂时不能更改工作区。</p>}
-      <button
-        className={`dashboard-dropdown-item ${!activeInstanceId ? "is-selected" : ""}`}
-        type="button"
-        disabled={workspaceSelectionLocked}
-        onClick={() => {
-          void updateWorkspaceSelection([]);
-          onClose();
-        }}
-      >
-        <Folder size={13} className="dashboard-dropdown-icon-blue" />
-        <div className="dashboard-dropdown-item-text">
-          <span className="dashboard-dropdown-item-title">无工作区</span>
-          <span className="dashboard-dropdown-item-desc">清空当前选择</span>
-        </div>
-        {!activeInstanceId && <Check size={13} className="dashboard-dropdown-check" />}
-      </button>
+  const renderInstanceAndPagePopover = (onClose: () => void, anchorRef: React.RefObject<HTMLDivElement | null>) => {
+    const regularInstances = agentProjects.filter((inst) => !inst.id.startsWith("node:"));
+    const serverInstances = agentProjects.filter((inst) => inst.id.startsWith("node:"));
 
-      {agentProjects.map((inst) => (
-        <div className="dashboard-workspace-option"
-          key={inst.id}
-        ><button
-          className={`dashboard-dropdown-item ${selectedWorkspaceIds.includes(inst.id) ? "is-selected" : ""}`}
+    return (
+      <DashboardPopover anchorRef={anchorRef} onClose={onClose} className="dashboard-project-popover">
+        <div className="dashboard-dropdown-section-title">工作区 · {selectedWorkspaceIds.length}/{maxSakiWorkspaces}</div>
+        <p className="dashboard-workspace-hint">可添加多个工作区一起使用，默认工作区用于未指定目标的操作。</p>
+        {workspaceSelectionLocked && <p className="dashboard-workspace-hint">任务执行或等待决定时暂时不能更改工作区。</p>}
+        <button
+          className={`dashboard-dropdown-item ${!activeInstanceId ? "is-selected" : ""}`}
           type="button"
-          role="checkbox"
-          aria-checked={selectedWorkspaceIds.includes(inst.id)}
-          disabled={workspaceSelectionLocked || (!selectedWorkspaceIds.includes(inst.id) && selectedWorkspaceIds.length >= maxSakiWorkspaces)}
+          disabled={workspaceSelectionLocked}
           onClick={() => {
-            void updateWorkspaceSelection(selectedWorkspaceIds.includes(inst.id) ? selectedWorkspaceIds.filter(id => id !== inst.id) : [...selectedWorkspaceIds, inst.id]);
+            void updateWorkspaceSelection([]);
+            onClose();
           }}
         >
-          <Server size={13} className="dashboard-dropdown-icon-green" />
+          <Folder size={13} className="dashboard-dropdown-icon-blue" />
           <div className="dashboard-dropdown-item-text">
-            <span className="dashboard-dropdown-item-title">{inst.name}</span>
-            <span className="dashboard-dropdown-item-desc">{inst.nodeName || "独立运行实例"}{activeInstanceId === inst.id ? " · 默认工作区" : ""}</span>
+            <span className="dashboard-dropdown-item-title">无工作区</span>
+            <span className="dashboard-dropdown-item-desc">清空当前选择</span>
           </div>
-          {selectedWorkspaceIds.includes(inst.id) && <Check size={13} className="dashboard-dropdown-check" />}
-        </button>{selectedWorkspaceIds.includes(inst.id) && activeInstanceId !== inst.id && <button type="button" className="dashboard-workspace-default-btn"
-          disabled={workspaceSelectionLocked} onClick={() => void updateWorkspaceSelection([inst.id, ...selectedWorkspaceIds.filter(id => id !== inst.id)])} title={`将 ${inst.name} 设为默认工作区`}>设为默认</button>}</div>
-      ))}
+          {!activeInstanceId && <Check size={13} className="dashboard-dropdown-check" />}
+        </button>
+
+        {serverInstances.length > 0 && (
+          <>
+            <div className="dashboard-dropdown-divider" />
+            <div className="dashboard-dropdown-section-title">远程 SSH 服务器 ({serverInstances.length})</div>
+            {serverInstances.map((inst) => {
+              const node = nodes.find((n) => n.id === inst.nodeId);
+              const isSelected = selectedWorkspaceIds.includes(inst.id);
+              const isDefault = activeInstanceId === inst.id;
+              const isOnline = node?.status === "ONLINE";
+              return (
+                <div className="dashboard-workspace-option" key={inst.id}>
+                  <button
+                    className={`dashboard-dropdown-item ${isSelected ? "is-selected" : ""}`}
+                    type="button"
+                    role="checkbox"
+                    aria-checked={isSelected}
+                    disabled={workspaceSelectionLocked || (!isSelected && selectedWorkspaceIds.length >= maxSakiWorkspaces)}
+                    onClick={() => {
+                      void updateWorkspaceSelection(isSelected ? selectedWorkspaceIds.filter(id => id !== inst.id) : [...selectedWorkspaceIds, inst.id]);
+                    }}
+                  >
+                    <Server size={13} style={{ color: "#38bdf8", flexShrink: 0 }} />
+                    <div className="dashboard-dropdown-item-text">
+                      <span className="dashboard-dropdown-item-title">{inst.name}</span>
+                      <span className="dashboard-dropdown-item-desc">
+                        {node ? `${node.host}:${node.port}` : "SSH 主机"} · {isOnline ? "在线" : "离线"}{isDefault ? " · 默认工作区" : ""}
+                      </span>
+                    </div>
+                    {isSelected && <Check size={13} className="dashboard-dropdown-check" />}
+                  </button>
+                  {isSelected && !isDefault && (
+                    <button
+                      type="button"
+                      className="dashboard-workspace-default-btn"
+                      disabled={workspaceSelectionLocked}
+                      onClick={() => void updateWorkspaceSelection([inst.id, ...selectedWorkspaceIds.filter(id => id !== inst.id)])}
+                      title={`将 ${inst.name} 设为默认工作区`}
+                    >
+                      设为默认
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        {regularInstances.length > 0 && (
+          <>
+            <div className="dashboard-dropdown-divider" />
+            <div className="dashboard-dropdown-section-title">托管服务实例 ({regularInstances.length})</div>
+            {regularInstances.map((inst) => {
+              const isSelected = selectedWorkspaceIds.includes(inst.id);
+              const isDefault = activeInstanceId === inst.id;
+              return (
+                <div className="dashboard-workspace-option" key={inst.id}>
+                  <button
+                    className={`dashboard-dropdown-item ${isSelected ? "is-selected" : ""}`}
+                    type="button"
+                    role="checkbox"
+                    aria-checked={isSelected}
+                    disabled={workspaceSelectionLocked || (!isSelected && selectedWorkspaceIds.length >= maxSakiWorkspaces)}
+                    onClick={() => {
+                      void updateWorkspaceSelection(isSelected ? selectedWorkspaceIds.filter(id => id !== inst.id) : [...selectedWorkspaceIds, inst.id]);
+                    }}
+                  >
+                    <Boxes size={13} className="dashboard-dropdown-icon-green" />
+                    <div className="dashboard-dropdown-item-text">
+                      <span className="dashboard-dropdown-item-title">{inst.name}</span>
+                      <span className="dashboard-dropdown-item-desc">
+                        {inst.nodeName || "独立运行实例"}{isDefault ? " · 默认工作区" : ""}
+                      </span>
+                    </div>
+                    {isSelected && <Check size={13} className="dashboard-dropdown-check" />}
+                  </button>
+                  {isSelected && !isDefault && (
+                    <button
+                      type="button"
+                      className="dashboard-workspace-default-btn"
+                      disabled={workspaceSelectionLocked}
+                      onClick={() => void updateWorkspaceSelection([inst.id, ...selectedWorkspaceIds.filter(id => id !== inst.id)])}
+                      title={`将 ${inst.name} 设为默认工作区`}
+                    >
+                      设为默认
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        )}
 
       {onNavigateView && (
         <>
@@ -919,7 +1045,8 @@ export function DashboardView({
         </>
       )}
     </DashboardPopover>
-  );
+    );
+  };
 
   const renderEnvironmentPopover = (onClose: () => void) => (
     <DashboardPopover anchorRef={worktreeShelfRef} onClose={onClose} className="dashboard-project-popover dashboard-env-popover">
@@ -1384,13 +1511,70 @@ export function DashboardView({
     );
   };
 
-  // Sync stored conversations on mount (remote Saki conversations + local storage)
+  const loadSessionDetail = useCallback(async (sessionId: string) => {
+    if (!sessionId || activeSessionIdRef.current !== sessionId) return;
+    const generation = ++sessionRequestGenerationRef.current;
+    const isCurrent = () => sessionRequestGenerationRef.current === generation && activeSessionIdRef.current === sessionId;
+    const existingSession = sessionsRef.current.find((item) => item.id === sessionId);
+    if (streamRunsRef.current.has(sessionId)) {
+      // Live events own the message list; fetch history again once this stream settles.
+      if (existingSession?.messages !== undefined) setMessages(existingSession.messages);
+      setSessionLoading(false);
+      setSessionLoadError(null);
+      return;
+    }
+    if (hydratedSessionIdsRef.current.has(sessionId) && existingSession?.messages !== undefined) {
+      setMessages(existingSession.messages);
+      setActiveInstanceId(existingSession.instanceId);
+      setWorkspaceInstanceIds(normalizeSakiWorkspaceIds(existingSession.instanceId, existingSession.workspaceInstanceIds));
+      sessionLoadingRef.current = false;
+      setSessionLoading(false);
+      setSessionLoadError(null);
+      return;
+    }
+
+    sessionLoadingRef.current = true;
+    setSessionLoading(true);
+    setSessionLoadError(null);
+    const cached = readSakiConversations(userId).find((item) => item.id === sessionId);
+    setMessages((cached?.messages ?? []).map((m: any, idx: number) =>
+      formatStoredChatMessage(m, idx, cached!.updatedAt, language)
+    ));
+    try {
+      // A local cache is display-only until the authoritative history is loaded.
+      const remote = localHistoryOnlyRef.current && cached ? cached : await api.sakiGetConversation(token, sessionId);
+      if (!isCurrent() || streamRunsRef.current.has(sessionId)) return;
+      const formatted = (remote.messages || []).map((m: any, idx: number) =>
+        formatStoredChatMessage(m, idx, remote.updatedAt, language)
+      );
+      historyVersionsRef.current.set(remote.id, remote.updatedAt);
+      hydratedSessionIdsRef.current.add(sessionId);
+      setMessages(formatted);
+      setActiveInstanceId(remote.instanceId ?? null);
+      setWorkspaceInstanceIds(normalizeSakiWorkspaceIds(remote.instanceId, remote.workspaceInstanceIds ?? sakiWorkspaceIdsFromContextKey(remote.contextKey, remote.instanceId)));
+      setSessions((current) => current.map((item) => item.id === sessionId ? { ...item, messages: formatted, updatedAt: remote.updatedAt } : item));
+      sessionLoadingRef.current = false;
+      setSessionLoading(false);
+    } catch (error) {
+      if (!isCurrent()) return;
+      // Keep sending locked: an empty or stale history must never replace the saved conversation.
+      setSessionLoading(false);
+      setSessionLoadError(error instanceof Error ? error.message : "会话加载失败，请重试。");
+    }
+  }, [language, token, userId]);
+
+  useEffect(() => {
+    hydratedSessionIdsRef.current.clear();
+    sessionRequestGenerationRef.current++;
+    return () => { sessionRequestGenerationRef.current++; };
+  }, [token, userId]);
+
+  // Sync stored conversations on mount (lightweight metadata list first)
   useEffect(() => {
     let isCancelled = false;
     async function loadConversations() {
-      const cachedMessages = new Map(readSakiConversations(userId).flatMap((conversation) => conversation.messages.map((message) => [`${conversation.id}:${message.id}`, message] as const)));
       try {
-        const remote = await api.sakiListConversations(token);
+        const remote = await api.sakiListConversations(token, { excludeMessages: true });
         if (isCancelled) return;
         if (Array.isArray(remote)) {
           localHistoryOnlyRef.current = false;
@@ -1403,27 +1587,15 @@ export function DashboardView({
               updatedAt: c.updatedAt,
               title: c.title || "历史会话",
               category: c.instanceId ? c.label || "实例会话" : "无项目",
-              time: formatRelativeTime(c.updatedAt, language),
-              messages: (c.messages || []).map((m: any, idx: number) => ({
-                id: m.id || `m-${idx}`,
-                role: m.role || "user",
-                content: m.content || "",
-                time: formatRelativeTime(m.createdAt || c.updatedAt, language),
-                createdAt: m.createdAt,
-                taskId: m.taskId,
-                isStreaming: Boolean(m.streaming ?? m.isStreaming),
-                rollbackJournal: m.rollbackJournal,
-                thinking: m.thinking,
-                actions: dashboardStoredActions(m),
-                timeline: m.timeline ?? (m.timelineEvents?.length ? undefined : cachedMessages.get(`${c.id}:${m.id}`)?.content === m.content ? cachedMessages.get(`${c.id}:${m.id}`)?.timeline : undefined),
-                timelineEvents: m.timelineEvents,
-                timelineBase: m.timelineBase ?? (cachedMessages.get(`${c.id}:${m.id}`)?.content === m.content ? cachedMessages.get(`${c.id}:${m.id}`)?.timelineBase : undefined),
-                thinkingDurationSec: m.thinkingDurationSec,
-                attachments: m.attachments
-              }))
+              time: formatRelativeTime(c.updatedAt, language)
             }));
-            return [...loaded.map((session) => streamRunsRef.current.has(session.id) ? current.find((item) => item.id === session.id) ?? session : session),
-              ...current.filter((session) => !loaded.some((item) => item.id === session.id))];
+            return [
+              ...loaded.map((session) => {
+                const existing = current.find((item) => item.id === session.id);
+                return existing?.messages ? { ...session, messages: existing.messages } : session;
+              }),
+              ...current.filter((session) => !loaded.some((item) => item.id === session.id))
+            ];
           });
           setConversationsLoaded(true);
           return;
@@ -1439,27 +1611,14 @@ export function DashboardView({
           const loaded = stored.map((c) => ({
             id: c.id,
             instanceId: c.instanceId ?? null,
-              workspaceInstanceIds: c.workspaceInstanceIds ?? sakiWorkspaceIdsFromContextKey(c.contextKey, c.instanceId),
+            workspaceInstanceIds: c.workspaceInstanceIds ?? sakiWorkspaceIdsFromContextKey(c.contextKey, c.instanceId),
             title: c.title || "历史会话",
             category: c.label || "历史记录",
             time: formatRelativeTime(c.updatedAt, language),
-            messages: (c.messages || []).map((m: any, idx: number) => ({
-              id: m.id || `m-${idx}`,
-              role: m.role || "user",
-              content: m.content || "",
-              time: formatRelativeTime(m.createdAt || c.updatedAt, language),
-              createdAt: m.createdAt,
-              taskId: m.taskId,
-              isStreaming: Boolean(m.streaming ?? m.isStreaming),
-              rollbackJournal: m.rollbackJournal,
-              thinking: m.thinking,
-              actions: dashboardStoredActions(m),
-              timeline: m.timeline,
-              timelineEvents: m.timelineEvents,
-              timelineBase: m.timelineBase,
-              thinkingDurationSec: m.thinkingDurationSec,
-              attachments: m.attachments
-            }))
+            updatedAt: c.updatedAt,
+            messages: (c.messages || []).map((m: any, idx: number) =>
+              formatStoredChatMessage(m, idx, c.updatedAt, language)
+            )
           }));
           return [...loaded.map((session) => current.find((item) => item.id === session.id) ?? session),
             ...current.filter((session) => !loaded.some((item) => item.id === session.id))];
@@ -1497,13 +1656,8 @@ export function DashboardView({
 
   useEffect(() => {
     if (!conversationsLoaded || !activeSessionId) return;
-    const session = sessions.find((item) => item.id === activeSessionId);
-    if (session) {
-      setMessages(session.messages ?? []);
-      setActiveInstanceId(session.instanceId);
-      setWorkspaceInstanceIds(normalizeSakiWorkspaceIds(session.instanceId, session.workspaceInstanceIds));
-    }
-  }, [conversationsLoaded, activeSessionId, sessions]);
+    void loadSessionDetail(activeSessionId);
+  }, [conversationsLoaded, activeSessionId, loadSessionDetail, isStreaming]);
 
   const reconnectTask = useCallback(async (task: SakiActiveTaskSummary) => {
     const sessionId = dashboardTaskSessionId(task);
@@ -1729,7 +1883,7 @@ export function DashboardView({
     async (textToSend?: string, historyOverride?: ChatMessage[], attachmentOverride?: SakiInputAttachment[]) => {
       const trimmedPrompt = (textToSend ?? promptText).trim();
       const currentAttachments = [...(attachmentOverride ?? attachments)];
-      if ((!trimmedPrompt && currentAttachments.length === 0) || workspaceSelectionBusy || isStreaming || (activeSessionId && streamRunsRef.current.has(activeSessionId)) || (actionBusyId && !historyOverride) || !(interactionMode === "agent" ? canUseAgent : canUseChat)) return;
+      if ((!trimmedPrompt && currentAttachments.length === 0) || sessionLoadingRef.current || sessionLoading || Boolean(sessionLoadError) || workspaceSelectionBusy || isStreaming || (activeSessionId && streamRunsRef.current.has(activeSessionId)) || (actionBusyId && !historyOverride) || !(interactionMode === "agent" ? canUseAgent : canUseChat)) return;
       if (!canUseProjectMode(interactionMode)) {
         setError("已选工作区不可用或未授权，请重新选择工作区。");
         return;
@@ -1740,6 +1894,8 @@ export function DashboardView({
       const userMsgId = `u-${newClientId()}`;
       const assistantMsgId = `a-${newClientId()}`;
       const convId = activeSessionId ?? `s-${newClientId()}`;
+      hydratedSessionIdsRef.current.add(convId);
+      sessionRequestGenerationRef.current++;
       const sourceMessages = historyOverride ?? messages;
       const createdAt = new Date().toISOString();
 
@@ -2055,6 +2211,8 @@ export function DashboardView({
       currentModelDisplayName,
       interactionMode,
       isStreaming,
+      sessionLoading,
+      sessionLoadError,
       messages,
       promptText,
       attachments,
@@ -2105,6 +2263,9 @@ export function DashboardView({
 
   const handleNewChat = () => {
     if (actionBusyId || workspaceSelectionBusy) return;
+    sessionLoadingRef.current = false;
+    setSessionLoading(false);
+    setSessionLoadError(null);
     selectSession(null);
     setMessages([]);
     setSelectedTool(null);
@@ -2134,36 +2295,13 @@ export function DashboardView({
     const found = sessions.find((s) => s.id === sessionId);
     setActiveInstanceId(found?.instanceId ?? null);
     setWorkspaceInstanceIds(normalizeSakiWorkspaceIds(found?.instanceId, found?.workspaceInstanceIds));
-    if (found?.messages && found.messages.length > 0) {
-      setMessages(found.messages);
-      return;
-    }
-    const stored = readSakiConversations(userId).find((c) => c.id === sessionId);
-    if (stored?.messages && Array.isArray(stored.messages)) {
-      setActiveInstanceId(stored.instanceId ?? null);
-      setWorkspaceInstanceIds(stored.workspaceInstanceIds ?? sakiWorkspaceIdsFromContextKey(stored.contextKey, stored.instanceId));
-      setMessages(
-        stored.messages.map((m: any, idx: number) => ({
-          id: m.id || `m-${idx}`,
-          role: m.role || "user",
-          content: m.content || "",
-          time: formatRelativeTime(m.createdAt || stored.updatedAt, language),
-          createdAt: m.createdAt,
-          taskId: m.taskId,
-          isStreaming: Boolean(m.streaming ?? m.isStreaming),
-          rollbackJournal: m.rollbackJournal,
-          thinking: m.thinking,
-          actions: dashboardStoredActions(m),
-          timeline: m.timeline,
-          timelineEvents: m.timelineEvents,
-          timelineBase: m.timelineBase,
-          thinkingDurationSec: m.thinkingDurationSec,
-          attachments: m.attachments
-        }))
-      );
-    } else {
-      setMessages([]);
-    }
+
+    sessionLoadingRef.current = true;
+    setSessionLoading(true);
+    setSessionLoadError(null);
+    setMessages([]);
+    if (activeSessionId === sessionId) void loadSessionDetail(sessionId);
+
   };
 
   const handleDeleteSession = async (id: string, e: React.MouseEvent) => {
@@ -2194,7 +2332,17 @@ export function DashboardView({
 
   async function prepareMessageHistoryWrite() {
     if (localHistoryOnlyRef.current) return { localOnly: true, baseUpdatedAt: undefined as string | undefined };
-    const remote = (await api.sakiListConversations(token)).find((conversation) => conversation.id === activeSessionId);
+    if (!activeSessionId) return { localOnly: false, baseUpdatedAt: undefined };
+    let remote: SakiSavedConversation | null = null;
+    try {
+      remote = await api.sakiGetConversation(token, activeSessionId);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        remote = null;
+      } else {
+        throw err;
+      }
+    }
     if (remote && !dashboardHistoryMatches(remote.messages, messages)) throw new Error("对话已在其他设备更新，请重新打开后再操作。");
     if (!remote && sessions.find((session) => session.id === activeSessionId)?.updatedAt) throw new Error("对话已被删除，请重新打开历史记录。");
     return { localOnly: false, baseUpdatedAt: remote?.updatedAt };
@@ -2485,22 +2633,31 @@ export function DashboardView({
                 </div>
               </button>
 
-              {agentProjects.slice(0, 4).map((inst) => (
-                <button
-                  key={inst.id}
-                  className={`dashboard-sidebar-item ${activeInstanceId === inst.id ? "is-active" : ""}`}
-                  type="button"
-                  onClick={() => {
-                    selectWorkspace(inst.id);
-                    setViewMode("workspace");
-                  }}
-                >
-                  <div className="dashboard-sidebar-item-content">
-                    <span className={`dashboard-status-dot ${inst.status === "RUNNING" ? "online" : "offline"}`} />
-                    <span className="dashboard-sidebar-item-title">{inst.name}</span>
-                  </div>
-                </button>
-              ))}
+              {agentProjects.slice(0, 10).map((inst) => {
+                const isServer = inst.id.startsWith("node:");
+                return (
+                  <button
+                    key={inst.id}
+                    className={`dashboard-sidebar-item ${activeInstanceId === inst.id ? "is-active" : ""}`}
+                    type="button"
+                    onClick={() => {
+                      selectWorkspace(inst.id);
+                      setViewMode("workspace");
+                    }}
+                    title={isServer ? `远程 SSH 服务器: ${inst.name}` : `托管实例: ${inst.name}`}
+                  >
+                    <div className="dashboard-sidebar-item-content">
+                      <span className={`dashboard-status-dot ${inst.status === "RUNNING" ? "online" : "offline"}`} />
+                      <span className="dashboard-sidebar-item-title">{inst.name}</span>
+                      {isServer && (
+                        <span style={{ fontSize: "10px", padding: "1px 5px", borderRadius: "4px", background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", marginLeft: "auto", flexShrink: 0 }}>
+                          SSH
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
 
             <div className="dashboard-sidebar-group">
@@ -2587,7 +2744,11 @@ export function DashboardView({
                       onClick={() => setTopbarDropdownOpen(!topbarDropdownOpen)}
                     >
                       {activeInstanceId ? (
-                        <Server size={14} className="dashboard-project-icon is-instance" />
+                        activeInstanceId.startsWith("node:") ? (
+                          <Server size={14} className="dashboard-project-icon" style={{ color: "#38bdf8" }} />
+                        ) : (
+                          <Server size={14} className="dashboard-project-icon is-instance" />
+                        )
                       ) : (
                         <Folder size={14} className="dashboard-project-icon" />
                       )}
@@ -2851,7 +3012,7 @@ export function DashboardView({
           ) : (
             /* Dashboard Workspace View - Single Screen Fit, Real Liquid Glass Refraction */
             <div className="dashboard-workspace-body">
-              {!messages.some((message) => !message.rollbackJournal) ? (
+              {!activeSessionId && !messages.some((message) => !message.rollbackJournal) ? (
                 <div className="dashboard-empty-container">
                   {/* Single Clean Greeting Sentence (No emojis, no extra elements) */}
                   <div className="dashboard-greeting-sentence">
@@ -2867,7 +3028,11 @@ export function DashboardView({
                         onClick={() => setContextDropdownOpen(!contextDropdownOpen)}
                       >
                         {activeInstanceId ? (
-                          <Server size={14} className="dashboard-project-icon is-instance" />
+                          activeInstanceId.startsWith("node:") ? (
+                            <Server size={14} className="dashboard-project-icon" style={{ color: "#38bdf8" }} />
+                          ) : (
+                            <Server size={14} className="dashboard-project-icon is-instance" />
+                          )
                         ) : (
                           <Folder size={14} className="dashboard-project-icon" />
                         )}
@@ -3010,10 +3175,11 @@ export function DashboardView({
                           <button
                             className={`dashboard-send-circle-btn ${(promptText.trim() || attachments.length > 0) ? "has-input" : ""} ${isStreaming ? "is-streaming" : ""}`}
                             type="button"
-                            title={isStreaming ? "停止生成" : "发送指令"}
+                            disabled={sessionLoading || Boolean(sessionLoadError)}
+                            title={isStreaming ? "停止生成" : sessionLoading ? "会话加载中..." : "发送指令"}
                             onClick={isStreaming ? handleStopGeneration : () => void handleSendMessage()}
                           >
-                            {isStreaming ? <Square size={12} fill="currentColor" /> : <ArrowUp size={15} />}
+                            {isStreaming ? <Square size={12} fill="currentColor" /> : sessionLoading ? <Loader2 size={14} className="dashboard-spinner" style={{ animation: "spin 1s linear infinite" }} /> : <ArrowUp size={15} />}
                           </button>
                         </div>
                       </div>
@@ -3192,13 +3358,25 @@ export function DashboardView({
                 <>
                   <DashboardChatStream resetKey={`${activeSessionId}:${messages.filter((message) => message.role === "user").at(-1)?.id}`}>
                     <div className="dashboard-chat-stream-inner">
-                      {messages.filter((message) => !message.rollbackJournal).map((msg) => (
-                        <DashboardAgentMessage key={msg.id} message={msg} busyId={isStreaming ? "streaming" : actionBusyId}
-                          selectedActionId={selectedTool?.messageId === msg.id ? selectedTool.actionId : undefined}
-                          onSelectAction={selectTool} onDecide={decideAction} onMessageOperation={handleMessageOperation} copiedMessageId={copiedMessageId}
-                          canRollbackCode={dashboardRollbackActions(messages.slice(dashboardTurnRange(messages, msg.id)!.start)).some(dashboardIsCodeChange)}
-                          onPreviewAttachment={(attachment) => setPreviewingAttachment({ attachment, editable: false })} />
-                      ))}
+                      {sessionLoadError ? (
+                        <div role="alert" className="dashboard-chat-loading-placeholder">
+                          <p>会话记录加载失败：{sessionLoadError}</p>
+                          <button type="button" className="secondary-button" onClick={() => activeSessionId && void loadSessionDetail(activeSessionId)}><RefreshCw size={14} />重新加载</button>
+                        </div>
+                      ) : sessionLoading ? (
+                        <div className="dashboard-chat-loading-placeholder" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "64px 0", gap: "10px", color: "var(--color-text-muted)" }}>
+                          <Loader2 size={20} className="dashboard-spinner" style={{ animation: "spin 1s linear infinite" }} />
+                          <span style={{ fontSize: "14px" }}>正在加载会话记录...</span>
+                        </div>
+                      ) : (
+                        messages.filter((message) => !message.rollbackJournal).map((msg) => (
+                          <DashboardAgentMessage key={msg.id} message={msg} busyId={isStreaming ? "streaming" : actionBusyId}
+                            selectedActionId={selectedTool?.messageId === msg.id ? selectedTool.actionId : undefined}
+                            onSelectAction={selectTool} onDecide={decideAction} onMessageOperation={handleMessageOperation} copiedMessageId={copiedMessageId}
+                            canRollbackCode={rollbackCodeMessageIds.has(msg.id)}
+                            onPreviewAttachment={(attachment) => setPreviewingAttachment({ attachment, editable: false })} />
+                        ))
+                      )}
                       {!isStreaming && gitChangesSummary && (gitChangesSummary.filesCount > 0 || gitChangesSummary.canRestore) ? (
                         <div className="dashboard-session-bottom-changes">
                           <SakiChangedFilesPill summary={gitChangesSummary} onClick={handleOpenChangesDetails} />
@@ -3272,8 +3450,11 @@ export function DashboardView({
                             ref={dockedTextareaRef}
                             className="dashboard-input-textarea"
                             rows={1}
+                            disabled={sessionLoading || Boolean(sessionLoadError)}
                             placeholder={
-                              attachments.length > 0 || skills.length > 0
+                              sessionLoading
+                                ? "正在加载会话记录..."
+                                : attachments.length > 0 || skills.length > 0
                                 ? "输入 @ 引用文件或 Skill，或继续发送指令..."
                                 : interactionMode === "agent"
                                 ? `继续下达 Agent 自动化运维指令 (${activePermission.label})...`
@@ -3316,10 +3497,11 @@ export function DashboardView({
                             <button
                               className={`dashboard-send-circle-btn ${(promptText.trim() || attachments.length > 0) ? "has-input" : ""} ${isStreaming ? "is-streaming" : ""}`}
                               type="button"
-                              title={isStreaming ? "停止生成" : "发送指令"}
+                              disabled={sessionLoading || Boolean(sessionLoadError)}
+                              title={isStreaming ? "停止生成" : sessionLoading ? "会话加载中..." : "发送指令"}
                               onClick={isStreaming ? handleStopGeneration : () => void handleSendMessage()}
                             >
-                              {isStreaming ? <Square size={12} fill="currentColor" /> : <ArrowUp size={14} />}
+                              {isStreaming ? <Square size={12} fill="currentColor" /> : sessionLoading ? <Loader2 size={14} className="dashboard-spinner" style={{ animation: "spin 1s linear infinite" }} /> : <ArrowUp size={14} />}
                             </button>
                           </div>
                         </div>

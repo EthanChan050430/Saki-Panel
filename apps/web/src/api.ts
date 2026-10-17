@@ -66,6 +66,7 @@ import type {
   LoginResponse,
   ManagedInstance,
   ManagedNode,
+  NodeMetricSnapshot,
   ManagedRole,
   ManagedScheduledTask,
   ManagedTaskRun,
@@ -1028,6 +1029,9 @@ export const api = {
     return requestJson<InstanceLogsResponse>(`/api/instances/${id}/logs?lines=300`, {}, token);
   },
   listInstanceFiles(token: string, id: string, path: string) {
+    if (id.startsWith("node:")) {
+      return this.listNodeFiles(token, id.slice(5), path);
+    }
     return requestJson<InstanceFileListResponse>(
       pathWithQuery(`/api/instances/${id}/files`, { path }),
       {},
@@ -1035,6 +1039,9 @@ export const api = {
     );
   },
   readInstanceFile(token: string, id: string, path: string) {
+    if (id.startsWith("node:")) {
+      return this.readNodeFile(token, id.slice(5), path);
+    }
     return requestJson<InstanceFileContentResponse>(
       pathWithQuery(`/api/instances/${id}/files/content`, { path }),
       {},
@@ -1042,6 +1049,9 @@ export const api = {
     );
   },
   writeInstanceFile(token: string, id: string, path: string, content: string) {
+    if (id.startsWith("node:")) {
+      return this.writeNodeFile(token, id.slice(5), path, content);
+    }
     return requestJson<InstanceFileContentResponse>(
       `/api/instances/${id}/files/content`,
       {
@@ -1069,6 +1079,9 @@ export const api = {
     overwrite: boolean,
     onProgress?: (progress: UploadProgressUpdate) => void
   ) {
+    if (id.startsWith("node:")) {
+      return this.uploadNodeFileMultipart(token, id.slice(5), path, file, overwrite, onProgress);
+    }
     const formData = new FormData();
     formData.append("path", path);
     formData.append("overwrite", String(overwrite));
@@ -1129,6 +1142,9 @@ export const api = {
     return this.uploadInstanceFileMultipart(token, id, path, file, overwrite, onProgress);
   },
   downloadInstanceFile(token: string, id: string, path: string, options: { base64?: boolean } = {}) {
+    if (id.startsWith("node:")) {
+      return this.downloadNodeFile(token, id.slice(5), path, options);
+    }
     const query: Record<string, string | undefined> = { path };
     if (options.base64) {
       query.base64 = "1";
@@ -1140,6 +1156,9 @@ export const api = {
     );
   },
   async saveInstanceFileDownload(token: string, id: string, path: string): Promise<void> {
+    if (id.startsWith("node:")) {
+      return this.saveNodeFileDownload(token, id.slice(5), path);
+    }
     const resp = await fetch(new URL(pathWithQuery(`/api/instances/${id}/files/download`, { path }), API_BASE), {
       headers: { authorization: `Bearer ${token}` }
     });
@@ -1158,6 +1177,9 @@ export const api = {
     triggerBlobDownload(blob, fileName);
   },
   async saveInstanceArchiveDownload(token: string, id: string, paths: string[], fileName?: string): Promise<void> {
+    if (id.startsWith("node:")) {
+      return this.saveNodeArchiveDownload(token, id.slice(5), paths, fileName);
+    }
     const resp = await fetch(new URL(`/api/instances/${id}/files/archive/download`, API_BASE), {
       method: "POST",
       headers: {
@@ -1182,6 +1204,9 @@ export const api = {
     triggerBlobDownload(blob, resolvedName);
   },
   makeInstanceDirectory(token: string, id: string, path: string) {
+    if (id.startsWith("node:")) {
+      return this.makeNodeDirectory(token, id.slice(5), path);
+    }
     return requestJson<InstanceFileEntry>(
       `/api/instances/${id}/files/mkdir`,
       { method: "POST", body: JSON.stringify({ path }) },
@@ -1189,6 +1214,9 @@ export const api = {
     );
   },
   deleteInstancePath(token: string, id: string, path: string) {
+    if (id.startsWith("node:")) {
+      return this.deleteNodePath(token, id.slice(5), path);
+    }
     return requestJson<{ ok: boolean }>(
       `/api/instances/${id}/files`,
       { method: "DELETE", body: JSON.stringify({ path }) },
@@ -1196,6 +1224,9 @@ export const api = {
     );
   },
   renameInstancePath(token: string, id: string, fromPath: string, toPath: string) {
+    if (id.startsWith("node:")) {
+      return this.renameNodePath(token, id.slice(5), fromPath, toPath);
+    }
     return requestJson<InstanceFileEntry>(
       `/api/instances/${id}/files/rename`,
       { method: "POST", body: JSON.stringify({ fromPath, toPath }) },
@@ -1203,6 +1234,9 @@ export const api = {
     );
   },
   copyInstancePath(token: string, id: string, fromPath: string, toPath: string) {
+    if (id.startsWith("node:")) {
+      return this.copyNodePath(token, id.slice(5), fromPath, toPath);
+    }
     return requestJson<InstanceFileEntry>(
       `/api/instances/${id}/files/copy`,
       { method: "POST", body: JSON.stringify({ fromPath, toPath }) },
@@ -1221,6 +1255,9 @@ export const api = {
       overwrite?: boolean;
     } = {}
   ) {
+    if (id.startsWith("node:")) {
+      return this.extractNodeArchive(token, id.slice(5), path, options as any);
+    }
     return requestJson<ExtractInstanceArchiveResponse>(
       `/api/instances/${id}/files/extract`,
       {
@@ -1238,6 +1275,9 @@ export const api = {
     );
   },
   archiveInstancePaths(token: string, id: string, paths: string[], outputPath?: string) {
+    if (id.startsWith("node:")) {
+      return this.archiveNodePaths(token, id.slice(5), paths, outputPath);
+    }
     return requestJson<ArchiveInstancePathsResponse>(
       `/api/instances/${id}/files/archive`,
       {
@@ -1253,6 +1293,221 @@ export const api = {
       {
         method: "POST",
         body: JSON.stringify({ paths, ...(fileName ? { fileName } : {}) })
+      },
+      token
+    );
+  },
+  nodeMetrics(token: string, id: string) {
+    return requestJson<{ nodeId: string; metrics: NodeMetricSnapshot[] }>(
+      `/api/nodes/${id}/metrics`,
+      {},
+      token
+    );
+  },
+  listNodeFiles(token: string, id: string, path: string) {
+    return requestJson<InstanceFileListResponse>(
+      pathWithQuery(`/api/nodes/${id}/files`, { path }),
+      {},
+      token
+    );
+  },
+  readNodeFile(token: string, id: string, path: string) {
+    return requestJson<InstanceFileContentResponse>(
+      pathWithQuery(`/api/nodes/${id}/files/content`, { path }),
+      {},
+      token
+    );
+  },
+  writeNodeFile(token: string, id: string, path: string, content: string) {
+    return requestJson<InstanceFileContentResponse>(
+      `/api/nodes/${id}/files/content`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ path, content })
+      },
+      token
+    );
+  },
+  async uploadNodeFileMultipart(
+    token: string,
+    id: string,
+    path: string,
+    file: File,
+    overwrite: boolean,
+    onProgress?: (progress: UploadProgressUpdate) => void
+  ) {
+    const formData = new FormData();
+    formData.append("path", path);
+    formData.append("overwrite", String(overwrite));
+    formData.append("file", file);
+
+    return new Promise<InstanceFileEntry>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", new URL(`/api/nodes/${id}/files/upload`, API_BASE).toString());
+      xhr.setRequestHeader("authorization", `Bearer ${token}`);
+
+      xhr.upload.onprogress = (event) => {
+        if (!event.lengthComputable) {
+          onProgress?.({ percent: 50, label: "上传中" });
+          return;
+        }
+        const percent = Math.round((event.loaded / event.total) * 100);
+        onProgress?.({ percent, label: "上传中" });
+      };
+
+      xhr.onerror = () => reject(new ApiError("网络连接失败，上传未完成", 0));
+      xhr.onabort = () => reject(new ApiError("上传已取消", 0));
+      xhr.onload = () => {
+        let payload: unknown = null;
+        try {
+          payload = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+        } catch {}
+
+        if (xhr.status < 200 || xhr.status >= 300) {
+          const message =
+            typeof payload === "object" &&
+            payload !== null &&
+            "message" in payload &&
+            typeof payload.message === "string"
+              ? payload.message
+              : `Request failed with ${xhr.status}`;
+          reject(new ApiError(normalizeApiErrorMessage(message, xhr.status), xhr.status));
+          return;
+        }
+
+        onProgress?.({ percent: 100, label: "完成" });
+        resolve(payload as InstanceFileEntry);
+      };
+
+      onProgress?.({ percent: 0, label: "准备上传" });
+      xhr.send(formData);
+    });
+  },
+  async uploadNodeFileWithProgress(
+    token: string,
+    id: string,
+    path: string,
+    file: File,
+    overwrite: boolean,
+    onProgress?: (progress: UploadProgressUpdate) => void
+  ) {
+    return this.uploadNodeFileMultipart(token, id, path, file, overwrite, onProgress);
+  },
+  downloadNodeFile(token: string, id: string, path: string, options: { base64?: boolean } = {}) {
+    const query: Record<string, string | undefined> = { path };
+    if (options.base64) {
+      query.base64 = "1";
+    }
+    return requestJson<DownloadInstanceFileResponse>(
+      pathWithQuery(`/api/nodes/${id}/files/download`, query),
+      {},
+      token
+    );
+  },
+  async saveNodeFileDownload(token: string, id: string, path: string): Promise<void> {
+    const resp = await fetch(new URL(pathWithQuery(`/api/nodes/${id}/files/download`, { path }), API_BASE), {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    if (!resp.ok) {
+      let message = `Download failed with ${resp.status}`;
+      try {
+        const payload = (await resp.json()) as { message?: string };
+        message = payload.message ?? message;
+      } catch {}
+      throw new ApiError(normalizeApiErrorMessage(message, resp.status), resp.status);
+    }
+    const blob = await resp.blob();
+    const cd = resp.headers.get("content-disposition") || "";
+    const defaultName = path.split("/").pop() || "download";
+    const fileName = parseContentDispositionFileName(cd, defaultName);
+    triggerBlobDownload(blob, fileName);
+  },
+  async saveNodeArchiveDownload(token: string, id: string, paths: string[], fileName?: string): Promise<void> {
+    const resp = await fetch(new URL(`/api/nodes/${id}/files/archive/download`, API_BASE), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ paths, ...(fileName ? { fileName } : {}) })
+    });
+    if (!resp.ok) {
+      let message = `Download failed with ${resp.status}`;
+      try {
+        const payload = (await resp.json()) as { message?: string };
+        message = payload.message ?? message;
+      } catch {}
+      throw new ApiError(normalizeApiErrorMessage(message, resp.status), resp.status);
+    }
+    const blob = await resp.blob();
+    const cd = resp.headers.get("content-disposition") || "";
+    const fallbackName = fileName || (paths.length === 1 ? paths[0]!.split("/").pop() || "archive.zip" : "selection.zip");
+    let resolvedName = parseContentDispositionFileName(cd, fallbackName);
+    if (!resolvedName.toLowerCase().endsWith(".zip")) resolvedName += ".zip";
+    triggerBlobDownload(blob, resolvedName);
+  },
+  makeNodeDirectory(token: string, id: string, path: string) {
+    return requestJson<InstanceFileEntry>(
+      `/api/nodes/${id}/files/mkdir`,
+      { method: "POST", body: JSON.stringify({ path }) },
+      token
+    );
+  },
+  deleteNodePath(token: string, id: string, path: string) {
+    return requestJson<{ ok: boolean }>(
+      `/api/nodes/${id}/files`,
+      { method: "DELETE", body: JSON.stringify({ path }) },
+      token
+    );
+  },
+  renameNodePath(token: string, id: string, fromPath: string, toPath: string) {
+    return requestJson<InstanceFileEntry>(
+      `/api/nodes/${id}/files/rename`,
+      { method: "POST", body: JSON.stringify({ fromPath, toPath }) },
+      token
+    );
+  },
+  copyNodePath(token: string, id: string, fromPath: string, toPath: string) {
+    return requestJson<InstanceFileEntry>(
+      `/api/nodes/${id}/files/copy`,
+      { method: "POST", body: JSON.stringify({ fromPath, toPath }) },
+      token
+    );
+  },
+  archiveNodePaths(token: string, id: string, paths: string[], outputPath?: string) {
+    return requestJson<ArchiveInstancePathsResponse>(
+      `/api/nodes/${id}/files/archive`,
+      {
+        method: "POST",
+        body: JSON.stringify({ paths, ...(outputPath ? { outputPath } : {}) })
+      },
+      token
+    );
+  },
+  extractNodeArchive(
+    token: string,
+    id: string,
+    path: string,
+    options: {
+      outputPath?: string;
+      preview?: boolean;
+      conflictPolicy?: "overwrite" | "skip" | "prompt";
+      conflictResolutions?: Record<string, ExtractConflictAction>;
+      overwrite?: boolean;
+    } = {}
+  ) {
+    return requestJson<ExtractInstanceArchiveResponse>(
+      `/api/nodes/${id}/files/extract`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          path,
+          ...(options.outputPath ? { outputPath: options.outputPath } : {}),
+          ...(options.preview ? { preview: true } : {}),
+          ...(options.conflictPolicy ? { conflictPolicy: options.conflictPolicy } : {}),
+          ...(options.conflictResolutions ? { conflictResolutions: options.conflictResolutions } : {}),
+          ...(options.overwrite ? { overwrite: true } : {})
+        })
       },
       token
     );
@@ -1725,8 +1980,12 @@ export const api = {
     }
     return response.blob();
   },
-  sakiListConversations(token: string) {
-    return requestJson<SakiSavedConversation[]>("/api/saki/conversations", {}, token);
+  sakiListConversations(token: string, options?: { excludeMessages?: boolean }) {
+    const query = options?.excludeMessages ? "?excludeMessages=true" : "";
+    return requestJson<SakiSavedConversation[]>(`/api/saki/conversations${query}`, {}, token);
+  },
+  sakiGetConversation(token: string, id: string) {
+    return requestJson<SakiSavedConversation>(`/api/saki/conversations/${encodeURIComponent(id)}`, {}, token);
   },
   sakiSaveConversation(
     token: string,

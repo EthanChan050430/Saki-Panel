@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronRight, Copy, CornerUpLeft, FileDiff, Maximize2, Minimize2, MoreHorizontal, Pencil, Plus, Terminal, Trash2, X } from "lucide-react";
 import type { InstanceGitChangesSummary, ManagedInstance, SakiAgentAction, SakiInputAttachment } from "@webops/shared";
@@ -234,7 +234,7 @@ function DashboardToolGroup({
   );
 }
 
-export function DashboardAgentMessage({ message, selectedActionId, busyId, onSelectAction, onDecide, onMessageOperation, copiedMessageId, canRollbackCode = false, onPreviewAttachment }: {
+export const DashboardAgentMessage = memo(function DashboardAgentMessage({ message, selectedActionId, busyId, onSelectAction, onDecide, onMessageOperation, copiedMessageId, canRollbackCode = false, onPreviewAttachment }: {
   message: DashboardChatMessage; selectedActionId?: string | undefined; busyId: string | null;
   onSelectAction: (messageId: string, actionId: string) => void; onDecide: DecideAction;
   onMessageOperation?: (messageId: string, operation: DashboardMessageOperation) => Promise<void>;
@@ -346,7 +346,7 @@ export function DashboardAgentMessage({ message, selectedActionId, busyId, onSel
       </div>
     </div> : null}
   </article>;
-}
+});
 
 export function DashboardToolDetails({ messageId, action, busyId, onDecide, onClose, token, instance, terminals, workspaceInstances,
   activeTerminalId, onSelectTerminal, onCreateTerminal, canCreateTerminal, terminalBusy,

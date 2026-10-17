@@ -13,11 +13,12 @@ export const sakiToolPermissions: Record<string, PermissionCode> = {
   sendshellinput: "terminal.input", createshell: "terminal.view", listshells: "terminal.view", closeshell: "terminal.input",
   diagnosecode: "terminal.input", getenvironmentinfo: "instance.view", updateinstancesettings: "instance.update",
   listtasks: "task.view", taskruns: "task.view", createscheduledtask: "task.create", updatescheduledtask: "task.update",
-  deletescheduledtask: "task.delete", runtask: "task.run", searchaudit: "audit.view", requestexternalaccess: "file.read"
+  deletescheduledtask: "task.delete", runtask: "task.run", searchaudit: "audit.view", requestexternalaccess: "file.read",
+  listservers: "node.view", describeserver: "node.view", runservercommand: "terminal.input", listserverfiles: "file.view", readserverfile: "file.read"
 };
 
 // Until there is OS process isolation, text filtering cannot confine these tools.
-export const sakiHostExecutionTools = new Set(["runcommand", "runinshell", "sendinput", "sendcommand", "sendshellinput", "createshell", "diagnosecode", "getenvironmentinfo", "gitstatus", "gitdiff", "instanceaction", "runtask", "createscheduledtask", "updatescheduledtask"]);
+export const sakiHostExecutionTools = new Set(["runcommand", "runinshell", "sendinput", "sendcommand", "sendshellinput", "createshell", "diagnosecode", "getenvironmentinfo", "gitstatus", "gitdiff", "instanceaction", "runtask", "createscheduledtask", "updatescheduledtask", "runservercommand"]);
 const readsBeforeMutation = new Set(["replaceinfile", "editlines", "applypatch", "batchedit", "uploadbase64", "archivepaths", "extractarchive"]);
 
 export function requiredSakiToolPermissions(name: string, args: Record<string, unknown> = {}): PermissionCode[] {

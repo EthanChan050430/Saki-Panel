@@ -49,6 +49,10 @@ import {
   listTaskRuns,
   updateScheduledTask
 } from "../../tasks.js";
+import { withLatestNodeMetrics } from "../../node-metrics.js";
+import { connect, readSettings, execSsh } from "../../ssh-nodes.js";
+import { listSshFiles, readSshFile, writeSshFile, statSshPath, restoreSshFileCheckpoint } from "../../ssh-files.js";
+import { canAccessNode, nodeVisibilityWhere } from "../../node-access.js";
 import {
   completedSakiActions,
   invalidateInstanceFileCache,
@@ -543,13 +547,73 @@ async function resolveAgentInstance(runtime: SakiAgentRuntime, args: Record<stri
   return activeInstance(runtime);
 }
 
+async function resolveAgentServerNode(runtime: SakiAgentRuntime, args: Record<string, unknown>) {
+  const user = await loadCurrentUser(runtime.userId);
+  if (!user) throw new RouteError("User not found.", 401);
+  const lookup = stringArg(args, "nodeId") || stringArg(args, "id") || stringArg(args, "server");
+  if (lookup) {
+    const node = await prisma.node.findFirst({
+      where: {
+        AND: [
+          nodeVisibilityWhere(user),
+          {
+            OR: [
+              { id: lookup },
+              { name: { contains: lookup } },
+              { host: lookup }
+            ]
+          }
+        ]
+      },
+      include: {
+        metrics: { orderBy: { createdAt: "desc" }, take: 1 },
+        instances: { select: { id: true, name: true, status: true } }
+      }
+    });
+    if (!node) throw new RouteError(`未找到远程服务器/节点：${lookup}`, 404);
+    return node;
+  }
+  if (runtime.context.instance?.nodeId) {
+    const node = await prisma.node.findUnique({
+      where: { id: runtime.context.instance.nodeId },
+      include: {
+        metrics: { orderBy: { createdAt: "desc" }, take: 1 },
+        instances: { select: { id: true, name: true, status: true } }
+      }
+    });
+    if (node && canAccessNode(user, node)) return node;
+  }
+  const firstNode = await prisma.node.findFirst({
+    where: nodeVisibilityWhere(user),
+    include: {
+      metrics: { orderBy: { createdAt: "desc" }, take: 1 },
+      instances: { select: { id: true, name: true, status: true } }
+    }
+  });
+  if (!firstNode) throw new RouteError("暂无可用服务器或集群节点。", 404);
+  return firstNode;
+}
+
+export function resolveSshInstancePath(instance: InstanceWithNode, relativePath: string): string {
+  const wd = instance.workingDirectory?.trim() || "/";
+  const rel = (relativePath || "").trim();
+  if (!rel || rel === ".") return wd;
+  if (path.posix.isAbsolute(rel)) return path.posix.normalize(rel);
+  return path.posix.join(wd, rel);
+}
+
 async function readFileForCheckpoint(instance: InstanceWithNode, relativePath: string): Promise<{ existed: boolean; content: string }> {
   try {
+    if (instance.node?.protocol === "ssh" || instance.id.startsWith("node:")) {
+      const targetPath = resolveSshInstancePath(instance, relativePath);
+      const file = await readSshFile(instance.nodeId, targetPath);
+      return { existed: true, content: file.content };
+    }
     const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath);
     return { existed: true, content: file.content };
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    if (/not found|no such file|ENOENT/i.test(message)) {
+    if (/not found|no such file|ENOENT|PATH_NOT_FOUND/i.test(message)) {
       return { existed: false, content: "" };
     }
     throw error;
@@ -632,6 +696,11 @@ export async function rollbackCheckpoint(userId: string, checkpoint: SakiCheckpo
   if (checkpoint.type === "file") {
     const instance = await loadVisibleInstance(userId, checkpoint.instanceId);
     if (!instance) throw new RouteError("Checkpoint instance not found.", 404);
+    if (instance.node.protocol === "ssh" || instance.id.startsWith("node:")) {
+      await restoreSshFileCheckpoint(instance.nodeId, resolveSshInstancePath(instance, checkpoint.path), checkpoint);
+      invalidateInstanceFileCache(instance.id, checkpoint.path);
+      return checkpoint.existed ? `Rolled back file ${checkpoint.path}.` : `Removed file ${checkpoint.path} created after checkpoint.`;
+    }
     if (checkpoint.existed) {
       await writeDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, {
         path: checkpoint.path,
@@ -1047,6 +1116,11 @@ function normalizeToolArgs(toolName: string, call: ParsedToolCall): Record<strin
   switch (toolName) {
     case "listinstances": return {};
     case "describeinstance": return { lookup: callArgs[0] };
+    case "listservers": return { query: callArgs[0] };
+    case "describeserver": return { nodeId: callArgs[0] };
+    case "runservercommand": return { nodeId: callArgs[0], command: callArgs[1], timeoutMs: callArgs[2] };
+    case "listserverfiles": return { nodeId: callArgs[0], path: callArgs[1], limit: callArgs[2] };
+    case "readserverfile": return { nodeId: callArgs[0], path: callArgs[1], startLine: callArgs[2], lineCount: callArgs[3] };
     case "instancelogs": return { lookup: callArgs[0], lines: callArgs[1] };
     case "listfiles": return { lookup: callArgs[0], path: callArgs[1] };
     case "readfile": return { lookup: callArgs[0], path: callArgs[1] };
@@ -1170,6 +1244,79 @@ export async function executeSakiAgentTool(
       } else if (toolName === "describeinstance") {
         requireUserPermission(runtime.permissions, "instance.view");
         observation = formatInstanceSummary(await resolveAgentInstance(runtime, args));
+      } else if (toolName === "listservers") {
+        requireUserPermission(runtime.permissions, "node.view");
+        const user = await loadCurrentUser(runtime.userId);
+        if (!user) throw new RouteError("User not found", 401);
+        const query = (stringArg(args, "query") ?? "").trim().toLowerCase();
+        const nodes = await prisma.node.findMany({
+          where: nodeVisibilityWhere(user),
+          orderBy: { createdAt: "desc" }
+        });
+        const nodesWithMetrics = await withLatestNodeMetrics(nodes);
+        const filtered = query
+          ? nodesWithMetrics.filter(n => `${n.name} ${n.host} ${n.protocol} ${n.os || ""}`.toLowerCase().includes(query))
+          : nodesWithMetrics;
+        observation = filtered.map(n => {
+          const m = n.metrics?.[0];
+          return `【服务器】${n.name} (${n.id})\n- 连接: ${n.protocol.toUpperCase()} -> ${n.host}:${n.port}\n- 状态: ${n.status}\n- 系统: ${n.os || "Linux"} / ${n.arch || "x64"}\n- CPU占用: ${m?.cpuUsage != null ? `${m.cpuUsage}%` : "暂无数据"}\n- 物理内存: ${m?.usedMemoryMb != null ? `${m.usedMemoryMb} MB / ${m.totalMemoryMb || "-"} MB (${m.memoryUsage}%)` : "暂无数据"}\n- 磁盘占用: ${m?.diskUsage != null ? `${m.diskUsage}%` : "暂无数据"}\n- 运行时间: ${m?.uptimeSeconds ? `${Math.floor(m.uptimeSeconds / 3600)}小时${Math.floor((m.uptimeSeconds % 3600) / 60)}分` : "未知"}`;
+        }).join("\n\n") || "未找到任何远程服务器或节点。";
+      } else if (toolName === "describeserver") {
+        requireUserPermission(runtime.permissions, "node.view");
+        const node = await resolveAgentServerNode(runtime, args);
+        const m = node.metrics?.[0];
+        const instancesText = node.instances?.length
+          ? node.instances.map(inst => `  - ${inst.name} (${inst.id}): ${inst.status}`).join("\n")
+          : "  (暂无实例托管于此服务器)";
+        observation = `【远程服务器详情】${node.name} (${node.id})\n- 协议与地址: ${node.protocol.toUpperCase()} ${node.host}:${node.port}\n- 连接状态: ${node.status}\n- 操作系统: ${node.os || "Linux"} (${node.arch || "x64"})\n- CPU 实时占用: ${m?.cpuUsage != null ? `${m.cpuUsage}%` : "暂无数据"}\n- 物理内存: ${m?.usedMemoryMb != null ? `${m.usedMemoryMb} MB / ${m.totalMemoryMb || "-"} MB (${m.memoryUsage}%)` : "暂无数据"}\n- 磁盘占用: ${m?.diskUsage != null ? `${m.diskUsage}% (${m.usedDiskGb || "-"} GB / ${m.totalDiskGb || "-"} GB)` : "暂无数据"}\n- 1分钟平均负载: ${m?.loadAverage1m ?? "未知"}\n- 连续开机时间: ${m?.uptimeSeconds ? `${Math.floor(m.uptimeSeconds / 3600)}小时${Math.floor((m.uptimeSeconds % 3600) / 60)}分` : "未知"}\n- 托管实例:\n${instancesText}`;
+      } else if (toolName === "runservercommand") {
+        requireUserPermission(runtime.permissions, "terminal.input");
+        requireUserPermission(runtime.permissions, "node.view");
+        const command = stringArg(args, "command");
+        if (!command) throw new RouteError("runServerCommand requires a command.", 400);
+        const node = await resolveAgentServerNode(runtime, args);
+        const timeoutMs = numericArg(args.timeoutMs, 30000, 1000, 120000);
+        if (node.protocol === "ssh") {
+          const settings = await readSettings(node.id);
+          const { client } = await connect(settings);
+          try {
+            const output = await execSsh(client, command, timeoutMs);
+            observation = output || "(Command completed with no output)";
+          } finally {
+            client.end();
+          }
+        } else {
+          observation = `非 SSH 协议节点请通过实例控制台执行命令。`;
+        }
+      } else if (toolName === "listserverfiles") {
+        requireUserPermission(runtime.permissions, "file.view");
+        requireUserPermission(runtime.permissions, "node.view");
+        const node = await resolveAgentServerNode(runtime, args);
+        const queryP = stringArg(args, "path") ?? "";
+        const limit = numericArg(args.limit, 200, 1, 1000);
+        if (node.protocol === "ssh") {
+          const files = await listSshFiles(node.id, queryP, { limit });
+          observation = [
+            `服务器 ${node.name} [${files.path || "/"}]:`,
+            files.entries.map(e => `${e.type === "directory" ? "[DIR]" : "[FILE]"} ${e.path || e.name} ${e.size ? `(${e.size} bytes)` : ""}`).join("\n") || "目录为空。"
+          ].join("\n");
+        } else {
+          observation = "该节点不支持 SFTP 浏览。";
+        }
+      } else if (toolName === "readserverfile") {
+        requireUserPermission(runtime.permissions, "file.read");
+        requireUserPermission(runtime.permissions, "node.view");
+        const node = await resolveAgentServerNode(runtime, args);
+        const queryP = stringArg(args, "path");
+        if (!queryP) throw new RouteError("readServerFile requires path.", 400);
+        const startLine = numericArg(args.startLine, 1, 1, 1_000_000);
+        const lineCount = numericArg(args.lineCount, defaultAgentReadFileLineCount, 1, maxAgentReadFileLineCount);
+        if (node.protocol === "ssh") {
+          const file = await readSshFile(node.id, queryP, { startLine, lineCount });
+          observation = renderAgentFileWindow(queryP, { content: file.content, size: file.size, ...(file.totalLines !== undefined ? { totalLines: file.totalLines } : {}) }, startLine);
+        } else {
+          observation = "该节点不支持读取。";
+        }
       } else if (toolName === "instancelogs") {
         requireUserPermission(runtime.permissions, "instance.logs");
         const instance = await resolveAgentInstance(runtime, args);
@@ -1182,13 +1329,22 @@ export async function executeSakiAgentTool(
         const instance = await resolveAgentInstance(runtime, args);
         const relativePath = safeRelativePath(args.path, instance.workingDirectory);
         const limit = numericArg(args.limit, 200, 1, 1000);
-        const files = await listDaemonInstanceFiles(instance.node, instance.id, instance.workingDirectory, relativePath, { limit });
-        observation = [
-          files.entries.map((entry) => `${entry.type === "directory" ? "[DIR]" : "[FILE]"} ${entry.path || entry.name} ${entry.size ? `(${entry.size} bytes)` : ""}`).join("\n") || "Directory is empty.",
-          files.truncated
-            ? `\nShowing ${files.entries.length} of ${files.totalEntries ?? "many"} entries. Narrow path or call listFiles with a higher limit if needed.`
-            : null
-        ].filter(Boolean).join("\n");
+        if (instance.node?.protocol === "ssh" || instance.id.startsWith("node:")) {
+          const targetPath = resolveSshInstancePath(instance, relativePath);
+          const files = await listSshFiles(instance.nodeId, targetPath, { limit });
+          observation = [
+            `服务器 ${instance.name} [${files.path || targetPath || "/"}]:`,
+            files.entries.map((entry) => `${entry.type === "directory" ? "[DIR]" : "[FILE]"} ${entry.path || entry.name} ${entry.size ? `(${entry.size} bytes)` : ""}`).join("\n") || "目录为空。"
+          ].join("\n");
+        } else {
+          const files = await listDaemonInstanceFiles(instance.node, instance.id, instance.workingDirectory, relativePath, { limit });
+          observation = [
+            files.entries.map((entry) => `${entry.type === "directory" ? "[DIR]" : "[FILE]"} ${entry.path || entry.name} ${entry.size ? `(${entry.size} bytes)` : ""}`).join("\n") || "Directory is empty.",
+            files.truncated
+              ? `\nShowing ${files.entries.length} of ${files.totalEntries ?? "many"} entries. Narrow path or call listFiles with a higher limit if needed.`
+              : null
+          ].filter(Boolean).join("\n");
+        }
       } else if (toolName === "readfile") {
         requireUserPermission(runtime.permissions, "file.read");
         const instance = await resolveAgentInstance(runtime, args);
@@ -1200,8 +1356,14 @@ export async function executeSakiAgentTool(
           Number.isFinite(requestedLineCount) && requestedLineCount > maxAgentReadFileLineCount;
         const lineCount = numericArg(args.lineCount, defaultAgentReadFileLineCount, 1, maxAgentReadFileLineCount);
         recordWorkingFileAccess(runtime.userId, instance.id, relativePath);
-        const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath, { startLine, lineCount });
-        observation = renderAgentFileWindow(relativePath, file, startLine);
+        if (instance.node?.protocol === "ssh" || instance.id.startsWith("node:")) {
+          const targetPath = resolveSshInstancePath(instance, relativePath);
+          const file = await readSshFile(instance.nodeId, targetPath, { startLine, lineCount });
+          observation = renderAgentFileWindow(relativePath, { content: file.content, size: file.size, ...(file.totalLines !== undefined ? { totalLines: file.totalLines } : {}) }, startLine);
+        } else {
+          const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath, { startLine, lineCount });
+          observation = renderAgentFileWindow(relativePath, file, startLine);
+        }
         if (lineCountCapped) observation += `\nRequested lineCount=${requestedLineCount} was capped to ${maxAgentReadFileLineCount}; continue at the line shown above.`;
       } else if (toolName === "writefile") {
         requireUserPermission(runtime.permissions, "file.write");
@@ -1213,8 +1375,12 @@ export async function executeSakiAgentTool(
         if (overwrite && append) throw new RouteError("Choose overwrite=true or append=true, not both.", 400);
         if (typeof args.content !== "string") throw new RouteError("writeFile requires string content (an empty string is allowed).", 400);
         if (overwrite || append) requireUserPermission(runtime.permissions, "file.read");
+        const isSshInstance = instance.node?.protocol === "ssh" || instance.id.startsWith("node:");
+        const sshTargetPath = isSshInstance ? resolveSshInstancePath(instance, relativePath) : "";
         try {
-          const existing = await statDaemonInstancePath(instance.node, instance.id, instance.workingDirectory, relativePath);
+          const existing = isSshInstance
+            ? await statSshPath(instance.nodeId, sshTargetPath)
+            : await statDaemonInstancePath(instance.node, instance.id, instance.workingDirectory, relativePath);
           if (existing.isDirectory) {
             throw new RouteError(`writeFile cannot overwrite directory '${relativePath}'.`, 400);
           }
@@ -1239,7 +1405,9 @@ export async function executeSakiAgentTool(
           recordWorkingFileAccess(runtime.userId, instance.id, relativePath);
         } else {
           if (overwrite || append) checkpoint = await createFileCheckpoint(currentActionId, instance, relativePath, runtime, previous);
-          const file = await writeDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, { path: relativePath, content: fileEditAfterContent, createOnly: !overwrite && !append });
+          const file = isSshInstance
+            ? await writeSshFile(instance.nodeId, sshTargetPath, fileEditAfterContent, { createOnly: !overwrite && !append })
+            : await writeDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, { path: relativePath, content: fileEditAfterContent, createOnly: !overwrite && !append });
           if (!checkpoint) {
             checkpoint = { id: checkpointId(), type: "file", instanceId: instance.id, workspaceBinding: bindSakiWorkspace(instance), path: relativePath, existed: false, content: "", actionId: currentActionId, createdAt: new Date().toISOString() };
             await persistCheckpoint(runtime, checkpoint);

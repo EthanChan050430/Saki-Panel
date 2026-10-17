@@ -829,6 +829,39 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
   );
 
   app.get("/api/saki/conversations", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    const query = request.query as { excludeMessages?: string; summary?: string; brief?: string } | undefined;
+    const excludeMessages = query?.excludeMessages === "true" || query?.excludeMessages === "1" || query?.summary === "true" || query?.brief === "true";
+
+    if (excludeMessages) {
+      const rows = await prisma.sakiConversation.findMany({
+        where: { userId: request.user.sub },
+        orderBy: { updatedAt: "desc" },
+        take: 80,
+        select: {
+          id: true,
+          contextKey: true,
+          label: true,
+          detail: true,
+          instanceId: true,
+          title: true,
+          createdAt: true,
+          updatedAt: true
+        }
+      });
+      return rows.map((r) => ({
+        id: r.id,
+        contextKey: r.contextKey,
+        workspaceInstanceIds: sakiWorkspaceIdsFromContextKey(r.contextKey, r.instanceId),
+        label: r.label,
+        detail: r.detail,
+        instanceId: r.instanceId,
+        title: r.title,
+        messages: [],
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString()
+      }));
+    }
+
     const rows = await prisma.sakiConversation.findMany({
       where: { userId: request.user.sub },
       orderBy: { updatedAt: "desc" },
@@ -852,6 +885,32 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
         updatedAt: r.updatedAt.toISOString()
       };
     });
+  });
+
+  app.get("/api/saki/conversations/:id", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    const { id } = request.params as { id: string };
+    const r = await prisma.sakiConversation.findFirst({
+      where: { id, userId: request.user.sub }
+    });
+    if (!r) {
+      throw new RouteError("Conversation not found", 404);
+    }
+    let parsedMessages: any[] = [];
+    try {
+      parsedMessages = JSON.parse(r.messages);
+    } catch {}
+    return {
+      id: r.id,
+      contextKey: r.contextKey,
+      workspaceInstanceIds: sakiWorkspaceIdsFromContextKey(r.contextKey, r.instanceId),
+      label: r.label,
+      detail: r.detail,
+      instanceId: r.instanceId,
+      title: r.title,
+      messages: parsedMessages,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString()
+    };
   });
 
   app.put("/api/saki/conversations/:id", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {

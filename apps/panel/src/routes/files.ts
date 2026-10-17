@@ -10,8 +10,25 @@ import type {
   UploadInstanceFileRequest,
   WriteInstanceFileRequest
 } from "@webops/shared";
-import { requireInstancePermission } from "../auth.js";
+import { authenticate, loadCurrentUser, requireInstancePermission } from "../auth.js";
+import { panelConfig } from "../config.js";
 import { loadVisibleInstance, type InstanceWithAccess } from "../instance-access.js";
+import { loadVisibleNode } from "../node-access.js";
+import type { PermissionCode } from "@webops/shared";
+import {
+  listSshFiles,
+  readSshFile,
+  writeSshFile,
+  makeSshDirectory,
+  deleteSshPath,
+  renameSshPath,
+  copySshPath,
+  archiveSshPaths,
+  extractSshArchive,
+  getSshArchiveDownloadStream,
+  getSshFileDownloadStream,
+  uploadSshFile
+} from "../ssh-files.js";
 import { writeAuditLog } from "../audit.js";
 import {
   archiveDaemonInstancePaths,
@@ -546,6 +563,412 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
         paths: body.paths,
         fileName: body.fileName
       });
+    }
+  });
+
+  async function loadNode(request: FastifyRequest, id: string) {
+    const user = await loadCurrentUser(request.user.sub);
+    if (!user) return null;
+    return loadVisibleNode(user, id);
+  }
+
+  function requireNodeFilePermission(code: PermissionCode) {
+    return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+      await authenticate(request, reply);
+      if (reply.sent) return;
+      if (panelConfig.disableAuth) return;
+
+      const user = await loadCurrentUser(request.user.sub);
+      if (!user || user.status !== "ACTIVE") {
+        reply.code(401).send({ message: "Unauthorized" });
+        return;
+      }
+      if (user.isSuperAdmin) {
+        request.user.username = user.username;
+        request.user.permissions = user.permissions;
+        return;
+      }
+      if (!user.permissions.includes("node.view") || !user.permissions.includes(code)) {
+        reply.code(403).send({ message: `Forbidden: requires node.view and ${code}` });
+        return;
+      }
+      request.user.username = user.username;
+      request.user.permissions = user.permissions;
+    };
+  }
+
+  // --- Node (Remote Server) Files Endpoints ---
+  app.get("/api/nodes/:id/files", { preHandler: requireNodeFilePermission("file.view") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const node = await loadNode(request, id);
+    if (!node) {
+      reply.code(404).send({ message: "Node not found" });
+      return;
+    }
+    try {
+      if (node.protocol === "ssh") {
+        return await listSshFiles(id, queryPath(request));
+      }
+      return await listDaemonInstanceFiles(node, "", "", queryPath(request));
+    } catch (error) {
+      await handleFailure(request, reply, "node_file.view", id, error, { path: queryPath(request) });
+    }
+  });
+
+  app.get("/api/nodes/:id/files/content", { preHandler: requireNodeFilePermission("file.read") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const node = await loadNode(request, id);
+    if (!node) {
+      reply.code(404).send({ message: "Node not found" });
+      return;
+    }
+    const query = request.query as { path?: string; startLine?: string; lineCount?: string };
+    const readOpts = {
+      ...(query.startLine ? { startLine: Number(query.startLine) } : {}),
+      ...(query.lineCount ? { lineCount: Number(query.lineCount) } : {})
+    };
+    try {
+      if (node.protocol === "ssh") {
+        return await readSshFile(id, queryPath(request), readOpts);
+      }
+      return await readDaemonInstanceFile(node, "", "", queryPath(request), readOpts);
+    } catch (error) {
+      await handleFailure(request, reply, "node_file.read", id, error, { path: queryPath(request) });
+    }
+  });
+
+  app.put("/api/nodes/:id/files/content", { preHandler: requireNodeFilePermission("file.write") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const node = await loadNode(request, id);
+    if (!node) {
+      reply.code(404).send({ message: "Node not found" });
+      return;
+    }
+    const body = request.body as Partial<WriteInstanceFileRequest>;
+    if (!body.path || body.content === undefined) {
+      reply.code(400).send({ message: "path and content are required" });
+      return;
+    }
+    try {
+      if (node.protocol === "ssh") {
+        const result = await writeSshFile(id, body.path, body.content, {
+          ...(body.createOnly ? { createOnly: true } : {})
+        });
+        await writeAuditLog({
+          request,
+          userId: request.user.sub,
+          action: "node_file.write",
+          resourceType: "node_file",
+          resourceId: id,
+          payload: { path: body.path, size: result.size }
+        });
+        return result;
+      }
+      return await writeDaemonInstanceFile(node, "", "", {
+        path: body.path,
+        content: body.content,
+        ...(body.createOnly ? { createOnly: true } : {})
+      });
+    } catch (error) {
+      await handleFailure(request, reply, "node_file.write", id, error, { path: body.path });
+    }
+  });
+
+  app.post("/api/nodes/:id/files/upload", { preHandler: requireNodeFilePermission("file.write") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const node = await loadNode(request, id);
+    if (!node) {
+      reply.code(404).send({ message: "Node not found" });
+      return;
+    }
+    const contentType = request.headers["content-type"] ?? "";
+    if (contentType.includes("multipart/form-data")) {
+      try {
+        const data = await request.file();
+        if (!data) {
+          reply.code(400).send({ message: "No file uploaded" });
+          return;
+        }
+        const fields: MultipartFields = data.fields;
+        const pathField = fields.path;
+        const filePath = pathField && "value" in pathField ? String(pathField.value) : "";
+        if (!filePath) {
+          reply.code(400).send({ message: "path is required" });
+          return;
+        }
+        const buffer = await data.toBuffer();
+        if (node.protocol === "ssh") {
+          const res = await uploadSshFile(id, filePath, buffer);
+          await writeAuditLog({
+            request,
+            userId: request.user.sub,
+            action: "node_file.upload",
+            resourceType: "node_file",
+            resourceId: id,
+            payload: { path: filePath, size: res.size }
+          });
+          return res;
+        }
+        return await uploadDaemonInstanceFile(node, "", "", { path: filePath, contentBase64: buffer.toString("base64") });
+      } catch (error) {
+        await handleFailure(request, reply, "node_file.upload", id, error);
+      }
+      return;
+    }
+
+    const body = request.body as Partial<UploadInstanceFileRequest>;
+    if (!body.path || body.contentBase64 === undefined) {
+      reply.code(400).send({ message: "path and contentBase64 are required" });
+      return;
+    }
+    try {
+      const buffer = Buffer.from(body.contentBase64, "base64");
+      if (node.protocol === "ssh") {
+        return await uploadSshFile(id, body.path, buffer);
+      }
+      return await uploadDaemonInstanceFile(node, "", "", { path: body.path, contentBase64: body.contentBase64 });
+    } catch (error) {
+      await handleFailure(request, reply, "node_file.upload", id, error, { path: body.path });
+    }
+  });
+
+  app.get("/api/nodes/:id/files/download", { preHandler: requireNodeFilePermission("file.read") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const node = await loadNode(request, id);
+    if (!node) {
+      reply.code(404).send({ message: "Node not found" });
+      return;
+    }
+    const query = request.query as { path?: string };
+    const filePath = query.path ?? "";
+    if (!filePath) {
+      reply.code(400).send({ message: "path is required" });
+      return;
+    }
+    try {
+      if (node.protocol === "ssh") {
+        const { stream: downloadStream, size, name } = await getSshFileDownloadStream(id, filePath);
+        reply.header("content-disposition", `attachment; filename="${encodeURIComponent(name)}"`);
+        reply.header("content-type", "application/octet-stream");
+        reply.header("content-length", size);
+        return reply.send(downloadStream);
+      }
+      const daemonStream = await getDaemonFileDownloadStream(node, "", "", filePath);
+      return reply.send(daemonStream);
+    } catch (error) {
+      await handleFailure(request, reply, "node_file.download", id, error, { path: filePath });
+    }
+  });
+
+  app.post("/api/nodes/:id/files/mkdir", { preHandler: requireNodeFilePermission("file.write") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const node = await loadNode(request, id);
+    if (!node) {
+      reply.code(404).send({ message: "Node not found" });
+      return;
+    }
+    const body = request.body as Partial<MakeInstanceDirectoryRequest>;
+    if (!body.path) {
+      reply.code(400).send({ message: "path is required" });
+      return;
+    }
+    try {
+      if (node.protocol === "ssh") {
+        return await makeSshDirectory(id, body.path);
+      }
+      return await makeDaemonInstanceDirectory(node, "", "", { path: body.path });
+    } catch (error) {
+      await handleFailure(request, reply, "node_file.mkdir", id, error, { path: body.path });
+    }
+  });
+
+  app.delete("/api/nodes/:id/files", { preHandler: requireNodeFilePermission("file.delete") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const node = await loadNode(request, id);
+    if (!node) {
+      reply.code(404).send({ message: "Node not found" });
+      return;
+    }
+    const body = request.body as Partial<DeleteInstanceFileRequest>;
+    if (!body.path) {
+      reply.code(400).send({ message: "path is required" });
+      return;
+    }
+    try {
+      if (node.protocol === "ssh") {
+        await deleteSshPath(id, body.path);
+      } else {
+        await deleteDaemonInstancePath(node, "", "", { path: body.path });
+      }
+      await writeAuditLog({
+        request,
+        userId: request.user.sub,
+        action: "node_file.delete",
+        resourceType: "node_file",
+        resourceId: id,
+        payload: { path: body.path }
+      });
+      return { ok: true, path: body.path };
+    } catch (error) {
+      await handleFailure(request, reply, "node_file.delete", id, error, { path: body.path });
+    }
+  });
+
+  app.post("/api/nodes/:id/files/rename", { preHandler: requireNodeFilePermission("file.write") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const node = await loadNode(request, id);
+    if (!node) {
+      reply.code(404).send({ message: "Node not found" });
+      return;
+    }
+    const body = request.body as Partial<RenameInstanceFileRequest>;
+    if (!body.fromPath || !body.toPath) {
+      reply.code(400).send({ message: "fromPath and toPath are required" });
+      return;
+    }
+    try {
+      if (node.protocol === "ssh") {
+        await renameSshPath(id, body.fromPath, body.toPath);
+      } else {
+        await renameDaemonInstancePath(node, "", "", { fromPath: body.fromPath, toPath: body.toPath });
+      }
+      return { ok: true, fromPath: body.fromPath, toPath: body.toPath };
+    } catch (error) {
+      await handleFailure(request, reply, "node_file.rename", id, error, { fromPath: body.fromPath, toPath: body.toPath });
+    }
+  });
+
+  app.post("/api/nodes/:id/files/copy", { preHandler: requireNodeFilePermission("file.write") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const node = await loadNode(request, id);
+    if (!node) {
+      reply.code(404).send({ message: "Node not found" });
+      return;
+    }
+    const body = request.body as { fromPath?: string; toPath?: string };
+    if (!body.fromPath || !body.toPath) {
+      reply.code(400).send({ message: "fromPath and toPath are required" });
+      return;
+    }
+    try {
+      if (node.protocol === "ssh") {
+        await copySshPath(id, body.fromPath, body.toPath);
+      } else {
+        await copyDaemonInstancePath(node, "", "", { fromPath: body.fromPath, toPath: body.toPath });
+      }
+      return { ok: true, fromPath: body.fromPath, toPath: body.toPath };
+    } catch (error) {
+      await handleFailure(request, reply, "node_file.copy", id, error, { fromPath: body.fromPath, toPath: body.toPath });
+    }
+  });
+
+  app.post("/api/nodes/:id/files/archive", { preHandler: requireNodeFilePermission("file.write") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const node = await loadNode(request, id);
+    if (!node) {
+      reply.code(404).send({ message: "Node not found" });
+      return;
+    }
+    const body = request.body as Partial<ArchiveInstancePathsRequest>;
+    if (!body.paths || !Array.isArray(body.paths) || body.paths.length === 0) {
+      reply.code(400).send({ message: "paths are required" });
+      return;
+    }
+    try {
+      if (node.protocol === "ssh") {
+        return await archiveSshPaths(id, body.paths, body.outputPath);
+      }
+      return await archiveDaemonInstancePaths(node, "", "", {
+        paths: body.paths,
+        ...(body.outputPath ? { outputPath: body.outputPath } : {})
+      });
+    } catch (error) {
+      await handleFailure(request, reply, "node_file.archive", id, error, { paths: body.paths });
+    }
+  });
+
+  app.post("/api/nodes/:id/files/extract", { preHandler: requireNodeFilePermission("file.write") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const node = await loadNode(request, id);
+    if (!node) {
+      reply.code(404).send({ message: "Node not found" });
+      return;
+    }
+    const body = request.body as Partial<ExtractInstanceArchiveRequest>;
+    if (!body.path) {
+      reply.code(400).send({ message: "path is required" });
+      return;
+    }
+    try {
+      if (node.protocol === "ssh") {
+        return await extractSshArchive(id, body.path, {
+          ...(body.outputPath ? { outputPath: body.outputPath } : {}),
+          ...(body.preview !== undefined ? { preview: body.preview } : {}),
+          ...(body.conflictPolicy ? { conflictPolicy: body.conflictPolicy } : {}),
+          ...(body.conflictResolutions ? { conflictResolutions: body.conflictResolutions } : {}),
+          ...(body.overwrite !== undefined ? { overwrite: body.overwrite } : {})
+        });
+      }
+      return await extractDaemonInstanceArchive(node, "", "", {
+        path: body.path,
+        ...(body.outputPath ? { outputPath: body.outputPath } : {}),
+        ...(body.preview ? { preview: true } : {}),
+        ...(body.conflictPolicy ? { conflictPolicy: body.conflictPolicy } : {}),
+        ...(body.conflictResolutions ? { conflictResolutions: body.conflictResolutions } : {}),
+        ...(body.overwrite ? { overwrite: true } : {})
+      });
+    } catch (error) {
+      await handleFailure(request, reply, "node_file.extract", id, error, { path: body.path });
+    }
+  });
+
+  app.post("/api/nodes/:id/files/archive/download", { preHandler: requireNodeFilePermission("file.read") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const node = await loadNode(request, id);
+    if (!node) {
+      reply.code(404).send({ message: "Node not found" });
+      return;
+    }
+    const body = request.body as Partial<DownloadInstanceArchiveRequest>;
+    if (!Array.isArray(body.paths) || body.paths.length === 0) {
+      reply.code(400).send({ message: "paths are required" });
+      return;
+    }
+
+    try {
+      if (node.protocol === "ssh") {
+        const { stream, size, name } = await getSshArchiveDownloadStream(id, body.paths, body.fileName);
+        reply.header("content-disposition", `attachment; filename="${encodeURIComponent(name)}"`);
+        reply.header("content-type", "application/zip");
+        if (size > 0) reply.header("content-length", size);
+        return reply.send(stream);
+      }
+
+      const daemonStream = await getDaemonArchiveDownloadStream(node, "", "", {
+        paths: body.paths,
+        ...(body.fileName ? { fileName: body.fileName } : {})
+      });
+
+      if (daemonStream.statusCode && daemonStream.statusCode >= 400) {
+        let message = "";
+        daemonStream.setEncoding("utf8");
+        daemonStream.on("data", (c: string) => (message += c));
+        await new Promise((r) => daemonStream.on("end", r));
+        const err = new Error(message.trim() || `Daemon archive download failed with status ${daemonStream.statusCode}`);
+        (err as any).statusCode = daemonStream.statusCode;
+        throw err;
+      }
+
+      const disp = daemonStream.headers["content-disposition"];
+      if (disp) reply.header("content-disposition", disp);
+      const ct = daemonStream.headers["content-type"] || "application/zip";
+      reply.header("content-type", ct);
+      if (daemonStream.headers["content-length"]) {
+        reply.header("content-length", daemonStream.headers["content-length"]);
+      }
+      return reply.send(daemonStream);
+    } catch (error) {
+      await handleFailure(request, reply, "node_file.archive.download", id, error, { paths: body.paths });
     }
   });
 }

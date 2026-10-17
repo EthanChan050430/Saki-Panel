@@ -181,7 +181,8 @@ import {
 import { FileManager } from "../../components/file-manager/FileManager.js";
 import { InstanceLogs } from "./InstanceLogs.js";
 import { SshConnectModal } from "./SshConnectModal.js";
-import { SshServerWorkspace } from "./SshServerWorkspace.js";
+import { SshServerWorkspace, createNodeSyntheticInstance } from "./SshServerWorkspace.js";
+import { SshServerSettingsModal } from "./SshServerSettingsModal.js";
 import { InstanceProxyModal } from "./InstanceProxyModal.js";
 import { InstanceSettingsModal } from "./InstanceSettingsModal.js";
 import { InstanceTasksPanel } from "./InstanceTasksPanel.js";
@@ -331,6 +332,8 @@ export function InstancesView({
   const [suggestingStartCommand, setSuggestingStartCommand] = useState<"create" | "settings" | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showSshModal, setShowSshModal] = useState(false);
+  const [fileManagerNode, setFileManagerNode] = useState<ManagedNode | null>(null);
+  const [settingsNode, setSettingsNode] = useState<ManagedNode | null>(null);
 
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncNodeId, setSyncNodeId] = useState("");
@@ -699,6 +702,7 @@ export function InstancesView({
       }),
     [instances]
   );
+  const sshServers = useMemo(() => nodes.filter((node) => node.protocol === "ssh"), [nodes]);
   const graphLayout = useMemo(() => {
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const groups = new Map<
@@ -1898,12 +1902,38 @@ export function InstancesView({
     <PageErrorToast error={error} onDismiss={() => setError("")} />
     {typeof document !== "undefined" && sshDialog ? createPortal(sshDialog, document.body) : null}
     {typeof document !== "undefined" && createDialog ? createPortal(createDialog, document.body) : null}
-    <SshServerWorkspace key={selectedSshNode.id} token={token} node={selectedSshNode} canViewTerminal={user.permissions.includes("terminal.view") && user.permissions.includes("node.view")}
-      onBack={() => setSelectedSshNodeId(null)}
+    <SshServerWorkspace
+      key={selectedSshNode.id}
+      token={token}
+      node={selectedSshNode}
+      canViewTerminal={user.permissions.includes("terminal.view") && user.permissions.includes("node.view")}
+      darkMode={darkMode}
+      onBack={() => {
+        setSelectedSshNodeId(null);
+        onInstanceFocus(null);
+      }}
       onCreateInstance={user.permissions.includes("instance.create") ? () => {
         setForm(current => ({ ...current, nodeId: selectedSshNode.id, name: "", workingDirectory: "", startCommand: "" }));
-        setCreateModalType("instance"); setShowCreateForm(true);
-      } : undefined} />
+        setCreateModalType("instance");
+        setShowCreateForm(true);
+      } : undefined}
+      onAskSaki={onAskSaki ? (prompt) => onAskSaki({
+        message: prompt || `请帮我巡检并分析远程服务器「${selectedSshNode.name}」(${selectedSshNode.host}:${selectedSshNode.port}) 的健康状态、系统负载及根目录文件结构。`,
+        contextTitle: `远程服务器 · ${selectedSshNode.name}`,
+        contextText: `主机: ${selectedSshNode.host}:${selectedSshNode.port}\n系统架构: ${selectedSshNode.os || "Linux"} (${selectedSshNode.arch || "x64"})\n状态: ${selectedSshNode.status}`,
+        mode: "agent"
+      }) : undefined}
+      onUpdateNode={(updated) => {
+        setNodes(current => current.map(n => n.id === updated.id ? updated : n));
+      }}
+      onDeleteNode={(nodeId) => {
+        setNodes(current => current.filter(n => n.id !== nodeId));
+        setSelectedSshNodeId(null);
+        onInstanceFocus(null);
+      }}
+      onSakiFileDragChange={onSakiFileDragChange}
+      handleSakiInstanceFileDrop={handleSakiInstanceFileDrop}
+    />
   </>;
 
   const selectedDatabase = databases.find((db) => db.id === selectedDatabaseId) ?? null;
@@ -2621,6 +2651,61 @@ export function InstancesView({
       {typeof document !== "undefined" && databaseVisualizerDialog ? createPortal(databaseVisualizerDialog, document.body) : null}
       {typeof document !== "undefined" && editDatabaseDialog ? createPortal(editDatabaseDialog, document.body) : null}
 
+      {fileManagerNode && typeof document !== "undefined" ? createPortal(
+        <div className="glass-modal-backdrop" onClick={() => setFileManagerNode(null)}>
+          <div className="glass-modal-container file-manager-fullscreen-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="glass-modal-header">
+              <div className="modal-title-wrap">
+                <div className="modal-title-icon-badge">
+                  <FolderOpen size={20} />
+                </div>
+                <div>
+                  <h3 className="modal-title">服务器文件管理</h3>
+                  <span className="modal-subtitle">{fileManagerNode.name} · {fileManagerNode.host} · /</span>
+                </div>
+              </div>
+              <button
+                className="icon-button mini modal-close-btn"
+                type="button"
+                onClick={() => setFileManagerNode(null)}
+                title="关闭"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="glass-modal-body file-manager-fullscreen-body">
+              <FileManager
+                token={token}
+                instance={createNodeSyntheticInstance(fileManagerNode)}
+                onSakiFileDragChange={onSakiFileDragChange}
+                onSakiInstanceFileDrop={handleSakiInstanceFileDrop}
+                darkMode={darkMode}
+                onClose={() => setFileManagerNode(null)}
+              />
+            </div>
+          </div>
+        </div>,
+        document.body
+      ) : null}
+
+      {settingsNode && typeof document !== "undefined" ? createPortal(
+        <SshServerSettingsModal
+          open={Boolean(settingsNode)}
+          node={settingsNode}
+          token={token}
+          onClose={() => setSettingsNode(null)}
+          onUpdated={(updated) => {
+            setNodes((current) => current.map((n) => (n.id === updated.id ? updated : n)));
+            setSettingsNode(null);
+          }}
+          onDeleted={(nodeId) => {
+            setNodes((current) => current.filter((n) => n.id !== nodeId));
+            setSettingsNode(null);
+          }}
+        />,
+        document.body
+      ) : null}
+
       <section className="instance-directory">
         <div className="instance-command-center">
           <div className="instance-command-main">
@@ -2628,8 +2713,8 @@ export function InstancesView({
               <TerminalIcon size={17} />
             </div>
             <div className="instance-command-count">
-              <span>实例与数据库</span>
-              <strong>{instances.length + databases.length}</strong>
+              <span>实例与服务器</span>
+              <strong>{instances.length + databases.length + sshServers.length}</strong>
             </div>
           </div>
 
@@ -2668,15 +2753,6 @@ export function InstancesView({
             </button>
           </div>
         </div>
-
-        {nodes.some(node => node.protocol === "ssh") && <section className="ssh-server-directory" aria-label="远程 SSH 服务器">
-          <div className="ssh-server-directory-heading"><Server size={17} /><h3>远程服务器</h3><span>直接连接 SSH 终端</span></div>
-          <div className="ssh-server-cards">{nodes.filter(node => node.protocol === "ssh").map(node => <button key={node.id} type="button" className="ssh-server-card" onClick={() => {
-            setSelectedId(null); setSelectedDatabaseId(null); setSelectedSshNodeId(node.id);
-          }}>
-            <Server size={22} /><div><strong>{node.name}</strong><span>{node.host}:{node.port}</span></div><span className="ssh-server-card-action"><TerminalIcon size={15} />打开终端</span>
-          </button>)}</div>
-        </section>}
 
         {directoryView === "cards" ? (
           <div className="instance-card-grid">
@@ -2778,6 +2854,147 @@ export function InstancesView({
                       <span>控制台</span>
                     </button>
                     {renderInstanceRowActions(instance)}
+                  </div>
+                </div>
+              );
+            })}
+
+            {sshServers.map((node) => {
+              const isOnline = node.status === "ONLINE";
+              return (
+                <div className={`instance-card ${isOnline ? "running" : "stopped"}`} key={`ssh-node-${node.id}`}>
+                  <span className="instance-card-signal" aria-hidden="true" />
+                  <div className="instance-card-header">
+                    <div className="instance-card-title">
+                      <div className="instance-card-icon" style={{ background: isOnline ? "rgba(56, 189, 248, 0.16)" : "rgba(148, 163, 184, 0.16)", color: isOnline ? "#38bdf8" : "#94a3b8" }}>
+                        <Server size={20} />
+                      </div>
+                      <div className="instance-title-copy">
+                        <button
+                          className="link-button instance-name"
+                          type="button"
+                          onClick={() => {
+                            setSelectedId(null);
+                            setSelectedDatabaseId(null);
+                            setSelectedSshNodeId(node.id);
+                          }}
+                        >
+                          {node.name}
+                        </button>
+                        <span>SSH 远程服务器 · {node.os || "Linux"} ({node.arch || "x64"})</span>
+                      </div>
+                    </div>
+                    <span className={`status-pill ${isOnline ? "running" : "stopped"} compact`}>
+                      {isOnline ? "探针在线" : "离线"}
+                    </span>
+                  </div>
+
+                  <button
+                    className="instance-card-command"
+                    type="button"
+                    title={`ssh ${node.host}:${node.port}`}
+                    onClick={() => {
+                      setSelectedId(null);
+                      setSelectedDatabaseId(null);
+                      setSelectedSshNodeId(node.id);
+                    }}
+                  >
+                    <TerminalIcon size={14} />
+                    <span>ssh {node.host}:{node.port}</span>
+                  </button>
+
+                  <div className="instance-glance">
+                    <span className="instance-glance-item" data-tooltip={`节点: ${node.name} (${node.host}:${node.port})`}>
+                      <Server size={13} />
+                      <span className="glance-label">{node.host}:{node.port}</span>
+                    </span>
+                    <span className="instance-glance-item" data-tooltip={`系统架构: ${node.os || "Linux"} · ${node.arch || "x64"}`}>
+                      <HardDrive size={13} />
+                      <span className="glance-label">{node.os || "Linux"} · {node.arch || "x64"}</span>
+                    </span>
+                    <span className="instance-glance-item" data-tooltip={`接入时间: ${formatDate(node.createdAt)}`}>
+                      <Clock size={13} />
+                      <span className="glance-label">{formatDate(node.createdAt)}</span>
+                    </span>
+                    <span className="instance-glance-item watch-on" data-tooltip="Saki 远程巡检与命令工具已就绪">
+                      <ShieldCheck size={13} />
+                      <span className="glance-label">Saki 已接入</span>
+                    </span>
+                  </div>
+
+                  {isOnline && (
+                    <div className="instance-card-ribbon-strip">
+                      <SparklineRibbon
+                        height={18}
+                        color="#38bdf8"
+                        glowColor="rgba(56, 189, 248, 0.4)"
+                        animated
+                      />
+                    </div>
+                  )}
+
+                  <div className="instance-card-footer">
+                    <button
+                      className="instance-card-console-btn"
+                      title="打开 SSH 终端"
+                      type="button"
+                      onClick={() => {
+                        setSelectedId(null);
+                        setSelectedDatabaseId(null);
+                        setSelectedSshNodeId(node.id);
+                      }}
+                    >
+                      <TerminalIcon size={14} />
+                      <span>SSH 终端</span>
+                    </button>
+                    <div className="row-actions instance-row-actions">
+                      <button
+                        className="icon-button mini"
+                        title="文件管理"
+                        type="button"
+                        onClick={() => setFileManagerNode(node)}
+                      >
+                        <FolderOpen size={15} />
+                      </button>
+                      <button
+                        className="icon-button mini"
+                        title="服务器设置"
+                        type="button"
+                        onClick={() => setSettingsNode(node)}
+                      >
+                        <Settings size={15} />
+                      </button>
+                      {onAskSaki && (
+                        <button
+                          className="icon-button mini"
+                          title="问 Saki"
+                          type="button"
+                          onClick={() =>
+                            onAskSaki({
+                              message: `请帮我巡检并分析远程服务器「${node.name}」(${node.host}:${node.port}) 的健康状态、系统负载及根目录文件结构。`,
+                              contextTitle: `远程服务器 · ${node.name}`,
+                              contextText: `主机: ${node.host}:${node.port}\n系统架构: ${node.os || "Linux"} (${node.arch || "x64"})\n状态: ${node.status}`,
+                              mode: "agent"
+                            })
+                          }
+                        >
+                          <Sparkles size={15} />
+                        </button>
+                      )}
+                      <button
+                        className="icon-button mini danger-action"
+                        title="断开并删除服务器"
+                        type="button"
+                        onClick={async () => {
+                          if (window.confirm(`确定要断开并移除远程服务器「${node.name}」吗？`)) {
+                            await api.deleteNode(token, node.id);
+                            setNodes((cur) => cur.filter((n) => n.id !== node.id));
+                          }
+                        }}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -2885,12 +3102,12 @@ export function InstancesView({
               );
             })}
 
-            {instances.length === 0 && databases.length === 0 ? (
+            {instances.length === 0 && databases.length === 0 && sshServers.length === 0 ? (
               <div style={{ gridColumn: "1 / -1", padding: "20px 0" }}>
                 <SakiEmptyState
                   illustration="instances"
-                  title="暂无实例或数据库"
-                  description="准备好搭建你的第一个服务了吗？你可以手动创建实例，或前往应用模板中心一键快速部署！"
+                  title="暂无实例或服务器"
+                  description="准备好搭建你的第一个服务了吗？你可以手动创建实例、接入远程服务器，或前往应用模板中心一键快速部署！"
                   action={{
                     label: "前往应用模板中心",
                     onClick: onOpenTemplates,
@@ -2990,6 +3207,120 @@ export function InstancesView({
               );
             })}
 
+            {sshServers.map((node) => {
+              const isOnline = node.status === "ONLINE";
+              return (
+                <div className={`instance-list-row ${isOnline ? "running" : "stopped"}`} role="row" key={`ssh-list-${node.id}`}>
+                  <div className="instance-list-top">
+                    <div className="instance-list-primary" role="cell">
+                      <span className="instance-list-icon" style={{ color: isOnline ? "#38bdf8" : "#94a3b8" }}>
+                        <Server size={18} />
+                      </span>
+                      <div className="instance-list-copy">
+                        <button
+                          className="link-button instance-list-name"
+                          type="button"
+                          onClick={() => {
+                            setSelectedId(null);
+                            setSelectedDatabaseId(null);
+                            setSelectedSshNodeId(node.id);
+                          }}
+                        >
+                          {node.name}
+                        </button>
+                        <span title={`ssh ${node.host}:${node.port}`}>ssh {node.host}:{node.port}</span>
+                      </div>
+                    </div>
+                    <div className="instance-list-status" role="cell">
+                      <span className={`status-pill ${isOnline ? "running" : "stopped"} compact`}>
+                        {isOnline ? "在线" : "离线"}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="instance-list-metas">
+                    <div className="instance-list-meta" role="cell" title={`${node.host}:${node.port}`}>
+                      <Server size={14} />
+                      <span>{node.host}:{node.port}</span>
+                    </div>
+                    <div className="instance-list-meta" role="cell" title="根目录 /">
+                      <HardDrive size={14} />
+                      <span>/</span>
+                    </div>
+                    <div className="instance-list-meta instance-owner-meta" role="cell" title={`平台: ${node.os || "Linux"} · ${node.arch || "x64"}`}>
+                      <Activity size={14} />
+                      <span>{node.os || "Linux"} · {node.arch || "x64"}</span>
+                    </div>
+                    <div className="instance-list-meta" role="cell" title="接入时间">
+                      <Clock size={14} />
+                      <span>{formatDate(node.createdAt)}</span>
+                    </div>
+                  </div>
+                  <div className="instance-list-actions" role="cell">
+                    <button
+                      className="icon-button mini"
+                      title="打开 SSH 终端"
+                      type="button"
+                      onClick={() => {
+                        setSelectedId(null);
+                        setSelectedDatabaseId(null);
+                        setSelectedSshNodeId(node.id);
+                      }}
+                    >
+                      <TerminalIcon size={15} />
+                    </button>
+                    <div className="row-actions instance-row-actions">
+                      <button
+                        className="icon-button mini"
+                        title="文件管理"
+                        type="button"
+                        onClick={() => setFileManagerNode(node)}
+                      >
+                        <FolderOpen size={15} />
+                      </button>
+                      <button
+                        className="icon-button mini"
+                        title="服务器设置"
+                        type="button"
+                        onClick={() => setSettingsNode(node)}
+                      >
+                        <Settings size={15} />
+                      </button>
+                      {onAskSaki && (
+                        <button
+                          className="icon-button mini"
+                          title="问 Saki"
+                          type="button"
+                          onClick={() =>
+                            onAskSaki({
+                              message: `请帮我巡检并分析远程服务器「${node.name}」(${node.host}:${node.port}) 的健康状态、系统负载及根目录文件结构。`,
+                              contextTitle: `远程服务器 · ${node.name}`,
+                              contextText: `主机: ${node.host}:${node.port}\n系统架构: ${node.os || "Linux"} (${node.arch || "x64"})\n状态: ${node.status}`,
+                              mode: "agent"
+                            })
+                          }
+                        >
+                          <Sparkles size={15} />
+                        </button>
+                      )}
+                      <button
+                        className="icon-button mini danger-action"
+                        title="断开并删除服务器"
+                        type="button"
+                        onClick={async () => {
+                          if (window.confirm(`确定要断开并移除远程服务器「${node.name}」吗？`)) {
+                            await api.deleteNode(token, node.id);
+                            setNodes((cur) => cur.filter((n) => n.id !== node.id));
+                          }
+                        }}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
             {databases.map((db) => {
               const dbNode = nodes.find((node) => node.id === db.nodeId) ?? null;
               const nodeName = dbNode?.name ?? db.nodeName ?? db.nodeId;
@@ -3080,11 +3411,11 @@ export function InstancesView({
               );
             })}
 
-            {instances.length === 0 && databases.length === 0 ? (
+            {instances.length === 0 && databases.length === 0 && sshServers.length === 0 ? (
               <SakiEmptyState
                 illustration="instances"
-                title="暂无实例或数据库"
-                description="开启你的第一个服务器实例吧"
+                title="暂无实例或服务器"
+                description="开启你的第一个服务器或实例吧"
                 action={{
                   label: "前往应用模板中心",
                   onClick: onOpenTemplates,

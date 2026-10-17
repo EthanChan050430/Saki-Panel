@@ -27,7 +27,7 @@ import { fetchDaemonStatus, testDaemonHealth } from "../daemon-client.js";
 import { generateSecretToken, hashToken, tokenLast4 } from "../security.js";
 import { writeAuditLog } from "../audit.js";
 import { canAccessNode, nodeVisibilityWhere } from "../node-access.js";
-import { saveSshConnection, removeSshNode, probeSshConnection, testSshConnection, validateSshInput } from "../ssh-nodes.js";
+import { saveSshConnection, removeSshNode, probeSshConnection, testSshConnection, validateSshInput, updateSshSettings, readSettings } from "../ssh-nodes.js";
 
 function normalizeProtocol(value: unknown): "http" | "https" | null {
   return value === "http" || value === "https" ? value : null;
@@ -512,9 +512,30 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
       return;
     }
 
-    const body = request.body as UpdateNodeRequest;
-    if (existing.protocol === "ssh" && ((body.host !== undefined && body.host !== existing.host) || (body.port !== undefined && body.port !== existing.port) || (body.protocol !== undefined && body.protocol !== "ssh"))) {
-      return reply.code(400).send({ message: "SSH 节点的连接地址由 SSH 配置管理，请重新连接服务器以更换地址" });
+    const body = request.body as UpdateNodeRequest & {
+      username?: string;
+      authType?: "password" | "privateKey";
+      password?: string;
+      privateKey?: string;
+      passphrase?: string;
+      hostFingerprint?: string;
+    };
+    if (existing.protocol === "ssh") {
+      try {
+        await updateSshSettings(id, {
+          ...(body.name !== undefined ? { name: body.name } : {}),
+          ...(body.host !== undefined ? { host: body.host } : {}),
+          ...(body.port !== undefined ? { port: body.port } : {}),
+          ...(body.username !== undefined ? { username: body.username } : {}),
+          ...(body.authType !== undefined ? { authType: body.authType } : {}),
+          ...(body.password !== undefined ? { password: body.password } : {}),
+          ...(body.privateKey !== undefined ? { privateKey: body.privateKey } : {}),
+          ...(body.passphrase !== undefined ? { passphrase: body.passphrase } : {}),
+          ...(body.hostFingerprint !== undefined ? { hostFingerprint: body.hostFingerprint } : {})
+        });
+      } catch (err) {
+        return reply.code(400).send({ message: `更新 SSH 配置失败：${(err as Error).message}` });
+      }
     }
     const protocol = body.protocol === undefined ? undefined : existing.protocol === "ssh" && body.protocol === "ssh" ? "ssh" : normalizeProtocol(body.protocol);
     if (body.protocol !== undefined && !protocol) {
@@ -566,6 +587,21 @@ export async function registerNodeRoutes(app: FastifyInstance): Promise<void> {
     });
 
     return toManagedNode(node);
+  });
+
+  app.get("/api/nodes/:id/metrics", { preHandler: requirePermission("node.view") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const user = await loadCurrentUser(request.user.sub);
+    if (!user) return reply.code(401).send({ message: "Unauthorized" });
+    const existing = await prisma.node.findUnique({ where: { id } });
+    if (!existing || !canAccessNode(user, existing)) return reply.code(404).send({ message: "Node not found" });
+
+    const metrics = await prisma.nodeMetric.findMany({
+      where: { nodeId: id },
+      orderBy: { createdAt: "desc" },
+      take: 24
+    });
+    return { nodeId: id, metrics: metrics.reverse().map(toMetricSnapshot) };
   });
 
   app.delete("/api/nodes/:id", { preHandler: requirePermission("node.delete") }, async (request, reply) => {

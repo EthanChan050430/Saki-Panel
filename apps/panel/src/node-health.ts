@@ -12,6 +12,7 @@ import {
 } from "./daemon-client.js";
 import { globalEventBus } from "./global-events.js";
 import { hasSshRuntime, probeSshConnection } from "./ssh-nodes.js";
+import { probeSshMetrics } from "./ssh-metrics.js";
 import { hasRecentDaemonHeartbeat, ingestHeartbeatSnapshots } from "./watch/events.js";
 
 export interface NodeProbeResult {
@@ -143,10 +144,39 @@ async function probeAndSyncNodeOnce(
 
   try {
     if (node.protocol === "ssh" && !(await hasSshRuntime(node.id))) {
-      await probeSshConnection(node.id);
+      let probeResult: Awaited<ReturnType<typeof probeSshMetrics>> | null = null;
+      try {
+        probeResult = await probeSshMetrics(node.id);
+      } catch {
+        await probeSshConnection(node.id);
+      }
       const now = new Date();
-      await prisma.node.update({ where: { id: node.id }, data: { status: "ONLINE", lastSeenAt: now } });
-      if (node.status !== "ONLINE") globalEventBus.broadcast("node.status_changed", { nodeId: node.id, status: "ONLINE", lastSeenAt: now.toISOString() });
+      const updatedData: Record<string, unknown> = { status: "ONLINE", lastSeenAt: now };
+      if (probeResult?.os && !node.os) updatedData.os = probeResult.os;
+      if (probeResult?.arch && !node.arch) updatedData.arch = probeResult.arch;
+
+      await prisma.node.update({ where: { id: node.id }, data: updatedData });
+
+      if (probeResult?.metrics) {
+        await prisma.nodeMetric.create({
+          data: {
+            nodeId: node.id,
+            cpuUsage: probeResult.metrics.cpuUsage,
+            memoryUsage: probeResult.metrics.memoryUsage,
+            diskUsage: probeResult.metrics.diskUsage,
+            totalMemoryMb: probeResult.metrics.totalMemoryMb ?? null,
+            usedMemoryMb: probeResult.metrics.usedMemoryMb ?? null,
+            totalDiskGb: probeResult.metrics.totalDiskGb ?? null,
+            usedDiskGb: probeResult.metrics.usedDiskGb ?? null,
+            uptimeSeconds: probeResult.metrics.uptimeSeconds ?? null,
+            loadAverage1m: probeResult.metrics.loadAverage1m ?? null
+          }
+        }).catch(() => undefined);
+      }
+
+      if (node.status !== "ONLINE") {
+        globalEventBus.broadcast("node.status_changed", { nodeId: node.id, status: "ONLINE", lastSeenAt: now.toISOString() });
+      }
       return { nodeId: node.id, ok: true, status: "ONLINE" };
     }
     const statusResult = await fetchDaemonStatus(creds, timeoutMs);

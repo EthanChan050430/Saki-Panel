@@ -554,8 +554,28 @@ export function SakiFloatingChat({
     if (!token) return;
     try {
       setInstancesLoading(true);
-      const list = await api.instances(token);
-      setAvailableInstances(list);
+      const [list, nodesList] = await Promise.all([
+        api.instances(token),
+        api.nodes(token).catch(() => [])
+      ]);
+      const sshNodes = (nodesList || []).filter((n: any) => n.protocol === "ssh");
+      const syntheticServers: ManagedInstance[] = sshNodes.map((n: any) => ({
+        id: `node:${n.id}`,
+        name: `[服务器] ${n.name}`,
+        nodeId: n.id,
+        workingDirectory: "/",
+        status: n.status === "ONLINE" ? "RUNNING" : "STOPPED",
+        createdAt: n.createdAt,
+        updatedAt: n.updatedAt,
+        type: "custom" as any,
+        startCommand: `ssh ${n.host}:${n.port}`,
+        autoRestart: false,
+        autoStart: false,
+        environmentVariables: {},
+        restartPolicy: "never",
+        restartMaxRetries: 3
+      } as unknown as ManagedInstance));
+      setAvailableInstances([...list, ...syntheticServers]);
     } catch (err) {
       console.warn("[saki] failed to load instances for workspace selector:", err);
     } finally {
