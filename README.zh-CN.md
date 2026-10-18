@@ -14,13 +14,17 @@
 [![check](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml/badge.svg)](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml)
 [![Release](https://img.shields.io/github/v/release/EthanChan050430/Saki-Panel)](https://github.com/EthanChan050430/Saki-Panel/releases/latest)
 
-https://github.com/user-attachments/assets/99a8d410-c079-4368-86c9-f847413d4580
+<a href=".github/assets/demo-v5-dashboard-zh.png"><img src=".github/assets/poster-v5-zh.png" alt="Saki Panel 5.0 — 运维与代码，同一个工作区。基于真实界面截图制作的产品海报。" /></a>
 
 </div>
 
 ## 界面预览
 
-![Saki Panel 集群看板](.github/assets/screenshot-dashboard.png)
+5.0 的概览页把 Saki 助手、实时系统指标和多个工作区放在一起。上方海报保留了运行中界面的原始截图，点击即可查看原图；示例中运行的是本地演示服务。
+
+![Saki Panel 5.0 Git 工作区与真实文件差异](.github/assets/demo-v5-git-zh.png)
+
+在实例的 Git 工作区查看文件差异、选择要提交的文件，并浏览版本记录。
 
 Saki Panel 把实例、节点、终端、文件、数据库与权限管理放在同一工作区。排查故障时，Saki 可以读取当前实例的状态和日志，给出诊断与待确认的操作，而不必在面板、终端和聊天工具之间反复复制内容。
 
@@ -30,8 +34,8 @@ Saki Panel 把实例、节点、终端、文件、数据库与权限管理放在
 |:---|:---|
 | **AI 协助运维** | 用自然语言查询状态与日志、阅读和修改工作区文件、管理实例、执行受控命令；支持 Skills、MCP 和图片／日志附件。 |
 | **Saki Watch 故障响应** | 记录异常退出与错误指纹，发起诊断，审阅补丁，并在验证失败且满足条件时回滚本次修改。 |
-| **实例与节点** | 集中管理 9 类实例及多台 Daemon 节点，包括 Minecraft、Steam、Docker 容器与 Compose。 |
-| **日常管理** | Web 终端、文件编辑与传输、SQLite／MySQL／PostgreSQL／Redis、定时任务和实例模板。 |
+| **实例与节点** | 通过 SSH 连接远程 Linux 服务器；集中管理 9 类实例及多台 Daemon 节点，包括 Minecraft、Steam、Docker 容器与 Compose。 |
+| **日常管理** | Web 终端、文件编辑与传输、Git 可视化差异、SQLite／MySQL／PostgreSQL／Redis、定时任务和实例模板。 |
 | **可观测与协作** | 集群看板、可靠性统计、审计日志、角色权限；故障通知支持 Webhook、钉钉、企业微信和 Telegram。 |
 | **扩展** | 插件工坊支持主题、Saki 形象、游戏、组件和语言包；运维包提供可按需导入的模板与 Runbook。 |
 
@@ -88,15 +92,13 @@ SSH 凭据加密保存在面板的 `data/panel/ssh-nodes` 中，备份时需保�
 
 ## Saki 如何协助排障
 
-![Saki 在实例日志旁排查问题](.github/assets/screenshot-saki-logs.png)
+![Saki Panel 5.0 实例控制台、实时日志、资源指标与 Saki 输入框](.github/assets/demo-v5-terminal-zh.png)
 
 Saki 能结合当前实例的状态、日志、文件与资源指标回答问题，并通过受限工具执行实例和文件操作。操作按风险分级；需要批准的动作会先展示给用户，部分危险命令由 Daemon 拦截。实际效果取决于所选模型、授权范围和节点环境。
 
 例如可以让它“检查实例退出前的日志并找出可能的配置错误”，或“重启服务后观察新日志”。也可以在聊天中附上截图或日志文件。常用流程可保存为 Skills，外部工具可通过 MCP 接入。
 
 ## Saki Watch 如何处理故障
-
-![Saki Watch 故障事件](.github/assets/screenshot-watch-incident.png)
 
 1. 实例意外退出后，Daemon 记录退出信息和错误指纹；此时默认不会调用模型。
 2. 默认由用户从事件通知中启动 AI 诊断。管理员也可以为实例启用自动诊断。

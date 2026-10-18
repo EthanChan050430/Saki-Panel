@@ -14,13 +14,17 @@ Manage Minecraft, Steam, Docker, and ordinary processes from one web console. Sa
 [![check](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml/badge.svg)](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml)
 [![Release](https://img.shields.io/github/v/release/EthanChan050430/Saki-Panel)](https://github.com/EthanChan050430/Saki-Panel/releases/latest)
 
-https://github.com/user-attachments/assets/99a8d410-c079-4368-86c9-f847413d4580
+<a href=".github/assets/demo-v5-dashboard-en.png"><img src=".github/assets/poster-v5-en.png" alt="Saki Panel 5.0 — Servers. Code. One workspace. Real application screenshot with a designed poster frame." /></a>
 
 </div>
 
 ## Screenshots
 
-![Saki Panel cluster dashboard](.github/assets/screenshot-dashboard.png)
+Version 5.0 puts Saki Assistant, live system metrics, and multiple workspaces on the overview page. The poster above uses an unmodified capture of the running app; click it to open the original screenshot. The examples use local demo services.
+
+![Saki Panel 5.0 visual Git workspace showing a real file diff](.github/assets/demo-v5-git-en.png)
+
+Review file changes, select what to commit, and browse history from the instance's Git workspace.
 
 Saki Panel brings instances, nodes, terminals, files, databases, and access control into one workspace. When something fails, Saki can inspect the current instance's status and logs and propose actions without making you copy context between a panel, a terminal, and a separate chat.
 
@@ -30,8 +34,8 @@ Saki Panel brings instances, nodes, terminals, files, databases, and access cont
 |:---|:---|
 | **AI-assisted operations** | Ask about status and logs, inspect or edit workspace files, manage instances, and run scoped commands. Supports Skills, MCP, and image or log attachments. |
 | **Saki Watch** | Record unexpected exits and error fingerprints, diagnose incidents, review patches, and roll back a change when verification fails under supported conditions. |
-| **Instances and nodes** | Manage nine instance types across Daemon nodes, including Minecraft, Steam, Docker containers, and Compose stacks. |
-| **Daily administration** | Web terminal, file editing and transfers, SQLite / MySQL / PostgreSQL / Redis, scheduled tasks, and instance templates. |
+| **Instances and nodes** | Connect remote Linux servers over SSH. Manage nine instance types across Daemon nodes, including Minecraft, Steam, Docker containers, and Compose stacks. |
+| **Daily administration** | Web terminal, file editing and transfers, visual Git diffs, SQLite / MySQL / PostgreSQL / Redis, scheduled tasks, and instance templates. |
 | **Visibility and access** | Cluster dashboard, reliability reports, audit history, and role-based access. Send incident notifications through webhooks, DingTalk, WeCom, or Telegram. |
 | **Extensions** | Install themes, Saki skins, games, widgets, and locales. Import optional operations packs with templates and runbooks. |
 
@@ -76,15 +80,13 @@ To build the images from source instead, use [docker-compose.yml](docker-compose
 
 ## How Saki helps investigate
 
-![Saki investigating beside instance logs](.github/assets/screenshot-saki-logs.png)
+![Saki Panel 5.0 instance console with live logs, resource metrics, and the Saki input](.github/assets/demo-v5-terminal-en.png)
 
 Saki combines the current instance's state, logs, files, and resource metrics with scoped tools for instance and file operations. Actions have risk levels; operations requiring approval are shown before execution, and the Daemon blocks certain dangerous commands. Results depend on the selected model, granted permissions, and node environment.
 
 For example, ask it to inspect logs before a crash and identify a likely configuration error, or to restart a service and watch its new logs. You can attach screenshots and log files. Save recurring procedures as Skills or connect external tools through MCP.
 
 ## How Saki Watch responds to incidents
-
-![Saki Watch incident](.github/assets/screenshot-watch-incident.png)
 
 1. After an unexpected exit, the Daemon records exit details and an error fingerprint. By default, no model call happens yet.
 2. A user starts AI diagnosis from the incident notification. An administrator can optionally enable automatic diagnosis for an instance.
