@@ -14,6 +14,8 @@
 [![check](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml/badge.svg)](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml)
 [![Release](https://img.shields.io/github/v/release/EthanChan050430/Saki-Panel)](https://github.com/EthanChan050430/Saki-Panel/releases/latest)
 
+https://github.com/user-attachments/assets/99a8d410-c079-4368-86c9-f847413d4580
+
 <a href=".github/assets/demo-v5-dashboard-zh.png"><img src=".github/assets/poster-v5-zh.png" alt="Saki Panel 5.0 — 运维与代码，同一个工作区。基于真实界面截图制作的产品海报。" /></a>
 
 </div>

@@ -14,6 +14,8 @@ Manage Minecraft, Steam, Docker, and ordinary processes from one web console. Sa
 [![check](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml/badge.svg)](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml)
 [![Release](https://img.shields.io/github/v/release/EthanChan050430/Saki-Panel)](https://github.com/EthanChan050430/Saki-Panel/releases/latest)
 
+https://github.com/user-attachments/assets/99a8d410-c079-4368-86c9-f847413d4580
+
 <a href=".github/assets/demo-v5-dashboard-en.png"><img src=".github/assets/poster-v5-en.png" alt="Saki Panel 5.0 — Servers. Code. One workspace. Real application screenshot with a designed poster frame." /></a>
 
 </div>
