@@ -1,7 +1,8 @@
 import { timingSafeEqual, randomBytes, createHash } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { isAbsolutePathInsideWorkspace } from "./workspace-path.js";
-export { classifyCommandRisk, findDangerousCommandReason } from "./command-policy.js";
+import { commandPathTokens } from "./command-policy.js";
+export { classifyCommandRisk, findDangerousCommandReason, isPosixCommandPlatform } from "./command-policy.js";
 
 export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, 12);
@@ -36,13 +37,10 @@ export function verifyToken(token: string, hash: string): boolean {
 
 /**
  * Detects command tokens that could reach outside the instance working
- * directory. Absolute paths inside the target workspace are allowed. This
- * is a command preflight check, not OS-level process isolation.
- * Short Windows-style flags such as `/s` or `/q` are allowed to avoid
- * false positives on benign commands.
+ * directory. Absolute paths inside the target workspace are allowed.
  */
-export function findCrossInstanceCommandEscape(command: string, workingDirectory?: string): string | null {
-  const tokens = command.match(/"[^"]*"|'[^']*'|[^\s"'|&;<>()]+/g) ?? [];
+export function findCrossInstanceCommandEscape(command: string, workingDirectory?: string, posixShell = false): string | null {
+  const tokens = commandPathTokens(command, posixShell);
   for (const rawToken of tokens) {
     let token = rawToken.replace(/^["']+|["']+$/g, "");
     if (!token) continue;

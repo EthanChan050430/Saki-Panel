@@ -144,13 +144,13 @@ export function SshServerSettingsModal({
 
   return (
     <div
-      className="modal-backdrop"
+      className="glass-modal-overlay"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !busy) onClose();
       }}
     >
-      <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="ssh-settings-title" style={{ maxWidth: 560 }}>
-        <div className="modal-header">
+      <div className="glass-modal-container instance-settings-modal ssh-settings-modal" role="dialog" aria-modal="true" aria-labelledby="ssh-settings-title">
+        <div className="glass-modal-header">
           <div className="modal-title-wrap">
             <Settings size={18} />
             <h2 id="ssh-settings-title">远程服务器设置 · {node.name}</h2>
@@ -167,7 +167,7 @@ export function SshServerSettingsModal({
         </div>
 
         <form onSubmit={handleSave}>
-          <div className="modal-body">
+          <div className="glass-modal-body">
             <div className="status-overview-banner" style={{ marginBottom: 16 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span>
@@ -306,7 +306,7 @@ export function SshServerSettingsModal({
             </div>
           </div>
 
-          <div className="modal-footer" style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <div className="glass-modal-footer" style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <button
               type="button"
               className="ghost-button"

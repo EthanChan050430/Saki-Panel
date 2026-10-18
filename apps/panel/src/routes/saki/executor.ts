@@ -8,7 +8,7 @@ import { prisma } from "../../db.js";
 import { assertSakiSessionAccess, hasSakiProjectAccess, sakiProjectPermissions } from "./session-access.js";
 import { selectedWorkspaceTarget } from "./selected-workspaces.js";
 import { writeAuditLog } from "../../audit.js";
-import { classifyCommandRisk, findCrossInstanceCommandEscape, findDangerousCommandReason } from "../../security.js";
+import { classifyCommandRisk, findCrossInstanceCommandEscape, findDangerousCommandReason, isPosixCommandPlatform } from "../../security.js";
 import { instanceAccessInclude, listVisibleInstances, loadInstanceAccessProfile, loadVisibleInstance } from "../../instance-access.js";
 import type { DaemonInstanceSpec } from "../../daemon-client.js";
 import {
@@ -159,7 +159,7 @@ function assertConsoleInputAllowed(data: string): string {
   }
 
   const preview = consoleInputPreview(data);
-  const safetyText = data.replace(/\r/g, "").replace(/\n/g, " ").trim();
+  const safetyText = data.trim();
   const blocked = findDangerousCommandReason(safetyText);
   if (blocked) {
     throw new RouteError(blocked, 400);
@@ -923,7 +923,7 @@ async function buildApproval(runtime: SakiAgentRuntime, call: ParsedToolCall): P
   } else if (toolName === "runcommand" || toolName === "runinshell") {
     requireUserPermission(runtime.permissions, "terminal.input");
     const instance = await resolveAgentInstance(runtime, args);
-    const commandRisk = classifyCommandRisk(stringArg(args, "command"), instance.workingDirectory);
+    const commandRisk = classifyCommandRisk(stringArg(args, "command"), instance.workingDirectory, isPosixCommandPlatform(instance.node.os));
     if (commandRisk.risk === "critical") throw new RouteError(commandRisk.reason, 400);
     const cwd = commandCwdArg(args);
     normalizeCommandRelativeCwd(cwd);
@@ -1655,10 +1655,10 @@ export async function executeSakiAgentTool(
         const instance = await resolveAgentInstance(runtime, args);
         const command = stringArg(args, "command");
         if (!command) throw new RouteError("runCommand requires a command.", 400);
-        const commandRisk = classifyCommandRisk(command, instance.workingDirectory);
+        const commandRisk = classifyCommandRisk(command, instance.workingDirectory, isPosixCommandPlatform(instance.node.os));
         if (commandRisk.risk === "critical") throw new RouteError(commandRisk.reason, 400);
         if (isAgentSandboxEnabled(runtime)) {
-          const escapeToken = findCrossInstanceCommandEscape(command, instance.workingDirectory);
+          const escapeToken = findCrossInstanceCommandEscape(command, instance.workingDirectory, isPosixCommandPlatform(instance.node.os));
           if (escapeToken) {
             throw new RouteError(`沙箱安全拦截：终端命令包含越界目录或路径（${escapeToken}），当前实例工作目录为 ${instance.workingDirectory}，已阻止访问工作区外部文件。`, 403);
           }

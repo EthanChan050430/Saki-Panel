@@ -1,4 +1,5 @@
 import { sakiChatErrorMessage } from "./components/saki/chat-error.js";
+import { invalidateResourceSnapshots, loadResourceSnapshot } from "./utils/resourceSnapshot.js";
 import type {
   InstanceGitStatus,
   InstanceGitHistory,
@@ -350,7 +351,18 @@ async function requestJson<T>(path: string, options: RequestInit = {}, token?: s
     throw new ApiError(normalizeApiErrorMessage(message, response.status), response.status);
   }
 
-  return (await response.json()) as T;
+  const result = (await response.json()) as T;
+  if (token && options.method && options.method !== "GET" && options.method !== "HEAD") {
+    if (path.startsWith("/api/saki/conversations")) invalidateResourceSnapshots(token, "conversation");
+    if (/^\/api\/instances(?:\/[^/]+(?:\/(?:start|stop|restart|kill|watch-policy|proxy))?)?$/.test(path)) {
+      for (const key of ["instances", "instance-statuses", "overview"]) invalidateResourceSnapshots(token, key);
+    }
+    if (/^\/api\/nodes(?:\/[^/]+)?$/.test(path)) {
+      for (const key of ["nodes", "instances", "overview"]) invalidateResourceSnapshots(token, key);
+    }
+    if (/^\/api\/databases(?:\/[^/]+)?$/.test(path)) invalidateResourceSnapshots(token, "databases");
+  }
+  return result;
 }
 
 export type SakiChatWorkflowStatus = "running" | "completed" | "failed" | "pending";
@@ -826,10 +838,10 @@ export const api = {
     );
   },
   dashboard(token: string) {
-    return requestJson<DashboardOverview>("/api/dashboard/overview", {}, token);
+    return loadResourceSnapshot(token, "overview", () => requestJson<DashboardOverview>("/api/dashboard/overview", {}, token));
   },
   nodes(token: string) {
-    return requestJson<ManagedNode[]>("/api/nodes", {}, token);
+    return loadResourceSnapshot(token, "nodes", () => requestJson<ManagedNode[]>("/api/nodes", {}, token));
   },
   checkLocalDaemonStatus(token: string) {
     return requestJson<LocalDaemonStatusResponse>("/api/nodes/local-status", {}, token);
@@ -930,8 +942,15 @@ export const api = {
       token
     );
   },
-  instances(token: string) {
+  instances(token: string, options?: { cachedStatus?: boolean }) {
+    if (options?.cachedStatus) {
+      return loadResourceSnapshot(token, "instances", () => requestJson<ManagedInstance[]>("/api/instances?cachedStatus=true", {}, token));
+    }
     return requestJson<ManagedInstance[]>("/api/instances", {}, token);
+  },
+  instanceStatuses(token: string) {
+    return loadResourceSnapshot(token, "instance-statuses", () => requestJson<Array<Pick<ManagedInstance,
+      "id" | "status" | "lastExitCode" | "lastStartedAt" | "lastStoppedAt" | "updatedAt">>>("/api/instances/statuses", {}, token));
   },
   instanceAssignees(token: string) {
     return requestJson<InstanceAssignee[]>("/api/instances/assignees", {}, token);
@@ -1982,10 +2001,11 @@ export const api = {
   },
   sakiListConversations(token: string, options?: { excludeMessages?: boolean }) {
     const query = options?.excludeMessages ? "?excludeMessages=true" : "";
+    if (options?.excludeMessages) return loadResourceSnapshot(token, "conversations", () => requestJson<SakiSavedConversation[]>(`/api/saki/conversations${query}`, {}, token));
     return requestJson<SakiSavedConversation[]>(`/api/saki/conversations${query}`, {}, token);
   },
   sakiGetConversation(token: string, id: string) {
-    return requestJson<SakiSavedConversation>(`/api/saki/conversations/${encodeURIComponent(id)}`, {}, token);
+    return loadResourceSnapshot(token, `conversation:${id}`, () => requestJson<SakiSavedConversation>(`/api/saki/conversations/${encodeURIComponent(id)}`, {}, token));
   },
   sakiSaveConversation(
     token: string,
@@ -2332,7 +2352,7 @@ export const api = {
     return requestJson<{ ok: boolean }>("/api/auth/logout", { method: "POST", body: JSON.stringify({}) }, token);
   },
   listDatabases(token: string) {
-    return requestJson<{ ok: boolean; databases: DatabaseVisualizerInstance[] }>("/api/databases", {}, token);
+    return loadResourceSnapshot(token, "databases", () => requestJson<{ ok: boolean; databases: DatabaseVisualizerInstance[] }>("/api/databases", {}, token));
   },
   discoverDatabases(token: string, nodeId?: string) {
     return requestJson<{ ok: boolean; databases: Array<DiscoveredDatabase & { nodeId: string; nodeName: string }> }>(

@@ -189,7 +189,6 @@ export function InstanceSettingsModal({
 
       // Instance fields are already persisted at this point; if the watch
       // policy save fails, say exactly which part succeeded and which failed.
-      onUpdated(updated);
       const watchMode = settingsForm.watchMode;
       const clampInt = (value: number, min: number, max: number, fallback: number) => {
         if (!Number.isFinite(value)) return fallback;
@@ -201,7 +200,7 @@ export function InstanceSettingsModal({
       };
       try {
         const healthCheckUrl = settingsForm.watchHealthCheckUrl.trim();
-        await api.updateWatchPolicy(token, updated.id, {
+        const policy = await api.updateWatchPolicy(token, updated.id, {
           enabled: watchMode !== "off",
           mode: watchMode === "off" ? "diagnose_and_patch" : watchMode,
           autoDiagnose: Boolean(settingsForm.watchAutoDiagnose),
@@ -215,7 +214,9 @@ export function InstanceSettingsModal({
           escalationMinutes: clampInt(settingsForm.watchEscalationMinutes, 1, 1440, 30),
           notifyChannelIds: settingsForm.watchNotifyChannelIds
         });
+        onUpdated({ ...updated, watchEnabled: policy.enabled });
       } catch (err) {
+        onUpdated(updated);
         setSettingsError(
           `实例信息已保存，值班策略保存失败：${err instanceof Error ? err.message : "未知错误"}`
         );

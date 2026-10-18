@@ -192,6 +192,8 @@ import { parseHashRoute, updateHashRoute } from "../../utils/route.js";
 import { defaultStartCommand, sakiArtAssets } from "../../constants.js";
 import { DatabaseVisualizer, AddDatabaseModal, EditDatabaseModal } from "../../DatabaseVisualizer.js";
 import { IncidentBanner, useIncidents } from "../../IncidentInbox.js";
+import { readResourceSnapshot, writeResourceSnapshot } from "../../utils/resourceSnapshot.js";
+import { mergeInstanceStatuses } from "../../utils/instanceDirectory.js";
 
 export function InstancesView({
   token,
@@ -228,9 +230,15 @@ export function InstancesView({
   onOpenFileRequestConsumed?: () => void;
   onFileManagerOpenChange?: ((open: boolean) => void) | undefined;
 }) {
-  const [nodes, setNodes] = useState<ManagedNode[]>([]);
-  const [instances, setInstances] = useState<ManagedInstance[]>([]);
-  const [watchEnabledMap, setWatchEnabledMap] = useState<Record<string, boolean>>({});
+  const [nodes, setNodes] = useState<ManagedNode[]>(() => readResourceSnapshot(token, "nodes") ?? []);
+  const [instances, setInstances] = useState<ManagedInstance[]>(() => readResourceSnapshot(token, "instances") ?? []);
+  const instancesRef = useRef(instances);
+  instancesRef.current = instances;
+  const loadGenerationRef = useRef(0);
+  const statusRequestRef = useRef(0);
+  const instanceMutationRef = useRef(0);
+  const [directoryLoading, setDirectoryLoading] = useState(() => !readResourceSnapshot(token, "instances"));
+  const watchEnabledMap = useMemo(() => Object.fromEntries(instances.map((instance) => [instance.id, instance.watchEnabled ?? true])), [instances]);
   const { active: watchActiveIncidents } = useIncidents(token, onLogout);
   const [selectedId, setSelectedIdState] = useState<string | null>(() => {
     return initialInstanceId ?? parseHashRoute().instanceId ?? null;
@@ -461,7 +469,7 @@ export function InstancesView({
   }
 
   const [createModalType, setCreateModalType] = useState<"instance" | "database">("instance");
-  const [databases, setDatabases] = useState<DatabaseVisualizerInstance[]>([]);
+  const [databases, setDatabases] = useState<DatabaseVisualizerInstance[]>(() => readResourceSnapshot<{ databases: DatabaseVisualizerInstance[] }>(token, "databases")?.databases ?? []);
   const [selectedDatabaseId, setSelectedDatabaseId] = useState<string | null>(null);
   const [editingDatabase, setEditingDatabase] = useState<DatabaseVisualizerInstance | null>(null);
   const [showTaskModal, setShowTaskModal] = useState(false);
@@ -557,7 +565,8 @@ export function InstancesView({
   
 
   const selectedInstance = instances.find((instance) => instance.id === selectedId) ?? null;
-  const selectedNode = selectedInstance ? nodes.find((node) => node.id === selectedInstance.nodeId) ?? null : null;
+  const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+  const selectedNode = selectedInstance ? nodeById.get(selectedInstance.nodeId) ?? null : null;
 
   // 实例级有效权限：myPermissions 为数组时已被后端收窄（= 分配权限 ∩ 全局权限）；
   // null/缺省表示不限制，跟随用户全局权限
@@ -582,12 +591,19 @@ export function InstancesView({
   );
 
   const knownShellIdsRef = useRef<Set<string>>(new Set());
+  const shellTargetRef = useRef(selectedId);
+  shellTargetRef.current = selectedId;
+  const shellRequestRef = useRef(0);
+  const shellInFlightRef = useRef<string | null>(null);
 
   const syncInstanceShells = useCallback(
     async (targetId: string) => {
-      if (!token) return;
+      if (!token || document.visibilityState === "hidden" || shellInFlightRef.current === targetId) return;
+      shellInFlightRef.current = targetId;
+      const request = ++shellRequestRef.current;
       try {
         const res = await api.listInstanceShells(token, targetId);
+        if (request !== shellRequestRef.current || shellTargetRef.current !== targetId) return;
         const serverShells = res.shells ?? res.sessions.map((sid) => ({ id: sid, label: undefined, createdAt: 0 }));
         const incomingIds = new Set(serverShells.map((shell) => shell.id));
         const hadKnown = knownShellIdsRef.current.size > 0;
@@ -596,7 +612,7 @@ export function InstancesView({
 
         setTerminalTabs((prev) => {
           if (serverShells.length === 0) {
-            return [{ key: "main", label: "终端" }];
+            return prev.length === 1 && prev[0]?.key === "main" && prev[0].label === "终端" ? prev : [{ key: "main", label: "终端" }];
           }
           const prevById = new Map(prev.filter((tab) => tab.shellSessionId).map((tab) => [tab.shellSessionId!, tab]));
           const main = prev.find((tab) => tab.key === "main") ?? { key: "main", label: "shell1" };
@@ -613,7 +629,10 @@ export function InstancesView({
               }
             );
           });
-          return next;
+          return prev.length === next.length && next.every((tab, index) => {
+            const old = prev[index];
+            return old?.key === tab.key && old.label === tab.label && old.shellSessionId === tab.shellSessionId;
+          }) ? prev : next;
         });
 
         setActiveTerminalKey((prev) => {
@@ -635,6 +654,8 @@ export function InstancesView({
         });
       } catch (e) {
         console.warn("Failed to sync instance shells", e);
+      } finally {
+        if (request === shellRequestRef.current) shellInFlightRef.current = null;
       }
     },
     [token]
@@ -648,7 +669,11 @@ export function InstancesView({
       const timer = window.setInterval(() => {
         void syncInstanceShells(selectedId);
       }, 2500);
-      return () => window.clearInterval(timer);
+      return () => {
+        window.clearInterval(timer);
+        shellRequestRef.current++;
+        shellInFlightRef.current = null;
+      };
     }
     setTerminalTabs([{ key: "main", label: "终端" }]);
     setActiveTerminalKey("main");
@@ -704,6 +729,7 @@ export function InstancesView({
   );
   const sshServers = useMemo(() => nodes.filter((node) => node.protocol === "ssh"), [nodes]);
   const graphLayout = useMemo(() => {
+    if (directoryView !== "graph") return { hubs: [], instances: [], edges: [], width: 0, height: 0 };
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const groups = new Map<
       string,
@@ -942,7 +968,7 @@ export function InstancesView({
       width: canvasWidth,
       height: canvasHeight
     };
-  }, [nodes, sortedInstances, graphLayoutMode, graphNodeMode]);
+  }, [directoryView, nodes, sortedInstances, graphLayoutMode, graphNodeMode]);
 
   const handleFitView = useCallback(() => {
     const panel = graphPanelRef.current;
@@ -1154,67 +1180,75 @@ export function InstancesView({
     });
   }, []);
 
-  const refreshWatchPolicies = useCallback(
-    async (list: ManagedInstance[]) => {
-      const entries = await Promise.all(
-        list.map(async (instance) => {
-          try {
-            const policy = await api.watchPolicy(token, instance.id);
-            return [instance.id, policy.enabled] as const;
-          } catch {
-            return null;
-          }
-        })
-      );
-      const nextMap: Record<string, boolean> = {};
-      for (const entry of entries) {
-        if (entry) nextMap[entry[0]] = entry[1];
-      }
-      setWatchEnabledMap(nextMap);
-    },
-    [token]
-  );
+  const refreshStatuses = useCallback(async () => {
+    if (document.visibilityState === "hidden" || instancesRef.current.length === 0) return;
+    const generation = loadGenerationRef.current;
+    const request = ++statusRequestRef.current;
+    const baseline = instancesRef.current;
+    try {
+      const statuses = await api.instanceStatuses(token);
+      if (generation !== loadGenerationRef.current || request !== statusRequestRef.current) return;
+      setInstances((current) => mergeInstanceStatuses(current, statuses, baseline));
+    } catch (err) {
+      if (generation !== loadGenerationRef.current) return;
+      if (err instanceof ApiError && err.status === 401) onLogout();
+    }
+  }, [token, onLogout]);
 
   const refresh = useCallback(async () => {
+    const generation = ++loadGenerationRef.current;
+    const mutation = instanceMutationRef.current;
+    const isCurrent = () => generation === loadGenerationRef.current;
     setError("");
-    try {
-      const [nextNodes, nextInstances, nextDatabases] = await Promise.all([
-        api.nodes(token),
-        api.instances(token),
-        api.listDatabases(token).then((res) => res.databases || []).catch(() => [])
-      ]);
-      setNodes(nextNodes);
-      setInstances(nextInstances);
-      setDatabases(nextDatabases);
-      void refreshWatchPolicies(nextInstances);
-      setSelectedIdState((current) => {
-        if (!current) return null;
-        const validId = nextInstances.some((instance) => instance.id === current) ? current : null;
-        if (validId !== current) {
-          prevInitialIdRef.current = validId;
-          queueMicrotask(() => {
-            onSelectInstance?.(validId);
-          });
-          updateHashRoute({ view: "instances", instanceId: validId });
-        }
-        return validId;
-      });
-      setForm((current) => ({
-        ...current,
-        nodeId: current.nodeId || nextNodes[0]?.id || ""
-      }));
-    } catch (err) {
+    const failed = (err: unknown) => {
+      if (!isCurrent()) return;
       if (err instanceof ApiError && err.status === 401) {
         onLogout();
         return;
       }
-      setError(err instanceof Error ? err.message : "刷新失败");
-    }
-  }, [initialInstanceId, onLogout, onSelectInstance, refreshWatchPolicies, token]);
+      setError((current) => current || (err instanceof Error ? err.message : "刷新失败"));
+    };
+    await Promise.all([
+      api.nodes(token).then((nextNodes) => {
+        if (!isCurrent()) return;
+        setNodes(nextNodes);
+        setForm((current) => ({ ...current, nodeId: current.nodeId || nextNodes[0]?.id || "" }));
+      }).catch(failed),
+      api.instances(token, { cachedStatus: true }).then((nextInstances) => {
+        if (!isCurrent() || mutation !== instanceMutationRef.current) return;
+        instancesRef.current = nextInstances;
+        setInstances(nextInstances);
+        setSelectedIdState((current) => {
+          if (!current || nextInstances.some((instance) => instance.id === current)) return current;
+          prevInitialIdRef.current = null;
+          queueMicrotask(() => onSelectInstance?.(null));
+          updateHashRoute({ view: "instances", instanceId: null });
+          return null;
+        });
+        void refreshStatuses();
+      }).catch(failed),
+      api.listDatabases(token).then((res) => {
+        if (isCurrent()) setDatabases(res.databases || []);
+      }).catch(failed)
+    ]);
+    if (isCurrent()) setDirectoryLoading(false);
+  }, [onLogout, onSelectInstance, refreshStatuses, token]);
 
   useEffect(() => {
     void refresh();
+    return () => { loadGenerationRef.current++; statusRequestRef.current++; };
   }, [refresh, refreshTick]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => { void refreshStatuses(); }, 15000);
+    const onVisible = () => { if (document.visibilityState === "visible") void refreshStatuses(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
+  }, [refreshStatuses]);
+
+  useEffect(() => {
+    if (readResourceSnapshot(token, "instances") !== undefined) writeResourceSnapshot(token, "instances", instances);
+  }, [token, instances]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1298,6 +1332,8 @@ export function InstancesView({
 
       const instance = await api.createInstance(token, payload);
       window.dispatchEvent(new Event("saki:instances_changed"));
+      instanceMutationRef.current++;
+      statusRequestRef.current++;
       setInstances((current) => [instance, ...current]);
       setSelectedId(instance.id);
       setShowCreateForm(false);
@@ -1336,6 +1372,8 @@ export function InstancesView({
               ? await api.restartInstance(token, instance.id)
               : await api.killInstance(token, instance.id);
 
+      instanceMutationRef.current++;
+      statusRequestRef.current++;
       setInstances((current) => current.map((item) => (item.id === instance.id ? response.instance : item)));
     } catch (err) {
       setError(err instanceof Error ? err.message : "操作失败");
@@ -1350,6 +1388,8 @@ export function InstancesView({
     setError("");
     try {
       await api.deleteInstance(token, instance.id);
+      instanceMutationRef.current++;
+      statusRequestRef.current++;
       setInstances((current) => current.filter((item) => item.id !== instance.id));
       setSelectedId((current) => (current === instance.id ? null : current));
     } catch (err) {
@@ -2052,11 +2092,9 @@ export function InstancesView({
             token={token}
             onClose={() => setShowSettingsModal(false)}
             onUpdated={(updated) => {
+              instanceMutationRef.current++;
+              statusRequestRef.current++;
               setInstances((current) => current.map((item) => (item.id === updated.id ? updated : item)));
-              void api
-                .watchPolicy(token, updated.id)
-                .then((policy) => setWatchEnabledMap((current) => ({ ...current, [updated.id]: policy.enabled })))
-                .catch(() => undefined);
             }}
             suggestingStartCommand={suggestingStartCommand}
             onSuggestStartCommand={async (workingDirectory, nodeId, onApply) => {
@@ -2081,6 +2119,8 @@ export function InstancesView({
             token={token}
             onClose={() => setShowProxyModal(false)}
             onUpdated={(updated) => {
+              instanceMutationRef.current++;
+              statusRequestRef.current++;
               setInstances((current) => current.map((item) => (item.id === updated.id ? updated : item)));
             }}
             onRestartInstance={(inst) => runAction(inst, "restart")}
@@ -2652,7 +2692,7 @@ export function InstancesView({
       {typeof document !== "undefined" && editDatabaseDialog ? createPortal(editDatabaseDialog, document.body) : null}
 
       {fileManagerNode && typeof document !== "undefined" ? createPortal(
-        <div className="glass-modal-backdrop" onClick={() => setFileManagerNode(null)}>
+        <div className="glass-modal-overlay" onClick={() => setFileManagerNode(null)}>
           <div className="glass-modal-container file-manager-fullscreen-modal" onClick={(e) => e.stopPropagation()}>
             <div className="glass-modal-header">
               <div className="modal-title-wrap">
@@ -2754,10 +2794,14 @@ export function InstancesView({
           </div>
         </div>
 
+        {directoryLoading && instances.length === 0 && databases.length === 0 && sshServers.length === 0 ? (
+          <div className="log-empty" role="status"><Loader2 size={18} className="spin" /> 正在加载实例与服务器...</div>
+        ) : null}
+
         {directoryView === "cards" ? (
           <div className="instance-card-grid">
             {sortedInstances.map((instance) => {
-              const instanceNode = nodes.find((node) => node.id === instance.nodeId) ?? null;
+              const instanceNode = nodeById.get(instance.nodeId) ?? null;
               const meta = instanceStatusMeta(instance.status);
               const nodeName = instanceNode?.name ?? instance.nodeName ?? instance.nodeId;
               const nodeDetail = nodeEndpointLabel(instanceNode) || (instance.nodeName ?? instance.nodeId);
@@ -3001,7 +3045,7 @@ export function InstancesView({
             })}
 
             {databases.map((db) => {
-              const dbNode = nodes.find((node) => node.id === db.nodeId) ?? null;
+              const dbNode = nodeById.get(db.nodeId) ?? null;
               const nodeName = dbNode?.name ?? db.nodeName ?? db.nodeId;
               const endpointLabel = db.config.path
                 ? compactPathLabel(db.config.path)
@@ -3102,7 +3146,7 @@ export function InstancesView({
               );
             })}
 
-            {instances.length === 0 && databases.length === 0 && sshServers.length === 0 ? (
+            {!directoryLoading && instances.length === 0 && databases.length === 0 && sshServers.length === 0 ? (
               <div style={{ gridColumn: "1 / -1", padding: "20px 0" }}>
                 <SakiEmptyState
                   illustration="instances"
@@ -3140,7 +3184,7 @@ export function InstancesView({
               <span>操作</span>
             </div>
             {sortedInstances.map((instance) => {
-              const instanceNode = nodes.find((node) => node.id === instance.nodeId) ?? null;
+              const instanceNode = nodeById.get(instance.nodeId) ?? null;
               const meta = instanceStatusMeta(instance.status);
               const nodeName = instanceNode?.name ?? instance.nodeName ?? instance.nodeId;
               const nodeDetail = nodeEndpointLabel(instanceNode) || (instance.nodeName ?? instance.nodeId);
@@ -3322,7 +3366,7 @@ export function InstancesView({
             })}
 
             {databases.map((db) => {
-              const dbNode = nodes.find((node) => node.id === db.nodeId) ?? null;
+              const dbNode = nodeById.get(db.nodeId) ?? null;
               const nodeName = dbNode?.name ?? db.nodeName ?? db.nodeId;
               const endpointLabel = db.config.path
                 ? compactPathLabel(db.config.path)
@@ -3411,7 +3455,7 @@ export function InstancesView({
               );
             })}
 
-            {instances.length === 0 && databases.length === 0 && sshServers.length === 0 ? (
+            {!directoryLoading && instances.length === 0 && databases.length === 0 && sshServers.length === 0 ? (
               <SakiEmptyState
                 illustration="instances"
                 title="暂无实例或服务器"
@@ -3620,7 +3664,7 @@ export function InstancesView({
                 })}
               </div>
 
-              {instances.length === 0 ? (
+              {!directoryLoading && instances.length === 0 ? (
                 <SakiEmptyState
                   illustration="instances"
                   title="暂无实例拓扑"

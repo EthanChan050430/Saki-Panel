@@ -162,6 +162,8 @@ export function buildChatModeSystemPrompt(imageGenEnabled: boolean, customPrompt
 Do not edit files, run commands, or change instances.
 Keep replies concise and clear. Show useful conclusions and sources; omit tool protocols and unnecessary status narration.
 
+${sakiUserQuestionGuidance}
+
 ${imageRule}
 
 ${searchEnabled ? sakiWebToolGuidance : "Web search is disabled in settings. Do not claim to have searched or verified current facts online; clearly state uncertainty when relevant."}
@@ -175,6 +177,13 @@ export const sakiFileToolGuidance =
 export const sakiInstanceToolGuidance =
   'For a panel-managed instance, prefer the panel lifecycle API through instanceAction over terminal process management. Read describeInstance to confirm the target, status and configured start/stop commands; use instanceAction({ action: "start" }) for a stopped or crashed instance and instanceAction({ action: "restart" }) to restart a running instance. Omit instanceId to use the active instance. Do not default to looking up a port/PID, killing it with kill/pkill/taskkill/Stop-Process, then launching the app in runCommand/createShell/runInShell. After an action, check instanceLogs and describeInstance; a successful request alone does not prove the service is healthy. If the API fails, inspect the error, instance state and logs before considering terminal recovery. Use shell lifecycle commands only when the user explicitly requests that method or the managed API is confirmed unavailable or insufficient; never bypass an approval rejection or permission denial.';
 
+export const sakiUserQuestionGuidance = `Clarify before dependent work:
+- First inspect the conversation, attached workspaces and relevant files for facts you can discover yourself. Do not ask the user to repeat information already available.
+- If essential information is still missing or conflicting, call askUser: unclear goal/success criteria, several plausible target instances or files, a requirement only the user knows, or alternatives with materially different results and no authorized default. Missing information is not limited to a style preference. Never invent a target, requirement, credential or user decision.
+- Example: "重启那个服务" with multiple plausible services and no clear target -> ask which service before restarting. "把登录接上" with no discoverable backend/API contract -> ask for the intended backend or contract. "修复这个类型错误" with an attached project -> inspect and fix it without asking about routine implementation choices.
+- Use askUser for the actual question card, not a plain-text question, reportProgress, or respond. Ask one focused question in the user's language; offer 2-4 distinct choices when helpful, otherwise omit options for a free-text answer. Do not bundle dependent edits or commands with the question. Wait for the answer, then continue the same task with its previous requirements and observations.
+- A question is not an approval. Do not ask again for actions already authorized. After a skip, use a safe default only when one exists; otherwise explain what remains blocked without inventing the missing decision. Do not ask again for the same skipped information.`;
+
 function compactAgentSystemPrompt(): string {
   return `You are Saki, a coding Agent in Saki Panel. Complete the user task with tools. Never claim an action was done unless a tool observation confirms it.
 
@@ -185,7 +194,7 @@ Rules:
 - ${sakiWebToolGuidance}
 - Work until the whole user task is complete. After each meaningful change, run appropriate diagnostics or targeted tests, fix failures, then continue the next unfinished checklist item. One edit or successful check does not complete a multi-step task.
 - For multi-step tasks, call manageTodos before work and update the full checklist as steps complete.
-- Call askUser only when a missing user preference matters; the user can choose, write an answer, or skip.
+- ${sakiUserQuestionGuidance}
 - If the task is done, reply in the user's language with no further tool calls.
 - Keep visible updates brief. Report meaningful progress, blockers and results; do not narrate every routine read or repeat tool output.
 
@@ -213,7 +222,7 @@ How to work:
 - The user may insert a follow-up while you are working. Incorporate it into the current task, preserving the original goal unless the user explicitly cancels or replaces it.
 - In Plan mode, do not write files or change state.
 - For a task with several meaningful steps, call manageTodos with the full checklist before working. Update the checklist as steps finish; mark a step complete only after its result is confirmed. Keep the list short and actionable.
-- If a decision truly depends on the user's preference, call askUser with one focused question and useful options. The user may choose an option, add their own answer, or skip; continue with reasonable judgment after a skip. Do not use askUser for routine implementation choices.
+- ${sakiUserQuestionGuidance}
 
 Visible progress:
 - Put long reasoning in native thinking / <think>.
@@ -331,7 +340,11 @@ export function buildAgentUserTurn(runtime: SakiAgentRuntime): string {
     : "";
   const contextBlock = additionalContext ? `\n\nContext${runtime.input.contextTitle ? ` (${runtime.input.contextTitle})` : ""}:\n${additionalContext}` : "";
   const skillsBlock = skillText ? `\n\nSkills:\n${skillText}` : "";
-  return `${contextBlock}${workingFilesText}${skillsBlock}${errorText}
+  const history = priorSakiHistory(runtime.input).slice(-maxHistoryMessages)
+    .filter((message) => (message.role === "user" || message.role === "assistant") && trimString(message.content))
+    .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`).join("\n\n");
+  const historyBlock = history ? `\n\nPrevious conversation (retain user requirements and confirmed decisions; do not repeat completed work):\n${history.slice(-maxAgentContinuationContextChars)}` : "";
+  return `${contextBlock}${workingFilesText}${skillsBlock}${errorText}${historyBlock}
 
 Instance snapshot: status=${runtime.context.workspace?.status ?? "unknown"}, lastExit=${runtime.context.workspace?.lastExitCode ?? "none"}
 Request: ${runtime.input.message}`.trim();

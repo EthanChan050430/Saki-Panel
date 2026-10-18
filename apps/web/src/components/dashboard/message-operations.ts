@@ -38,10 +38,35 @@ export function dashboardTurnRange(messages: DashboardChatMessage[], messageId: 
 /** Latest action state wins; restore changes in reverse execution order. */
 export function dashboardRollbackActions(messages: DashboardChatMessage[]): SakiAgentAction[] {
   return [...new Map(messages.flatMap(dashboardStoredActions).map((action) => [action.id, action])).values()]
-    .filter((action) => (action.approval?.rollbackAvailable || (action.approval?.rollbackAvailable !== false && action.ok
-      && dashboardIsCodeChange(action) && !/no (?:write|change) was needed/.test(action.observation))) && action.status !== "rolled_back"
-      && action.status !== "rejected" && action.status !== "pending_approval" && action.status !== "pending_input")
+    .filter(dashboardActionCanRollback)
     .reverse();
+}
+
+function dashboardActionCanRollback(action: SakiAgentAction): boolean {
+  return Boolean((action.approval?.rollbackAvailable || (action.approval?.rollbackAvailable !== false && action.ok
+    && dashboardIsCodeChange(action) && !/no (?:write|change) was needed/.test(action.observation))) && action.status !== "rolled_back"
+    && action.status !== "rejected" && action.status !== "pending_approval" && action.status !== "pending_input");
+}
+
+export function dashboardRollbackCodeMessageIds(messages: DashboardChatMessage[]): Set<string> {
+  const seen = new Set<string>();
+  const suffix: boolean[] = new Array(messages.length);
+  let hasCodeChange = false;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    for (const action of dashboardStoredActions(messages[index]!).reverse()) {
+      if (seen.has(action.id)) continue;
+      seen.add(action.id);
+      if (dashboardActionCanRollback(action) && dashboardIsCodeChange(action)) hasCodeChange = true;
+    }
+    suffix[index] = hasCodeChange;
+  }
+  const result = new Set<string>();
+  let turnStart = 0;
+  messages.forEach((message, index) => {
+    if (message.role === "user") turnStart = index;
+    if (!message.rollbackJournal && suffix[turnStart]) result.add(message.id);
+  });
+  return result;
 }
 
 function rollbackReference(action: SakiAgentAction): SakiAgentAction {

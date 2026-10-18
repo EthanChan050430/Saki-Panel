@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronRight, Copy, CornerUpLeft, FileDiff, Maximize2, Minimize2, MoreHorizontal, Pencil, Plus, Terminal, Trash2, X } from "lucide-react";
 import type { InstanceGitChangesSummary, ManagedInstance, SakiAgentAction, SakiInputAttachment } from "@webops/shared";
@@ -242,7 +242,7 @@ export const DashboardAgentMessage = memo(function DashboardAgentMessage({ messa
   canRollbackCode?: boolean;
   onPreviewAttachment?: (attachment: SakiInputAttachment) => void;
 }) {
-  const parsed = message.role === "assistant" ? parseThinkingContent(message.content, message.thinking) : { answer: message.content, thinking: "" };
+  const parsed = useMemo(() => message.role === "assistant" ? parseThinkingContent(message.content, message.thinking) : { answer: message.content, thinking: "" }, [message.role, message.content, message.thinking]);
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -254,10 +254,10 @@ export const DashboardAgentMessage = memo(function DashboardAgentMessage({ messa
   );
   const isStreamingActive = Boolean(message.isStreaming && !hasPendingAction);
   const isStreamingAnswer = Boolean(isStreamingActive && !message.isThinking && !message.workflowMessage);
-  const timeline = compactDashboardTimeline(message.role === "assistant" ? renderableSakiTimeline({
+  const timeline = useMemo(() => compactDashboardTimeline(message.role === "assistant" ? renderableSakiTimeline({
     id: message.id, role: message.role, content: message.content, ...(message.timeline ? { timeline: message.timeline } : {}), timelineEvents: message.timelineEvents,
     ...(message.actions ? { actions: message.actions } : {}), thinking: message.thinking, ...(message.createdAt ? { createdAt: message.createdAt } : {}), streaming: message.isStreaming
-  }) : []);
+  }) : []), [message]);
   const lastTimelineId = timeline.at(-1)?.id;
   const renderAction = (item: PresentedDashboardAction) => item.kind === "group" ? (
     <DashboardToolGroup key={item.id} group={item} messageId={message.id} selectedActionId={selectedActionId}

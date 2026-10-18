@@ -26,6 +26,7 @@ export const instanceUserInclude = {
 
 export const instanceAccessInclude = {
   node: true,
+  watchPolicy: { select: { enabled: true } },
   createdBy: {
     include: instanceUserInclude
   },

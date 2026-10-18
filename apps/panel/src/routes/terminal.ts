@@ -6,7 +6,7 @@ import { isAuthDisabled, loadAuthDisabledCurrentUser, loadCurrentUser, type JwtU
 import { writeAuditLog } from "../audit.js";
 import { instancePermissionOverride, loadVisibleInstance } from "../instance-access.js";
 import { panelConfig } from "../config.js";
-import { findDangerousCommandReason } from "../security.js";
+import { findDangerousCommandReason, isPosixCommandPlatform } from "../security.js";
 import type { InstanceOwnerRole, PermissionCode } from "@webops/shared";
 
 function send(socket: WebSocket, payload: TerminalServerMessage): void {
@@ -185,6 +185,8 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
     let daemonSocket: WebSocket | null = null;
     let user: CurrentUser | null = null;
     let instanceId: string | null = null;
+    let commandWorkingDirectory: string | undefined;
+    let posixShell = false;
     // 实例级细分权限：null = 不限制（跟随全局权限）；数组 = 该用户在此实例上的有效权限
     let instancePermissions: PermissionCode[] | null = null;
     let authInProgress = false;
@@ -306,6 +308,8 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
         if (browserSocket.readyState !== WebSocket.OPEN) return;
         user = authenticatedUser;
         instanceId = instance.id;
+        commandWorkingDirectory = instance.workingDirectory;
+        posixShell = isPosixCommandPlatform(instance.node.os);
         authInProgress = false;
         daemonConnectAttempts.add(`${instance.node.protocol}://${instance.node.host}:${instance.node.port}`);
         connectDaemonSocket(undefined, undefined, sessionId, { ...instance, node: endpoint });
@@ -352,7 +356,7 @@ export async function registerTerminalRoutes(app: FastifyInstance): Promise<void
         if (!isRawPtyInput || isSubmission) {
           const screened = isRawPtyInput ? stripTerminalEscapeSequences(message.data) : message.data;
           const commandPreview = inputPreview(screened);
-          const blocked = findDangerousCommandReason(commandPreview);
+          const blocked = findDangerousCommandReason(screened.trim(), commandWorkingDirectory, posixShell);
           if (blocked) {
             send(browserSocket, { type: "error", message: blocked });
             void writeAuditLog({

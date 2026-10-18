@@ -1,11 +1,38 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeft, FolderOpen, Plus, Server, Settings, Sparkles, Terminal, X, ShieldCheck } from "lucide-react";
+import {
+  Activity,
+  ArrowRight,
+  ChevronLeft,
+  Copy,
+  FolderOpen,
+  History,
+  Maximize2,
+  Plus,
+  RefreshCw,
+  Server,
+  Settings,
+  Sparkles,
+  Terminal,
+  Trash2,
+  X
+} from "lucide-react";
 import type { ManagedNode, ManagedInstance } from "@webops/shared";
-import { SshTerminal } from "../../components/terminal/SshTerminal.js";
+import { SshTerminal, type SshTerminalActions } from "../../components/terminal/SshTerminal.js";
 import { ServerProcessProbeCard } from "./ServerProcessProbeCard.js";
 import { SshServerSettingsModal } from "./SshServerSettingsModal.js";
+import { SshSystemInfoModal } from "./SshSystemInfoModal.js";
 import { FileManager } from "../../components/file-manager/FileManager.js";
+import { LiquidGlassContainer } from "../../components/common/LiquidGlass.js";
+import { formatDate } from "../../utils/path.js";
+import {
+  readTerminalInputHistory,
+  appendTerminalInputHistory
+} from "../../components/terminal/terminalHistory.js";
+import {
+  nextTerminalAutocompleteValue,
+  type TerminalAutocompleteState
+} from "../../components/terminal/WebTerminal.js";
 
 export function createNodeSyntheticInstance(node: ManagedNode): ManagedInstance {
   return {
@@ -60,6 +87,21 @@ export function SshServerWorkspace({
   const [activeTab, setActiveTab] = useState(1);
   const [showFileManagerModal, setShowFileManagerModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showSystemInfoModal, setShowSystemInfoModal] = useState(false);
+  const [activeTerminalActions, setActiveTerminalActions] = useState<SshTerminalActions | null>(null);
+  const [terminalStatus, setTerminalStatus] = useState<"connecting" | "connected" | "closed" | "error">("connecting");
+  const [terminalReadOnly, setTerminalReadOnly] = useState(false);
+
+  const [terminalCmd, setTerminalCmd] = useState("");
+  const [terminalHistoryIndex, setTerminalHistoryIndex] = useState<number | null>(null);
+  const [terminalHistoryDraft, setTerminalHistoryDraft] = useState("");
+  const [terminalAutocompleteState, setTerminalAutocompleteState] = useState<TerminalAutocompleteState | null>(null);
+  const [showHistoryMenu, setShowHistoryMenu] = useState(false);
+  const [historyMenuPos, setHistoryMenuPos] = useState<{ left: number; bottom: number } | null>(null);
+  const historyBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  const historyNodeKey = `node:${node.id}`;
+  const historyList = readTerminalInputHistory(historyNodeKey);
 
   const addTab = () => {
     const id = ++counter.current;
@@ -73,138 +115,248 @@ export function SshServerWorkspace({
     if (activeTab === id) setActiveTab(next.at(-1)?.id ?? 0);
   };
 
+  const toggleHistoryMenu = useCallback((e?: React.MouseEvent | React.TouchEvent | React.PointerEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    setShowHistoryMenu((prev) => {
+      const next = !prev;
+      if (next && historyBtnRef.current) {
+        const rect = historyBtnRef.current.getBoundingClientRect();
+        const isMobile = window.innerWidth <= 768;
+        const popoverWidth = Math.min(340, window.innerWidth - 24);
+        setHistoryMenuPos({
+          left: isMobile
+            ? Math.max(12, Math.round((window.innerWidth - popoverWidth) / 2))
+            : Math.max(12, Math.min(window.innerWidth - 352, rect.left - 6)),
+          bottom: Math.max(12, window.innerHeight - rect.top + 8),
+        });
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!showHistoryMenu) return;
+    const handlePointerDown = (event: MouseEvent | PointerEvent | TouchEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (
+        (target as Element).closest?.(".terminal-history-btn") ||
+        (target as Element).closest?.(".terminal-history-wrap") ||
+        (target as Element).closest?.(".terminal-history-popover")
+      ) {
+        return;
+      }
+      setShowHistoryMenu(false);
+    };
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [showHistoryMenu]);
+
+  const handleSendCommand = (cmdToSend?: string) => {
+    const cmd = (cmdToSend ?? terminalCmd).trim();
+    if (!cmd) return;
+    if (!activeTerminalActions?.sendCommand(cmd)) return;
+    appendTerminalInputHistory(historyNodeKey, cmd);
+    setTerminalCmd("");
+    setTerminalHistoryIndex(null);
+    setTerminalHistoryDraft("");
+    setTerminalAutocompleteState(null);
+    setShowHistoryMenu(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && (e.nativeEvent.isComposing || e.keyCode === 229)) {
+      return;
+    }
+    const history = readTerminalInputHistory(historyNodeKey);
+
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const next = nextTerminalAutocompleteValue(terminalCmd, history, terminalAutocompleteState);
+      if (next) {
+        setTerminalCmd(next.value);
+        setTerminalAutocompleteState(next.state);
+      }
+      return;
+    }
+
+    setTerminalAutocompleteState(null);
+
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (history.length === 0) return;
+      if (terminalHistoryIndex === null) {
+        setTerminalHistoryDraft(terminalCmd);
+        const nextIdx = history.length - 1;
+        setTerminalHistoryIndex(nextIdx);
+        setTerminalCmd(history[nextIdx] ?? "");
+      } else if (terminalHistoryIndex > 0) {
+        const nextIdx = terminalHistoryIndex - 1;
+        setTerminalHistoryIndex(nextIdx);
+        setTerminalCmd(history[nextIdx] ?? "");
+      }
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (terminalHistoryIndex === null) return;
+      if (terminalHistoryIndex < history.length - 1) {
+        const nextIdx = terminalHistoryIndex + 1;
+        setTerminalHistoryIndex(nextIdx);
+        setTerminalCmd(history[nextIdx] ?? "");
+      } else {
+        setTerminalHistoryIndex(null);
+        setTerminalCmd(terminalHistoryDraft);
+      }
+    }
+  };
+
   const syntheticInstance = createNodeSyntheticInstance(node);
+  const activeTabItem = tabs.find((t) => t.id === activeTab);
 
   return (
-    <section className="ssh-server-workspace">
-      <header className="ssh-server-header">
-        <button
-          type="button"
-          className="icon-button"
-          title="返回服务器与实例列表"
-          onClick={onBack}
-        >
-          <ArrowLeft size={18} />
-        </button>
-        <Server size={20} />
-        <div className="ssh-server-title">
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <h2>{node.name}</h2>
-            <span className={`status-badge mini ${node.status === "ONLINE" ? "online" : "offline"}`}>
-              {node.status === "ONLINE" ? "探针在线" : "离线"}
-            </span>
-          </div>
-          <span>
-            {node.host}:{node.port} · SSH 远程服务器 · {node.os || "Linux"} ({node.arch || "x64"})
-          </span>
-        </div>
-
-        <div className="ssh-header-actions">
-          <button
-            type="button"
-            className="secondary-button"
-            title="管理远程服务器文件"
-            onClick={() => setShowFileManagerModal(true)}
-          >
-            <FolderOpen size={15} />
-            文件管理
-          </button>
-
-          <button
-            type="button"
-            className="secondary-button"
-            title="远程服务器配置"
-            onClick={() => setShowSettingsModal(true)}
-          >
-            <Settings size={15} />
-            设置
-          </button>
-
-          {onAskSaki && (
-            <button
-              type="button"
-              className="secondary-button saki-gradient-btn"
-              title="请求 Saki 分析与巡检远程服务器"
-              onClick={() =>
-                onAskSaki(
-                  `请帮我巡检并分析远程服务器「${node.name}」(${node.host}:${node.port}) 的健康状态、系统负载及根目录文件结构。`
-                )
-              }
-            >
-              <Sparkles size={15} />
-              问 Saki
-            </button>
-          )}
-
-          {onCreateInstance && (
-            <button type="button" className="primary-button" onClick={onCreateInstance}>
-              <Plus size={15} />
-              创建托管实例
-            </button>
-          )}
-        </div>
-      </header>
-
-      <p className="ssh-server-description">
-        直接操作远程服务器，使用 SSH 登录账号的权限和默认目录。内置 Linux 实时性能监控探针及文件浏览器。
-      </p>
-
-      <div className="ssh-workspace-body">
-        {/* Left main area: Multi-tab SSH Terminals */}
-        <div className="ssh-workspace-main">
-          {!canViewTerminal ? (
-            <div style={{ padding: 24, textAlign: "center" }}>
-              <p role="status">当前账号没有终端访问权限，请联系管理员分配终端权限。</p>
-            </div>
-          ) : (
-            <>
-              <div className="ssh-server-tabs" role="tablist" aria-label="SSH 终端">
-                {tabs.map((tab) => (
-                  <div
-                    className={`ssh-server-tab ${activeTab === tab.id ? "is-active" : ""}`}
-                    key={tab.id}
-                  >
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={activeTab === tab.id}
-                      aria-controls={`ssh-terminal-${tab.id}`}
-                      onClick={() => setActiveTab(tab.id)}
-                    >
-                      <Terminal size={14} />
-                      {tab.label}
-                    </button>
-                    <button
-                      type="button"
-                      title={`关闭${tab.label}`}
-                      aria-label={`关闭${tab.label}`}
-                      onClick={() => closeTab(tab.id)}
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                ))}
+    <div className="ssh-server-workspace">
+      {/* 主布局 (Instance Master Layout) */}
+      <div className="instance-master-layout">
+        {/* 左侧：终端栏 (Terminal Column) */}
+        <section className="instance-terminal-col">
+          <div className="glass-panel instance-terminal-box">
+            {/* 顶栏 (Topbar matching instance terminal topbar) */}
+            <div className="instance-terminal-topbar">
+              <div className="terminal-topbar-left">
                 <button
                   type="button"
-                  className="icon-button mini"
-                  title="新建 SSH 终端"
-                  onClick={addTab}
+                  className="glass-back-button"
+                  title="返回服务器与实例列表"
+                  aria-label="返回服务器与实例列表"
+                  onClick={onBack}
                 >
-                  <Plus size={16} />
+                  <ChevronLeft size={16} />
+                  <span className="back-btn-label">返回列表</span>
                 </button>
               </div>
-
-              {tabs.map((tab) => (
-                <div
-                  key={tab.id}
-                  id={`ssh-terminal-${tab.id}`}
-                  role="tabpanel"
-                  className="ssh-server-terminal-panel"
-                  hidden={activeTab !== tab.id}
-                >
-                  <SshTerminal token={token} nodeId={node.id} active={activeTab === tab.id} />
+              <div className="terminal-topbar-right">
+                <div className="terminal-topbar-actions">
+                  <button
+                    className="icon-button mini"
+                    title="清空终端"
+                    type="button"
+                    onClick={() => activeTerminalActions?.clear()}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                  <button
+                    className="icon-button mini"
+                    title="重新连接 SSH"
+                    type="button"
+                    onClick={() => activeTerminalActions?.reconnect()}
+                  >
+                    <RefreshCw size={15} />
+                  </button>
+                  <button
+                    className="icon-button mini"
+                    title="复制终端选中文本"
+                    type="button"
+                    onClick={() => activeTerminalActions?.copySelection()}
+                  >
+                    <Copy size={15} />
+                  </button>
+                  <button
+                    className="icon-button mini terminal-expand-btn"
+                    title="全屏终端"
+                    type="button"
+                    onClick={() => activeTerminalActions?.toggleFullscreen()}
+                  >
+                    <Maximize2 size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button mini new-shell-btn"
+                    title="新建 SSH 终端"
+                    onClick={addTab}
+                  >
+                    <Plus size={15} />
+                  </button>
                 </div>
-              ))}
+                <div className="mac-dots">
+                  <span className="dot red" />
+                  <span className="dot yellow" />
+                  <span className="dot green" />
+                </div>
+              </div>
+            </div>
+
+            {/* 标签栏 (Tabstrip matching instance terminal tabstrip) */}
+            {tabs.length > 1 && (
+              <div className="terminal-tabstrip" role="tablist">
+                {tabs.map((tab) => {
+                  const isActive = tab.id === activeTab;
+                  return (
+                    <div
+                      key={tab.id}
+                      role="tab"
+                      aria-selected={isActive}
+                      className={`terminal-tab ${isActive ? "active" : ""}`}
+                      onClick={() => setActiveTab(tab.id)}
+                    >
+                      <Terminal size={13} />
+                      <span className="tab-label">{tab.label}</span>
+                      {tabs.length > 1 && (
+                        <button
+                          type="button"
+                          className="tab-close"
+                          title={`关闭${tab.label}`}
+                          aria-label={`关闭${tab.label}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            closeTab(tab.id);
+                          }}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* 终端展示容器 (Terminal Screen Container) */}
+            <div className="terminal-container">
+              {!canViewTerminal ? (
+                <div className="terminal-no-permission">
+                  当前账号没有终端访问权限，请联系管理员分配终端权限。
+                </div>
+              ) : (
+                tabs.map((tab) => (
+                  <div
+                    key={tab.id}
+                    id={`ssh-terminal-${tab.id}`}
+                    role="tabpanel"
+                    className={`terminal-wrapper ${activeTab === tab.id ? "active" : ""}`}
+                    style={{
+                      display: activeTab === tab.id ? "flex" : "none",
+                      height: "100%",
+                      flexDirection: "column"
+                    }}
+                  >
+                    <SshTerminal
+                      token={token}
+                      nodeId={node.id}
+                      active={activeTab === tab.id}
+                      hideToolbar={true}
+                      onMountTerminalActions={activeTab === tab.id ? setActiveTerminalActions : undefined}
+                      onStatusChange={
+                        activeTab === tab.id
+                          ? (s, ro) => {
+                              setTerminalStatus(s);
+                              setTerminalReadOnly(ro);
+                            }
+                          : undefined
+                      }
+                    />
+                  </div>
+                ))
+              )}
 
               {!tabs.length && (
                 <div style={{ margin: "auto", padding: 24, textAlign: "center" }}>
@@ -215,21 +367,241 @@ export function SshServerWorkspace({
                   </button>
                 </div>
               )}
-            </>
-          )}
-        </div>
+            </div>
+          </div>
 
-        {/* Right sidebar: Real-time Telemetry & Probe Card */}
-        <div className="ssh-workspace-sidebar">
+          {/* 实例风格的底部输入框 (Terminal Bottom Command Row matching instance) */}
+          {canViewTerminal ? (
+            <form
+              className="terminal-command-row"
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSendCommand();
+              }}
+            >
+              <LiquidGlassContainer
+                className="terminal-input-wrap"
+                displacementScale={100}
+                zoom={1.20}
+                refractionIntensity={1.2}
+                blurAmount={0}
+                saturation={108}
+                cornerRadius={24}
+                mode="shader"
+              >
+                <div className="terminal-history-wrap">
+                  <button
+                    ref={historyBtnRef}
+                    className="terminal-history-btn"
+                    type="button"
+                    title="历史命令"
+                    onClick={toggleHistoryMenu}
+                  >
+                    <History size={17} />
+                  </button>
+
+                  {showHistoryMenu && historyMenuPos && typeof document !== "undefined" && createPortal(
+                    <div
+                      className="glass-panel terminal-history-popover"
+                      style={{
+                        left: historyMenuPos.left,
+                        bottom: historyMenuPos.bottom,
+                      }}
+                    >
+                      <div className="terminal-history-header">
+                        <span>历史命令</span>
+                        <span className="terminal-history-count">
+                          {historyList.length} 条
+                        </span>
+                      </div>
+                      <div className="terminal-history-list">
+                        {historyList.length === 0 ? (
+                          <div className="terminal-history-empty">暂无历史命令</div>
+                        ) : (
+                          historyList.slice().reverse().map((hCmd, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              className="terminal-history-item"
+                              title={hCmd}
+                              onClick={() => {
+                                setTerminalCmd(hCmd);
+                                setShowHistoryMenu(false);
+                              }}
+                            >
+                              <span className="history-cmd-text">{hCmd}</span>
+                              <span
+                                className="history-send-tag"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleSendCommand(hCmd);
+                                }}
+                                title="直接执行"
+                              >
+                                执行 ↵
+                              </span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>,
+                    document.body
+                  )}
+                </div>
+
+                <input
+                  className="terminal-cmd-input"
+                  style={{
+                    background: "transparent",
+                    backgroundColor: "transparent",
+                    backdropFilter: "none",
+                    WebkitBackdropFilter: "none",
+                    border: "none",
+                    boxShadow: "none",
+                    outline: "none",
+                  }}
+                  value={terminalCmd}
+                  onChange={(e) => {
+                    setTerminalCmd(e.target.value);
+                    setTerminalHistoryIndex(null);
+                    setTerminalAutocompleteState(null);
+                  }}
+                  onKeyDown={handleKeyDown}
+                  disabled={!canViewTerminal}
+                  placeholder={
+                    !canViewTerminal
+                      ? "无终端访问权限"
+                      : `输入命令按回车发送到 ${activeTabItem?.label || "终端"}，按 Tab 键自动补全，上下键切换历史`
+                  }
+                />
+
+                <button
+                  className="terminal-send-btn"
+                  type="submit"
+                  title="发送命令 (Enter)"
+                  disabled={!canViewTerminal || !terminalCmd.trim()}
+                >
+                  <ArrowRight size={18} strokeWidth={2.4} />
+                </button>
+              </LiquidGlassContainer>
+            </form>
+          ) : null}
+        </section>
+
+        {/* 右侧边栏卡片组 (Master Sidebar Cards Column) */}
+        <aside className="instance-sidebar-col">
+          {/* 1. 服务器概要卡片 (Instance summary card) */}
+          <div className="glass-panel instance-side-card instance-summary-card">
+            <div className="instance-summary-header">
+              <div className="summary-title-row">
+                <h3 title={node.name}>{node.name}</h3>
+              </div>
+              <div className="summary-status-row">
+                <span className={`status-badge mini ${node.status === "ONLINE" ? "online" : "offline"}`}>
+                  {node.status === "ONLINE" ? "探针在线" : "离线"}
+                </span>
+                <span className="instance-program-badge">SSH 远程服务器</span>
+              </div>
+            </div>
+            <div className="instance-summary-table">
+              <div className="summary-row">
+                <span className="summary-label">主机地址</span>
+                <span className="summary-value" title={`${node.host}:${node.port}`}>
+                  {node.host}:{node.port}
+                </span>
+              </div>
+              <div className="summary-row">
+                <span className="summary-label">系统架构</span>
+                <span className="summary-value" title={`${node.os || "Linux"} (${node.arch || "x64"})`}>
+                  {node.os || "Linux"} ({node.arch || "x64"})
+                </span>
+              </div>
+              <div className="summary-row">
+                <span className="summary-label">连接端口</span>
+                <span className="summary-value">{node.port}</span>
+              </div>
+              <div className="summary-row">
+                <span className="summary-label">协议</span>
+                <span className="summary-value">SSH</span>
+              </div>
+              <div className="summary-row">
+                <span className="summary-label">默认目录</span>
+                <span className="summary-value" title="登录账号家目录 (~) 或根目录 (/)">
+                  /
+                </span>
+              </div>
+              <div className="summary-row">
+                <span className="summary-label">接入时间</span>
+                <span className="summary-value">{formatDate(node.createdAt)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 2. 快捷操作卡片 (Instance actions panel card) */}
+          <div className="glass-panel instance-side-card instance-actions-panel-card">
+            <div className="quick-actions-square-grid">
+              <button
+                type="button"
+                className="quick-action-square-btn action-files"
+                title="管理远程服务器文件"
+                onClick={() => setShowFileManagerModal(true)}
+              >
+                <div className="action-icon-circle files">
+                  <FolderOpen size={18} />
+                </div>
+                <span className="action-text">文件管理</span>
+              </button>
+
+              <button
+                type="button"
+                className="quick-action-square-btn action-settings"
+                title="远程服务器配置"
+                onClick={() => setShowSettingsModal(true)}
+              >
+                <div className="action-icon-circle settings">
+                  <Settings size={18} />
+                </div>
+                <span className="action-text">服务器设置</span>
+              </button>
+
+              <button
+                type="button"
+                className="quick-action-square-btn action-sysinfo"
+                title="查看系统详情与硬件规格"
+                onClick={() => setShowSystemInfoModal(true)}
+              >
+                <div className="action-icon-circle sysinfo">
+                  <Activity size={18} />
+                </div>
+                <span className="action-text">系统信息</span>
+              </button>
+
+              {onCreateInstance && (
+                <button
+                  type="button"
+                  className="quick-action-square-btn action-start"
+                  title="在此服务器上创建托管实例"
+                  onClick={onCreateInstance}
+                >
+                  <div className="action-icon-circle start">
+                    <Plus size={18} />
+                  </div>
+                  <span className="action-text">创建实例</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 3. 实时性能与探针卡片 */}
           <ServerProcessProbeCard node={node} token={token} />
-        </div>
+        </aside>
       </div>
 
       {/* Fullscreen File Manager Modal */}
       {showFileManagerModal && typeof document !== "undefined"
         ? createPortal(
             <div
-              className="glass-modal-backdrop"
+              className="glass-modal-overlay"
               onClick={() => setShowFileManagerModal(false)}
             >
               <div
@@ -274,7 +646,7 @@ export function SshServerWorkspace({
         : null}
 
       {/* Server Settings Modal */}
-      {showSettingsModal && typeof document !== "undefined" ? (
+      {showSettingsModal && typeof document !== "undefined" ? createPortal(
         <SshServerSettingsModal
           open={showSettingsModal}
           node={node}
@@ -286,8 +658,20 @@ export function SshServerWorkspace({
           onDeleted={(id) => {
             onDeleteNode?.(id);
           }}
-        />
+        />,
+        document.body
       ) : null}
-    </section>
+
+      {/* System Information Modal */}
+      {showSystemInfoModal && typeof document !== "undefined" ? createPortal(
+        <SshSystemInfoModal
+          open={showSystemInfoModal}
+          node={node}
+          token={token}
+          onClose={() => setShowSystemInfoModal(false)}
+        />,
+        document.body
+      ) : null}
+    </div>
   );
 }

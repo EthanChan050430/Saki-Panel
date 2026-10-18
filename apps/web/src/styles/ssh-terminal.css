@@ -9,43 +9,473 @@
 .ssh-server-card strong { overflow: hidden; text-overflow: ellipsis; }
 .ssh-server-card > div > span { font-size: 12px; color: #86868b; overflow-wrap: anywhere; }
 .ssh-server-card-action { margin-left: auto; display: flex; align-items: center; gap: 5px; color: #0071e3; font-size: 12px; white-space: nowrap; }
-.ssh-server-workspace { display: flex; flex-direction: column; min-height: 550px; height: calc(100dvh - 150px); overflow: hidden; border-radius: 16px; border: 1px solid rgba(127, 160, 190, .2); background: rgba(248, 251, 255, .88); backdrop-filter: blur(18px); }
-[data-theme="dark"] .ssh-server-workspace { background: rgba(22, 30, 40, .9); }
-.ssh-server-header { display: flex; gap: 12px; align-items: center; padding: 16px; }
-.ssh-server-title { flex: 1; min-width: 0; }
-.ssh-server-title h2 { margin: 0 0 4px; font-size: 18px; overflow-wrap: anywhere; }
-.ssh-server-title > span, .ssh-server-description { font-size: 12px; color: #86868b; overflow-wrap: anywhere; }
-.ssh-server-description { margin: 0; padding: 0 18px 14px; }
-.ssh-server-tabs { display: flex; gap: 6px; align-items: center; overflow-x: auto; flex-shrink: 0; padding: 0 12px 8px; }
-.ssh-server-tab { display: flex; align-items: center; border-radius: 8px; background: rgba(127, 160, 190, .06); flex-shrink: 0; }
-.ssh-server-tab.is-active { background: rgba(0, 113, 227, .12); color: #0071e3; }
-.ssh-server-tab > button { display: inline-flex; align-items: center; gap: 6px; padding: 8px; background: transparent; border: 0; color: inherit; cursor: pointer; }
-.ssh-server-terminal-panel { flex: 1; min-height: 0; }
-.ssh-server-terminal-panel[hidden] { display: none; }
-.ssh-terminal { height: 100%; display: flex; flex-direction: column; min-height: 0; background: #111820; color: #d9e3ee; }
-.ssh-terminal:fullscreen { height: 100dvh; padding: 12px; }
-.ssh-terminal-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 14px; flex-shrink: 0; }
+.ssh-server-workspace {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: calc(100vh - 120px);
+  min-height: 560px;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+[data-theme="dark"] .ssh-server-workspace {
+  background: transparent;
+}
+.ssh-server-header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 2px 4px 8px 4px;
+  min-height: 36px;
+  flex-shrink: 0;
+}
+.ssh-server-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.ssh-server-title h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: inherit;
+}
+.ssh-server-title-icon {
+  color: #0071e3;
+  flex-shrink: 0;
+}
+[data-theme="dark"] .ssh-server-title-icon {
+  color: #409cff;
+}
+.ssh-server-meta {
+  font-size: 12px;
+  color: #86868b;
+  overflow-wrap: anywhere;
+}
+[data-theme="dark"] .ssh-server-meta {
+  color: #98989d;
+}
+
+.ssh-server-workspace .instance-master-layout {
+  flex: 1 1 0;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+}
+
+.ssh-terminal {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #111820;
+  color: #d9e3ee;
+  border-radius: 0 0 24px 24px;
+}
+.ssh-terminal:fullscreen {
+  height: 100dvh;
+  padding: 12px;
+  border-radius: 0;
+}
+.ssh-terminal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 14px;
+  flex-shrink: 0;
+}
 .ssh-terminal-actions { display: flex; gap: 7px; }
 .ssh-terminal-actions button { color: #d9e3ee; }
 .ssh-terminal-status { font-size: 12px; color: #96a3b3; }
 .ssh-terminal-status.is-connected { color: #72d6a7; }
 .ssh-terminal-status.is-error, .ssh-terminal-error { color: #ff8d9a; }
 .ssh-terminal-error { padding: 0 14px; margin: 0 0 8px; font-size: 12px; overflow-wrap: anywhere; }
-.ssh-terminal-screen { flex: 1; min-height: 0; overflow: hidden; padding: 3px 10px 10px; }
-.ssh-workspace-body { display: grid; grid-template-columns: minmax(0, 1fr) 330px; flex: 1; min-height: 0; overflow: hidden; }
-.ssh-workspace-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; border-right: 1px solid rgba(127, 160, 190, .2); }
-[data-theme="dark"] .ssh-workspace-main { border-right-color: rgba(255, 255, 255, .08); }
-.ssh-workspace-sidebar { overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
-.ssh-workspace-sidebar .instance-probe-card { width: 100%; margin: 0; box-shadow: none; }
+.ssh-terminal-screen {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 6px 12px 12px;
+}
 .ssh-header-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
-@media (max-width: 960px) {
-  .ssh-workspace-body { grid-template-columns: 1fr; overflow-y: auto; }
-  .ssh-workspace-main { border-right: 0; min-height: 480px; }
+@media (max-width: 1100px) {
+  .ssh-server-workspace {
+    height: auto;
+    min-height: 0;
+  }
+  .ssh-server-workspace .instance-master-layout {
+    height: auto;
+    min-height: 0;
+  }
 }
 @media (max-width: 600px) {
-  .ssh-server-workspace { height: calc(100dvh - 110px); min-height: 400px; }
-  .ssh-server-header { flex-wrap: wrap; gap: 8px; padding: 12px; }
+  .ssh-server-header {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 2px 4px;
+  }
   .ssh-header-actions { width: 100%; justify-content: flex-end; flex-wrap: wrap; }
-  .ssh-server-title h2 { font-size: 16px; }
+  .ssh-server-title h2 { font-size: 14px; }
   .ssh-server-card-action { font-size: 11px; }
+}
+
+.ssh-workspace-actions.quick-actions-square-grid { flex-shrink: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.ssh-settings-modal > form { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
+.ssh-settings-modal > form > .glass-modal-body { flex: 1; min-height: 0; overflow-y: auto; }
+.ssh-settings-modal .glass-modal-footer { flex-shrink: 0; }
+
+.quick-action-square-btn.action-sysinfo .action-icon-circle {
+  color: #0284c7 !important;
+}
+.quick-action-square-btn.action-sysinfo:hover:not(:disabled) {
+  background: rgba(2, 132, 199, 0.08);
+  border-color: rgba(2, 132, 199, 0.35);
+}
+.quick-action-square-btn.action-sysinfo:hover:not(:disabled) .action-icon-circle svg {
+  color: #0284c7;
+  filter: drop-shadow(0 0 8px rgba(2, 132, 199, 0.5));
+}
+[data-theme="dark"] .quick-action-square-btn.action-sysinfo .action-icon-circle {
+  color: #38bdf8 !important;
+}
+[data-theme="dark"] .quick-action-square-btn.action-sysinfo:hover:not(:disabled) {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.4);
+}
+[data-theme="dark"] .quick-action-square-btn.action-sysinfo:hover:not(:disabled) .action-icon-circle svg {
+  color: #38bdf8;
+  filter: drop-shadow(0 0 10px rgba(56, 189, 248, 0.7));
+}
+
+.ssh-sysinfo-modal {
+  max-width: 760px !important;
+  width: 94vw !important;
+  max-height: 88vh !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.ssh-sysinfo-modal-body {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  padding: 18px 20px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 16px !important;
+}
+
+.ssh-sysinfo-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 768px) {
+  .ssh-sysinfo-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.ssh-sysinfo-kpi-card {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.03);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+[data-theme="dark"] .ssh-sysinfo-kpi-card {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.sysinfo-kpi-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sysinfo-kpi-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary, #64748b);
+}
+
+.sysinfo-status-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
+.sysinfo-status-pill.normal,
+.sysinfo-status-pill.online {
+  background: rgba(16, 185, 129, 0.12);
+  color: #10b981;
+}
+
+.sysinfo-status-pill.warn {
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
+}
+
+.sysinfo-status-pill.offline {
+  background: rgba(100, 116, 139, 0.12);
+  color: #64748b;
+}
+
+.sysinfo-kpi-value-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sysinfo-kpi-main-val {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary, #0f172a);
+}
+
+[data-theme="dark"] .sysinfo-kpi-main-val {
+  color: #f8fafc;
+}
+
+.sysinfo-kpi-sub-val {
+  font-size: 11px;
+  color: var(--text-secondary, #64748b);
+}
+
+.sysinfo-mini-track {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+  margin-top: 2px;
+}
+
+[data-theme="dark"] .sysinfo-mini-track {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.sysinfo-mini-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.sysinfo-mini-fill.cpu-fill { background: #0284c7; }
+.sysinfo-mini-fill.mem-fill { background: #8b5cf6; }
+.sysinfo-mini-fill.disk-fill { background: #10b981; }
+.sysinfo-mini-fill.uptime-fill { background: #0ea5e9; }
+
+.ssh-sysinfo-panel-card {
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.03);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+[data-theme="dark"] .ssh-sysinfo-panel-card {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.sysinfo-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sysinfo-panel-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #0f172a);
+}
+
+[data-theme="dark"] .sysinfo-panel-title {
+  color: #f8fafc;
+}
+
+.sysinfo-chart-stats {
+  font-size: 11px;
+  color: var(--text-secondary, #64748b);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sysinfo-chart-stats strong {
+  color: #0284c7;
+  font-weight: 600;
+}
+
+[data-theme="dark"] .sysinfo-chart-stats strong {
+  color: #38bdf8;
+}
+
+.stat-divider {
+  opacity: 0.5;
+}
+
+.sysinfo-svg-chart-wrap {
+  width: 100%;
+  height: 110px;
+  position: relative;
+}
+
+.sysinfo-svg-canvas {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.sysinfo-grid-line {
+  stroke: rgba(0, 0, 0, 0.06);
+  stroke-dasharray: 3 3;
+}
+
+[data-theme="dark"] .sysinfo-grid-line {
+  stroke: rgba(255, 255, 255, 0.06);
+}
+
+.sysinfo-axis-text {
+  font-size: 9px;
+  fill: var(--text-secondary, #64748b);
+}
+
+.sysinfo-alloc-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sysinfo-alloc-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.alloc-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+}
+
+.alloc-name {
+  font-weight: 500;
+  color: var(--text-primary, #0f172a);
+}
+
+[data-theme="dark"] .alloc-name {
+  color: #f8fafc;
+}
+
+.alloc-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.alloc-used-tag {
+  color: #0284c7;
+  font-weight: 600;
+}
+
+[data-theme="dark"] .alloc-used-tag {
+  color: #38bdf8;
+}
+
+.alloc-free-tag {
+  color: var(--text-secondary, #64748b);
+}
+
+.alloc-bar-track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+}
+
+[data-theme="dark"] .alloc-bar-track {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.alloc-bar-segment {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.alloc-bar-segment.used-mem {
+  background: linear-gradient(90deg, #8b5cf6, #a855f7);
+}
+
+.alloc-bar-segment.used-disk {
+  background: linear-gradient(90deg, #10b981, #059669);
+}
+
+.sysinfo-specs-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+}
+
+@media (max-width: 600px) {
+  .sysinfo-specs-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.spec-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  font-size: 12px;
+}
+
+[data-theme="dark"] .spec-item {
+  border-bottom-color: rgba(255, 255, 255, 0.05);
+}
+
+.spec-label {
+  color: var(--text-secondary, #64748b);
+}
+
+.spec-value {
+  font-weight: 500;
+  color: var(--text-primary, #0f172a);
+}
+
+[data-theme="dark"] .spec-value {
+  color: #f8fafc;
 }

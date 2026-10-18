@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { stripThinking } from "./types.js";
 
 export const maxIdenticalToolExecutions = 3;
@@ -7,7 +8,8 @@ export const maxIdenticalOutputTurns = 2;
 export const maxDegenerateRetries = 1;
 
 export function fingerprintAgentText(text: string): string {
-  return stripThinking(text).replace(/\s+/g, " ").trim().slice(0, 1000);
+  const cleaned = stripThinking(text).replace(/\s+/g, " ").trim();
+  return cleaned ? createHash("sha256").update(cleaned).digest("hex") : "";
 }
 
 const completedAnswerPattern =
@@ -34,7 +36,8 @@ export function looksLikeProgressOnlyToolIntent(text: string): boolean {
 }
 
 export function isDegenerateRepetition(text: string): boolean {
-  const cleaned = stripThinking(text).replace(/\s+/g, " ").trim();
+  const plain = stripThinking(text);
+  const cleaned = plain.replace(/\s+/g, " ").trim();
   if (cleaned.length < 80) return false;
 
   for (const size of [12, 16, 24, 32, 48]) {
@@ -48,7 +51,7 @@ export function isDegenerateRepetition(text: string): boolean {
     if (count >= 8) return true;
   }
 
-  const lines = cleaned.split(/\n/).map((line) => line.trim()).filter(Boolean);
+  const lines = plain.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   if (lines.length >= 10) {
     const first = lines[0]!;
     if (first.length >= 6 && lines.slice(0, 10).every((line) => line === first)) return true;

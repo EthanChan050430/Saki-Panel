@@ -106,15 +106,18 @@ import {
 import { SakiEmptyState } from "../components/saki/SakiEmptyState.js";
 import { MetricDetailModal, type MetricDetailKind } from "../components/dashboard/MetricDetailModal.js";
 import { DashboardPopover } from "../components/dashboard/DashboardPopover.js";
-import { DashboardAgentMessage, DashboardToolDetails, dashboardActionTerminal, type DashboardChatMessage, type DashboardTerminalSession } from "../components/dashboard/DashboardAgentConversation.js";
+import { DashboardToolDetails, dashboardActionTerminal, type DashboardChatMessage, type DashboardTerminalSession } from "../components/dashboard/DashboardAgentConversation.js";
 import { SakiChangedFilesPill, useCodeChanges, filterGitChangesForSession } from "../components/saki/chat/SakiCodeChanges.js";
-import { dashboardDeleteTurn, dashboardHasUntrackedTerminalChanges, dashboardHistoryMatches, dashboardIsCodeChange, dashboardRecordAction, dashboardRollbackActions, dashboardStoredActions, dashboardTurnRange, type DashboardMessageOperation } from "../components/dashboard/message-operations.js";
+import { dashboardDeleteTurn, dashboardHasUntrackedTerminalChanges, dashboardHistoryMatches, dashboardIsCodeChange, dashboardRecordAction, dashboardRollbackActions, dashboardRollbackCodeMessageIds, dashboardStoredActions, dashboardTurnRange, type DashboardMessageOperation } from "../components/dashboard/message-operations.js";
 import { dashboardTaskIsPending, dashboardTaskMessages, dashboardTaskNeedsSync, dashboardTaskSessionId, type DashboardSession, type DashboardStreamRun } from "../components/dashboard/task-runtime.js";
 import { dashboardMergeTimeline, dashboardStreamTimeline } from "../components/dashboard/timeline.js";
 import { DashboardChatStream } from "../components/dashboard/DashboardChatStream.js";
+import { DashboardMessageList } from "../components/dashboard/DashboardMessageList.js";
 import { formatDate, formatNumber, resourcesFromNodes, isImageFile, imageMimeTypeFromPath, base64ToBlob, compactContextText } from "../utils/path.js";
 import { readRecentInstances } from "../utils/recentInstances.js";
 import { newClientId } from "../utils/id.js";
+import { readResourceSnapshot, writeResourceSnapshot } from "../utils/resourceSnapshot.js";
+import { mergeInstanceStatuses } from "../utils/instanceDirectory.js";
 import { useGlobalEvent } from "../GlobalEventContext.js";
 import { LiquidGlassContainer } from "../components/common/LiquidGlass.js";
 import {
@@ -261,10 +264,11 @@ export function DashboardView({
   availableViews?: ViewMode[];
 }) {
   const { language } = usePanelLanguage();
-  const [overview, setOverview] = useState<DashboardOverview | null>(null);
-  const [nodes, setNodes] = useState<ManagedNode[]>([]);
-  const [instances, setInstances] = useState<ManagedInstance[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [overview, setOverview] = useState<DashboardOverview | null>(() => readResourceSnapshot(token, "overview") ?? null);
+  const [nodes, setNodes] = useState<ManagedNode[]>(() => canViewNodes ? readResourceSnapshot(token, "nodes") ?? [] : []);
+  const [instances, setInstances] = useState<ManagedInstance[]>(() => canViewInstances ? readResourceSnapshot(token, "instances") ?? [] : []);
+  const [loading, setLoading] = useState(() => !readResourceSnapshot(token, "overview"));
+  const refreshGenerationRef = useRef(0);
   const [error, setError] = useState("");
   const [testingNodeId, setTestingNodeId] = useState<string | null>(null);
   const [metricDetail, setMetricDetail] = useState<MetricDetailKind | null>(null);
@@ -311,25 +315,7 @@ export function DashboardView({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionLoadError, setSessionLoadError] = useState<string | null>(null);
-  const rollbackCodeMessageIds = useMemo(() => {
-    const result = new Set<string>();
-    const turnCache = new Map<number, boolean>();
-    for (const msg of messages) {
-      if (msg.rollbackJournal) continue;
-      const turn = dashboardTurnRange(messages, msg.id);
-      if (!turn) continue;
-      if (!turnCache.has(turn.start)) {
-        turnCache.set(
-          turn.start,
-          dashboardRollbackActions(messages.slice(turn.start)).some(dashboardIsCodeChange)
-        );
-      }
-      if (turnCache.get(turn.start)) {
-        result.add(msg.id);
-      }
-    }
-    return result;
-  }, [messages]);
+  const rollbackCodeMessageIds = useMemo(() => dashboardRollbackCodeMessageIds(messages), [messages]);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [messageNotice, setMessageNotice] = useState("");
   const messageMutationRef = useRef(false);
@@ -343,7 +329,15 @@ export function DashboardView({
   const [terminalBusy, setTerminalBusy] = useState(false);
   const terminalInstanceRef = useRef(activeInstanceId);
   terminalInstanceRef.current = activeInstanceId;
-  const [sessions, setSessions] = useState<SessionItem[]>([]);
+  const [sessions, setSessions] = useState<SessionItem[]>(() => {
+    const cached = readResourceSnapshot<SakiSavedConversation[]>(token, "conversations") ?? readSakiConversations(userId);
+    return cached.map((conversation) => ({
+      id: conversation.id, instanceId: conversation.instanceId ?? null,
+      workspaceInstanceIds: conversation.workspaceInstanceIds ?? sakiWorkspaceIdsFromContextKey(conversation.contextKey, conversation.instanceId),
+      updatedAt: conversation.updatedAt, title: conversation.title || "历史会话",
+      category: conversation.label || "历史记录", time: formatRelativeTime(conversation.updatedAt, language)
+    }));
+  });
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
   const [conversationsLoaded, setConversationsLoaded] = useState(false);
@@ -1536,7 +1530,8 @@ export function DashboardView({
     sessionLoadingRef.current = true;
     setSessionLoading(true);
     setSessionLoadError(null);
-    const cached = readSakiConversations(userId).find((item) => item.id === sessionId);
+    const cached = readResourceSnapshot<SakiSavedConversation>(token, `conversation:${sessionId}`)
+      ?? readSakiConversations(userId).find((item) => item.id === sessionId);
     setMessages((cached?.messages ?? []).map((m: any, idx: number) =>
       formatStoredChatMessage(m, idx, cached!.updatedAt, language)
     ));
@@ -1578,8 +1573,13 @@ export function DashboardView({
         if (isCancelled) return;
         if (Array.isArray(remote)) {
           localHistoryOnlyRef.current = false;
-          for (const conversation of remote) historyVersionsRef.current.set(conversation.id, conversation.updatedAt);
+          for (const conversation of remote) {
+            const previousVersion = historyVersionsRef.current.get(conversation.id);
+            if (previousVersion && previousVersion !== conversation.updatedAt) hydratedSessionIdsRef.current.delete(conversation.id);
+            historyVersionsRef.current.set(conversation.id, conversation.updatedAt);
+          }
           setSessions((current) => {
+            const currentById = new Map(current.map((session) => [session.id, session]));
             const loaded = remote.map((c) => ({
               id: c.id,
               instanceId: c.instanceId ?? null,
@@ -1589,12 +1589,13 @@ export function DashboardView({
               category: c.instanceId ? c.label || "实例会话" : "无项目",
               time: formatRelativeTime(c.updatedAt, language)
             }));
+            const loadedIds = new Set(loaded.map((session) => session.id));
             return [
               ...loaded.map((session) => {
-                const existing = current.find((item) => item.id === session.id);
+                const existing = currentById.get(session.id);
                 return existing?.messages ? { ...session, messages: existing.messages } : session;
               }),
-              ...current.filter((session) => !loaded.some((item) => item.id === session.id))
+              ...current.filter((session) => !loadedIds.has(session.id) && (!session.updatedAt || streamRunsRef.current.has(session.id)))
             ];
           });
           setConversationsLoaded(true);
@@ -1655,7 +1656,7 @@ export function DashboardView({
   }, [conversationsLoaded, latestTasks, activeSessionId]);
 
   useEffect(() => {
-    if (!conversationsLoaded || !activeSessionId) return;
+    if (!activeSessionId) return;
     void loadSessionDetail(activeSessionId);
   }, [conversationsLoaded, activeSessionId, loadSessionDetail, isStreaming]);
 
@@ -1711,56 +1712,47 @@ export function DashboardView({
   }, [conversationsLoaded, activeSessionId, latestTasks, reconnectTask]);
 
   const refresh = useCallback(async () => {
+    const generation = ++refreshGenerationRef.current;
+    const isCurrent = () => generation === refreshGenerationRef.current;
     setError("");
-    setLoading(true);
-    try {
-      setOverview(await api.dashboard(token));
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401) {
-        onLogout();
-        return;
-      }
-      setError(err instanceof Error ? err.message : "概览数据加载失败");
-    }
-
-    if (canViewNodes) {
-      try {
-        setNodes(await api.nodes(token));
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 401) {
-          onLogout();
-          return;
-        }
-        setError((current) => current || (err instanceof Error ? err.message : "节点数据加载失败"));
-      }
-    } else {
-      setNodes([]);
-    }
-
-    if (canViewInstances) {
-      try {
-        setInstances(await api.instances(token));
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 401) {
-          onLogout();
-          return;
-        }
-        setError((current) => current || (err instanceof Error ? err.message : "实例数据加载失败"));
-      }
-    } else {
-      setInstances([]);
-    }
-
-    setLoading(false);
+    const failed = (err: unknown) => {
+      if (!isCurrent()) return;
+      if (err instanceof ApiError && err.status === 401) { onLogout(); return; }
+      setError((current) => current || (err instanceof Error ? err.message : "概览数据加载失败"));
+    };
+    if (!canViewNodes) setNodes([]);
+    if (!canViewInstances) setInstances([]);
+    await Promise.all([
+      api.dashboard(token).then((next) => { if (isCurrent()) setOverview(next); }).catch(failed)
+        .finally(() => { if (isCurrent()) setLoading(false); }),
+      canViewNodes ? api.nodes(token).then((next) => { if (isCurrent()) setNodes(next); }).catch(failed) : Promise.resolve(),
+      canViewInstances ? api.instances(token, { cachedStatus: true }).then(async (next) => {
+        if (!isCurrent()) return;
+        setInstances(next);
+        const statuses = await api.instanceStatuses(token);
+        if (isCurrent()) setInstances((current) => mergeInstanceStatuses(current, statuses, next));
+      }).catch(failed) : Promise.resolve()
+    ]);
   }, [canViewInstances, canViewNodes, onLogout, token]);
 
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => {
-      void refresh();
-    }, 10000);
-    return () => window.clearInterval(timer);
+    const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
+    const timer = window.setInterval(onVisible, 10000);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      refreshGenerationRef.current++;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [refresh, refreshTick]);
+
+  useEffect(() => {
+    if (canViewInstances && readResourceSnapshot(token, "instances") !== undefined) writeResourceSnapshot(token, "instances", instances);
+  }, [token, instances, canViewInstances]);
+  useEffect(() => {
+    if (canViewNodes && readResourceSnapshot(token, "nodes") !== undefined) writeResourceSnapshot(token, "nodes", nodes);
+  }, [token, nodes, canViewNodes]);
 
   useGlobalEvent("node.status_changed", (event) => {
     const data = event.data as { nodeId?: string; status?: ManagedNode["status"]; lastSeenAt?: string | null } | undefined;
@@ -3359,24 +3351,22 @@ export function DashboardView({
                   <DashboardChatStream resetKey={`${activeSessionId}:${messages.filter((message) => message.role === "user").at(-1)?.id}`}>
                     <div className="dashboard-chat-stream-inner">
                       {sessionLoadError ? (
-                        <div role="alert" className="dashboard-chat-loading-placeholder">
-                          <p>会话记录加载失败：{sessionLoadError}</p>
+                        <div role="alert" className="dashboard-history-status">
+                          <p>会话记录校验失败：{sessionLoadError}</p>
                           <button type="button" className="secondary-button" onClick={() => activeSessionId && void loadSessionDetail(activeSessionId)}><RefreshCw size={14} />重新加载</button>
                         </div>
                       ) : sessionLoading ? (
-                        <div className="dashboard-chat-loading-placeholder" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "64px 0", gap: "10px", color: "var(--color-text-muted)" }}>
-                          <Loader2 size={20} className="dashboard-spinner" style={{ animation: "spin 1s linear infinite" }} />
-                          <span style={{ fontSize: "14px" }}>正在加载会话记录...</span>
+                        <div className={messages.length ? "dashboard-history-status" : "dashboard-chat-loading-placeholder"} role="status">
+                          <Loader2 size={16} className="dashboard-spinner" style={{ animation: "spin 1s linear infinite" }} />
+                          <span>{messages.length ? "已显示缓存，正在校验最新记录..." : "正在加载会话记录..."}</span>
                         </div>
-                      ) : (
-                        messages.filter((message) => !message.rollbackJournal).map((msg) => (
-                          <DashboardAgentMessage key={msg.id} message={msg} busyId={isStreaming ? "streaming" : actionBusyId}
-                            selectedActionId={selectedTool?.messageId === msg.id ? selectedTool.actionId : undefined}
-                            onSelectAction={selectTool} onDecide={decideAction} onMessageOperation={handleMessageOperation} copiedMessageId={copiedMessageId}
-                            canRollbackCode={rollbackCodeMessageIds.has(msg.id)}
-                            onPreviewAttachment={(attachment) => setPreviewingAttachment({ attachment, editable: false })} />
-                        ))
-                      )}
+                      ) : null}
+                      <DashboardMessageList key={activeSessionId ?? "new"} messages={messages}
+                        busyId={sessionLoading || sessionLoadError ? "history-loading" : isStreaming ? "streaming" : actionBusyId}
+                        selectedTool={selectedTool} onSelectAction={selectTool} onDecide={decideAction}
+                        onMessageOperation={handleMessageOperation} copiedMessageId={copiedMessageId}
+                        rollbackCodeMessageIds={rollbackCodeMessageIds}
+                        onPreviewAttachment={(attachment) => setPreviewingAttachment({ attachment, editable: false })} />
                       {!isStreaming && gitChangesSummary && (gitChangesSummary.filesCount > 0 || gitChangesSummary.canRestore) ? (
                         <div className="dashboard-session-bottom-changes">
                           <SakiChangedFilesPill summary={gitChangesSummary} onClick={handleOpenChangesDetails} />

@@ -838,6 +838,7 @@ export interface ManagedInstance {
   startCommand: string;
   stopCommand?: string | null | undefined;
   status: InstanceStatus;
+  watchEnabled?: boolean | undefined;
   autoStart: boolean;
   restartPolicy: RestartPolicy;
   restartMaxRetries: number;

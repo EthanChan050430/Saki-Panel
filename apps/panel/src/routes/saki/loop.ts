@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { bindSakiWorkspace } from "./workspace-binding.js";
+import { retainAgentToolCacheAfterAction } from "./tool-cache-policy.js";
+import { normalizeUserQuestionTurn } from "./user-question-policy.js";
 import type { SakiAgentAction, SakiAgentRiskLevel, SakiChatRequest, SakiChatResponse, SakiInputAttachment, PermissionCode } from "@webops/shared";
 import { countTokens, estimateModelCallTokens } from "../../tokenizer.js";
 import { recordAgentTokenUsage } from "../../points.js";
@@ -41,7 +43,7 @@ import { advertisedSakiToolSchemas, isSakiReadOnlyAgentTool, normalizedAgentTool
 import { callConfiguredAgentTurn } from "./providers.js";
 import { isContextOverflowError } from "./providers/common.js";
 import { webVerificationBlockReason } from "./web-policy.js";
-import { buildAgentGitNote, buildAgentPrompt, buildAgentUserTurn, buildAgentWorkspacePrefix, buildStaticAgentSystemPrompt, sakiFileToolGuidance } from "./prompt.js";
+import { buildAgentGitNote, buildAgentPrompt, buildAgentUserTurn, buildAgentWorkspacePrefix, buildStaticAgentSystemPrompt, sakiFileToolGuidance, sakiUserQuestionGuidance } from "./prompt.js";
 import {
   compactAgentTurnMessages,
   closeInterruptedToolCalls,
@@ -379,6 +381,7 @@ export function observationForAgentPrompt(action: SakiAgentAction): string {
 }
 
 export const cacheableReadOnlyAgentToolNames = new Set([
+  "readfile",
   "describeinstance",
   "listfiles",
   "findfiles",
@@ -421,10 +424,11 @@ function stableCacheValue(value: unknown): unknown {
 }
 
 function normalizedAgentToolCacheArgs(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
-  const normalized = Object.fromEntries(Object.entries(args).filter(([key]) => key !== "note"));
+  const normalized = Object.fromEntries(Object.entries(args).filter(([key]) => key !== "note" && key !== "refresh"));
   if (toolName === "readfile" && normalized.lineCount === undefined) {
     normalized.lineCount = defaultAgentReadFileLineCount;
   }
+  if (toolName === "readfile" && normalized.startLine === undefined) normalized.startLine = 1;
   if (toolName === "listfiles" && normalized.limit === undefined) normalized.limit = 200;
   if (toolName === "listinstances" && normalized.limit === undefined) normalized.limit = 50;
   return normalized;
@@ -465,10 +469,11 @@ function shouldCacheAgentToolResult(call: ParsedToolCall, action: SakiAgentActio
   return !Array.isArray(call.args) && cacheableReadOnlyAgentToolNames.has(normalizedAgentToolName(call.name));
 }
 
-function shouldInvalidateAgentToolCache(call: ParsedToolCall): boolean {
-  const toolName = normalizedAgentToolName(call.name);
-  if (toolName === "respond" || toolName === "reportprogress") return false;
-  return !isSakiReadOnlyAgentTool(toolName);
+export function isAgentToolCacheEntryFresh(action: SakiAgentAction, now = Date.now()): boolean {
+  const tool = normalizedAgentToolName(action.tool);
+  const maxAge = ["describeinstance", "getenvironmentinfo", "gitstatus", "gitdiff", "diagnosecode"].includes(tool) ? 5000 : 5 * 60 * 1000;
+  const age = now - Date.parse(action.createdAt);
+  return Number.isFinite(age) && age >= 0 && age < maxAge;
 }
 
 export function compactAgentScratchpadEntry(entry: string, index: number): string {
@@ -614,6 +619,23 @@ function billedAgentTurnTokens(modelId: string, prompt: string, turn: SakiModelT
 
 export type ExecuteToolFn = (runtime: SakiAgentRuntime, call: ParsedToolCall, options: { approved?: boolean; actionId?: string; pendingResume?: SakiAgentResumeState }) => Promise<SakiAgentAction>;
 
+export function restoreAgentTurnMessages(runtime: SakiAgentRuntime, resume?: SakiAgentResumeState, gitSummary = ""): SakiAgentTurnMessage[] {
+  if (resume?.turnMessages?.length) {
+    return closeInterruptedToolCalls(resume.turnMessages);
+  }
+  const input = resume ? { ...runtime.input, message: resume.input.message, history: resume.input.history ?? runtime.input.history ?? [] } : runtime.input;
+  const messages: SakiAgentTurnMessage[] = [{ role: "user", content: buildAgentUserTurn({ ...runtime, input }) }];
+  if (gitSummary) messages.push({ role: "user", content: buildAgentGitNote(gitSummary) });
+  for (const action of resume?.actions ?? []) {
+    if (action.status === "pending_approval" || action.status === "pending_input") continue;
+    const call = { id: `restored-${action.id}`, name: action.tool, args: action.args };
+    messages.push({ role: "assistant", content: "", toolCalls: [call] },
+      { role: "tool", toolCallId: call.id, name: call.name, content: observationForAgentPrompt(action) });
+  }
+  if (resume?.scratchpadEntries.length) messages.push({ role: "user", content: `[Recovered task progress — retain decisions and completed work]\n${renderAgentScratchpad(resume.scratchpadEntries)}` });
+  return messages;
+}
+
 export async function runSakiAgent(
   runtime: SakiAgentRuntime,
   events?: SakiAgentRunEvents,
@@ -628,22 +650,25 @@ export async function runSakiAgent(
   runtime.externalReadPerformed ||= actions.some((action) => normalizedAgentToolName(action.tool) === "requestexternalaccess" && action.ok);
   runtime.usedToolNames = [...new Set(actions.map((action) => normalizedAgentToolName(action.tool)))];
   const gitSummary = resume || runtime.toolProfile === "chat" ? "" : await loadWorkspaceGitSummary(runtime);
-  const turnMessages: SakiAgentTurnMessage[] = resume?.turnMessages?.length
-    ? closeInterruptedToolCalls(resume.turnMessages)
-    : [
-        { role: "user", content: buildAgentUserTurn(runtime) },
-        ...(gitSummary ? [{ role: "user" as const, content: buildAgentGitNote(gitSummary) }] : [])
-      ];
+  const turnMessages = restoreAgentTurnMessages(runtime, resume, gitSummary);
   runtime.turnMessages = turnMessages;
   const basePrompt = buildAgentPrompt(runtime);
   const resumeGoal = resume?.input?.message;
   const agentScratchpadEntries: string[] = [...(resume?.scratchpadEntries ?? [])];
   const readOnlyToolCache = new Map<string, SakiAgentAction>(
-    (resume?.readOnlyToolCache ?? []).filter(([, action]) => Date.now() - Date.parse(action.createdAt) < 5 * 60 * 1000)
+    (resume?.readOnlyToolCache ?? []).filter(([, action]) => isAgentToolCacheEntryFresh(action)).slice(-100)
   );
+  const rememberReadResult = (key: string, action: SakiAgentAction) => {
+    readOnlyToolCache.delete(key);
+    readOnlyToolCache.set(key, action);
+    if (readOnlyToolCache.size > 100) readOnlyToolCache.delete(readOnlyToolCache.keys().next().value!);
+  };
   let currentPrompt = basePrompt;
   const modelProfile = sakiModelProfile(runtime.config.provider, runtime.config.model);
-  const agentSystemPrompt = `${runtime.systemPromptOverride || buildStaticAgentSystemPrompt(modelProfile)}
+  const systemPrompt = runtime.systemPromptOverride || buildStaticAgentSystemPrompt(modelProfile);
+  const questionGuidance = runtime.kind !== "watch" && runtime.toolProfile !== "research" && !systemPrompt.includes(sakiUserQuestionGuidance)
+    ? `\n\n${sakiUserQuestionGuidance}` : "";
+  const agentSystemPrompt = `${systemPrompt}${questionGuidance}
 
 ${buildAgentWorkspacePrefix(runtime)}
 
@@ -899,10 +924,12 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
     };
   };
 
+  type ToolResult = { call: ParsedToolCall; toolStepId: string; action: SakiAgentAction; durationMs: number; cacheHit?: boolean };
   const runToolWithWorkflow = async (
     call: ParsedToolCall,
-    toolStepId: string
-  ): Promise<{ call: ParsedToolCall; toolStepId: string; action: SakiAgentAction; durationMs: number; cacheHit?: boolean }> => {
+    toolStepId: string,
+    sharedRead?: Promise<ToolResult>
+  ): Promise<ToolResult> => {
     const toolStartedAt = Date.now();
     const authorize = (executeToolFn as ExecuteToolFn & { authorize?: (runtime: SakiAgentRuntime, call: ParsedToolCall) => Promise<void> }).authorize;
     if (authorize) {
@@ -916,7 +943,8 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
     const cacheKey = agentReadOnlyToolCacheKey(runtime, call);
     if (cacheKey) {
       const cached = readOnlyToolCache.get(cacheKey);
-      if (cached && Date.now() - Date.parse(cached.createdAt) < 5 * 60 * 1000) {
+      if (cached && !(!Array.isArray(call.args) && call.args.refresh === true) && isAgentToolCacheEntryFresh(cached)) {
+        rememberReadResult(cacheKey, cached);
         toolCacheHits += 1;
         return {
           call,
@@ -927,6 +955,12 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
         };
       }
       toolCacheMisses += 1;
+    }
+
+    if (sharedRead) {
+      const previous = await sharedRead;
+      return { call, toolStepId, action: cloneCachedAgentAction(call, previous.action),
+        durationMs: Date.now() - toolStartedAt, cacheHit: true };
     }
 
     runtime.usedToolNames ??= [];
@@ -941,9 +975,9 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
           id: actionId(),
           tool: call.name,
           args: toolCallArgsForDisplay(call),
-          observation: `Skipped duplicate '${call.name}' — already ran ${previousCount} times with the same arguments. Do not repeat. Edit, diagnoseCode, or respond.`,
-          ok: true,
-          status: "completed",
+          observation: `Duplicate limit reached for '${call.name}' after ${previousCount} attempts with the same arguments. This call was NOT executed and is NOT evidence of success. Use the previous observations to inspect the cause, change the approach, or explain the blocker.`,
+          ok: false,
+          status: "failed",
           createdAt: new Date().toISOString()
         },
         durationMs: Date.now() - toolStartedAt,
@@ -971,10 +1005,12 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
       };
     }
     if (cacheKey && shouldCacheAgentToolResult(call, action)) {
-      readOnlyToolCache.set(cacheKey, action);
+      rememberReadResult(cacheKey, action);
     }
-    if (shouldInvalidateAgentToolCache(call)) {
+    const retainedCache = retainAgentToolCacheAfterAction([...readOnlyToolCache], action, runtime);
+    if (retainedCache.length !== readOnlyToolCache.size || action.approval?.checkpointId) {
       readOnlyToolCache.clear();
+      for (const entry of retainedCache) readOnlyToolCache.set(...entry);
       toolExecutionCounts.clear();
       toolCacheInvalidations += 1;
     }
@@ -1065,13 +1101,20 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
         : "Saki has prepared an action that needs your approval. Please review it in the action preview first.";
       return finishAgentResponse(action.status, finalMessage);
     }
+    const observation = observationForAgentPrompt(action);
+    if (cacheHit) {
+      for (let index = 0; index < turnMessages.length; index++) {
+        const previous = turnMessages[index]!;
+        if (previous.role === "tool" && previous.name === call.name && previous.content === observation) {
+          turnMessages[index] = { ...previous, content: "Identical observation is retained in the latest tool result below; this earlier result is superseded." };
+        }
+      }
+    }
     turnMessages.push({
       role: "tool",
       toolCallId: ensureToolCallId(call),
       name: call.name,
-      content: cacheHit && turnMessages.some((message) => message.role === "tool" && message.name === call.name && message.content === observationForAgentPrompt(action))
-        ? "Cache hit. Reuse the identical successful observation above; no new information. Continue the next unfinished step."
-        : observationForAgentPrompt(action)
+      content: observation
     });
     agentScratchpadEntries.push(`\nAssistant: ${renderToolCall(call)}\nObservation:\n${observationForAgentPrompt(action)}\n`);
     rebuildCurrentPrompt();
@@ -1119,9 +1162,9 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
       if (consecutiveFailedTools >= maxConsecutiveFailedTools) {
         return finishAgentResponse("stuck_failures", stuckFailuresMessage());
       }
-    } else if (action.ok && !cacheHit) {
+    } else if (action.ok) {
       consecutiveFailedTools = 0;
-      turnMadeProgress = true;
+      if (!cacheHit) turnMadeProgress = true;
     }
 
     // Persist each confirmed result, so a process restart can resume without
@@ -1220,8 +1263,8 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
       continue;
     }
     truncatedReplies = 0;
+    if (runtime.kind !== "watch" && runtime.toolProfile !== "research") turn = normalizeUserQuestionTurn(turn);
     const rawContent = stripDsmlWrappers(turn.content);
-    // 让后续所有代码都基于剥掉 DSML 包装的干净内容工作
     (turn as SakiModelToolTurn & { content: string }).content = rawContent;
     const cleanedTurn = stripThinking(rawContent).trim();
     if (isDegenerateRepetition(cleanedTurn)) {
@@ -1366,7 +1409,15 @@ IMPORTANT: ${sakiFileToolGuidance}\nPrevious output:\n${turn.content.slice(0, 12
           callIndex += 1;
         }
 
-        const results = await Promise.all(batch.map((item) => runToolWithWorkflow(item.call, item.toolStepId)));
+        const reads = new Map<string, Promise<ToolResult>>();
+        const results = await Promise.all(batch.map((item) => {
+          const cacheKey = agentReadOnlyToolCacheKey(runtime, item.call);
+          const key = cacheKey ? `${cacheKey}::refresh=${!Array.isArray(item.call.args) && item.call.args.refresh === true}` : null;
+          const shared = key ? reads.get(key) : undefined;
+          const result = runToolWithWorkflow(item.call, item.toolStepId, shared);
+          if (key && !shared) reads.set(key, result);
+          return result;
+        }));
         for (const result of results) {
           const finalResponse = await handleToolResult(result);
           if (finalResponse) return finalResponse;

@@ -2685,6 +2685,19 @@
   line-height: 1.6;
   color: var(--text-secondary);
 }
+
+.dashboard-history-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.dashboard-history-status p { margin: 0; }
+.dashboard-history-more { display: flex; justify-content: center; padding: 12px 0 20px; }
+.dashboard-message-list { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .dashboard-workspace-option { display: flex; align-items: center; min-width: 0; }
 .dashboard-workspace-option > .dashboard-dropdown-item { flex: 1; min-width: 0; }
 .dashboard-workspace-default-btn {

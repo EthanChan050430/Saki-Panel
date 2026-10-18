@@ -104,11 +104,11 @@ export function SakiAskUserCard({
   const options = [...new Set(action.question?.options ?? [])];
   const answer = action.answer;
   return (
-    <section className="saki-agent-widget saki-question-card" aria-label="确认">
+    <section className="saki-agent-widget saki-question-card" aria-label="询问用户">
       <div className="saki-agent-widget-heading">
         <span className="saki-agent-widget-icon"><CircleHelp size={16} /></span>
-        <strong>确认</strong>
-        <span className="saki-question-state">{pending ? "待确认" : answer?.skipped ? "已跳过" : "已确认"}</span>
+        <strong>需要你的回答</strong>
+        <span className="saki-question-state">{pending ? "待回答" : answer?.skipped ? "已跳过" : "已回答"}</span>
       </div>
       <p className="saki-question-text">{action.question?.text ?? String(action.args.question ?? "")}</p>
       {pending ? (
@@ -132,7 +132,7 @@ export function SakiAskUserCard({
           <div className="saki-question-actions">
             <button type="button" className="saki-question-submit" disabled={busy || (!selection && !customText.trim())}
               onClick={() => void submit({ ...(selection ? { selection } : {}), ...(customText.trim() ? { customText: customText.trim() } : {}) })}>
-              {busy ? <Loader2 size={14} className="status-spinner" /> : <Send size={14} />} 确认
+              {busy ? <Loader2 size={14} className="status-spinner" /> : <Send size={14} />} 发送回答
             </button>
             <button type="button" className="saki-question-skip" disabled={busy} onClick={() => void submit({ skipped: true })}>
               <SkipForward size={14} /> 跳过

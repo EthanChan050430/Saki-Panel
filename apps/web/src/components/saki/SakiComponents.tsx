@@ -357,13 +357,16 @@ export function sortSakiConversationsByTime(conversations: StoredSakiConversatio
     .map((item) => item.conversation);
 }
 
+let sakiConversationReadCache: { userId: string; raw: string | null; conversations: StoredSakiConversation[] } | null = null;
+
 export function readSakiConversations(userId?: string): StoredSakiConversation[] {
   if (!userId) return [];
   try {
     const raw = globalThis.localStorage?.getItem(`${sakiConversationStorageKey}:user:${encodeURIComponent(userId)}`);
+    if (sakiConversationReadCache?.userId === userId && sakiConversationReadCache.raw === raw) return sakiConversationReadCache.conversations;
     const parsed = raw ? (JSON.parse(raw) as unknown) : [];
     if (!Array.isArray(parsed)) return [];
-    return sortSakiConversationsByTime(
+    const conversations = sortSakiConversationsByTime(
       parsed
         .map((item): StoredSakiConversation | null => {
           if (!item || typeof item !== "object") return null;
@@ -385,6 +388,8 @@ export function readSakiConversations(userId?: string): StoredSakiConversation[]
         .filter((item): item is StoredSakiConversation => Boolean(item))
         .filter((conversation) => hasPersistableSakiSpeech(conversation.messages))
     ).slice(0, 80);
+    sakiConversationReadCache = { userId, raw: raw ?? null, conversations };
+    return conversations;
   } catch {
     return [];
   }
@@ -2174,7 +2179,7 @@ export function sakiActionTitle(action: SakiAgentAction): string {
     case "managetodos":
       return "任务计划";
     case "askuser":
-      return "确认";
+      return "询问用户";
     case "spawntask":
       return "子任务";
     default:

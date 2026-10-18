@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Prisma } from "@prisma/client";
-import { classifyCommandRisk, findDangerousCommandReason } from "../../security.js";
+import { classifyCommandRisk, findDangerousCommandReason, isPosixCommandPlatform } from "../../security.js";
 import { sakiModelProfile } from "./model-profile.js";
 import { requiredSakiToolPermissions, sakiHostExecutionTools } from "./resource-policy.js";
 import { parseWorkspacePatch } from "./patch.js";
@@ -50,7 +50,7 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "readServerFile", description: "Read file contents from a remote server with line numbers.", parameters: objectSchema({ nodeId: { type: "string", description: "Node or server id or name." }, path: { type: "string", description: "Remote file path." }, startLine: { type: "integer", minimum: 1 }, lineCount: { type: "integer", minimum: 1, maximum: 2000 } }, ["path"]) },
   { name: "instanceLogs", description: "Read recent instance logs.", parameters: objectSchema({ instanceId: instanceLookupSchema, lines: { type: "integer", minimum: 1, maximum: 500 } }) },
   { name: "listFiles", description: "List a directory. Use limit on large folders.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, limit: { type: "integer", minimum: 1, maximum: 1000 } }) },
-  { name: "readFile", description: "Read current file contents with line numbers. Defaults to startLine=1 and 200 lines; request up to 2000 lines. Large outputs include a continuation line. Use searchFiles or readSymbol to locate code when useful.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, lineCount: { type: "integer", minimum: 1, maximum: 2000 } }, ["path"]), aliases: ["view_file", "viewFile", "read_file", "cat"] },
+  { name: "readFile", description: "Read current file contents with line numbers. Defaults to startLine=1 and 200 lines; request up to 2000 lines. Large outputs include a continuation line. Reuse a recent observation for an unchanged file; set refresh=true when new contents are explicitly needed. Use searchFiles or readSymbol to locate code when useful.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, lineCount: { type: "integer", minimum: 1, maximum: 2000 }, refresh: { type: "boolean", description: "Bypass a recent cached read after external changes or when explicitly asked to recheck." } }, ["path"]), aliases: ["view_file", "viewFile", "read_file", "cat"] },
   { name: "writeFile", description: "Write complete UTF-8 contents without a line-count limit. Creates a missing file or updates an existing file after reading and checkpointing it (requires file.read + file.write). Repeating identical content succeeds without writing. Set overwrite=false to require a new file, or append=true for another chunk. Prefer applyPatch/replaceInFile for targeted edits.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, content: { type: "string" }, overwrite: { type: "boolean" }, append: { type: "boolean" } }, ["path", "content"]), aliases: ["write_file", "write_to_file", "saveFile", "createFile"] },
   { name: "replaceInFile", description: "Replace one unique exact string. Use editLines when you have line numbers; applyPatch for larger diffs.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, oldText: { type: "string" }, newText: { type: "string" } }, ["path", "oldText", "newText"]), aliases: ["str_replace", "replace_file_content", "replace_in_file", "strReplace", "edit_file"] },
   { name: "editLines", description: "Replace a 1-based line range. Use this when you already have line numbers from readFile, outlineFile, or searchFiles. Checkpointed.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, endLine: { type: "integer", minimum: 0 }, replacement: { type: "string" } }, ["path", "startLine", "endLine", "replacement"]), aliases: ["editFileLines", "replaceLines", "edit_lines", "patchLines"] },
@@ -93,7 +93,7 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "reportProgress", description: "Short user-visible status. Not hidden chain-of-thought.", parameters: objectSchema({ text: { type: "string" } }, ["text"]), aliases: ["progress", "statusUpdate"] },
   { name: "diagnoseCode", description: "Fast syntax/typecheck. Call after edits before respond. Never uses npm test.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, command: { type: "string" } }), aliases: ["diagnostics", "checkTypes", "typecheck", "lintCode", "diagnose_code", "lint"] },
   { name: "manageTodos", description: "Show or update the task checklist. For multi-step work call this before acting, after a step changes, and before finishing. Send the complete Markdown checklist using - [ ] for pending, - [-] for the current step, and - [x] for completed. Mark at most one step in progress.", parameters: objectSchema({ todos: { type: "string" } }, ["todos"]), aliases: ["setTodos", "todos", "updateTodos", "manage_todos", "todoTool", "taskList"] },
-  { name: "askUser", description: "Pause and ask the user one concise question when a missing preference or decision matters. Offer 2-4 distinct choices when useful; the user can choose, add custom text, or skip. Do not call for routine decisions you can make yourself.", parameters: objectSchema({ question: { type: "string" }, options: { type: "array", items: { type: "string" } } }, ["question"]), aliases: ["requestUserInput", "askQuestion"] },
+  { name: "askUser", description: "Ask the user when essential information is missing or conflicting: unclear goal or success criteria, ambiguous target instance/file, missing user-only requirements, or materially different outcomes without an authorized default. Inspect available context first; do not guess the missing decision or perform dependent changes. Ask one focused question in the user's language, with 2-4 distinct choices when useful (omit choices for free text). This opens a question card and pauses until an answer or skip. Use this tool instead of ending with a plain-text clarification question. Routine reversible implementation choices and facts you can inspect do not need a question.", parameters: objectSchema({ question: { type: "string", maxLength: 500 }, options: { type: "array", maxItems: 4, items: { type: "string", maxLength: 120 } } }, ["question"]), aliases: ["requestUserInput", "askQuestion", "ask_user", "request_user_input"] },
   { name: "spawnTask", description: "Research-only sub-agent. Inspect, do not edit. Use only for broad multi-file exploration.", parameters: objectSchema({ instanceId: instanceLookupSchema, task: { type: "string" }, maxSteps: { type: "integer", minimum: 1, maximum: 10 } }, ["task"]), aliases: ["subAgent", "delegate", "runSubTask"] },
   { name: "batchEdit", description: "Apply several editLines/replaceInFile operations in one step. Use when changing more than one region or file. Checkpointed.", parameters: objectSchema({ instanceId: instanceLookupSchema, edits: { type: "array", items: { type: "object", properties: { path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, endLine: { type: "integer", minimum: 0 }, replacement: { type: "string" }, oldText: { type: "string" }, newText: { type: "string" } }, required: ["path"] } } }, ["edits"]), aliases: ["batch_edit", "multiFileEdit", "batch_patch"] },
   { name: "applyPatch", description: "Apply a unified diff or multi-file block patch with context-only @@ hunks. Use for targeted or multi-file edits. Re-read current contents after a conflict before retrying.", parameters: objectSchema({ instanceId: instanceLookupSchema, patch: { type: "string", description: "Unified diff (---/+++ / @@) or *** Begin Patch format." } }, ["patch"]), aliases: ["apply_patch", "applyDiff", "applyPatches", "patchFiles", "patch"] },
@@ -308,7 +308,7 @@ export function toolSchemasForRuntime(runtime: SakiAgentRuntime): SakiToolSchema
 
 function advertisedToolSchemasForRuntime(runtime: SakiAgentRuntime): SakiToolSchema[] {
   if (runtime.toolProfile === "chat") {
-    const names = new Set<string>(["respond", "reportProgress"]);
+    const names = new Set<string>(["respond", "reportProgress", "askUser"]);
     if (runtime.config.searchEnabled) { names.add("searchWeb"); names.add("browse"); }
     if (runtime.config.imageGen?.enabled) names.add("generateImage");
     return schemasNamed(names);
@@ -422,8 +422,8 @@ function capAdvertisedToolSchemas(schemas: SakiToolSchema[], maxTools: ReturnTyp
   if (kept.length > maxTools.maxAdvertisedTools) {
     // Small models must still see the managed lifecycle route and web tools.
     const priority = new Map([
-      "instanceAction", "describeInstance", "instanceLogs", "searchWeb", "browse", "generateImage",
-      "readFile", "searchFiles", "applyPatch", "writeFile", "runCommand", "diagnoseCode", "manageTodos", "askUser", "findFiles"
+      "askUser", "instanceAction", "describeInstance", "instanceLogs", "searchWeb", "browse", "generateImage",
+      "readFile", "searchFiles", "applyPatch", "writeFile", "runCommand", "diagnoseCode", "manageTodos", "findFiles"
     ].map((name, index) => [name, index]));
     return kept.sort((a, b) => (priority.get(a.name) ?? priority.size) - (priority.get(b.name) ?? priority.size))
       .slice(0, maxTools.maxAdvertisedTools);
@@ -432,13 +432,13 @@ function capAdvertisedToolSchemas(schemas: SakiToolSchema[], maxTools: ReturnTyp
   return [...kept, ...rest.slice(0, room)];
 }
 
-const sakiChatToolNames = new Set(["generateimage", "generate_image", "drawimage", "createimage", "txt2img", "imagegen", "imagine", "respond", "reportprogress", "searchweb", "browse"]);
+const sakiChatToolNames = new Set(["generateimage", "generate_image", "drawimage", "createimage", "txt2img", "imagegen", "imagine", "respond", "reportprogress", "searchweb", "browse", "askuser"]);
 
 export function assertToolProfileAllowsTool(runtime: SakiAgentRuntime, toolName: string): void {
   const lower = normalizedAgentToolName(toolName);
   if (runtime.toolProfile === "chat") {
     if (!sakiChatToolNames.has(lower) && !sakiChatToolNames.has(toolName.toLowerCase())) {
-      throw new RouteError("Chat mode can search the web, read public pages, generate images and reply. It cannot edit files, run commands, or change instances.", 403);
+      throw new RouteError("Chat mode can ask questions, search the web, read public pages, generate images and reply. It cannot edit files, run commands, or change instances.", 403);
     }
     return;
   }
@@ -519,6 +519,7 @@ export function parseJsonMaybe(value: unknown): unknown {
 }
 
 const parameterAliases: Record<string, Record<string, string>> = {
+  askuser: { prompt: "question", choices: "options" },
   writefile: { text: "content", body: "content", data: "content", fileContent: "content", file_content: "content", source: "content" },
   replaceinfile: { find: "oldText", search: "oldText", match: "oldText", replace: "newText", with: "newText", replacement: "newText" },
   editlines: { lines: "replacement", content: "replacement", text: "replacement", newContent: "replacement", new_content: "replacement" },
@@ -574,6 +575,7 @@ export function normalizeStructuredToolCall(raw: unknown): ParsedToolCall {
 
 export function shorthandPrimaryArgumentKey(toolName: string): string | null {
   const lower = toolName.toLowerCase();
+  if (lower === "askuser") return "question";
   if (lower === "listinstances") return "query";
   if (lower === "describeinstance" || lower === "instancelogs" || lower === "listtasks") return "instanceId";
   if (lower === "listfiles" || lower === "readfile" || lower === "mkdir" || lower === "deletepath" || lower === "statfile" || lower === "fileinfo" || lower === "inspectpath" || lower === "gitdiff" || lower === "diff") return "path";
@@ -592,6 +594,7 @@ export function shorthandPrimaryArgumentKey(toolName: string): string | null {
 
 export function shorthandPositionalArguments(toolName: string, values: unknown[]): Record<string, unknown> | null {
   const lower = toolName.toLowerCase();
+  if (lower === "askuser") return { question: values[0], options: values[1] };
   if (lower === "readfile") return { path: values[0], startLine: values[1], lineCount: values[2] };
   if (lower === "listfiles") return { path: values[0], limit: values[1] };
   if (lower === "instancelogs") return { instanceId: values[0], lines: values[1] };
@@ -1367,6 +1370,13 @@ function commandWorkingDirectory(runtime: SakiAgentRuntime, args: Record<string,
   return instance?.workingDirectory;
 }
 
+function commandUsesPosixShell(runtime: SakiAgentRuntime, args: Record<string, unknown>): boolean {
+  const lookup = stringArg(args, "instanceId") || stringArg(args, "instance") || stringArg(args, "id");
+  const instance = runtime.context.instances ? selectedWorkspaceTarget(runtime.context, lookup) : runtime.context.instance;
+  if (lookup && lookup !== instance?.id && lookup !== instance?.name) return false;
+  return isPosixCommandPlatform(instance?.node.os);
+}
+
 export function assertSakiPermissionModeAllowsTool(
   runtime: SakiAgentRuntime,
   toolName: string,
@@ -1381,7 +1391,7 @@ export function assertSakiPermissionModeAllowsTool(
   }
 
   if (lower === "runcommand" || lower === "runinshell") {
-    const commandRisk = classifyCommandRisk(stringArg(args, "command"), commandWorkingDirectory(runtime, args));
+    const commandRisk = classifyCommandRisk(stringArg(args, "command"), commandWorkingDirectory(runtime, args), commandUsesPosixShell(runtime, args));
     if (commandRisk.risk !== "low" || !commandRisk.readOnly || rawStringArg(args, "input") || rawStringArg(args, "stdin")) {
       throw new RouteError("Plan mode only permits low-risk inspection commands. Switch permission mode before running commands that can modify state.", 403);
     }
@@ -1414,7 +1424,7 @@ export function shouldRequestSakiApproval(runtime: SakiAgentRuntime, toolName: s
   if (lower === "runcommand" || lower === "runinshell") {
     // stdin can carry a program or answers that change the command's behavior.
     if (rawStringArg(args, "input") || rawStringArg(args, "stdin")) return true;
-    const commandRisk = classifyCommandRisk(stringArg(args, "command"), commandWorkingDirectory(runtime, args));
+    const commandRisk = classifyCommandRisk(stringArg(args, "command"), commandWorkingDirectory(runtime, args), commandUsesPosixShell(runtime, args));
     return permissionMode === "ask" ? commandRisk.risk !== "low" : !commandRisk.autoApprove;
   }
   // Normal workspace edits are allowed in both modes. File tools retain their

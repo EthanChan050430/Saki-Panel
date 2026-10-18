@@ -36,6 +36,7 @@ import { resolveSakiContext } from "./chat.js";
 import { assertSakiSessionAccess, assertSakiTaskAccess } from "./session-access.js";
 import { assertSakiApprovalBindings } from "./workspace-binding.js";
 import { withSakiWorkspaceMutation } from "./workspace-mutation.js";
+import { retainAgentToolCacheAfterAction } from "./tool-cache-policy.js";
 import { maybeFinishWatchIncident } from "../../watch/runner.js";
 import { updateIncident } from "../../watch/incidents.js";
 
@@ -136,38 +137,40 @@ async function withTrackedActionDecision(pending: PendingSakiAction, userId: str
   } finally { if (!background) delete task.decisionInFlight; }
 }
 
-function resumeAfterSakiActionDecision(pending: PendingSakiAction, action: SakiAgentAction): SakiAgentResumeState | null {
+function resumeAfterSakiActionDecision(pending: PendingSakiAction, action: SakiAgentAction, runtime: SakiAgentRuntime): SakiAgentResumeState | null {
   if (!pending.resume) return null;
+  const alreadyRecorded = pending.resume.actions.some((previous) => previous.id === action.id && previous.status !== "pending_approval" && previous.status !== "pending_input");
   const toolCallId = ensureToolCallId(pending.call);
   const existingTurnMessages = pending.resume.turnMessages ? [...pending.resume.turnMessages] : [];
   if (existingTurnMessages.length > 0) {
-    existingTurnMessages.push({
+    const result = {
       role: "tool",
       toolCallId,
       name: pending.call.name,
-      content: observationForAgentPrompt(action)
-    });
+      content: `${observationForAgentPrompt(action)}\n\n[Decision resolved — continue the same task]\nThis action already ran; do not repeat it just because approval completed. Retain the original request, conversation, checklist and confirmed observations above. Continue the next unfinished step without restarting discovery. Refresh only observations affected by this action or evidence of external changes. If the action failed, use its actual error to decide the repair and any necessary retry.`
+    } as const;
+    const existingResult = existingTurnMessages.findIndex((message) => message.role === "tool" && message.toolCallId === toolCallId);
+    if (existingResult >= 0) existingTurnMessages[existingResult] = result;
+    else existingTurnMessages.push(result);
   }
   return {
     ...pending.resume,
-    // Approval may have just changed the workspace. Never restore observations
-    // from before that mutation as current tool results.
-    readOnlyToolCache: [],
-    actions: [...pending.resume.actions, action],
+    readOnlyToolCache: retainAgentToolCacheAfterAction(pending.resume.readOnlyToolCache ?? [], action, runtime),
+    actions: [...pending.resume.actions.filter((previous) => previous.id !== action.id), action],
     scratchpadEntries: [
       ...pending.resume.scratchpadEntries,
-      `\nAssistant: ${renderToolCall(pending.call)}\nObservation:\n${observationForAgentPrompt(action)}\n`,
-      ...(!action.ok
+      ...(!alreadyRecorded ? [`\nAssistant: ${renderToolCall(pending.call)}\nObservation:\n${observationForAgentPrompt(action)}\n`] : []),
+      ...(!alreadyRecorded && !action.ok
         ? ["If the error is caused by missing permission, blocked safety policy, or missing active instance, stop and respond with a concise explanation. Otherwise adjust your plan and continue.\n"]
         : [])
     ],
-    toolExecutions: pending.resume.toolExecutions + 1,
+    toolExecutions: pending.resume.toolExecutions + (alreadyRecorded ? 0 : 1),
     turnMessages: existingTurnMessages
   };
 }
 
 async function persistDecisionResult(pending: PendingSakiAction, action: SakiAgentAction, runtime: SakiAgentRuntime): Promise<void> {
-  const resumeState = resumeAfterSakiActionDecision(pending, action);
+  const resumeState = resumeAfterSakiActionDecision(pending, action, runtime);
   if (!resumeState) return;
   const instanceId = runtime.context.workspace?.instanceId ?? null;
   await persistSessionAgentMemory({
@@ -184,13 +187,17 @@ async function continueSakiAgentAfterActionDecision(
   runtime: SakiAgentRuntime,
   persisted = false
 ): Promise<SakiChatResponse | undefined> {
-  const resume = resumeAfterSakiActionDecision(pending, action);
+  const resume = resumeAfterSakiActionDecision(pending, action, runtime);
   if (!resume) return undefined;
   const task = resume.taskId ? getActiveSakiTaskById(resume.taskId) : null;
   const trackedTaskId = task?.userId === runtime.userId && task.decisionInFlight ? task.id : undefined;
   if (trackedTaskId) {
     runtime.taskId = trackedTaskId;
-    for (const confirmed of resume.actions) emitActiveSakiTaskEvent(trackedTaskId, "action", { action: confirmed });
+    const published = task?.eventsBuffer.some((event) => {
+      const previous = event.payload.action as SakiAgentAction | undefined;
+      return event.type === "action" && previous?.id === action.id && previous.status === action.status;
+    });
+    if (!published) emitActiveSakiTaskEvent(trackedTaskId, "action", { action });
   }
   const events = trackedTaskId ? trackedSakiTaskEvents(trackedTaskId) : undefined;
   try {
@@ -333,7 +340,7 @@ async function answerPendingSakiQuestionUnlocked(
     ...(customText ? { customText } : {})
   };
   const observation = skipped
-    ? "The user skipped this question. Continue using reasonable judgment; do not ask the same question again."
+    ? "The user skipped this question. Continue with a safe default only if one exists; otherwise explain the missing requirement and keep dependent work blocked. Do not invent the target or user decision, treat a skip as approval, or ask the same question again."
     : `User answer:\n${selection ? `Selected option: ${selection}\n` : ""}${customText ? `Custom answer: ${customText}` : ""}`;
   const action: SakiAgentAction = completedSakiActions.get(id) ?? {
     id, tool: "askUser", args, question: { text: String(args.question ?? ""), options }, answer,

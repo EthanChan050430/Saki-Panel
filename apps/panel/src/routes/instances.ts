@@ -46,7 +46,7 @@ import {
   type InstanceWithAccess
 } from "../instance-access.js";
 import { writeAuditLog } from "../audit.js";
-import { findDangerousCommandReason, hashToken } from "../security.js";
+import { findDangerousCommandReason, hashToken, isPosixCommandPlatform } from "../security.js";
 import {
   applyDaemonClashSubscription,
   createDaemonInstanceShell,
@@ -71,6 +71,8 @@ import {
   type DaemonInstanceSpec
 } from "../daemon-client.js";
 import { fetchClashSubscriptionProxies } from "../clash-subscription.js";
+import { createKeyedTaskQueue } from "../task-queue.js";
+import { defaultWatchPolicy } from "../watch/policy.js";
 
 function parseProxyConfig(raw: string | null | undefined): InstanceProxyConfig | null {
   if (!raw) return null;
@@ -156,6 +158,7 @@ function toManagedInstance(instance: InstanceWithAccess, viewer?: { profile: Ins
     startCommand: instance.startCommand,
     stopCommand: instance.stopCommand,
     status: instance.status,
+    watchEnabled: instance.watchPolicy?.enabled ?? defaultWatchPolicy.enabled,
     autoStart: instance.autoStart,
     restartPolicy: instance.restartPolicy as RestartPolicy,
     restartMaxRetries: instance.restartMaxRetries,
@@ -703,25 +706,32 @@ function normalizeListedStatus(instance: InstanceWithAccess, status: InstanceSta
   return status;
 }
 
+const queueStatusProbe = createKeyedTaskQueue(8);
+
 async function refreshVolatileStatus(instance: InstanceWithAccess): Promise<InstanceWithAccess> {
   if (!volatileStatuses.has(instance.status)) {
     return instance;
   }
 
-  try {
-    const state = await readDaemonInstanceStatus(instance.node, instance.id);
-    const nextStatus = normalizeListedStatus(instance, state.status);
-    const nextExitCode = state.exitCode ?? null;
-    if (nextStatus === instance.status && nextExitCode === (instance.lastExitCode ?? null)) {
-      return instance;
+  return queueStatusProbe(`${instance.id}:${instance.updatedAt.toISOString()}`, async () => {
+    let nextStatus: InstanceStatus;
+    let nextExitCode: number | null;
+    try {
+      const state = await readDaemonInstanceStatus(instance.node, instance.id);
+      nextStatus = normalizeListedStatus(instance, state.status);
+      nextExitCode = state.exitCode ?? null;
+    } catch {
+      if (instance.status === "UNKNOWN" || instance.status === "CRASHED") return instance;
+      nextStatus = "UNKNOWN";
+      nextExitCode = instance.lastExitCode;
     }
-    return updateStatus(instance.id, nextStatus, nextExitCode);
-  } catch {
-    if (instance.status === "UNKNOWN" || instance.status === "CRASHED") {
-      return instance;
-    }
-    return updateStatus(instance.id, "UNKNOWN", instance.lastExitCode);
-  }
+    if (nextStatus === instance.status && nextExitCode === (instance.lastExitCode ?? null)) return instance;
+    await prisma.instance.updateMany({
+      where: { id: instance.id, updatedAt: instance.updatedAt, status: instance.status },
+      data: statusPatch(nextStatus, nextExitCode)
+    });
+    return await prisma.instance.findUnique({ where: { id: instance.id }, include: instanceAccessInclude }) ?? instance;
+  });
 }
 
 async function sendNotFound(reply: FastifyReply): Promise<void> {
@@ -1287,8 +1297,21 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
 
   app.get("/api/instances", { preHandler: requirePermission("instance.view") }, async (request) => {
     const [instances, viewer] = await Promise.all([listVisibleInstances(request.user.sub), loadViewer(request)]);
+    const query = request.query as { cachedStatus?: string };
+    if (query.cachedStatus === "true") return instances.map((instance) => toManagedInstance(instance, viewer));
     const refreshed = await Promise.all(instances.map(refreshVolatileStatus));
     return refreshed.map((instance) => toManagedInstance(instance, viewer));
+  });
+
+  app.get("/api/instances/statuses", { preHandler: requirePermission("instance.view") }, async (request) => {
+    const instances = await listVisibleInstances(request.user.sub);
+    const refreshed = await Promise.all(instances.map(refreshVolatileStatus));
+    return refreshed.map((instance) => ({
+      id: instance.id, status: instance.status, lastExitCode: instance.lastExitCode,
+      lastStartedAt: instance.lastStartedAt?.toISOString() ?? null,
+      lastStoppedAt: instance.lastStoppedAt?.toISOString() ?? null,
+      updatedAt: instance.updatedAt.toISOString()
+    }));
   });
 
   app.get("/api/instances/assignees", { preHandler: requirePermission("instance.update") }, async (request) => {
@@ -1850,7 +1873,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       reply.code(400).send({ message: "command is required" });
       return;
     }
-    const blocked = findDangerousCommandReason(command);
+    const blocked = findDangerousCommandReason(command, instance.workingDirectory, isPosixCommandPlatform(instance.node.os));
     if (blocked) {
       await writeAuditLog({
         request,
@@ -1981,7 +2004,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       reply.code(400).send({ message: "command is required" });
       return;
     }
-    const blocked = findDangerousCommandReason(command);
+    const blocked = findDangerousCommandReason(command, instance.workingDirectory, isPosixCommandPlatform(instance.node.os));
     if (blocked) {
       reply.code(400).send({ message: blocked });
       return;
