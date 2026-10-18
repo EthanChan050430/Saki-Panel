@@ -80,12 +80,15 @@ resetStage(windowsStage);
 try {
   for (const item of [
     "apps/panel/dist",
+    "apps/panel/package.json",
     "apps/daemon/dist",
     "apps/daemon/package.json",
     "apps/web/dist",
+    "apps/web/package.json",
     "packages/shared/dist",
     "packages/shared/package.json",
     "prisma/schema.prisma",
+    "scripts/prepare-db.mjs",
     "package.json",
     "package-lock.json",
     "release/README.md",
@@ -163,6 +166,7 @@ try {
     "packages/shared/dist",
     "packages/shared/package.json",
     "prisma/schema.prisma",
+    "scripts/prepare-db.mjs",
     "package.json",
     "package-lock.json",
     "release/README.md",

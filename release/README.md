@@ -1,34 +1,56 @@
-# Saki Panel 4.0 发行包
+# Saki Panel 5.0
 
-此版本提供 Windows x64 便携包和 Linux x64 发行包。`saki-panel-windows-amd64.exe` 与 `saki-panel-linux-amd64` 是单独提供的启动器；**运行面板需要对应压缩包中的 Web、Panel、Daemon 和依赖文件**。
+Saki Panel is an open-source server management panel for Minecraft, Steam game servers, Docker containers, Docker Compose stacks, and ordinary processes.
+
+Version 5.0 adds remote Linux servers over SSH, a browser-based SSH terminal, remote system metrics, a visual Git workspace, and file mentions in Saki Assistant. It also updates the assistant layout and task progress controls, adds NVIDIA as a model provider, and improves GitHub Copilot tool support.
+
+## Downloads
+
+Get the packages from [Saki Panel 5.0 Releases](https://github.com/EthanChan050430/Saki-Panel/releases/tag/v5.0).
+
+| File | Use |
+| --- | --- |
+| `saki-panel-v5.0-windows-x64.zip` | Windows x64 portable package with Node.js and runtime dependencies included. |
+| `saki-panel-v5.0-linux-x64.tar.gz` | Linux x64 package with compiled application files. Requires Node.js 22.13 or newer, npm 9 or newer, and an internet connection for dependency installation. |
+| `saki-panel-windows-amd64.exe` | Windows launcher, also included in the ZIP as `saki-panel.exe`. |
+| `saki-panel-linux-amd64` | Linux launcher, also included in the archive as `saki-panel`. |
+| `SHA256SUMS-v5.0.txt` | SHA-256 checksums for the four downloads above. |
+
+The individual launchers need the application files from the matching archive. Download the ZIP or TAR.GZ for a complete installation.
 
 ## Windows x64
 
-1. 下载并解压 `saki-panel-v4.0-windows-x64.zip`。
-2. 在解压目录运行 `saki-panel.exe`。
-3. 打开 <http://localhost:5478>。
+1. Extract `saki-panel-v5.0-windows-x64.zip` into a writable folder.
+2. Run `saki-panel.exe` from that folder.
+3. Open <http://localhost:5478>.
 
-Windows 便携包包含 Node.js 运行时及所需依赖，无需另外安装 Node.js。请在首次对外开放服务前更换默认管理员密码，以及 `JWT_SECRET` 和 `DAEMON_REGISTRATION_TOKEN`。
+Node.js is bundled; no separate Node.js installation is needed.
 
 ## Linux x64
 
-Linux 包含原生启动器和已编译的应用代码，需要在目标 Linux 机器安装 Node.js ≥ 22.13、npm ≥ 9，并联网安装与该系统匹配的依赖：
+Install Node.js 22.13 or newer and npm 9 or newer, then run:
 
-~~~bash
-mkdir saki-panel-v4.0
-tar -xzf saki-panel-v4.0-linux-x64.tar.gz -C saki-panel-v4.0
-cd saki-panel-v4.0
+```bash
+mkdir saki-panel-v5.0
+tar -xzf saki-panel-v5.0-linux-x64.tar.gz -C saki-panel-v5.0
+cd saki-panel-v5.0
 npm ci
 chmod +x saki-panel
 ./saki-panel
-~~~
+```
 
-Linux 包不包含预装的 `node_modules`。运行后打开 <http://localhost:5478>。可在启动前通过环境变量配置端口、密码和密钥；常用配置项见 `.env.example`。
+Open <http://localhost:5478>. Linux dependencies are installed on the target machine so native modules match its platform.
 
-## 首次使用
+## Configuration and upgrades
 
-开发默认账号为 `admin` / `admin123456`。面板、Daemon 和 Web 默认端口分别为 `5479`、`5480` 和 `5478`。跨主机或公网部署时，请设置强密码与随机密钥，配置 HTTPS，并限制可访问端口。运行数据保存在解压目录的 `data/` 下。
+The default login is `admin` / `admin123456`. The default ports are `5478` for the web console, `5479` for the Panel API, and `5480` for the local Daemon. Set a strong administrator password, `JWT_SECRET`, and `DAEMON_REGISTRATION_TOKEN` before exposing the services. See `.env.example` for settings.
 
-模板页中的 Minecraft Paper 与 Docker Compose 运维包按需下载并验证 SHA-256 与文件大小。下载和导入不会自动执行脚本或修改实例。
+Before upgrading, stop Saki Panel and back up `data/`, your `.env`, and any instance files stored outside `data/`. Extract 5.0 into a separate folder and copy your configuration and data into it. The Panel synchronizes the database schema at startup; keep the backup if you need to return to an older version.
 
-可用 `SHA256SUMS-v4.0.txt` 核对下载文件的 SHA-256。项目文档见仓库 [README](https://github.com/EthanChan050430/Saki-Panel/blob/main/README.zh-CN.md)。
+Remote SSH terminals require an SSH account. Deploying the remote Daemon for instance management also requires Linux, Node.js 22.13 or newer, and npm on that server. Git operations require Git on the machine that holds the workspace.
+
+Optional operations packs are downloaded from the Templates page and checked against their SHA-256 hashes and sizes. Downloading a pack does not run its scripts.
+
+Check downloads with `Get-FileHash -Algorithm SHA256 <file>` on Windows or `sha256sum -c SHA256SUMS-v5.0.txt` on Linux when all four files are present. For a single download, compare its hash with the corresponding line in the checksum file.
+
+[Documentation](https://github.com/EthanChan050430/Saki-Panel#readme) · [Report a bug](https://github.com/EthanChan050430/Saki-Panel/issues)
