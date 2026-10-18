@@ -10,7 +10,7 @@ The English and Chinese README posters combine real application screenshots with
 - `../../.github/assets/demo-v5-dashboard-{en,zh}.png` — original overview captures.
 - `../../.github/assets/demo-v5-terminal-{en,zh}.png` — original instance console captures.
 - `../../.github/assets/demo-v5-git-{en,zh}.png` — original Git workspace captures.
-- `saki-panel-v5-poster.html` — editable composition; `?lang=en` or `?lang=zh` selects the language. Capture at a viewport of 2048 × 1536 with a device scale factor of 1 after fonts and images finish loading.
+- `poster-v5.html` — editable composition; `?lang=en` or `?lang=zh` selects the language. Capture at a viewport of 2048 × 1536 with a device scale factor of 1 after fonts and images finish loading.
 
 The captures show the released 5.0 interface from commit `bd4c917e265a887b84434fcea065724e3233e4a5`. Two actual Node.js demo processes run locally: an HTTP API and a background worker. The Git diff is a real change in the isolated demo repository. Prompts in the assistant inputs are drafts; they were not submitted to a model. The English captures retain the translations currently shipped by the application, including labels that are still in Chinese.
 

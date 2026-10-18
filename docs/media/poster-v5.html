@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=2048, initial-scale=1">
+<title>Saki Panel 5.0 — product poster</title>
+<style>
+* { box-sizing: border-box; }
+html, body { width: 2048px; height: 1536px; margin: 0; overflow: hidden; }
+body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; color: #202532; background: #fafafd; }
+.backdrop { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.brand { position: absolute; top: 45px; left: 160px; display: flex; align-items: center; gap: 17px; }
+.brand img { width: 52px; height: 52px; }
+.brand strong { font-size: 31px; font-weight: 650; letter-spacing: -.8px; }
+.edition { position: absolute; right: 160px; top: 53px; display: flex; align-items: center; gap: 13px; font-size: 16px; letter-spacing: 2.5px; font-weight: 600; color: #586172; }
+.edition b { color: #fff; background: #242a39; border-radius: 8px; padding: 7px 12px; font-size: 20px; letter-spacing: 0; }
+h1 { position: absolute; left: 160px; top: 118px; margin: 0; font-size: 75px; font-weight: 650; letter-spacing: -3.2px; line-height: 1.25; }
+.subtitle { position: absolute; top: 224px; left: 164px; margin: 0; font-size: 25px; color: #616575; letter-spacing: .3px; }
+.window { position: absolute; left: 160px; top: 312px; width: 1728px; height: 1100px; border-radius: 20px; box-shadow: 0 26px 65px #24294229, 0 0 0 12px #ffffff9c, 0 0 0 13px #ffffffef; }
+.screen { display: block; width: 1728px; height: 1100px; border-radius: 20px; }
+.footer { position: absolute; top: 1455px; left: 160px; right: 160px; display: flex; justify-content: space-between; align-items: center; gap: 24px; }
+.features { display: flex; align-items: center; gap: 23px; font-size: 20px; font-weight: 600; color: #424857; }
+.features span + span { border-left: 1px solid #a6a8b6; padding-left: 23px; }
+.open { font-size: 17px; color: #5a6070; letter-spacing: .5px; }
+.caption { position: absolute; left: 160px; top: 1501px; margin: 0; color: #7a7c8a; font-size: 14px; letter-spacing: .25px; }
+html[lang="zh-CN"] h1 { font-size: 76px; letter-spacing: -1.8px; font-weight: 600; }
+</style>
+<img class="backdrop" src="../../.github/assets/poster-v5-background.png" alt="">
+<div class="brand"><img src="../../apps/web/public/assets/saki-panel-icon.webp" alt=""><strong>Saki Panel</strong></div>
+<div class="edition"><b>5.0</b><span id="edition">OPEN SOURCE</span></div>
+<h1 id="headline">Servers. Code. One workspace.</h1>
+<p class="subtitle" id="subtitle">AI assistance. Live metrics. Terminals. Git.</p>
+<div class="window"><img class="screen" id="screen" src="../../.github/assets/demo-v5-dashboard-en.png" alt="Actual Saki Panel 5.0 workspace"></div>
+<div class="footer"><div class="features" id="features"><span>SSH servers</span><span>Visual Git</span><span>Saki Assistant</span><span>Saki Watch</span></div><span class="open">github.com/EthanChan050430/Saki-Panel</span></div>
+<p class="caption" id="caption">Actual Saki Panel 5.0 interface · Local demo services · Original screenshot preserved</p>
+<script>
+if (new URLSearchParams(location.search).get('lang') === 'zh') {
+  document.documentElement.lang = 'zh-CN';
+  document.getElementById('edition').textContent = '开源服务器面板';
+  document.getElementById('headline').textContent = '运维与代码，同一个工作区。';
+  document.getElementById('subtitle').textContent = 'AI 助手、实时监控、终端与 Git，一屏掌握。';
+  document.getElementById('features').innerHTML = '<span>SSH 远程管理</span><span>Git 可视化</span><span>Saki AI 助手</span><span>Watch 故障响应</span>';
+  document.getElementById('caption').textContent = 'Saki Panel 5.0 实机界面 · 本地演示服务 · 界面截图保留原图';
+  document.getElementById('screen').src = '../../.github/assets/demo-v5-dashboard-zh.png';
+}
+</script>
+</html>
