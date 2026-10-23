@@ -19,5 +19,5 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm run test:watch
       - run: npm run check
+      - run: npm run test:watch
