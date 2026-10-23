@@ -16,6 +16,8 @@ The captures show the released 5.0 interface from commit `bd4c917e265a887b84434f
 
 The demo runs from an isolated release directory. The main development database and saved provider credentials were not used.
 
+An independent [incident walkthrough](../case-studies/port-recovery/README.md) now records actual model calls, approval, verification, and earlier failed attempts. Its screenshots and evidence are separate from the interface posters described here. It used an isolated runtime and an existing local Ollama model; its preparation also probed existing cloud connections. See the walkthrough for the tested code fixes and exact scope.
+
 ## ImageGen prompt
 
 Mode: built-in ImageGen, opaque background. Reference inputs: the current Chinese dashboard screenshot and the existing Saki Panel app icon. The prompt below produced the background plate only; actual screenshots and exact bilingual typography are separate layers in the HTML composition.

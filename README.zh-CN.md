@@ -8,7 +8,7 @@
 
 在一个 Web 控制台管理 Minecraft、Steam、Docker 和常规进程；Saki 可以结合实时日志、文件与节点指标协助排障，并在授权后执行操作。
 
-[查看界面](#界面预览) · [快速开始](#快速开始) · [下载发行版](https://github.com/EthanChan050430/Saki-Panel/releases/latest) · [English](README.md)
+[查看界面](#界面预览) · [排障实测](docs/case-studies/port-recovery/README.md) · [快速开始](#快速开始) · [下载发行版](https://github.com/EthanChan050430/Saki-Panel/releases/latest) · [English](README.md)
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![check](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml/badge.svg)](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml)
@@ -110,6 +110,10 @@ Saki 能结合当前实例的状态、日志、文件与资源指标回答问题
 
 Watch 还支持冷却时间、运行次数限制、通知渠道与升级提醒。相关选项可在实例设置及系统设置中配置。
 
+### 可复现排障实测
+
+[端口配置错误：诊断、审批与恢复](docs/case-studies/port-recovery/README.md) 提供故意注入故障的示例服务，以及实际 Ollama 模型调用、原始补丁、审批前后配置、健康检查和界面截图。本次实测先发现并修复了 Watch 文件编辑绕过审批的问题，再完成重测；报告保留了此前的连接失败和错误端口修复被回滚的记录，并注明使用的源码修订和限制。
+
 ## 面板与扩展
 
 支持的实例类型：`generic_command`、`nodejs`、`python`、`java_jar`、`shell_script`、`docker_container`、`docker_compose`、`minecraft`、`steam_game_server`。实例页提供启停、日志、进程探测及可选代理设置；模板可以复用启动命令和环境变量。
@@ -136,6 +140,7 @@ Web (React / Vite)  ──HTTP / WebSocket──  Panel (Fastify / Prisma)
 npm run dev                 # 同时启动 Panel、Daemon 和 Web
 npm run build               # 构建全部工作区
 npm run check               # TypeScript 检查
+npm run test:watch          # Watch 审批与诊断上下文回归测试
 npm run db:push             # 同步 SQLite schema
 npm run verify:operation-packs
 ~~~

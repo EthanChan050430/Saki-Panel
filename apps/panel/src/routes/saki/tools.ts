@@ -1417,6 +1417,10 @@ export function shouldRequestSakiApproval(runtime: SakiAgentRuntime, toolName: s
   if (lower === "requestexternalaccess") return true;
   if (runtime.externalReadPerformed && ["searchweb", "browse", "crawl", "researchweb", "generateimage"].includes(lower)) return true;
 
+  // Watch must stage every patch before the incident policy can consider
+  // auto-approval. Ordinary Agent edit permissions must not bypass that gate.
+  if (runtime.kind === "watch" && watchMutatingToolNames.has(lower)) return true;
+
   if (permissionMode === "bypassPermissions" || permissionMode === "plan" || isSakiReadOnlyAgentTool(lower)) {
     return false;
   }

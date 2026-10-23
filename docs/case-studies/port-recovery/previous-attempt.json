@@ -1,0 +1,42 @@
+{
+  "provider": "nvidia",
+  "model": "z-ai/glm-5.3-flash",
+  "requestedAt": "2026-10-23T13:04:00.611Z",
+  "response": {
+    "message": "模型调用中断：Model API request failed with 502: Provider connection failed\n\n已保留任务上下文与已完成操作，可重试继续。",
+    "actions": [],
+    "retry": {
+      "reason": "模型调用中断：Model API request failed with 502: Provider connection failed\n\n已保留任务上下文与已完成操作，可重试继续。"
+    }
+  },
+  "requests": [
+    {
+      "sequence": 3,
+      "startedAt": "2026-10-23T13:04:01.244Z",
+      "model": "z-ai/glm-5.3-flash",
+      "stream": true,
+      "error": "upstream_network_error"
+    },
+    {
+      "sequence": 4,
+      "startedAt": "2026-10-23T13:05:04.453Z",
+      "model": "z-ai/glm-5.3-flash",
+      "stream": true,
+      "error": "upstream_network_error"
+    },
+    {
+      "sequence": 5,
+      "startedAt": "2026-10-23T13:06:09.672Z",
+      "model": "z-ai/glm-5.3-flash",
+      "stream": true,
+      "error": "upstream_network_error"
+    },
+    {
+      "sequence": 6,
+      "startedAt": "2026-10-23T13:07:18.218Z",
+      "model": "z-ai/glm-5.3-flash",
+      "stream": true,
+      "error": "upstream_network_error"
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+diff --git a/apps/panel/src/routes/saki/tools.ts b/apps/panel/src/routes/saki/tools.ts
+index bcfbfd5..f49f3cd 100644
+--- a/apps/panel/src/routes/saki/tools.ts
++++ b/apps/panel/src/routes/saki/tools.ts
+@@ -1417,6 +1417,10 @@ export function shouldRequestSakiApproval(runtime: SakiAgentRuntime, toolName: s
+   if (lower === "requestexternalaccess") return true;
+   if (runtime.externalReadPerformed && ["searchweb", "browse", "crawl", "researchweb", "generateimage"].includes(lower)) return true;
+ 
++  // Watch must stage every patch before the incident policy can consider
++  // auto-approval. Ordinary Agent edit permissions must not bypass that gate.
++  if (runtime.kind === "watch" && watchMutatingToolNames.has(lower)) return true;
++
+   if (permissionMode === "bypassPermissions" || permissionMode === "plan" || isSakiReadOnlyAgentTool(lower)) {
+     return false;
+   }
+diff --git a/apps/panel/src/routes/saki/watch-prompt.ts b/apps/panel/src/routes/saki/watch-prompt.ts
+index b3847ce..a18cb0d 100644
+--- a/apps/panel/src/routes/saki/watch-prompt.ts
++++ b/apps/panel/src/routes/saki/watch-prompt.ts
+@@ -2,6 +2,20 @@ import type { SakiChatRequest } from "@webops/shared";
+ import type { InstanceWithNode, ResolvedSakiContext } from "./types.js";
+ import { relevantLogLines } from "./prompt.js";
+ 
++function watchHealthCheckTarget(value: string | null | undefined): string {
++  if (!value) return "(not configured)";
++  try {
++    const url = new URL(value);
++    url.username = "";
++    url.password = "";
++    url.search = "";
++    url.hash = "";
++    return url.toString();
++  } catch {
++    return "(invalid health check URL)";
++  }
++}
++
+ export function buildWatchUserMessage(input: {
+   instance: InstanceWithNode;
+   context: ResolvedSakiContext;
+@@ -10,6 +24,7 @@ export function buildWatchUserMessage(input: {
+   trigger: string;
+   mode: "diagnose_only" | "diagnose_and_patch";
+   willRetry: boolean;
++  healthCheckUrl?: string | null;
+ }): string {
+   const logs = input.logTail.trim()
+     || relevantLogLines(input.context.logs).map((line) => `[${line.stream}] ${line.text}`).join("\n")
+@@ -22,6 +37,7 @@ Start command: ${input.instance.startCommand}
+ Working directory: ${input.instance.workingDirectory}
+ Restart policy: ${input.instance.restartPolicy} (willRetry=${input.willRetry ? "true" : "false"})
+ Watch mode: ${input.mode}
++Health check target (credentials/query omitted): ${watchHealthCheckTarget(input.healthCheckUrl)}
+ 
+ Recent logs:
+ ${logs}
+@@ -38,6 +54,7 @@ export function buildWatchSystemPrompt(mode: "diagnose_only" | "diagnose_and_pat
+ 
+ Rules:
+ - Read logs, the start command, and relevant config files before proposing a change.
++- Use the configured health check target and workspace deployment documentation to identify intended ports and paths. Never choose an arbitrary valid port just to make the process start. If the intended value cannot be established, report the uncertainty without editing it.
+ - Call searchSkills / readSkill early. Follow diagnose-runtime when it matches.
+ - Only do the smallest fix: one config value, one missing path, one obvious typo. Never refactor.
+ - Never use shell tools, never delete files, never change instance start/stop commands.
+diff --git a/apps/panel/src/watch/runner.ts b/apps/panel/src/watch/runner.ts
+index ef6d693..b5c3d42 100644
+--- a/apps/panel/src/watch/runner.ts
++++ b/apps/panel/src/watch/runner.ts
+@@ -257,7 +257,8 @@ export async function startWatchRun(input: {
+       logTail: input.logTail,
+       trigger: input.trigger,
+       mode: input.mode,
+-      willRetry: input.willRetry
++      willRetry: input.willRetry,
++      healthCheckUrl: policy.healthCheckUrl ?? null
+     }) + (evidenceSection ? `\n\n${evidenceSection}` : "");
+     const chatInput = watchChatRequest(message, instance.id);
+     const skills = (await loadSakiSkills("runtime crash logs diagnostics", false, 8)).skills;

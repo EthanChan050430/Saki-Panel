@@ -1,0 +1,17 @@
+{
+  "id": "cmvkzzlvk001wv5a0fgf55hnx",
+  "trigger": "crash",
+  "status": "resolved",
+  "exitCode": 1,
+  "summary": "Saki has prepared an action that needs your approval. Please review it in the action preview first.（健康检查通过：HTTP 200）",
+  "rootCause": null,
+  "diagnosis": {
+    "summary": "Saki has prepared an action that needs your approval. Please review it in the action preview first.",
+    "confidence": 0.4
+  },
+  "createdAt": "2026-10-23T13:20:33.921Z",
+  "resolvedAt": "2026-10-23T13:28:39.922Z",
+  "rollbackSet": [
+    "saki_checkpoint_1792762085460_4dd37d2b"
+  ]
+}

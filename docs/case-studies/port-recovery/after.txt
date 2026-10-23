@@ -1,0 +1,50 @@
+[2026-10-23T13:00:35.896Z] [system] Starting: node server.mjs
+[2026-10-23T13:00:36.050Z] [system] Process started in PTY mode with pid 33224.
+[2026-10-23T13:00:36.058Z] [stdout] 
+[2026-10-23T13:00:36.263Z] [stdout] [startup] service=Saki Recovery Demo host=127.0.0.1 port=70000
+[2026-10-23T13:00:36.263Z] [stdout] 
+[2026-10-23T13:00:37.291Z] [system] Process exited with code 1.
+[2026-10-23T13:02:30.662Z] [system] Starting: node server.mjs
+[2026-10-23T13:02:30.691Z] [system] Process started in PTY mode with pid 19640.
+[2026-10-23T13:02:30.706Z] [stdout] 
+[2026-10-23T13:02:30.913Z] [stdout] [startup] service=Saki Recovery Demo host=127.0.0.1 port=70000
+[2026-10-23T13:02:30.913Z] [stdout] 
+[2026-10-23T13:02:30.936Z] [stdout] RangeError [ERR_SOCKET_BAD_PORT]: options.port should be >= 0 and < 65536. Received type number (70000).
+[2026-10-23T13:02:30.936Z] [stdout]     at Server.listen (node:net:2090:5)
+[2026-10-23T13:02:30.936Z] [stdout]     at file:///<DEMO_RUNTIME>/workspace/recovery-api/server.mjs:16:10
+[2026-10-23T13:02:30.936Z] [stdout]     at ModuleJob.run (node:internal/modules/esm/module_job:274:25)
+[2026-10-23T13:02:30.936Z] [stdout]     at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:644:26)
+[2026-10-23T13:02:30.936Z] [stdout]     at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:116:5)
+[2026-10-23T13:02:32.437Z] [system] Process exited with code 1.
+[2026-10-23T13:15:26.515Z] [system] Starting: node server.mjs
+[2026-10-23T13:15:26.582Z] [system] Process started in PTY mode with pid 26564.
+[2026-10-23T13:15:26.594Z] [stdout] 
+[2026-10-23T13:15:26.827Z] [stdout] [startup] service=Saki Recovery Demo host=127.0.0.1 port=3000
+[2026-10-23T13:15:26.827Z] [stdout] 
+[2026-10-23T13:15:26.849Z] [stdout] [ready] http://127.0.0.1:3000/health
+[2026-10-23T13:20:09.983Z] [system] Stopping instance.
+[2026-10-23T13:20:10.205Z] [system] PTY signal failed: 错误: 无法终止 PID 3656 (属于 PID 26564 子进程)的进程。
+[2026-10-23T13:20:10.205Z] [system] 原因: 只能强行终止这个进程(带 /F 选项)。
+[2026-10-23T13:20:10.205Z] [system] 错误: 无法终止 PID 26564 (属于 PID 22212 子进程)的进程。
+[2026-10-23T13:20:10.205Z] [system] 原因: 一个或多个此进程的子进程仍然在运行。
+[2026-10-23T13:20:10.227Z] [stdout] 
+[2026-10-23T13:20:10.291Z] [system] Process exited with code -1073741510.
+[2026-10-23T13:20:32.018Z] [system] Starting: node server.mjs
+[2026-10-23T13:20:32.051Z] [system] Process started in PTY mode with pid 33380.
+[2026-10-23T13:20:32.058Z] [stdout] 
+[2026-10-23T13:20:32.256Z] [stdout] [startup] service=Saki Recovery Demo host=127.0.0.1 port=70000
+[2026-10-23T13:20:32.256Z] [stdout] 
+[2026-10-23T13:20:32.268Z] [stdout] RangeError [ERR_SOCKET_BAD_PORT]: options.port should be >= 0 and < 65536. Received type number (70000).
+[2026-10-23T13:20:32.268Z] [stdout]     at Server.listen (node:net:2090:5)
+[2026-10-23T13:20:32.268Z] [stdout]     at file:///<DEMO_RUNTIME>/workspace/recovery-api/server.mjs:16:10
+[2026-10-23T13:20:32.268Z] [stdout]     at ModuleJob.run (node:internal/modules/esm/module_job:274:25)
+[2026-10-23T13:20:32.268Z] [stdout]     at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:644:26)
+[2026-10-23T13:20:32.268Z] [stdout]     at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:116:5)
+[2026-10-23T13:20:33.798Z] [system] Process exited with code 1.
+[2026-10-23T13:28:29.589Z] [system] Starting: node server.mjs
+[2026-10-23T13:28:29.649Z] [system] Process started in PTY mode with pid 22656.
+[2026-10-23T13:28:29.657Z] [stdout] 
+[2026-10-23T13:28:29.894Z] [stdout] [startup] service=Saki Recovery Demo host=127.0.0.1 port=16541
+[2026-10-23T13:28:29.894Z] [stdout] 
+[2026-10-23T13:28:29.914Z] [stdout] [ready] http://127.0.0.1:16541/health
+[2026-10-23T13:28:39.920Z] [stdout] [request] GET /health

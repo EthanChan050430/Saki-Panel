@@ -1,0 +1,10 @@
+{
+  "server.mjs": {
+    "fixture": "b49d62bc83726ceb66988fc70057e153613dd5d67694ea65c273db13c528b5c3",
+    "after": "b49d62bc83726ceb66988fc70057e153613dd5d67694ea65c273db13c528b5c3"
+  },
+  "README.md": {
+    "fixture": "89a702707e4ba5dc67cd82c038ae833ebd04a76fe1794787e394d2d0ddcaf3eb",
+    "after": "89a702707e4ba5dc67cd82c038ae833ebd04a76fe1794787e394d2d0ddcaf3eb"
+  }
+}

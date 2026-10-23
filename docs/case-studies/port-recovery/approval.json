@@ -1,0 +1,20 @@
+[
+  {
+    "tool": "replaceInFile",
+    "args": {
+      "newText": "16541",
+      "path": "service.json",
+      "instanceId": "aec64dee-beb1-477e-8db8-8b22fd015829",
+      "oldText": "70000"
+    },
+    "createdAt": "2026-10-23T13:25:03.656Z",
+    "approval": {
+      "required": true,
+      "reason": "File write requires approval. Review the diff; Saki will checkpoint the previous file before writing.",
+      "risk": "high",
+      "preview": "端口配置错误 · 真实排障演示:service.json",
+      "diff": "--- service.json\n+++ service.json\n@@ -1,5 +1,5 @@\n {\n   \"name\": \"Saki Recovery Demo\",\n   \"host\": \"127.0.0.1\",\n-  \"port\": 70000\n+  \"port\": 16541\n }\n",
+      "rollbackAvailable": true
+    }
+  }
+]

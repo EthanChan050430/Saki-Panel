@@ -257,7 +257,8 @@ export async function startWatchRun(input: {
       logTail: input.logTail,
       trigger: input.trigger,
       mode: input.mode,
-      willRetry: input.willRetry
+      willRetry: input.willRetry,
+      healthCheckUrl: policy.healthCheckUrl ?? null
     }) + (evidenceSection ? `\n\n${evidenceSection}` : "");
     const chatInput = watchChatRequest(message, instance.id);
     const skills = (await loadSakiSkills("runtime crash logs diagnostics", false, 8)).skills;

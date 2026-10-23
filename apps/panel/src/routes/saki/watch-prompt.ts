@@ -2,6 +2,20 @@ import type { SakiChatRequest } from "@webops/shared";
 import type { InstanceWithNode, ResolvedSakiContext } from "./types.js";
 import { relevantLogLines } from "./prompt.js";
 
+function watchHealthCheckTarget(value: string | null | undefined): string {
+  if (!value) return "(not configured)";
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "(invalid health check URL)";
+  }
+}
+
 export function buildWatchUserMessage(input: {
   instance: InstanceWithNode;
   context: ResolvedSakiContext;
@@ -10,6 +24,7 @@ export function buildWatchUserMessage(input: {
   trigger: string;
   mode: "diagnose_only" | "diagnose_and_patch";
   willRetry: boolean;
+  healthCheckUrl?: string | null;
 }): string {
   const logs = input.logTail.trim()
     || relevantLogLines(input.context.logs).map((line) => `[${line.stream}] ${line.text}`).join("\n")
@@ -22,6 +37,7 @@ Start command: ${input.instance.startCommand}
 Working directory: ${input.instance.workingDirectory}
 Restart policy: ${input.instance.restartPolicy} (willRetry=${input.willRetry ? "true" : "false"})
 Watch mode: ${input.mode}
+Health check target (credentials/query omitted): ${watchHealthCheckTarget(input.healthCheckUrl)}
 
 Recent logs:
 ${logs}
@@ -38,6 +54,7 @@ export function buildWatchSystemPrompt(mode: "diagnose_only" | "diagnose_and_pat
 
 Rules:
 - Read logs, the start command, and relevant config files before proposing a change.
+- Use the configured health check target and workspace deployment documentation to identify intended ports and paths. Never choose an arbitrary valid port just to make the process start. If the intended value cannot be established, report the uncertainty without editing it.
 - Call searchSkills / readSkill early. Follow diagnose-runtime when it matches.
 - Only do the smallest fix: one config value, one missing path, one obvious typo. Never refactor.
 - Never use shell tools, never delete files, never change instance start/stop commands.
