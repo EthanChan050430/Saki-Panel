@@ -84,11 +84,21 @@ function formatDisk(gb?: number | null): string | null {
   return `${Math.round(gb * 10) / 10} GB`;
 }
 
-function formatUptime(seconds?: number | null): string | null {
+function formatUptime(seconds?: number | null, language?: string): string | null {
   if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) return null;
   const days = Math.floor(seconds / 86400);
   const hours = Math.floor((seconds % 86400) / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
+  if (language === "en-US") {
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes} mins`;
+  }
+  if (language === "zh-TW") {
+    if (days > 0) return `${days} 天 ${hours} 小時`;
+    if (hours > 0) return `${hours} 小時 ${minutes} 分鐘`;
+    return `${minutes} 分鐘`;
+  }
   if (days > 0) return `${days} 天 ${hours} 小时`;
   if (hours > 0) return `${hours} 小时 ${minutes} 分钟`;
   return `${minutes} 分钟`;
@@ -122,7 +132,7 @@ export function MetricDetailModal({
   testingNodeId?: string | null | undefined;
 }) {
 
-  const { t } = usePanelLanguage();
+  const { t, language } = usePanelLanguage();
   const meta = metricMeta[kind];
 
   useEffect(() => {
@@ -356,7 +366,7 @@ function NodeMetricCard({
   onTestNode?: ((id: string) => void) | undefined;
   testingNodeId?: string | null | undefined;
 }) {
-  const { t } = usePanelLanguage();
+  const { t, language } = usePanelLanguage();
   const metric = node.latestMetric;
   const cpu = metric?.cpuUsage ?? 0;
   const memory = metric?.memoryUsage ?? 0;
@@ -365,7 +375,7 @@ function NodeMetricCard({
   const memoryTotal = formatMemory(metric?.totalMemoryMb);
   const diskLabel = formatDisk(metric?.usedDiskGb);
   const diskTotal = formatDisk(metric?.totalDiskGb);
-  const uptime = formatUptime(metric?.uptimeSeconds);
+  const uptime = formatUptime(metric?.uptimeSeconds, language);
   const load = typeof metric?.loadAverage1m === "number" ? metric.loadAverage1m.toFixed(2) : null;
   const isTesting = testingNodeId === node.id;
 

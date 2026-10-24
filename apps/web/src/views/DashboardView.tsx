@@ -204,8 +204,98 @@ const PAGE_OPTIONS: Array<{ view: ViewMode; label: string; desc: string; icon: R
   { view: "settings", label: "系统设置", desc: "控制台配置与外观", icon: <Settings size={13} className="dashboard-page-icon icon-orange" /> }
 ];
 
-function getGreetingSentence(): string {
+function getAgentPermissionOptions(language?: PanelLanguage) {
+  if (language === "en-US") {
+    return [
+      { id: "ask" as const, label: "Ask", menuLabel: "Ask Before Execution", description: "Standard workspace edits execute directly; risky operations require confirmation", icon: ShieldAlert, color: "ask" },
+      { id: "acceptEdits" as const, label: "Auto", menuLabel: "Auto Execute (Default)", description: "Automatically approves permitted actions; risky operations still require confirmation", icon: ShieldCheck, color: "auto" },
+      { id: "bypassPermissions" as const, label: "Full Access", menuLabel: "Full Access", description: "No per-action approval required; account & security policies still apply; external files require one-time approval", icon: XOctagon, color: "full" },
+      { id: "plan" as const, label: "Read-only", menuLabel: "Read-only Observation", description: "Read-only exploration and planning without modifying files", icon: Lock, color: "readonly" }
+    ];
+  }
+  if (language === "zh-TW") {
+    return [
+      { id: "ask" as const, label: "需確認", menuLabel: "需確認", description: "常規工作區編輯直接執行，高風險操作需確認", icon: ShieldAlert, color: "ask" },
+      { id: "acceptEdits" as const, label: "自主執行", menuLabel: "自主執行（預設）", description: "自動核准規則允許的操作，高風險操作仍需確認", icon: ShieldCheck, color: "auto" },
+      { id: "bypassPermissions" as const, label: "完全存取權限", menuLabel: "完全存取權限", description: "無需逐項核准，仍遵守帳號與安全策略；外部檔案仍需單次審批", icon: XOctagon, color: "full" },
+      { id: "plan" as const, label: "唯讀模式", menuLabel: "唯讀觀察", description: "唯讀探索和規劃，不修改檔案", icon: Lock, color: "readonly" }
+    ];
+  }
+  return AGENT_PERMISSION_OPTIONS;
+}
+
+function getPageOptions(language?: PanelLanguage) {
+  if (language === "en-US") {
+    return [
+      { view: "instances" as ViewMode, label: "Instances", desc: "View and control all service instances", icon: <Boxes size={13} className="dashboard-page-icon icon-amber" /> },
+      { view: "nodes" as ViewMode, label: "Nodes", desc: "Daemon node health and network", icon: <Network size={13} className="dashboard-page-icon icon-teal" /> },
+      { view: "templates" as ViewMode, label: "Templates", desc: "Quickly deploy applications and services", icon: <FileCode size={13} className="dashboard-page-icon icon-purple" /> },
+      { view: "reliability" as ViewMode, label: "Reliability", desc: "SLO, self-healing, and circuit breaker metrics", icon: <HeartPulse size={13} className="dashboard-page-icon icon-rose" /> },
+      { view: "users" as ViewMode, label: "Users", desc: "User and role permission policies", icon: <Users size={13} className="dashboard-page-icon icon-blue" /> },
+      { view: "audit" as ViewMode, label: "Audit", desc: "Full site operation audit logs and tracing", icon: <ScrollText size={13} className="dashboard-page-icon icon-gray" /> },
+      { view: "plugins" as ViewMode, label: "Plugins", desc: "Extension plugins and ecosystem integrations", icon: <Puzzle size={13} className="dashboard-page-icon icon-green" /> },
+      { view: "settings" as ViewMode, label: "Settings", desc: "Console configuration and appearance", icon: <Settings size={13} className="dashboard-page-icon icon-orange" /> }
+    ];
+  }
+  if (language === "zh-TW") {
+    return [
+      { view: "instances" as ViewMode, label: "執行個體管理", desc: "檢視與控制所有服務執行個體", icon: <Boxes size={13} className="dashboard-page-icon icon-amber" /> },
+      { view: "nodes" as ViewMode, label: "節點拓撲", desc: "Daemon 節點健康與網路", icon: <Network size={13} className="dashboard-page-icon icon-teal" /> },
+      { view: "templates" as ViewMode, label: "部署範本", desc: "快速部署應用與服務", icon: <FileCode size={13} className="dashboard-page-icon icon-purple" /> },
+      { view: "reliability" as ViewMode, label: "可靠性監控", desc: "SLO、自我修復與熔斷指標", icon: <HeartPulse size={13} className="dashboard-page-icon icon-rose" /> },
+      { view: "users" as ViewMode, label: "使用者權限", desc: "使用者與角色權限策略", icon: <Users size={13} className="dashboard-page-icon icon-blue" /> },
+      { view: "audit" as ViewMode, label: "稽核日誌", desc: "全站操作記錄與追蹤", icon: <ScrollText size={13} className="dashboard-page-icon icon-gray" /> },
+      { view: "plugins" as ViewMode, label: "外掛中心", desc: "擴充外掛與生態整合", icon: <Puzzle size={13} className="dashboard-page-icon icon-green" /> },
+      { view: "settings" as ViewMode, label: "系統設定", desc: "主控台設定與外觀", icon: <Settings size={13} className="dashboard-page-icon icon-orange" /> }
+    ];
+  }
+  return PAGE_OPTIONS;
+}
+
+function getGreetingSentence(language?: PanelLanguage): string {
   const hour = new Date().getHours();
+  if (language === "en-US") {
+    let timePrefix = "Good afternoon";
+    if (hour >= 5 && hour < 12) timePrefix = "Good morning";
+    else if (hour >= 12 && hour < 18) timePrefix = "Good afternoon";
+    else if (hour >= 18 && hour < 22) timePrefix = "Good evening";
+    else timePrefix = "Late night";
+
+    const variations = [
+      `${timePrefix}, how can I help you today?`,
+      `${timePrefix}, what would you like to explore or troubleshoot?`,
+      `${timePrefix}, cluster is in good health and ready for instructions.`,
+      `${timePrefix}, what would you like to build or optimize today?`,
+      `${timePrefix}, feel free to ask for any DevOps or coding tasks.`,
+      "What would you like to explore or troubleshoot today?",
+      "Cluster is running smoothly. Ready for your instructions.",
+      "How can I assist you today?",
+      "Ready to start today's cluster maintenance and DevOps tasks?"
+    ];
+    return variations[Math.floor(Math.random() * variations.length)] ?? "What would you like to explore or troubleshoot today?";
+  }
+  if (language === "zh-TW") {
+    let timePrefix = "";
+    if (hour >= 5 && hour < 12) timePrefix = "早安";
+    else if (hour >= 12 && hour < 14) timePrefix = "午安";
+    else if (hour >= 14 && hour < 18) timePrefix = "下午好";
+    else if (hour >= 18 && hour < 22) timePrefix = "晚上好";
+    else timePrefix = "夜深了";
+
+    const variations = [
+      `${timePrefix}，今天有什麼我可以協助你的？`,
+      `${timePrefix}，今天有什麼想探索或排查的？`,
+      `${timePrefix}，叢集狀態良好，隨時聽候指令。`,
+      `${timePrefix}，今天想構建或最佳化什麼？`,
+      `${timePrefix}，有任何維運或程式碼需求隨時吩咐。`,
+      "今天有什麼想探索或排查的？",
+      "叢集運作正常，隨時聽候您的指令。",
+      "有什麼我可以協助你的？",
+      "準備好開始本次的叢集維護與開發任務了嗎？"
+    ];
+    return variations[Math.floor(Math.random() * variations.length)] ?? "今天有什麼想探索或排查的？";
+  }
+
   let timePrefix = "";
   if (hour >= 5 && hour < 12) {
     timePrefix = "早上好";
@@ -337,8 +427,8 @@ export function DashboardView({
     return cached.map((conversation) => ({
       id: conversation.id, instanceId: conversation.instanceId ?? null,
       workspaceInstanceIds: conversation.workspaceInstanceIds ?? sakiWorkspaceIdsFromContextKey(conversation.contextKey, conversation.instanceId),
-      updatedAt: conversation.updatedAt, title: conversation.title || "历史会话",
-      category: conversation.label || "历史记录", time: formatRelativeTime(conversation.updatedAt, language)
+      updatedAt: conversation.updatedAt, title: conversation.title || (language === "en-US" ? "History Session" : language === "zh-TW" ? "歷史對話" : "历史会话"),
+      category: conversation.label || (language === "en-US" ? "History" : language === "zh-TW" ? "歷史記錄" : "历史记录"), time: formatRelativeTime(conversation.updatedAt, language)
     }));
   });
   const sessionsRef = useRef(sessions);
@@ -710,7 +800,10 @@ export function DashboardView({
   }, [token, publishSessionMessages, finishStream, refreshTasks]);
 
   // Single Clean Greeting Sentence State
-  const [greetingSentence, setGreetingSentence] = useState(() => getGreetingSentence());
+  const [greetingSentence, setGreetingSentence] = useState(() => getGreetingSentence(language));
+  useEffect(() => {
+    setGreetingSentence(getGreetingSentence(language));
+  }, [language]);
 
   // Dropdowns & Shelves
   const topbarDropdownRef = useRef<HTMLDivElement | null>(null);
@@ -749,21 +842,46 @@ export function DashboardView({
   const workspaceNames = selectedWorkspaceIds.map(id => authorizedProjects.find(instance => instance.id === id)?.name ?? "工作区不可用").join("、");
   const workspaceSelectionLocked = sessionLoading || Boolean(sessionLoadError) || workspaceSelectionBusy || isStreaming || Boolean(actionBusyId) || messages.some(message => message.actions?.some(action => action.status === "pending_approval" || action.status === "pending_input"));
   const canCreateTerminal = Boolean(isSuperAdmin && canUseTerminal && canUseAgent && selectedProject);
+  const isEn = language === "en-US";
+  const isTw = language === "zh-TW";
+  const permissionOptions = useMemo(() => getAgentPermissionOptions(language), [language]);
   const projectPermissionHint = !activeInstanceId
-    ? isSuperAdmin ? "未关联项目；项目操作仍按工具权限校验" : "仅可对话、规划和搜索；使用项目工具前请选择已授权项目"
-    : !selectedProject || !canUseProjectMode(interactionMode) ? "已选工作区不可用或未授权，请重新选择工作区"
-    : selectedWorkspaceIds.length > 1 ? `已添加 ${selectedWorkspaceIds.length} 个工作区：${workspaceNames}；按各工作区权限执行`
+    ? isSuperAdmin
+      ? isEn ? "No project associated; tool permissions still verified" : isTw ? "未關聯專案；專案操作仍按工具權限驗證" : "未关联项目；项目操作仍按工具权限校验"
+      : isEn ? "Chat, plan, and search only; select an authorized project before using tools" : isTw ? "僅可對話、規劃和搜尋；使用專案工具前請選取已授權專案" : "仅可对话、规划和搜索；使用项目工具前请选择已授权项目"
+    : !selectedProject || !canUseProjectMode(interactionMode)
+      ? isEn ? "Selected workspace is unavailable or unauthorized; please select another" : isTw ? "已選工作區不可用或未授權，請重新選取工作區" : "已选工作区不可用或未授权，请重新选择工作区"
+    : selectedWorkspaceIds.length > 1
+      ? isEn ? `Added ${selectedWorkspaceIds.length} workspace(s): ${workspaceNames}; executed per workspace permissions` : isTw ? `已加入 ${selectedWorkspaceIds.length} 個工作區：${workspaceNames}；按各工作區權限執行` : `已添加 ${selectedWorkspaceIds.length} 个工作区：${workspaceNames}；按各工作区权限执行`
     : selectedProject.myPermissions
-      ? `当前项目权限：${[
-          selectedProject.myPermissions.includes("file.read") && "读取",
-          selectedProject.myPermissions.includes("file.write") && "写入",
-          selectedProject.myPermissions.includes("file.delete") && "删除",
-          selectedProject.myPermissions.includes("instance.logs") && "日志",
-          selectedProject.myPermissions.includes("task.view") && "查看任务"
-        ].filter(Boolean).join("、") || "仅对话"}`
-      : isSuperAdmin ? "按当前账号与项目权限执行" : "仅限当前项目，按账号权限执行；外部文件需单次审批";
+      ? isEn
+        ? `Current project permissions: ${[
+            selectedProject.myPermissions.includes("file.read") && "Read",
+            selectedProject.myPermissions.includes("file.write") && "Write",
+            selectedProject.myPermissions.includes("file.delete") && "Delete",
+            selectedProject.myPermissions.includes("instance.logs") && "Logs",
+            selectedProject.myPermissions.includes("task.view") && "View Tasks"
+          ].filter(Boolean).join(", ") || "Chat Only"}`
+        : isTw
+          ? `目前專案權限：${[
+              selectedProject.myPermissions.includes("file.read") && "讀取",
+              selectedProject.myPermissions.includes("file.write") && "寫入",
+              selectedProject.myPermissions.includes("file.delete") && "刪除",
+              selectedProject.myPermissions.includes("instance.logs") && "日誌",
+              selectedProject.myPermissions.includes("task.view") && "檢視工作"
+            ].filter(Boolean).join("、") || "僅對話"}`
+          : `当前项目权限：${[
+              selectedProject.myPermissions.includes("file.read") && "读取",
+              selectedProject.myPermissions.includes("file.write") && "写入",
+              selectedProject.myPermissions.includes("file.delete") && "删除",
+              selectedProject.myPermissions.includes("instance.logs") && "日志",
+              selectedProject.myPermissions.includes("task.view") && "查看任务"
+            ].filter(Boolean).join("、") || "仅对话"}`
+      : isSuperAdmin
+        ? isEn ? "Executed per current account and project permissions" : isTw ? "按目前帳號與專案權限執行" : "按当前账号与项目权限执行"
+        : isEn ? "Current project only, per account permissions; external files require single approval" : isTw ? "僅限目前專案，按帳號權限執行；外部檔案需單次審批" : "仅限当前项目，按账号权限执行；外部文件需单次审批";
   const [agentPermission, setAgentPermission] = useState<SakiAgentPermissionMode>("acceptEdits");
-  const activePermission = AGENT_PERMISSION_OPTIONS.find((option) => option.id === agentPermission)!;
+  const activePermission = permissionOptions.find((option) => option.id === agentPermission) || permissionOptions[1];
   const PermissionIcon = activePermission.icon;
   const [detailsTab, setDetailsTab] = useState<"action" | "terminal" | "changes">("action");
   const {
@@ -1023,7 +1141,7 @@ export function DashboardView({
         <>
           <div className="dashboard-dropdown-divider" />
           <div className="dashboard-dropdown-section-title">快捷跳转页面</div>
-          {PAGE_OPTIONS.filter((p) => !availableViews || availableViews.includes(p.view)).map((page) => (
+          {getPageOptions(language).filter((p) => !availableViews || availableViews.includes(p.view)).map((page) => (
             <button
               key={page.view}
               className="dashboard-dropdown-item"
@@ -1254,7 +1372,7 @@ export function DashboardView({
           <DashboardPopover anchorRef={permissionDropdownRef} onClose={() => setPermissionDropdownOpen(false)} className="dashboard-model-popover dashboard-permission-popover">
             <div className="dashboard-dropdown-section-title">智能体权限策略</div>
             <div className="dashboard-project-permission-note">{projectPermissionHint}。审批方式不会增加账号权限。</div>
-            {AGENT_PERMISSION_OPTIONS.map((option) => {
+            {permissionOptions.map((option) => {
               const Icon = option.icon;
               const isSelected = agentPermission === option.id;
               return (
@@ -2231,7 +2349,7 @@ export function DashboardView({
     setMentionDismissedStart(null);
     setAddMenuOpen(false);
     setViewMode("workspace");
-    setGreetingSentence(getGreetingSentence());
+    setGreetingSentence(getGreetingSentence(language));
     if (typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches) {
       setSidebarCollapsed(true);
     }
