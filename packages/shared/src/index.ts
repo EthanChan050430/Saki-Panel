@@ -1,6 +1,6 @@
 export const PANEL_VERSION = "5.0";
 
-export { wrapSakiCommandWithCwd, type AgentShellKind } from "./terminal.js";
+export { wrapSakiCommandWithCwd, quoteAgentShellArgument, type AgentShellKind } from "./terminal.js";
 
 export const noRolePermissionRoleName = "__no_role__";
 
@@ -1873,6 +1873,7 @@ export interface SakiActionDecisionResponse {
 
 export interface SakiChatRequest {
   message: string;
+  reasoningEffort?: import("./saki-reasoning.js").SakiReasoningEffort;
   /** Stable client turn identity, used for reconnects and cross-device history. */
   clientRequestId?: string;
   conversationId?: string;
@@ -2261,6 +2262,8 @@ export function sanitizeSakiImageGenConfig(value: unknown): SakiImageGenConfig {
 
 export interface SakiConfigResponse {
   requestTimeoutMs: number;
+  /** Per-request override, never persisted as the global model configuration. */
+  reasoningEffort?: import("./saki-reasoning.js").SakiReasoningEffort;
   provider: string;
   model: string;
   ollamaUrl: string;
@@ -2976,4 +2979,5 @@ export interface ActivateOperationPackResponse {
 }
 
 export * from "./git.js";
+export * from "./saki-reasoning.js";
 export * from "./database-security.js";

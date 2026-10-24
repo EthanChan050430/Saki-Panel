@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Prisma } from "@prisma/client";
 import { classifyCommandRisk, findDangerousCommandReason, isPosixCommandPlatform } from "../../security.js";
-import { sakiModelProfile } from "./model-profile.js";
+import { prefersStableAgentTools, sakiModelProfile } from "./model-profile.js";
 import { requiredSakiToolPermissions, sakiHostExecutionTools } from "./resource-policy.js";
 import { parseWorkspacePatch } from "./patch.js";
 import { selectedWorkspaceTarget } from "./selected-workspaces.js";
@@ -219,9 +219,13 @@ const sakiResearchToolNames = new Set([
   "describeinstance"
 ]);
 
-type SakiToolGroupId = "instances" | "liveTerminal" | "schedule" | "web" | "webDeep" | "archive" | "memory" | "audit" | "env" | "research" | "imageGen";
+type SakiToolGroupId = "instances" | "liveTerminal" | "schedule" | "web" | "webDeep" | "archive" | "memory" | "audit" | "env" | "research" | "imageGen" | "servers";
 
 const sakiToolGroups: Record<SakiToolGroupId, { names: string[]; hint: RegExp }> = {
+  servers: {
+    names: ["listServers", "describeServer", "runServerCommand", "listServerFiles", "readServerFile"],
+    hint: /\b(?:server|ssh|sftp|node status|runServerCommand|readServerFile)\b|服务器|远程|集群节点/i
+  },
   instances: {
     names: ["listInstances", "describeInstance", "instanceAction", "updateInstanceSettings"],
     hint: /\b(instance|start command|stop command|kill instance)\b|实例|节点|启动|停止|重启|杀死|listInstances|instanceAction/i
@@ -321,11 +325,18 @@ function advertisedToolSchemasForRuntime(runtime: SakiAgentRuntime): SakiToolSch
     return research;
   }
 
+  // Calling an already-advertised core tool is not a new task requirement.
+  // In particular, describeInstance/createShell must not silently expand the
+  // schema prefix on every DeepSeek/GLM tool round. Explicit task hints and
+  // non-core tools still discover their groups; ACL filtering runs each time.
+  const usedToolNames = prefersStableAgentTools(runtime.config.provider, runtime.config.model)
+    ? (runtime.usedToolNames ?? []).filter((used) => !sakiCoreToolNames.some((name) => name === canonicalToolSchema(used)?.name))
+    : runtime.usedToolNames ?? [];
   const hint = [
     runtime.input.message,
     runtime.input.contextTitle,
     runtime.input.panelError,
-    ...(runtime.usedToolNames ?? [])
+    ...usedToolNames
   ]
     .filter(Boolean)
     .join("\n");
@@ -340,7 +351,7 @@ function advertisedToolSchemasForRuntime(runtime: SakiAgentRuntime): SakiToolSch
   }
 
   for (const group of Object.values(sakiToolGroups)) {
-    const usedInGroup = (runtime.usedToolNames ?? []).some((used) => {
+    const usedInGroup = usedToolNames.some((used) => {
       const canonical = canonicalToolSchema(used)?.name;
       return Boolean(canonical && group.names.includes(canonical));
     });
@@ -1130,6 +1141,10 @@ export function toolArgs(call: ParsedToolCall): Record<string, unknown> {
 }
 
 export const sakiReadOnlyToolNames = new Set([
+  "listservers",
+  "describeserver",
+  "listserverfiles",
+  "readserverfile",
   "listinstances",
   "describeinstance",
   "instancelogs",
@@ -1145,11 +1160,6 @@ export const sakiReadOnlyToolNames = new Set([
   "findsymbol",
   "gotodefinition",
   "symbolsearch",
-  "diagnosecode",
-  "diagnostics",
-  "checktypes",
-  "typecheck",
-  "lintcode",
   "managetodos",
   "askuser",
   "settodos",
@@ -1226,7 +1236,6 @@ export const sakiPlanBlockedToolNames = new Set([
   "closeshell",
   "deleteshell",
   "killshell",
-  "runinshell",
   "sendshellinput",
   "instanceaction",
   "updateinstancesettings",
@@ -1243,6 +1252,8 @@ export function normalizedAgentToolName(toolName: string): string {
 export function isSakiReadOnlyAgentTool(toolName: string): boolean {
   return sakiReadOnlyToolNames.has(normalizedAgentToolName(toolName));
 }
+
+export const sakiCommandToolNames = new Set(["runcommand", "runinshell", "runservercommand", "diagnosecode"]);
 
 export const watchAgentToolAllowlist = new Set([
   "describeinstance",
@@ -1311,7 +1322,7 @@ const watchProtectedSegments = new Set([
 
 function assertWatchTargetPathSafe(rawPath: string): void {
   const normalized = rawPath.replace(/\\/g, "/").trim().replace(/^\.\/+/, "");
-  if (!normalized || normalized.includes("..")) {
+  if (!normalized || normalized.split("/").includes("..")) {
     throw new RouteError("Watch mode blocked an invalid file path.", 403);
   }
   const segments = normalized.toLowerCase().split("/").filter(Boolean);
@@ -1384,13 +1395,17 @@ export function assertSakiPermissionModeAllowsTool(
 ): void {
   const lower = normalizedAgentToolName(toolName);
   const permissionMode = effectiveSakiAgentPermissionMode(runtime.input);
+  if (sakiCommandToolNames.has(lower) && (lower !== "diagnosecode" || stringArg(args, "command"))) {
+    const risk = classifyCommandRisk(stringArg(args, "command"), commandWorkingDirectory(runtime, args), commandUsesPosixShell(runtime, args));
+    if (risk.risk === "critical") throw new RouteError(risk.reason, 403);
+  }
   if (permissionMode !== "plan") return;
 
   if (sakiPlanBlockedToolNames.has(lower)) {
     throw new RouteError("Plan mode can inspect the workspace and propose a plan, but it cannot change files, settings, tasks, or instance state. Switch to Request approval, Approve for me, or Full access to execute changes.", 403);
   }
 
-  if (lower === "runcommand" || lower === "runinshell") {
+  if (sakiCommandToolNames.has(lower)) {
     const commandRisk = classifyCommandRisk(stringArg(args, "command"), commandWorkingDirectory(runtime, args), commandUsesPosixShell(runtime, args));
     if (commandRisk.risk !== "low" || !commandRisk.readOnly || rawStringArg(args, "input") || rawStringArg(args, "stdin")) {
       throw new RouteError("Plan mode only permits low-risk inspection commands. Switch permission mode before running commands that can modify state.", 403);
@@ -1403,7 +1418,7 @@ export function isApprovalTool(toolName: string, args: Record<string, unknown>):
   if (["deletepath", "updateinstancesettings", "createscheduledtask", "updatescheduledtask", "deletescheduledtask", "runtask"].includes(lower)) {
     return true;
   }
-  if (lower === "runcommand" || lower === "runinshell") {
+  if (sakiCommandToolNames.has(lower)) {
     return classifyCommandRisk(stringArg(args, "command")).risk !== "low";
   }
   if (["instanceaction", "sendshellinput", "sendinput", "sendcommand", "closeshell"].includes(lower)) return true;
@@ -1415,6 +1430,7 @@ export function shouldRequestSakiApproval(runtime: SakiAgentRuntime, toolName: s
   const permissionMode = effectiveSakiAgentPermissionMode(runtime.input);
 
   if (lower === "requestexternalaccess") return true;
+  if (lower === "diagnosecode" && !stringArg(args, "command")) return false;
   if (runtime.externalReadPerformed && ["searchweb", "browse", "crawl", "researchweb", "generateimage"].includes(lower)) return true;
 
   // Watch must stage every patch before the incident policy can consider
@@ -1425,7 +1441,7 @@ export function shouldRequestSakiApproval(runtime: SakiAgentRuntime, toolName: s
     return false;
   }
 
-  if (lower === "runcommand" || lower === "runinshell") {
+  if (sakiCommandToolNames.has(lower)) {
     // stdin can carry a program or answers that change the command's behavior.
     if (rawStringArg(args, "input") || rawStringArg(args, "stdin")) return true;
     const commandRisk = classifyCommandRisk(stringArg(args, "command"), commandWorkingDirectory(runtime, args), commandUsesPosixShell(runtime, args));

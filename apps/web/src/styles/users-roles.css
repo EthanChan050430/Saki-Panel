@@ -7,6 +7,33 @@
    用户管理界面：移动端响应式与 iOS 卡片流视图
    ======================================================== */
 
+/* 固定面板高度，用户列表在面板内滚动。 */
+.panel-block.users-panel {
+  display: flex;
+  flex-direction: column;
+  height: 640px;
+  max-height: 75dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.users-panel > .section-heading {
+  flex-shrink: 0;
+}
+
+.users-panel > .table-wrap,
+.users-panel > .mobile-user-cards-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+}
+
+.users-panel > .mobile-user-cards-wrap > * {
+  flex-shrink: 0;
+}
+
 /* 头部控件栏 */
 .users-panel-header {
   display: flex;

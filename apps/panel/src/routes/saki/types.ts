@@ -1,6 +1,7 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { isSensitiveWorkspacePath } from "../../workspace-path.js";
 import type { Prisma } from "@prisma/client";
 import type {
   InstanceLogLine,
@@ -19,7 +20,7 @@ import type {
   SakiWorkspaceContext,
   UpdateScheduledTaskRequest
 } from "@webops/shared";
-import { parseSakiModelSelection, sakiAttachmentMentionToken, sakiListedModelSupportsVision, sakiNvidiaBaseUrl, sakiNvidiaDefaultModel } from "@webops/shared";
+import { normalizeSakiReasoningEffort, parseSakiModelSelection, sakiAttachmentMentionToken, sakiListedModelSupportsVision, sakiNvidiaBaseUrl, sakiNvidiaDefaultModel } from "@webops/shared";
 export type { SakiSkillSummary } from "@webops/shared";
 import type { SakiSkillSummary } from "@webops/shared";
 import type { FastifyRequest } from "fastify";
@@ -225,24 +226,7 @@ export function redactSensitiveText(value: string): string {
     .replace(/\b(sk-[a-zA-Z0-9_-]{12,})\b/g, "[redacted-api-key]");
 }
 
-export function isSensitiveRelativePath(value: string): boolean {
-  const normalized = value.replace(/\\/g, "/").toLowerCase();
-  return [
-    /(^|\/)\.env(?:\.|$)/,
-    /(^|\/)\.git(\/|$)/,
-    /(^|\/)\.ssh(\/|$)/,
-    /(^|\/)node_modules(\/|$)/,
-    /(^|\/)dist(\/|$)/,
-    /(^|\/)build(\/|$)/,
-    /token/,
-    /secret/,
-    /credential/,
-    /private[_-]?key/,
-    /\.pem$/,
-    /\.key$/,
-    /\.pfx$/
-  ].some((pattern) => pattern.test(normalized));
-}
+export const isSensitiveRelativePath = isSensitiveWorkspacePath;
 
 export function safeRelativePath(value: unknown, workingDirectory?: string): string {
   let raw = trimString(value).replace(/\\/g, "/");
@@ -250,13 +234,15 @@ export function safeRelativePath(value: unknown, workingDirectory?: string): str
   raw = raw.replace(/^\.\/+/, "");
   if (workingDirectory) {
     const normWd = workingDirectory.replace(/\\/g, "/").replace(/\/+$/, "");
-    if (raw.toLowerCase().startsWith(normWd.toLowerCase() + "/")) {
+    const windows = /^[a-z]:|^\/\//i.test(normWd);
+    const compare = (value: string) => windows ? value.toLowerCase() : value;
+    if (compare(raw).startsWith(compare(normWd) + "/")) {
       raw = raw.slice(normWd.length + 1).replace(/^\.\/+/, "");
-    } else if (raw.toLowerCase() === normWd.toLowerCase()) {
+    } else if (compare(raw) === compare(normWd)) {
       return "";
     }
   }
-  if (path.isAbsolute(raw) || raw.split("/").some((part) => part === "..")) {
+  if (path.isAbsolute(raw) || /^[a-z]:|^\/\//i.test(raw) || /[\x00-\x1f]/.test(raw) || raw.split("/").some((part) => part === "..")) {
     throw new RouteError("沙箱安全拦截：文件工具仅允许访问当前实例工作区内部的路径。", 403);
   }
   if (isSensitiveRelativePath(raw)) {
@@ -645,6 +631,7 @@ export interface SakiModelToolTurn {
   forwardedDeltaText?: boolean;
   forwardedDeltaContent?: string;
   usageTokens?: number;
+  modelUsage?: import("../../tokenizer.js").ModelUsage;
   assistantState?: SakiAssistantState;
 }
 
@@ -1376,28 +1363,30 @@ export function sanitizeRequestedSakiModel(value: unknown): string {
 
 export function withRequestedSakiModel(
   config: SakiConfigResponse,
-  input: (Pick<SakiChatRequest, "model"> & { provider?: string | null }) | null | undefined
+  input: (Pick<SakiChatRequest, "model" | "reasoningEffort"> & { provider?: string | null }) | null | undefined
 ): SakiConfigResponse {
   const selection = parseSakiModelSelection(sanitizeRequestedSakiModel(input?.model), trimString(input?.provider));
   const requestedModel = selection.model;
   const activeProvider = selection.provider ? normalizeProviderId(selection.provider) : config.provider;
+  const withEffort = (selected: SakiConfigResponse): SakiConfigResponse => ({ ...selected,
+    reasoningEffort: normalizeSakiReasoningEffort(input?.reasoningEffort, selected.model, selected.provider) });
 
   if (activeProvider !== config.provider) {
     if (!Object.hasOwn(config.providerConfigs, activeProvider)) {
       throw new RouteError(`Unknown model provider: ${activeProvider}`, 400);
     }
     const pCfg = config.providerConfigs[activeProvider]!;
-    return {
+    return withEffort({
       ...config,
       provider: activeProvider,
       model: requestedModel || trimString(pCfg.model),
       ollamaUrl: trimString(pCfg.ollamaUrl) || defaultLocalProviderUrl(activeProvider),
       baseUrl: trimString(pCfg.baseUrl) || providerDefaults[activeProvider]?.baseUrl || "",
       apiKey: trimString(pCfg.apiKey)
-    };
+    });
   }
 
-  return requestedModel && requestedModel !== config.model ? { ...config, model: requestedModel } : config;
+  return withEffort(requestedModel && requestedModel !== config.model ? { ...config, model: requestedModel } : config);
 }
 
 export function sakiPermissionModeLabel(mode: SakiAgentPermissionMode): string {

@@ -61,7 +61,8 @@ export async function callOpenAiCompatibleModel(
         model,
         messages: withOpenAiImageInputs(buildDirectMessages(input, prompt, buildDirectSystemPrompt(config)), input)
       },
-      0.3
+      0.3,
+      config.reasoningEffort
     ),
     config.requestTimeoutMs
   );
@@ -108,7 +109,8 @@ export async function callOpenAiCompatibleModelStream(
         stream: true,
         stream_options: { include_usage: true }
       },
-      0.3
+      0.3,
+      config.reasoningEffort
     ),
     config.requestTimeoutMs,
     async (response) => {
@@ -152,7 +154,8 @@ export async function callOpenAiCompatibleAgentTurn(
         tools: openAiToolSchemas(),
         tool_choice: "auto"
       },
-      0.2
+      0.2,
+      config.reasoningEffort
     ),
     config.requestTimeoutMs
   );
@@ -182,7 +185,8 @@ export async function callOpenAiCompatiblePromptAgentTurn(
         model,
         messages: withOpenAiImageInputs(buildPromptFallbackMessages(input, prompt, config), input)
       },
-      0.2
+      0.2,
+      config.reasoningEffort
     ),
     config.requestTimeoutMs
   );
@@ -302,7 +306,8 @@ export async function callOpenAiCompatibleAgentTurnStream(
         stream: true,
         stream_options: { include_usage: true }
       },
-      0.2
+      0.2,
+      config.reasoningEffort
     ),
     config.requestTimeoutMs,
     async (response) => {
@@ -333,7 +338,8 @@ export async function callOpenAiCompatibleAgentTurnStream(
     },
     prompt,
     usageHolder.current
-      ? { usage: { prompt_tokens: usageHolder.current.promptTokens, completion_tokens: usageHolder.current.completionTokens } }
+      ? { usage: { prompt_tokens: usageHolder.current.promptTokens, completion_tokens: usageHolder.current.completionTokens,
+          ...(usageHolder.current.cachedPromptTokens !== undefined ? { prompt_tokens_details: { cached_tokens: usageHolder.current.cachedPromptTokens } } : {}) } }
       : undefined,
     true
   );

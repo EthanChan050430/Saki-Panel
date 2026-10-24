@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SakiModelPicker } from "./SakiModelReasoningPanel.js";
+import { DashboardPopover } from "../dashboard/DashboardPopover.js";
 import {
   Activity,
   BookOpen,
@@ -6,7 +8,6 @@ import {
   Check,
   ChevronRight,
   Code2,
-  Cpu,
   Edit3,
   FileCode,
   FileSearch,
@@ -35,7 +36,6 @@ import type {
   SakiChatMode,
   SakiModelOption
 } from "@webops/shared";
-import { sakiModelMatchesSelection, sakiModelSelectionKey } from "@webops/shared";
 import type { BrowserSpeechRecognition } from "../../types/app.js";
 import { getSakiAffectionQuote, getSpeechRecognitionConstructor } from "./sakiChatHelpers.js";
 import type { SakiPetController } from "./pet/sakiPetState.js";
@@ -327,6 +327,7 @@ export function SakiCapsuleHUD({
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuAnchorRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (mode === "text_input") {
@@ -457,6 +458,7 @@ export function SakiCapsuleHUD({
     if (mode === "dock" && !menuOpen) return;
     const handlePointerDownOutside = (event: PointerEvent) => {
       const target = event.target as Node | null;
+      if (target && menuRef.current?.contains(target)) return;
       if (rootRef.current && target && !rootRef.current.contains(target)) {
         if (mode === "voice_recording") {
           stopSpeechRecognition();
@@ -637,6 +639,7 @@ export function SakiCapsuleHUD({
           <button
             type="button"
             className={`capsule-plus-btn ${menuOpen ? "active" : ""}`}
+            ref={menuAnchorRef}
             onClick={(e) => {
               e.stopPropagation();
               setMenuOpen((prev) => !prev);
@@ -688,7 +691,7 @@ export function SakiCapsuleHUD({
           </div>
 
           {menuOpen && (
-            <div ref={menuRef} className="capsule-settings-popover" onClick={(e) => e.stopPropagation()}>
+            <DashboardPopover anchorRef={menuAnchorRef} popoverRef={menuRef} onClose={() => setMenuOpen(false)} className="capsule-settings-popover saki-reasoning-popover" width={340}>
               <div className="popover-group">
                 <div className="popover-group-label">
                   <Bot size={12} />
@@ -757,34 +760,9 @@ export function SakiCapsuleHUD({
               )}
 
               <div className="popover-group">
-                <div className="popover-group-label">
-                  <Cpu size={12} />
-                  <span>模型切换</span>
-                </div>
-                <div className="popover-model-list">
-                  {effectiveModels.map((m) => {
-                    const isSelected =
-                      sakiModelMatchesSelection(m, currentModelId) || (!currentModelId && m.id === "auto");
-                    return (
-                      <button
-                        key={sakiModelSelectionKey(m)}
-                        type="button"
-                        disabled={!onModelChange}
-                        className={`popover-model-item ${isSelected ? "selected" : ""}`}
-                        onClick={() => {
-                          onModelChange?.(sakiModelSelectionKey(m));
-                          setMenuOpen(false);
-                        }}
-                      >
-                        <span className="model-name">{m.name}</span>
-                        {m.provider && <span className="model-badge">{m.provider}</span>}
-                        {isSelected && <Check size={12} className="model-check" />}
-                      </button>
-                    );
-                  })}
-                </div>
+                <SakiModelPicker models={effectiveModels} currentModelId={currentModelId} onSelectModel={(modelId) => onModelChange?.(modelId)} />
               </div>
-            </div>
+            </DashboardPopover>
           )}
         </div>
       ) : mode === "voice_recording" ? (

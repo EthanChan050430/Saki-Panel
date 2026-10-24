@@ -18,6 +18,7 @@ import { buildAnthropicAgentMessages, buildPromptFallbackMessages, currentAgentT
 import { extractProviderUsage, mergeModelUsage, type ModelUsage } from "../../../tokenizer.js";
 import { anthropicSupportsThinking } from "../model-profile.js";
 import { modelOutputWasTruncated, streamPromptAgentTurnWithFilteredDelta, withTurnUsage } from "./common.js";
+import { anthropicAgentCacheOptions } from "./prompt-cache.js";
 import { parseStreamJsonPayload, readServerSentEventData, requestJsonPayload, requestStreamingPayload } from "./http.js";
 import {
   isToolCallingUnsupportedError,
@@ -60,6 +61,7 @@ export async function callAnthropicModel(config: SakiConfigResponse, input: Saki
       body: JSON.stringify(
         anthropicRequestBody(model, {
           system: agentFallback ? directMessages.find((message) => message.role === "system")?.content : buildDirectSystemPrompt(config),
+          ...anthropicAgentCacheOptions(baseUrl, agentFallback),
           messages
         })
       )
@@ -111,6 +113,7 @@ export async function callAnthropicModelStream(
       body: JSON.stringify(
         anthropicRequestBody(model, {
           system: agentFallback ? directMessages.find((message) => message.role === "system")?.content : buildDirectSystemPrompt(config),
+          ...anthropicAgentCacheOptions(baseUrl, agentFallback),
           messages,
           stream: true
         })
@@ -143,6 +146,7 @@ export async function callAnthropicAgentTurn(config: SakiConfigResponse, input: 
       body: JSON.stringify(
         anthropicRequestBody(model, {
           system: currentAgentTurnConversation()?.systemPrompt ?? buildDirectSystemPrompt(config),
+          ...anthropicAgentCacheOptions(baseUrl, true),
           messages,
           tools: anthropicToolSchemas()
         })
@@ -293,6 +297,7 @@ export async function callAnthropicAgentTurnStream(
       body: JSON.stringify(
         anthropicRequestBody(model, {
           system: currentAgentTurnConversation()?.systemPrompt ?? buildDirectSystemPrompt(config),
+          ...anthropicAgentCacheOptions(baseUrl, true),
           messages,
           stream: true,
           tools: anthropicToolSchemas()
@@ -328,7 +333,8 @@ export async function callAnthropicAgentTurnStream(
     },
     prompt,
     usageHolder.current
-      ? { usage: { input_tokens: usageHolder.current.promptTokens, output_tokens: usageHolder.current.completionTokens } }
+      ? { usage: { input_tokens: usageHolder.current.promptTokens, output_tokens: usageHolder.current.completionTokens,
+          ...(usageHolder.current.cachedPromptTokens !== undefined ? { prompt_tokens_details: { cached_tokens: usageHolder.current.cachedPromptTokens } } : {}) } }
       : undefined,
     true
   );

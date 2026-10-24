@@ -46,6 +46,9 @@ export function countTokens(text: string, modelId: string = "gpt-4"): number {
 export interface ModelUsage {
   promptTokens: number;
   completionTokens: number;
+  /** Subset of promptTokens, never added to the total again. Undefined means
+   * the provider did not report cache usage; zero is a measured cache miss. */
+  cachedPromptTokens?: number;
 }
 
 function usageNumber(value: unknown): number {
@@ -61,13 +64,20 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 export function extractProviderUsage(payload: unknown): ModelUsage | null {
   const root = asRecord(payload);
   if (!root) return null;
-  const usage = asRecord(root.usage);
+  // Anthropic's message_start carries usage inside message, while subsequent
+  // message_delta events carry it at the top level.
+  const usage = asRecord(root.usage) ?? asRecord(asRecord(root.message)?.usage);
   if (usage) {
+    const cacheTokens = usageNumber(usage.cache_creation_input_tokens) + usageNumber(usage.cache_read_input_tokens);
+    const cachedValue = usage.prompt_cache_hit_tokens ?? asRecord(usage.prompt_tokens_details)?.cached_tokens ?? usage.cache_read_input_tokens;
+    const cachedPromptTokens = typeof cachedValue === "number" && Number.isFinite(cachedValue) && cachedValue >= 0
+      ? Math.round(cachedValue) : undefined;
     const promptTokens =
       usageNumber(usage.prompt_tokens) ||
-      usageNumber(usage.input_tokens) ||
+      (usageNumber(usage.input_tokens) + cacheTokens) ||
       usageNumber(usage.inputTokens) ||
-      usageNumber(usage.prompt_eval_count);
+      usageNumber(usage.prompt_eval_count) ||
+      (usageNumber(usage.prompt_cache_hit_tokens) + usageNumber(usage.prompt_cache_miss_tokens));
     let completionTokens =
       usageNumber(usage.completion_tokens) ||
       usageNumber(usage.output_tokens) ||
@@ -85,7 +95,7 @@ export function extractProviderUsage(payload: unknown): ModelUsage | null {
       return { promptTokens: total, completionTokens: 0 };
     }
     if (promptTokens + completionTokens > 0) {
-      return { promptTokens, completionTokens };
+      return { promptTokens, completionTokens, ...(cachedPromptTokens !== undefined ? { cachedPromptTokens: Math.min(cachedPromptTokens, promptTokens) } : {}) };
     }
   }
   const ollamaPrompt = usageNumber(root.prompt_eval_count);
@@ -101,7 +111,9 @@ export function mergeModelUsage(current: ModelUsage | null, incoming: ModelUsage
   if (!incoming) return current;
   return {
     promptTokens: Math.max(current.promptTokens, incoming.promptTokens),
-    completionTokens: Math.max(current.completionTokens, incoming.completionTokens)
+    completionTokens: Math.max(current.completionTokens, incoming.completionTokens),
+    ...(current.cachedPromptTokens !== undefined || incoming.cachedPromptTokens !== undefined
+      ? { cachedPromptTokens: Math.max(current.cachedPromptTokens ?? 0, incoming.cachedPromptTokens ?? 0) } : {})
   };
 }
 

@@ -33,6 +33,7 @@ import {
   nextTerminalAutocompleteValue,
   type TerminalAutocompleteState
 } from "../../components/terminal/WebTerminal.js";
+import { NodeStatusPill } from "../../components/common/CommonUI.js";
 
 export function createNodeSyntheticInstance(node: ManagedNode): ManagedInstance {
   return {
@@ -99,6 +100,17 @@ export function SshServerWorkspace({
   const [showHistoryMenu, setShowHistoryMenu] = useState(false);
   const [historyMenuPos, setHistoryMenuPos] = useState<{ left: number; bottom: number } | null>(null);
   const historyBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== "undefined" && window.innerWidth <= 640
+  );
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 640);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   const historyNodeKey = `node:${node.id}`;
   const historyList = readTerminalInputHistory(historyNodeKey);
@@ -233,6 +245,11 @@ export function SshServerWorkspace({
                   <ChevronLeft size={16} />
                   <span className="back-btn-label">返回列表</span>
                 </button>
+                <div className="ssh-topbar-node-badge">
+                  <Server size={14} className="ssh-topbar-icon" />
+                  <span className="ssh-topbar-name" title={node.name}>{node.name}</span>
+                  <NodeStatusPill status={node.status} />
+                </div>
               </div>
               <div className="terminal-topbar-right">
                 <div className="terminal-topbar-actions">
@@ -254,9 +271,15 @@ export function SshServerWorkspace({
                   </button>
                   <button
                     className="icon-button mini"
-                    title="复制终端选中文本"
+                    title="复制终端选中文本 / 日志"
                     type="button"
-                    onClick={() => activeTerminalActions?.copySelection()}
+                    onClick={() => {
+                      if (activeTerminalActions?.extractOrCopyLogs) {
+                        activeTerminalActions.extractOrCopyLogs();
+                      } else {
+                        activeTerminalActions?.copySelection();
+                      }
+                    }}
                   >
                     <Copy size={15} />
                   </button>
@@ -344,6 +367,7 @@ export function SshServerWorkspace({
                       nodeId={node.id}
                       active={activeTab === tab.id}
                       hideToolbar={true}
+                      onAskSaki={onAskSaki}
                       onMountTerminalActions={activeTab === tab.id ? setActiveTerminalActions : undefined}
                       onStatusChange={
                         activeTab === tab.id
@@ -471,6 +495,8 @@ export function SshServerWorkspace({
                   placeholder={
                     !canViewTerminal
                       ? "无终端访问权限"
+                      : isMobile
+                      ? `发送命令到 ${activeTabItem?.label || "终端"}…`
                       : `输入命令按回车发送到 ${activeTabItem?.label || "终端"}，按 Tab 键自动补全，上下键切换历史`
                   }
                 />
@@ -575,6 +601,20 @@ export function SshServerWorkspace({
                 </div>
                 <span className="action-text">系统信息</span>
               </button>
+
+              {onAskSaki && (
+                <button
+                  type="button"
+                  className="quick-action-square-btn action-saki"
+                  title="向 Saki 咨询或诊断当前服务器"
+                  onClick={() => onAskSaki(`请帮我分析或诊断远程服务器「${node.name}」(${node.host}) 的运行状况。`)}
+                >
+                  <div className="action-icon-circle saki">
+                    <Sparkles size={18} />
+                  </div>
+                  <span className="action-text">问 Saki</span>
+                </button>
+              )}
 
               {onCreateInstance && (
                 <button

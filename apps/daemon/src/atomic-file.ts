@@ -4,6 +4,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { DaemonError } from "./errors.js";
 
 // Serialize panel writes per target and flush a staged file before publishing.
 const writes = new Map<string, Promise<void>>();
@@ -34,7 +35,7 @@ async function publishStagedFile(target: string, createOnly: boolean, stage: (te
       }
       if (expectedSha256 !== undefined && (!/^[a-f0-9]{64}$/.test(expectedSha256)
         || createHash("sha256").update(await fs.readFile(destination)).digest("hex") !== expectedSha256)) {
-        throw Object.assign(new Error("File changed after the Agent edit. Preserve or resolve that edit before undo."), { statusCode: 409 });
+        throw new DaemonError("FILE_EDIT_CONFLICT", "File changed after the Agent edit.", "File changed after the Agent edit. Preserve or resolve it before undo.", 409);
       }
       if (createOnly) {
         try {

@@ -1,3 +1,6 @@
+import { SakiModelPicker } from "../components/saki/SakiModelReasoningPanel.js";
+import { useSakiReasoningEffort } from "../components/saki/useSakiReasoningEffort.js";
+import { sakiReasoningEffortLabel } from "@webops/shared";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
@@ -726,6 +729,7 @@ export function DashboardView({
   const [activeEnvironment, setActiveEnvironment] = useState<"local" | "worktree">("local");
   const [availableModels, setAvailableModels] = useState<SakiModelOption[]>([]);
   const [activeModelKey, setActiveModelKey] = useState<string>("");
+  const [reasoningEffort] = useSakiReasoningEffort(activeModelKey);
   const [interactionMode, setInteractionMode] = useState<"agent" | "chat">(canUseAgent ? "agent" : "chat");
   const authorizedProjects = useMemo(() => {
     const list = instances.filter((instance) =>
@@ -1159,56 +1163,14 @@ export function DashboardView({
         title="切换 AI 模型"
       >
         <Sparkles size={12} className="dashboard-model-sparkle-icon" />
-        <span>{currentModelDisplayName}</span>
+        <span className="dashboard-model-name">{currentModelDisplayName}</span>
+        {reasoningEffort !== "auto" ? <span className="saki-reasoning-trigger-label">{sakiReasoningEffortLabel(reasoningEffort)}</span> : null}
         <ChevronDown size={11} className={`dashboard-model-chevron ${modelDropdownOpen ? "is-open" : ""}`} />
       </button>
 
       {modelDropdownOpen && (
-        <DashboardPopover anchorRef={modelDropdownRef} onClose={() => setModelDropdownOpen(false)} className="dashboard-model-popover" width={340}>
-          <div className="dashboard-dropdown-section-title">
-            可用模型 {availableModels.length > 0 ? `(${availableModels.length})` : ""}
-          </div>
-          {availableModels.length === 0 ? (
-            <div className="dashboard-dropdown-item is-disabled">
-              <span className="dashboard-dropdown-item-desc">正在加载可用模型...</span>
-            </div>
-          ) : (
-            availableModels.map((model) => {
-              const modelKey = sakiModelSelectionKey(model);
-              const isSelected = sakiModelMatchesSelection(model, activeModelKey);
-              return (
-                <button
-                  key={modelKey}
-                  className={`dashboard-dropdown-item ${isSelected ? "is-selected" : ""}`}
-                  type="button"
-                  onClick={() => {
-                    setActiveModelKey(modelKey);
-                    setModelDropdownOpen(false);
-                  }}
-                >
-                  <div className="dashboard-dropdown-item-text">
-                    <div style={{ display: "flex", alignItems: "center" }}>
-                      <span className="dashboard-dropdown-item-title">
-                        {model.label || model.name || model.id}
-                      </span>
-                      {(model.vendor || model.provider) && (
-                        <span className="dashboard-model-vendor-badge">
-                          {model.vendor || model.provider}
-                        </span>
-                      )}
-                      {model.supportsVision && (
-                        <span className="dashboard-model-vision-badge" title="支持视觉分析">
-                          👁
-                        </span>
-                      )}
-                    </div>
-                    <span className="dashboard-dropdown-item-desc">{model.id}</span>
-                  </div>
-                  {isSelected && <Check size={13} className="dashboard-dropdown-check" />}
-                </button>
-              );
-            })
-          )}
+        <DashboardPopover anchorRef={modelDropdownRef} onClose={() => setModelDropdownOpen(false)} className="dashboard-model-popover" width={320}>
+          <SakiModelPicker models={availableModels} currentModelId={activeModelKey} currentModelName={currentModelDisplayName} onSelectModel={setActiveModelKey} />
         </DashboardPopover>
       )}
     </div>
@@ -1968,6 +1930,7 @@ export function DashboardView({
         terminalSandbox: true,
         model: requestedModel || null,
         provider: requestedProvider || null,
+        reasoningEffort,
         history: historyPayload,
         ...(mentionedSkillIds.length > 0 ? { selectedSkillIds: mentionedSkillIds } : {}),
         ...(currentAttachments.length > 0 ? { attachments: currentAttachments } : {})
@@ -2190,6 +2153,7 @@ export function DashboardView({
     },
     [
       activeModelKey,
+      reasoningEffort,
       activeSessionId,
       activeInstanceId,
       workspaceInstanceIds,

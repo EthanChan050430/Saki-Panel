@@ -37,6 +37,7 @@ import { assertSafeRegex } from "../regex-utils.js";
 import { writeTextFileAtomic, writeStreamFileAtomic } from "../atomic-file.js";
 import { inspectExternalFile, readApprovedExternalFile } from "../external-file.js";
 import { captureWorkspaceCheckpoint, finalizeWorkspaceCheckpoint, restoreWorkspaceCheckpoint } from "../workspace-checkpoint.js";
+import { DaemonError } from "../errors.js";
 import type { SakiExternalFileSnapshot } from "@webops/shared";
 
 const maxEditableFileBytes = 1024 * 1024;
@@ -44,7 +45,7 @@ const maxEditableFileBytes = 1024 * 1024;
 async function assertUndoHash(target: string, expected: string | undefined): Promise<void> {
   if (expected === undefined) return;
   if (!/^[a-f0-9]{64}$/.test(expected) || createHash("sha256").update(await fs.readFile(target)).digest("hex") !== expected) {
-    throw Object.assign(new Error("File changed after the Agent edit. Preserve or resolve that edit before undo."), { statusCode: 409 });
+    throw new DaemonError("FILE_EDIT_CONFLICT", "File changed after the Agent edit.", "File changed after the Agent edit. Preserve or resolve it before undo.", 409);
   }
 }
 
@@ -1064,7 +1065,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
     const body = request.body as { path: string; workingDirectory?: string };
     const resolved = body.workingDirectory ? await resolveTarget(body.workingDirectory, body.path) : null;
     const snapshot = await inspectExternalFile(resolved?.target ?? body.path);
-    if (resolved && !isInside(await fs.realpath(resolved.root), snapshot.path)) throw Object.assign(new Error("Path escapes the instance working directory"), { statusCode: 403 });
+    if (resolved && !isInside(await fs.realpath(resolved.root), snapshot.path)) throw new DaemonError("PATH_OUT_OF_BOUNDS", "Path escapes the instance working directory", "Path escapes the instance working directory.", 403);
     return snapshot;
   });
   app.post("/api/agent/external-files/read", { preHandler: authenticatePanelRequest }, async (request) => {

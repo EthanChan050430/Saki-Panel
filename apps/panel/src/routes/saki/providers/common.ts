@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { SakiChatRequest, SakiConfigResponse, SakiModelOption } from "@webops/shared";
+import { normalizeSakiReasoningEffort, type SakiReasoningEffort, type SakiChatRequest, type SakiConfigResponse, type SakiModelOption } from "@webops/shared";
 import { sakiNvidiaDefaultModel } from "@webops/shared";
 import type { SakiModelToolTurn } from "../types.js";
 import {
@@ -28,7 +28,8 @@ import {
   trimString
 } from "../types.js";
 import { openAiToolSchemas } from "../tools.js";
-import { nativeThinkingChatExtras } from "../model-profile.js";
+import { isGlm53Flash, nativeThinkingChatExtras } from "../model-profile.js";
+import { glmPreservedThinkingOptions } from "./prompt-cache.js";
 import { extractProviderUsage, estimateModelCallTokens, mergeModelUsage, modelUsageTotal, type ModelUsage } from "../../../tokenizer.js";
 import { parseToolCallsFromText } from "./catalog.js";
 import { currentAgentTurnConversation } from "../agent-messages.js";
@@ -49,7 +50,8 @@ export function withTurnUsage(
   payload?: unknown,
   includeToolSchemas = false
 ): SakiModelToolTurn {
-  const fromApi = modelUsageTotal(extractProviderUsage(payload));
+  const modelUsage = extractProviderUsage(payload);
+  const fromApi = modelUsageTotal(modelUsage);
   const tokens =
     fromApi ||
     estimateModelCallTokens(
@@ -59,7 +61,7 @@ export function withTurnUsage(
       "gpt-4",
       includeToolSchemas ? JSON.stringify(openAiToolSchemas()) : undefined
     );
-  return { ...turn, ...(tokens > 0 ? { usageTokens: tokens } : {}), ...(modelOutputWasTruncated(payload) ? { truncated: true } : {}) };
+  return { ...turn, ...(modelUsage ? { modelUsage } : {}), ...(tokens > 0 ? { usageTokens: tokens } : {}), ...(modelOutputWasTruncated(payload) ? { truncated: true } : {}) };
 }
 
 export const MAX_RETRIES = 3;
@@ -183,15 +185,22 @@ export function openAiCompatibleChatBody(
   baseUrl: string,
   model: string,
   body: Record<string, unknown>,
-  preferredTemperature: number
+  preferredTemperature: number,
+  reasoningEffort?: SakiReasoningEffort
 ): Record<string, unknown> {
   // These sampling and reasoning defaults belong to this Nemotron model,
   // rather than every model hosted by NVIDIA's OpenAI-compatible API.
   const isNvidiaNemotron = provider === "nvidia" && model.trim().toLowerCase() === sakiNvidiaDefaultModel;
+  const effort = normalizeSakiReasoningEffort(reasoningEffort, model, provider);
+  const explicitThinking = effort !== "auto" && /(?:^|\/)(?:deepseek-|glm-)/i.test(model)
+    ? { thinking: { type: "enabled" } } : {};
   const withThinking = {
     ...(isNvidiaNemotron ? { max_tokens: 65536, reasoning_budget: 16384, top_p: 0.95 } : {}),
     ...body,
-    ...nativeThinkingChatExtras(provider, model)
+    ...nativeThinkingChatExtras(provider, model),
+    ...explicitThinking,
+    ...(isGlm53Flash(model) && currentAgentTurnConversation() ? glmPreservedThinkingOptions(baseUrl) : {}),
+    ...(effort !== "auto" ? { reasoning_effort: effort } : {})
   };
   if (!shouldSendCustomTemperature(provider, baseUrl, model)) return withThinking;
   return { ...withThinking, temperature: isNvidiaNemotron ? 0.6 : preferredTemperature };

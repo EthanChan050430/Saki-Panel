@@ -2,6 +2,14 @@ import { normalizeProviderId } from "./types.js";
 
 export type SakiModelFamily = "claude" | "gpt" | "gemini" | "qwen" | "deepseek" | "glm" | "local" | "copilot" | "generic";
 
+export function isGlm53Flash(model?: string | null): boolean {
+  return /(?:^|\/)glm-5\.3-flash(?:x)?(?:$|[-:])/i.test((model ?? "").trim());
+}
+
+export function prefersStableAgentTools(provider: unknown, model?: string | null): boolean {
+  return sakiModelProfile(provider, model).family === "deepseek" || isGlm53Flash(model);
+}
+
 export interface SakiModelProfile {
   family: SakiModelFamily;
   nativeTools: boolean;
@@ -67,6 +75,7 @@ const nativeThinkingModelPattern =
 export function sakiModelWantsNativeThinking(provider: unknown, model?: string | null): boolean {
   const modelId = (model ?? "").toLowerCase();
   if (!modelId) return false;
+  if (isGlm53Flash(model)) return true;
   const family = sakiModelProfile(provider, model).family;
   if (family === "claude") return /claude-(3-7|sonnet-4|opus-4|haiku-4|4-)/i.test(modelId);
   return nativeThinkingModelPattern.test(modelId);

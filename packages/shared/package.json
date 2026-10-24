@@ -7,6 +7,18 @@
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./command-policy": {
+      "types": "./dist/types/command-policy.d.ts",
+      "import": "./dist/command-policy.js"
+    },
+    "./network-command-policy": {
+      "types": "./dist/types/network-command-policy.d.ts",
+      "import": "./dist/network-command-policy.js"
+    },
+    "./workspace-path": {
+      "types": "./dist/types/workspace-path.d.ts",
+      "import": "./dist/workspace-path.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",

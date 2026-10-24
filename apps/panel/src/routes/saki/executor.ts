@@ -3,6 +3,9 @@ import { createHash } from "node:crypto";
 import { createPatch } from "diff";
 import { applyPatchToContent, parseWorkspacePatch, patchHunkStartLine } from "./patch.js";
 import { renderAgentFileWindow } from "./file-window.js";
+import { optionalTerminalCheckpoint } from "./terminal-checkpoint.js";
+import { serverToolWorkspace } from "./server-tool-policy.js";
+import { wrapSakiCommandWithCwd, quoteAgentShellArgument } from "@webops/shared";
 import type { CreateScheduledTaskRequest, PermissionCode, SakiAgentAction, SakiAgentRiskLevel, SakiChatRequest, SakiInputAttachment, UpdateScheduledTaskRequest } from "@webops/shared";
 import { prisma } from "../../db.js";
 import { assertSakiSessionAccess, hasSakiProjectAccess, sakiProjectPermissions } from "./session-access.js";
@@ -109,6 +112,7 @@ import {
   instanceSettingsSnapshot,
   shouldRequestSakiApproval,
   normalizedAgentToolName,
+  sakiCommandToolNames,
   toolArgs
 } from "./tools.js";
 import { attachIncidentCheckpoint } from "../../watch/incidents.js";
@@ -314,16 +318,17 @@ async function workspaceRootNames(instance: InstanceWithNode): Promise<Set<strin
   return names;
 }
 
-function diagnoseCommandForPath(targetPath: string): string | null {
+function diagnoseCommandForPath(instance: InstanceWithNode, targetPath: string): string | null {
   const ext = path.extname(targetPath).toLowerCase();
-  if (ext === ".py") return `python -m py_compile "${targetPath}"`;
-  if (ext === ".js" || ext === ".mjs" || ext === ".cjs") return `node --check "${targetPath}"`;
-  if (ext === ".json") return `node -e "JSON.parse(require('fs').readFileSync(${JSON.stringify(targetPath)}, 'utf8'))"`;
+  const quote = (value: string) => quoteAgentShellArgument(nodeLooksWindows(instance) ? "powershell" : "posix", value);
+  if (ext === ".py") return `python -m py_compile ${quote(targetPath)}`;
+  if (ext === ".js" || ext === ".mjs" || ext === ".cjs") return `node --check ${quote(targetPath)}`;
+  if (ext === ".json") return `node -e ${quote("JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))")} -- ${quote(targetPath)}`;
   return null;
 }
 
 async function detectDiagnoseCommand(instance: InstanceWithNode, targetPath: string): Promise<string> {
-  const pathCommand = targetPath ? diagnoseCommandForPath(targetPath) : null;
+  const pathCommand = targetPath ? diagnoseCommandForPath(instance, targetPath) : null;
   if (pathCommand && ![".ts", ".tsx", ".mts", ".cts"].includes(path.extname(targetPath).toLowerCase())) {
     return pathCommand;
   }
@@ -331,7 +336,7 @@ async function detectDiagnoseCommand(instance: InstanceWithNode, targetPath: str
     const names = await workspaceRootNames(instance);
     if (names.has("tsconfig.json") || names.has("jsconfig.json")) return "npx tsc --noEmit --pretty false --incremental false";
     if (names.has("pyproject.toml") || names.has("requirements.txt") || names.has("setup.py")) {
-      return targetPath ? `python -m py_compile "${targetPath}"` : "python -m compileall -q .";
+      return targetPath ? diagnoseCommandForPath(instance, targetPath) || "python -m compileall -q ." : "python -m compileall -q .";
     }
     if (names.has("Cargo.toml")) return "cargo check --quiet";
     if (names.has("go.mod")) return "go vet ./...";
@@ -376,7 +381,7 @@ function coerceEditsArray(value: unknown): unknown[] {
 }
 
 function nodeLooksWindows(instance: InstanceWithNode): boolean {
-  return /win/i.test(instance.node.os ?? "") || /^[A-Za-z]:[\\/]|^\\\\/.test(instance.workingDirectory);
+  return /^(?:win32|win64|windows|winnt)(?:\b|_)/i.test(instance.node.os ?? "") || /^[A-Za-z]:[\\/]|^\\\\/.test(instance.workingDirectory);
 }
 
 async function updateInstanceFromDaemonState(instance: InstanceWithNode, state: { status: string; exitCode?: number | null | undefined }) {
@@ -1175,7 +1180,7 @@ export async function executeSakiAgentTool(
   call: ParsedToolCall,
   options: { approved?: boolean; actionId?: string; pendingResume?: SakiAgentResumeState; externalRead?: PreparedExternalRead; mutationLocked?: boolean } = {}
 ): Promise<SakiAgentAction> {
-  if (!options.mutationLocked && /^(writefile|replaceinfile|editlines|batchedit|applypatch|uploadbase64|deletepath|renamepath|mkdir|generateimage|archivepaths|extractarchive|runcommand|runinshell|sendshellinput)$/.test(normalizedAgentToolName(call.name))) {
+  if (!options.mutationLocked && /^(writefile|replaceinfile|editlines|batchedit|applypatch|uploadbase64|deletepath|renamepath|mkdir|generateimage|archivepaths|extractarchive|runcommand|runinshell|diagnosecode|sendshellinput)$/.test(normalizedAgentToolName(call.name))) {
     const args = toolArgs(call);
     const selected = runtime.context.instances ? selectedWorkspaceTarget(runtime.context, stringArg(args, "instanceId") || stringArg(args, "instance") || stringArg(args, "id")) : null;
     return withSakiWorkspaceMutation(selected?.id ?? runtime.context.instance?.id ?? String(args.instanceId ?? "global"),
@@ -1183,7 +1188,7 @@ export async function executeSakiAgentTool(
   }
   const initiatingRuntime = runtime;
   const tool = call.name.trim();
-  const toolName = tool.toLowerCase();
+  const toolName = normalizedAgentToolName(tool);
   const startedAt = new Date().toISOString();
   let ok = true;
   let observation = "";
@@ -1204,7 +1209,20 @@ export async function executeSakiAgentTool(
 
     try {
       runtime = await authorizeSakiTool(runtime, call, args);
+      if (toolName === "diagnosecode") {
+        const instance = await resolveAgentInstance(runtime, args);
+        args.command = stringArg(args, "command") || await detectDiagnoseCommand(instance, safeRelativePath(args.path));
+        args.timeoutMs ??= 20000;
+        if (/\b(?:npm|pnpm|yarn|bun)\s+(?:test|run\s+test)\b/i.test(stringArg(args, "command"))) {
+          throw new RouteError("diagnoseCode is a fast syntax/typecheck. Use runCommand for test suites.", 400);
+        }
+      }
       assertSakiPermissionModeAllowsTool(runtime, toolName, args);
+      if (sakiCommandToolNames.has(toolName) && toolName !== "runservercommand" && isAgentSandboxEnabled(runtime)) {
+        const target = await resolveAgentInstance(runtime, args);
+        const escape = findCrossInstanceCommandEscape(stringArg(args, "command"), target.workingDirectory, isPosixCommandPlatform(target.node.os));
+        if (escape) throw new RouteError(`终端命令包含工作区外路径（${escape}）。请使用工作区内路径，或为外部文件申请单次读取审批。`, 403);
+      }
       assertToolProfileAllowsTool(runtime, toolName);
       assertWatchToolAllowed(runtime, toolName, args);
       if (normalizedAgentToolName(toolName) === "askuser") {
@@ -1276,11 +1294,19 @@ export async function executeSakiAgentTool(
         if (!command) throw new RouteError("runServerCommand requires a command.", 400);
         const node = await resolveAgentServerNode(runtime, args);
         const timeoutMs = numericArg(args.timeoutMs, 30000, 1000, 120000);
+        let submittedCommand = command;
+        if (isAgentSandboxEnabled(runtime)) {
+          const workspace = serverToolWorkspace(runtime.context, node.id);
+          const escape = findCrossInstanceCommandEscape(command, workspace.workingDirectory, isPosixCommandPlatform(node.os));
+          if (escape) throw new RouteError(`终端命令包含工作区外路径（${escape}）。`, 403);
+          if (!isPosixCommandPlatform(node.os)) throw new RouteError("此节点请使用 runCommand，在守护进程确定的终端类型下执行。", 400);
+          submittedCommand = wrapSakiCommandWithCwd("posix", workspace.workingDirectory, command);
+        }
         if (node.protocol === "ssh") {
           const settings = await readSettings(node.id);
           const { client } = await connect(settings);
           try {
-            const output = await execSsh(client, command, timeoutMs);
+            const output = await execSsh(client, submittedCommand, timeoutMs);
             observation = output || "(Command completed with no output)";
           } finally {
             client.end();
@@ -1292,7 +1318,9 @@ export async function executeSakiAgentTool(
         requireUserPermission(runtime.permissions, "file.view");
         requireUserPermission(runtime.permissions, "node.view");
         const node = await resolveAgentServerNode(runtime, args);
-        const queryP = stringArg(args, "path") ?? "";
+        const workspace = serverToolWorkspace(runtime.context, node.id);
+        await authorizeSakiTool(initiatingRuntime, { name: "listFiles", args: { instanceId: workspace.id } }, { instanceId: workspace.id });
+        const queryP = resolveSshInstancePath(workspace, safeRelativePath(args.path, workspace.workingDirectory));
         const limit = numericArg(args.limit, 200, 1, 1000);
         if (node.protocol === "ssh") {
           const files = await listSshFiles(node.id, queryP, { limit });
@@ -1307,8 +1335,10 @@ export async function executeSakiAgentTool(
         requireUserPermission(runtime.permissions, "file.read");
         requireUserPermission(runtime.permissions, "node.view");
         const node = await resolveAgentServerNode(runtime, args);
-        const queryP = stringArg(args, "path");
-        if (!queryP) throw new RouteError("readServerFile requires path.", 400);
+        if (!stringArg(args, "path")) throw new RouteError("readServerFile requires path.", 400);
+        const workspace = serverToolWorkspace(runtime.context, node.id);
+        await authorizeSakiTool(initiatingRuntime, { name: "readFile", args: { instanceId: workspace.id } }, { instanceId: workspace.id });
+        const queryP = resolveSshInstancePath(workspace, safeRelativePath(args.path, workspace.workingDirectory));
         const startLine = numericArg(args.startLine, 1, 1, 1_000_000);
         const lineCount = numericArg(args.lineCount, defaultAgentReadFileLineCount, 1, maxAgentReadFileLineCount);
         if (node.protocol === "ssh") {
@@ -1650,7 +1680,9 @@ export async function executeSakiAgentTool(
           ...(conflictPolicy ? { conflictPolicy } : {})
         });
         observation = `Success: extracted ${result.archivePath} to ${result.outputPath} (${result.extractedCount} files, skipped ${result.skippedCount}, overwrote ${result.overwrittenCount}, ${result.totalBytes} bytes).`;
-      } else if (toolName === "runcommand" || toolName === "runinshell") {
+      } else if (toolName === "diagnosecode" && !stringArg(args, "command")) {
+        observation = "No fast diagnostic command is available for this workspace. No validation was run; choose an explicit check with runCommand.";
+      } else if (toolName === "runcommand" || toolName === "runinshell" || toolName === "diagnosecode") {
         requireUserPermission(runtime.permissions, "terminal.input");
         const instance = await resolveAgentInstance(runtime, args);
         const command = stringArg(args, "command");
@@ -1664,8 +1696,13 @@ export async function executeSakiAgentTool(
           }
         }
         const checkpointEnabled = ["file.read", "file.write", "file.delete"].every((code) => runtime.permissions.includes(code as PermissionCode));
-        const readOnlyCommand = commandRisk.risk === "low" && commandRisk.readOnly && !optionalCommandInputArg(args);
-        const snapshot = checkpointEnabled && !readOnlyCommand ? await captureDaemonWorkspaceCheckpoint(instance.node, instance.id, instance.workingDirectory) : undefined;
+        const readOnlyCommand = commandRisk.readOnly && !optionalCommandInputArg(args);
+        const checkpointWarnings: string[] = [];
+        const captured = checkpointEnabled && !readOnlyCommand
+          ? await optionalTerminalCheckpoint(() => captureDaemonWorkspaceCheckpoint(instance.node, instance.id, instance.workingDirectory), "capture")
+          : undefined;
+        if (captured?.warning) checkpointWarnings.push(captured.warning);
+        const snapshot = captured?.value;
         if (snapshot) {
           checkpoint = { id: checkpointId(), type: "workspace", instanceId: instance.id, workspaceBinding: bindSakiWorkspace(instance), snapshotId: snapshot.snapshotId, actionId: currentActionId, createdAt: new Date().toISOString() };
           await persistCheckpoint(runtime, checkpoint);
@@ -1693,9 +1730,16 @@ export async function executeSakiAgentTool(
           }
         } finally {
           if (snapshot) {
-            const finalized = await finalizeDaemonWorkspaceCheckpoint(instance.node, instance.id, instance.workingDirectory, snapshot.snapshotId);
-            if (finalized.changedCount === 0 && checkpoint) { await removeCheckpoint(checkpoint.id); checkpoint = null; terminalNoFileChanges = true; }
+            const finalized = await optionalTerminalCheckpoint(() => finalizeDaemonWorkspaceCheckpoint(instance.node, instance.id, instance.workingDirectory, snapshot.snapshotId), "finalize");
+            if (finalized.warning) checkpointWarnings.push(finalized.warning);
+            if ((!finalized.value || finalized.value.changedCount === 0) && checkpoint) {
+              await removeCheckpoint(checkpoint.id);
+              checkpoint = null;
+              terminalNoFileChanges = finalized.value?.changedCount === 0;
+            }
           }
+          // Preserve the command's result (or original failure), even if the undo scan failed.
+          if (checkpointWarnings.length) observation += `\n${checkpointWarnings.join("\n")}`;
         }
         if (readOnlyCommand && ok) terminalNoFileChanges = true;
         if (!checkpointEnabled && !readOnlyCommand) observation += "\nFile undo is unavailable for this terminal call: the account lacks workspace read/write/delete permissions.";
@@ -2027,44 +2071,6 @@ export async function executeSakiAgentTool(
         observation = `Success: wrote project memory to SAKI.md (${file.size} bytes).${formatSanitizedWriteNote(sanitized.removed)}`;
       } else if (toolName === "reportprogress") {
         observation = rawStringArg(args, "text");
-      } else if (toolName === "diagnosecode" || toolName === "diagnostics" || toolName === "checktypes" || toolName === "typecheck" || toolName === "lintcode") {
-        requireUserPermission(runtime.permissions, "terminal.input");
-        const instance = await resolveAgentInstance(runtime, args);
-        const customCmd = stringArg(args, "command");
-        const targetPath = safeRelativePath(args.path);
-        const checkCommand = customCmd || (await detectDiagnoseCommand(instance, targetPath));
-        if (checkCommand && /\b(?:npm|pnpm|yarn|bun)\s+(?:test|run\s+test)\b/i.test(checkCommand)) {
-          throw new RouteError("diagnoseCode is a fast syntax/typecheck. Do not pass test-suite commands.", 400);
-        }
-        if (!checkCommand) {
-          observation = "No fast diagnostic command for this workspace (no tsconfig/pyproject/Cargo.toml/go.mod, and no JS/Python/JSON path). Treat diagnostics as clean and continue.";
-        } else {
-          try {
-            const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
-              command: checkCommand,
-              workingDirectory: instance.workingDirectory,
-              timeoutMs: 20000,
-              logToInstance: false
-            }, currentAgentAbortSignal());
-
-            const outputText = [runResult.stdout, runResult.stderr].filter(Boolean).join("\n").trim();
-            if (runResult.exitCode === 0) {
-              observation = `Diagnostics clean: '${checkCommand}' passed with exit code 0. No syntax or type errors detected.`;
-            } else {
-              ok = false;
-              observation = [
-                `Diagnostics found errors (command: '${checkCommand}', exit code ${runResult.exitCode}):`,
-                "",
-                outputText || "(command failed with non-zero exit code without stdout/stderr)",
-                "",
-                "Tip: Use the file paths and line numbers above to fix errors with editLines or replaceInFile."
-              ].join("\n");
-            }
-          } catch (err) {
-            ok = false;
-            observation = `Diagnostics command '${checkCommand}' could not complete: ${err instanceof Error ? err.message : String(err)}`;
-          }
-        }
       } else if (toolName === "managetodos" || toolName === "settodos" || toolName === "todos" || toolName === "updatetodos") {
         const todos = rawStringArg(args, "todos") || rawStringArg(args, "list");
         if (!todos) throw new RouteError("manageTodos requires a todos markdown list (e.g. '- [ ] Step 1\\n- [x] Step 2').", 400);
@@ -2314,7 +2320,7 @@ export async function executeSakiAgentTool(
         const instance = await resolveAgentInstance(runtime, args);
         const targetPath = safeRelativePath(args.path);
         const staged = booleanArg(args, "staged", false) ? " --staged" : "";
-        const command = `git diff${staged}${targetPath ? ` -- "${targetPath}"` : ""}`;
+        const command = `git diff${staged}${targetPath ? ` -- ${quoteAgentShellArgument(nodeLooksWindows(instance) ? "powershell" : "posix", targetPath)}` : ""}`;
         const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
           command,
           workingDirectory: instance.workingDirectory,
@@ -2334,7 +2340,7 @@ export async function executeSakiAgentTool(
           observation = `${cachedEnv.text}\n\n[cached environment probe]`;
         } else {
           const probeCmd = nodeLooksWindows(instance)
-            ? "echo OS=%OS% ARCH=%PROCESSOR_ARCHITECTURE% & node -v & npm -v & git --version"
+            ? "[System.Environment]::OSVersion.VersionString; node -v; npm -v; git --version"
             : "uname -srm; node -v; npm -v; git --version";
           const runResult = await runDaemonInstanceCommand(instance.node, instance.id, {
             command: probeCmd,

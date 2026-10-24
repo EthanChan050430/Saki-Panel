@@ -1,4 +1,6 @@
 import React from "react";
+import { useSakiReasoningEffort } from "../useSakiReasoningEffort.js";
+import { sakiReasoningEffortLabel } from "@webops/shared";
 import {
   ArrowRight,
   CheckCircle2,
@@ -200,6 +202,7 @@ export const SakiComposer = React.memo(function SakiComposer({
   hasActiveInstance,
   token
 }: SakiComposerProps) {
+  const [reasoningEffort] = useSakiReasoningEffort(currentModelId);
   const placeholder = attachments.length > 0
     ? "输入 @ 引用已上传的文件或 Skill"
     : mode === "agent" && permissionMode === "plan"
@@ -670,6 +673,7 @@ export const SakiComposer = React.memo(function SakiComposer({
                       return seg.split(/[-\s]/).slice(0, 2).join("-");
                     })()}
                   </span>
+                  {reasoningEffort !== "auto" ? <span className="saki-reasoning-trigger-label">{sakiReasoningEffortLabel(reasoningEffort)}</span> : null}
                   <ChevronDown size={10} className="model-chevron" />
                 </button>
               </div>

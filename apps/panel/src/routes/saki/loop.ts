@@ -45,6 +45,7 @@ import { isContextOverflowError } from "./providers/common.js";
 import { webVerificationBlockReason } from "./web-policy.js";
 import { buildAgentGitNote, buildAgentPrompt, buildAgentUserTurn, buildAgentWorkspacePrefix, buildStaticAgentSystemPrompt, sakiFileToolGuidance, sakiUserQuestionGuidance } from "./prompt.js";
 import {
+  appendAgentToolObservation,
   compactAgentTurnMessages,
   closeInterruptedToolCalls,
   ensureToolCallId,
@@ -1102,20 +1103,12 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
       return finishAgentResponse(action.status, finalMessage);
     }
     const observation = observationForAgentPrompt(action);
-    if (cacheHit) {
-      for (let index = 0; index < turnMessages.length; index++) {
-        const previous = turnMessages[index]!;
-        if (previous.role === "tool" && previous.name === call.name && previous.content === observation) {
-          turnMessages[index] = { ...previous, content: "Identical observation is retained in the latest tool result below; this earlier result is superseded." };
-        }
-      }
-    }
-    turnMessages.push({
+    appendAgentToolObservation(turnMessages, {
       role: "tool",
       toolCallId: ensureToolCallId(call),
       name: call.name,
       content: observation
-    });
+    }, cacheHit && action.ok && cacheableReadOnlyAgentToolNames.has(normalizedAgentToolName(call.name)));
     agentScratchpadEntries.push(`\nAssistant: ${renderToolCall(call)}\nObservation:\n${observationForAgentPrompt(action)}\n`);
     rebuildCurrentPrompt();
 

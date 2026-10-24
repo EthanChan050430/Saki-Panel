@@ -1,3 +1,5 @@
+import { SakiModelPicker } from "../SakiModelReasoningPanel.js";
+import { DashboardPopover } from "../../dashboard/DashboardPopover.js";
 import React from "react";
 import { createPortal } from "react-dom";
 import {
@@ -7,25 +9,15 @@ import {
   Eye,
   ImageIcon,
   Paperclip,
-  ScanEye,
   Shield,
-  ShieldCheck,
   XOctagon
 } from "lucide-react";
 import { LiquidGlassContainer } from "../../common/LiquidGlass.js";
 import {
-  sakiListedModelSupportsVision,
-  sakiModelMatchesSelection,
-  sakiModelSelectionKey,
   type SakiAgentPermissionMode,
   type SakiModelOption
 } from "@webops/shared";
-import {
-  formatSakiModelMultiplier,
-  resolveSakiModelPointsMultiplier,
-  type SakiModelPointsMultiplierMap
-} from "../sakiChatHelpers.js";
-import { usePanelLanguage } from "../../../i18n/index.js";
+import type { SakiModelPointsMultiplierMap } from "../sakiChatHelpers.js";
 
 export interface SakiChatDropdownsProps {
   // Add menu
@@ -56,6 +48,7 @@ export interface SakiChatDropdownsProps {
   modelPointsMultipliers?: SakiModelPointsMultiplierMap;
   language: string;
   onSelectModel: (modelId: string) => void;
+  onCloseModelDropdown: () => void;
 }
 
 export const SakiChatDropdowns = React.memo(function SakiChatDropdowns({
@@ -81,9 +74,9 @@ export const SakiChatDropdowns = React.memo(function SakiChatDropdowns({
   currentModelId,
   modelPointsMultipliers,
   language,
-  onSelectModel
+  onSelectModel,
+  onCloseModelDropdown
 }: SakiChatDropdownsProps) {
-  const { t } = usePanelLanguage();
   return (
     <>
       {sakiAddMenuOpen && sakiAddBtnRef.current
@@ -233,63 +226,10 @@ export const SakiChatDropdowns = React.memo(function SakiChatDropdowns({
         : null}
 
       {modelDropdownOpen && modelSelectorRef.current
-        ? createPortal(
-            <LiquidGlassContainer
-              ref={modelDropdownRef}
-              className="saki-model-dropdown-wrapper"
-              style={{
-                position: "fixed",
-                left: modelSelectorRef.current.getBoundingClientRect().left,
-                bottom: window.innerHeight - modelSelectorRef.current.getBoundingClientRect().top + 8
-              }}
-              cornerRadius={12}
-              displacementScale={100}
-              zoom={1.20}
-              refractionIntensity={1.2}
-              blurAmount={16}
-              saturation={108}
-              mode="shader"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="saki-model-dropdown">
-                {availableModels.map((model) => {
-                  const supportsVision = sakiListedModelSupportsVision(model);
-                  const multiplier = resolveSakiModelPointsMultiplier(modelPointsMultipliers, model);
-                  const multiplierText =
-                    multiplier === 0
-                      ? t("common.free")
-                      : formatSakiModelMultiplier(multiplier);
-                  return (
-                    <button
-                      key={sakiModelSelectionKey(model)}
-                      className={`saki-model-option ${sakiModelMatchesSelection(model, currentModelId) ? "active" : ""}`}
-                      type="button"
-                      onClick={() => {
-                        onSelectModel(sakiModelSelectionKey(model));
-                      }}
-                    >
-                      <span className="saki-model-option-name">{model.label || model.id}</span>
-                      <span className="saki-model-option-meta">
-                        <span
-                          className={`saki-model-multiplier ${multiplier === 0 ? "free" : multiplier !== 1 ? "custom" : ""}`}
-                          title={t("saki.chat.pointsMultiplier")}
-                        >
-                          {multiplierText}
-                        </span>
-                        {supportsVision ? (
-                          <span className="saki-model-vision-icon" title={t("saki.chat.supportsVision")} aria-label={t("saki.chat.supportsVision")}>
-                            <ScanEye size={14} />
-                          </span>
-                        ) : null}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </LiquidGlassContainer>,
-            document.body
-          )
+        ? <DashboardPopover anchorRef={modelSelectorRef} popoverRef={modelDropdownRef} onClose={onCloseModelDropdown}
+              className="saki-model-dropdown-wrapper saki-reasoning-popover" width={320}>
+              <SakiModelPicker models={availableModels} currentModelId={currentModelId} onSelectModel={onSelectModel} modelPointsMultipliers={modelPointsMultipliers} />
+            </DashboardPopover>
         : null}
     </>
   );

@@ -1,3 +1,4 @@
+import { useSakiReasoningEffort } from "./useSakiReasoningEffort.js";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ConversationSyncQueue } from "./conversation-sync.js";
 import { prepareSakiTaskReplay, taskAssistantMessageId } from "./task-messages.js";
@@ -906,6 +907,7 @@ export function SakiFloatingChat({
     }, 4500);
   }
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [reasoningEffort] = useSakiReasoningEffort(currentModelId);
   const [modelPointsMultipliers, setModelPointsMultipliers] = useState<Record<string, number>>({});
   const [permissionDropdownOpen, setPermissionDropdownOpen] = useState(false);
   const [sakiAddMenuOpen, setSakiAddMenuOpen] = useState(false);
@@ -3522,6 +3524,7 @@ export function SakiFloatingChat({
       ...(requestMode === "agent" ? { agentPermissionMode: permissionMode, terminalSandbox } : { terminalSandbox }),
       selectedSkillIds: effectiveSelectedSkillIds,
       attachments: submittedAttachments,
+      reasoningEffort,
       ...(currentModelId.trim() ? parseSakiModelSelection(currentModelId) : {})
     };
     if (requestMode === "agent") {
@@ -4860,6 +4863,7 @@ export function SakiFloatingChat({
       terminalSandbox={terminalSandbox}
       onToggleTerminalSandbox={handleToggleTerminalSandbox}
       modelDropdownOpen={modelDropdownOpen}
+      onCloseModelDropdown={() => setModelDropdownOpen(false)}
       modelSelectorRef={modelSelectorRef}
       modelDropdownRef={modelDropdownRef}
       availableModels={availableModels}

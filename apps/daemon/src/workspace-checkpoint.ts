@@ -4,6 +4,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { daemonPaths } from "./config.js";
 import { writeTextFileAtomic } from "./atomic-file.js";
+import { DaemonError } from "./errors.js";
 
 type Entry = { kind: "directory" } | { kind: "link"; hash: string } | { kind: "file"; hash: string; content: string; mode: number };
 type Tree = Record<string, Entry>;
@@ -17,7 +18,8 @@ interface Snapshot {
 const omitted = new Set([".git", "node_modules", ".venv", "venv", ".webops-saki-trash"]);
 const maxBytes = 100 * 1024 * 1024;
 const maxEntries = 20000;
-const problem = (message: string) => Object.assign(new Error(message), { statusCode: 409 });
+// Expected conflicts must retain their actionable reason in production responses.
+const problem = (message: string) => new DaemonError("WORKSPACE_CHECKPOINT_FAILED", message, message, 409);
 const storage = () => path.join(daemonPaths.dataDir, "agent-workspace-checkpoints");
 const snapshotPath = (id: string) => {
   if (!/^[a-f0-9-]{36}$/.test(id)) throw problem("Invalid workspace checkpoint.");

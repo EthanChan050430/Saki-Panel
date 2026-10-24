@@ -58,7 +58,17 @@ async function readDistTypes() {
 async function sourceIsNewerThanDist() {
   try {
     const [srcStat, distStat] = await Promise.all([stat(sharedSource), stat(sharedTypes)]);
-    return srcStat.mtimeMs > distStat.mtimeMs;
+    if (srcStat.mtimeMs > distStat.mtimeMs) return true;
+    // Server-only policy subpaths must be refreshed even when index.ts did not change.
+    for (const name of ["command-policy", "network-command-policy", "workspace-path", "terminal"]) {
+      const [source, runtime, declaration] = await Promise.all([
+        stat(path.join(rootDir, "packages/shared/src", `${name}.ts`)),
+        stat(path.join(rootDir, "packages/shared/dist", `${name}.js`)),
+        stat(path.join(rootDir, "packages/shared/dist/types", `${name}.d.ts`))
+      ]);
+      if (source.mtimeMs > runtime.mtimeMs || source.mtimeMs > declaration.mtimeMs) return true;
+    }
+    return false;
   } catch {
     return true;
   }

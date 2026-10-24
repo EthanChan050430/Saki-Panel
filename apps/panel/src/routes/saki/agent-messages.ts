@@ -20,6 +20,8 @@ export interface SakiAgentTurnMessage {
   toolCallId?: string;
   name?: string;
   assistantState?: SakiAssistantState;
+  /** Local-only reference; expanded before compaction can remove its source. */
+  toolResultReference?: string;
 }
 
 export interface SakiAgentTurnConversation {
@@ -327,11 +329,39 @@ ${JSON.stringify(advertisedSakiToolSchemas().map(({ name, description, parameter
   return buildDirectMessages(input, prompt, `${buildDirectSystemPrompt(config)}\n\n${toolInstructions}`);
 }
 
+export function appendAgentToolObservation(messages: SakiAgentTurnMessage[], message: SakiAgentTurnMessage, cacheHit = false): void {
+  if (cacheHit && message.role === "tool" && message.content.length > 256) {
+    const source = messages.find((previous) => previous.role === "tool" && previous.toolCallId
+      && !previous.toolResultReference && previous.name?.toLowerCase() === message.name?.toLowerCase()
+      && previous.content === message.content);
+    if (source?.toolCallId) {
+      const resultNumber = messages.slice(0, messages.indexOf(source) + 1).filter((previous) => previous.role === "tool").length;
+      const content = `Cached result unchanged. Reuse tool result #${resultNumber} above (${source.name}, call ${source.toolCallId}).`;
+      if (content.length < message.content.length) {
+        messages.push({ ...message, content, toolResultReference: source.toolCallId });
+        return;
+      }
+    }
+  }
+  messages.push(message);
+}
+
 export function compactAgentTurnMessages(messages: SakiAgentTurnMessage[], maxChars = 60000): SakiAgentTurnMessage[] {
   const sizeOf = (message: SakiAgentTurnMessage) => message.content.length
     + (message.toolCalls ? JSON.stringify(message.toolCalls).length : 0)
     + (message.assistantState ? JSON.stringify(message.assistantState).length : 0);
   if (messages.reduce((sum, message) => sum + sizeOf(message), 0) <= maxChars) return messages;
+  // Leave headroom so a small new observation does not rewrite the cached
+  // history again on every turn. Protected messages can exceed this target.
+  const targetChars = Math.floor(maxChars * 0.75);
+  const observations = new Map(messages.filter((message) => message.role === "tool" && !message.toolResultReference)
+    .map((message) => [message.toolCallId, message.content]));
+  messages = messages.map((message) => {
+    if (!message.toolResultReference) return message;
+    const { toolResultReference, ...rest } = message;
+    return { ...rest, content: observations.get(toolResultReference)
+      ?? "Previous cached observation is no longer available. Read again with refresh=true if needed." };
+  });
   const excerpt = (content: string, limit: number) => {
     if (content.length <= limit) return content;
     const marker = `\n... [compacted ${content.length - limit} chars; middle omitted] ...\n`;
@@ -349,7 +379,7 @@ export function compactAgentTurnMessages(messages: SakiAgentTurnMessage[], maxCh
       content: excerpt(message.content, limit)
     };
   });
-  if (compacted.reduce((sum, message) => sum + sizeOf(message), 0) <= maxChars || compacted.length < 2) return compacted;
+  if (compacted.reduce((sum, message) => sum + sizeOf(message), 0) <= targetChars || compacted.length < 2) return compacted;
 
   // Summarize only complete protocol groups, including large historical write
   // arguments/reasoning. Keep the original goal and any unconfirmed calls.
@@ -393,7 +423,8 @@ export function compactAgentTurnMessages(messages: SakiAgentTurnMessage[], maxCh
     }
   }
   for (let cursor = 0; cursor <= groups.length; cursor++) {
-    if (remainingSize + (summaries.length ? summary().content.length : 0) <= maxChars) break;
+    const limit = cursor === groups.length ? maxChars : targetChars;
+    if (remainingSize + (summaries.length ? summary().content.length : 0) <= limit) break;
     const index = cursor === groups.length ? lastAssistant : cursor;
     if (index < 0 || (index === lastAssistant && cursor !== groups.length)) continue;
     const group = groups[index]!;

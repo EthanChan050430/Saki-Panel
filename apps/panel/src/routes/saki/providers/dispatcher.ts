@@ -184,6 +184,14 @@ export async function callConfiguredAgentTurnUnfiltered(
       timeoutMs: config.requestTimeoutMs,
       promptChars: prompt.length,
       contentChars: turn.content.length,
+      ...(turn.modelUsage ? {
+        promptTokens: turn.modelUsage.promptTokens,
+        completionTokens: turn.modelUsage.completionTokens,
+        ...(turn.modelUsage.cachedPromptTokens !== undefined ? {
+          cachedPromptTokens: turn.modelUsage.cachedPromptTokens,
+          uncachedPromptTokens: Math.max(0, turn.modelUsage.promptTokens - turn.modelUsage.cachedPromptTokens)
+        } : {})
+      } : {}),
       toolCalls: turn.toolCalls.map((call) => call.name),
       durationMs: Date.now() - startedAt
     });

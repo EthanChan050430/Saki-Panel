@@ -2,10 +2,11 @@ import fs from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 import type { SakiExternalFileSnapshot } from "@webops/shared";
+import { DaemonError } from "./errors.js";
 
 const maxBytes = 1024 * 1024;
 function reject(message: string): never {
-  throw Object.assign(new Error(message), { statusCode: 409 });
+  throw new DaemonError("EXTERNAL_READ_REJECTED", message, message, 409);
 }
 
 export async function inspectExternalFile(filePath: string): Promise<SakiExternalFileSnapshot> {
@@ -49,7 +50,9 @@ export async function readApprovedExternalFile(snapshot: SakiExternalFileSnapsho
       length += read.bytesRead;
     }
     if (length !== snapshot.size || !matches(await handle.stat({ bigint: true }))) reject("File changed while reading.");
-    const content = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, length));
+    let content: string;
+    try { content = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, length)); }
+    catch { reject("Only UTF-8 text files are supported."); }
     if (content.includes("\0")) reject("Binary files are not supported.");
     const lines = content.split(/\r?\n/);
     if (content.endsWith("\n")) lines.pop();

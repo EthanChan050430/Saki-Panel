@@ -18,13 +18,16 @@ export const sakiToolPermissions: Record<string, PermissionCode> = {
 };
 
 // Until there is OS process isolation, text filtering cannot confine these tools.
-export const sakiHostExecutionTools = new Set(["runcommand", "runinshell", "sendinput", "sendcommand", "sendshellinput", "createshell", "diagnosecode", "getenvironmentinfo", "gitstatus", "gitdiff", "instanceaction", "runtask", "createscheduledtask", "updatescheduledtask", "runservercommand"]);
+export const sakiHostExecutionTools = new Set(["runcommand", "runinshell", "sendinput", "sendcommand", "sendshellinput", "createshell", "closeshell", "diagnosecode", "getenvironmentinfo", "gitstatus", "gitdiff", "instanceaction", "runtask", "createscheduledtask", "updatescheduledtask", "runservercommand"]);
 const readsBeforeMutation = new Set(["replaceinfile", "editlines", "applypatch", "batchedit", "uploadbase64", "archivepaths", "extractarchive"]);
 
 export function requiredSakiToolPermissions(name: string, args: Record<string, unknown> = {}): PermissionCode[] {
   const required = name === "instanceaction" ? [`instance.${String(args.action ?? "")}` as PermissionCode]
     : sakiToolPermissions[name] ? [sakiToolPermissions[name]!] : [];
   if (readsBeforeMutation.has(name) || (name === "writefile" && (args.overwrite === true || args.append === true))) required.push("file.read");
+  if (["runservercommand", "listserverfiles", "readserverfile"].includes(name)) required.push("node.view");
+  if (["runcommand", "runinshell", "diagnosecode", "createshell", "closeshell", "sendshellinput"].includes(name)) required.push("terminal.view");
+  if (name === "createshell") required.push("terminal.input");
   // Saving an image overwrites a file and captures its previous contents for rollback.
   if (name === "generateimage" && typeof args.path === "string" && args.path.trim()) required.push("file.write", "file.read");
   if (name === "applypatch" && typeof args.patch === "string" && parseWorkspacePatch(args.patch).some((file) => file.kind === "delete")) required.push("file.delete");

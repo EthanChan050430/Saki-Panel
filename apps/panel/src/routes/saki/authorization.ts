@@ -32,7 +32,7 @@ export async function authorizeSakiTool(runtime: SakiAgentRuntime, call: ParsedT
   if (context && context.workingDirectory !== runtime.context.instance?.workingDirectory) throw new RouteError("Workspace changed. Start a new request.", 409);
   if (context && runtime.context.instance) assertSakiWorkspaceBinding(context, bindSakiWorkspace(runtime.context.instance));
   let target = context;
-  const lookup = stringArg(args, "instanceId") || stringArg(args, "instance") || stringArg(args, "id");
+  const lookup = hasInstanceParameter ? stringArg(args, "instanceId") || stringArg(args, "instance") || stringArg(args, "id") : "";
   if (instances) {
     target = selectedWorkspaceTarget(selectedContext, lookup);
   } else if (lookup) {

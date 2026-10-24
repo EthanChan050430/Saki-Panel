@@ -20,6 +20,12 @@ export function sakiProjectPermissions(user: CurrentUser, instance: InstanceWith
   return override === null ? permissions : permissions.filter((permission) => !isInstanceAssignablePermission(permission) || override.includes(permission));
 }
 
+/** Tool discovery uses all explicitly selected projects; execution still checks one target. */
+export function sakiWorkspacePermissions(user: CurrentUser, active: InstanceWithAccess | null, selected?: InstanceWithAccess[], credentialPermissions: readonly PermissionCode[] = user.permissions): PermissionCode[] {
+  if (!selected) return sakiProjectPermissions(user, active, credentialPermissions);
+  return [...new Set(selected.flatMap(instance => sakiProjectPermissions(user, instance, credentialPermissions)))];
+}
+
 /** Replayed output and resumed model context require current authority too. */
 export async function assertSakiSessionAccess(userId: string, instanceId: string | null, mode: "agent" | "chat" = "agent") {
   const user = isAuthDisabled() ? await loadAuthDisabledCurrentUser() : await loadCurrentUser(userId);

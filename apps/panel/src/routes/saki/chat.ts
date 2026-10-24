@@ -13,7 +13,7 @@ import type {
 import { sakiListedModelSupportsVision, normalizeSakiWorkspaceIds, resolveSakiMentionedSkills, parseSakiWorkspaceFileMentions } from "@webops/shared";
 import { writeAuditLog } from "../../audit.js";
 import { readDaemonInstanceFile, readDaemonInstanceLogs } from "../../daemon-client.js";
-import { assertSakiSessionAccess, assertSakiSelectedWorkspaces, sakiProjectPermissions } from "./session-access.js";
+import { assertSakiSessionAccess, assertSakiSelectedWorkspaces, sakiProjectPermissions, sakiWorkspacePermissions } from "./session-access.js";
 import { buildDirectSystemPrompt, buildPrompt } from "./prompt.js";
 import { estimateModelCallTokens } from "../../tokenizer.js";
 import {
@@ -73,7 +73,10 @@ export async function resolveSakiContext(
   const { user, instance, permissions } = await assertSakiSessionAccess(userId, instanceId ?? null, mode);
   const context: ResolvedSakiContext = { instance, workspace: toWorkspaceContext(instance), logs: [], access: { isSuperAdmin: user.isSuperAdmin, permissions } };
   const instances = await assertSakiSelectedWorkspaces(userId, instanceId, workspaceInstanceIds, mode);
-  if (instances) context.instances = instances;
+  if (instances) {
+    context.instances = instances;
+    context.access!.permissions = sakiWorkspacePermissions(user, instance, instances);
+  }
   if (includeLogs && instance && permissions.includes("instance.logs")) {
     try { context.logs = (await readDaemonInstanceLogs(instance.node, instance.id, 180)).lines; } catch { /* optional logs */ }
   }
@@ -372,12 +375,13 @@ export async function prepareSakiChatInvocation(
   const context: ResolvedSakiContext = {
     instance: authorized.instance, workspace: toWorkspaceContext(authorized.instance), logs: [],
     ...(selectedInstances ? { instances: selectedInstances } : {}),
-    access: { isSuperAdmin: authorized.user.isSuperAdmin, permissions }
+    access: { isSuperAdmin: authorized.user.isSuperAdmin, permissions: sakiWorkspacePermissions(authorized.user, authorized.instance, selectedInstances, request.user.permissions) }
   };
 
   const requestedModel = sanitizeRequestedSakiModel(body.model);
   const config = withRequestedSakiModel(await readEffectiveSakiConfig(), {
     model: requestedModel || null,
+    reasoningEffort: body.reasoningEffort ?? "auto",
     provider: body.provider || null
   });
   const attachments = await hydrateSakiAttachmentsForModel(
@@ -402,6 +406,7 @@ export async function prepareSakiChatInvocation(
     auditSearch: trimString(body.auditSearch) || null,
     mode,
     agentPermissionMode: normalizeSakiAgentPermissionMode(body.agentPermissionMode),
+    reasoningEffort: config.reasoningEffort ?? "auto",
     terminalSandbox: body.terminalSandbox !== false,
     selectedSkillIds: Array.isArray(body.selectedSkillIds) ? body.selectedSkillIds.map(trimString).filter(Boolean) : [],
     attachments,

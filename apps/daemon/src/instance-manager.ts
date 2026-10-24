@@ -12,6 +12,8 @@ import { daemonPaths } from "./config.js";
 import { loadRuntimeState, saveRuntimeState, type PersistedInstance } from "./state-persist.js";
 import { ensureInstanceClashProxy, stopInstanceClash } from "./clash-core.js";
 import { parseShellMarker, resolveShellCommandCwd, shellCommandSubmission, stripTerminalText } from "./shell-command.js";
+import { commandExecutionBlockReason } from "@webops/shared/command-policy";
+import { DaemonError } from "./errors.js";
 
 export interface DaemonInstanceSpec {
   id: string;
@@ -280,37 +282,9 @@ async function resolveWorkingDirectory(targetPath: string): Promise<string> {
   return resolved;
 }
 
-const daemonCriticalCommandPatterns: RegExp[] = [
-  /\brm\s+-rf\s+(\/|\*|~|\$HOME)\b/i,
-  /\bdel\s+\/[sq]\s+(?:[a-z]:\\|\\|\*)/i,
-  /\brmdir\s+\/[sq]\s+(?:[a-z]:\\|\\|\*)/i,
-  /\bformat\s+[a-z]:/i,
-  /\bmkfs(?:\.|\s)/i,
-  /\bdd\s+if=.*\s+of=\/dev\//i,
-  /\bshutdown\b/i,
-  /\breboot\b/i,
-  /\bhalt\b/i,
-  /\bpoweroff\b/i,
-  /\breg\s+delete\b/i,
-  /\bnet\s+user\s+.*\s+\/delete\b/i
-];
-
 function assertCommandAllowed(command: string): void {
-  const normalized = command.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    throw new Error("Command is required");
-  }
-  if (normalized.length > 4000) {
-    throw new Error("Command is too long");
-  }
-  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(command)) {
-    throw new Error("Command contains control characters");
-  }
-  for (const pattern of daemonCriticalCommandPatterns) {
-    if (pattern.test(normalized)) {
-      throw new Error("Command was blocked by the daemon safety policy");
-    }
-  }
+  const reason = commandExecutionBlockReason(command, undefined, process.platform !== "win32");
+  if (reason) throw new DaemonError("INSTANCE_COMMAND_BLOCKED", reason, reason, 403);
 }
 
 function commandLauncher(command: string): { file: string; args: string[] } {
