@@ -627,7 +627,7 @@
 
 [data-theme="dark"] .metric-detail-brand p,
 [data-theme="dark"] .metric-detail-header-value span,
-[data-theme="dark"] .metric-detail-stat span,
+[data-theme="dark"] .metric-detail-stat span:not(.metric-detail-stat-icon),
 [data-theme="dark"] .metric-detail-section-heading span,
 [data-theme="dark"] .metric-node-card-title small,
 [data-theme="dark"] .metric-bar-label,

@@ -1881,14 +1881,20 @@ button.metric-tile {
 .metric-detail-stat-icon {
   width: 34px;
   height: 34px;
-  display: grid;
-  place-items: center;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0;
   border-radius: 11px;
   color: #ff75ac;
   background: rgba(255, 117, 172, 0.12);
 }
 
-.metric-detail-stat span {
+.metric-detail-stat-icon svg {
+  display: block;
+}
+
+.metric-detail-stat span:not(.metric-detail-stat-icon) {
   display: block;
   color: #687786;
   font-size: 12px;
