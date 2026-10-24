@@ -2561,6 +2561,7 @@ export function DashboardView({
           <div className="dashboard-sidebar-search">
             <Search size={12} />
             <input
+              className="dashboard-sidebar-search-input"
               type="text"
               placeholder="搜索项目或记录..."
               value={searchQuery}

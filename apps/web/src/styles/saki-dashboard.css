@@ -192,31 +192,73 @@
   left: 9px;
   color: #86868b;
   pointer-events: none;
+  transition: color 0.18s ease;
 }
 
-.dashboard-sidebar-search input {
+.dashboard-sidebar-search input,
+.dashboard-sidebar-search-input {
   width: 100%;
   height: 30px;
   padding: 0 8px 0 28px;
   border-radius: 8px;
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.06);
   background: rgba(0, 0, 0, 0.03);
   font-size: 12px;
   color: #1d1d1f;
   outline: none;
+  box-sizing: border-box;
   transition: all 0.2s ease;
 }
 
-.dashboard-sidebar-search input:focus {
+.dashboard-sidebar-search input::placeholder,
+.dashboard-sidebar-search-input::placeholder {
+  color: #86868b;
+  opacity: 1;
+}
+
+.dashboard-sidebar-search input:focus,
+.dashboard-sidebar-search-input:focus {
   border-color: #0071e3;
   background: #ffffff;
   box-shadow: 0 0 0 2px rgba(0, 113, 227, 0.12);
 }
 
-[data-theme="dark"] .dashboard-sidebar-search input {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.06);
-  color: #f5f5f7;
+[data-theme="dark"] .dashboard-sidebar-search svg {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+[data-theme="dark"] .dashboard-sidebar-search:focus-within svg {
+  color: #2997ff;
+}
+
+[data-theme="dark"] .dashboard-sidebar-search input,
+[data-theme="dark"] .dashboard-sidebar-search-input {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  color: #f5f5f7 !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+[data-theme="dark"] .dashboard-sidebar-search input::placeholder,
+[data-theme="dark"] .dashboard-sidebar-search-input::placeholder {
+  color: rgba(255, 255, 255, 0.35) !important;
+  opacity: 1 !important;
+}
+
+[data-theme="dark"] .dashboard-sidebar-search input:hover,
+[data-theme="dark"] .dashboard-sidebar-search-input:hover {
+  background: rgba(255, 255, 255, 0.07) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+[data-theme="dark"] .dashboard-sidebar-search input:focus,
+[data-theme="dark"] .dashboard-sidebar-search-input:focus {
+  border-color: #2997ff !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 0 0 0 2px rgba(41, 151, 255, 0.2) !important;
 }
 
 /* Sidebar Nav Scroll Area */

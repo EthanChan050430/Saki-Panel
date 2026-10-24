@@ -36,13 +36,13 @@ export function SakiModelReasoningPanel({ models, currentModelId, currentModelNa
   const label = ultra ? "Ultra" : sakiReasoningEffortLabel(value);
   const filtered = models.filter((model) => `${model.label} ${model.name} ${model.id} ${model.provider}`.toLowerCase().includes(query.toLowerCase()));
 
-  return <div className={`saki-reasoning-panel ${ultra ? "is-ultra" : ""}`}>
+  return <div className={`saki-reasoning-panel ${choosingModel ? "is-choosing-model" : ""} ${ultra ? "is-ultra" : ""}`}>
     {choosingModel ? <>
       <div className="saki-reasoning-list-heading">
         <button type="button" onClick={() => setChoosingModel(false)} aria-label="返回推理强度"><ChevronLeft size={16} /></button>
         <span>选择模型</span>
       </div>
-      <label className="saki-reasoning-search"><Search size={14} /><input autoFocus={typeof window !== "undefined" && !window.matchMedia("(pointer: coarse)").matches} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索模型…" aria-label="搜索模型" /></label>
+      <label className="saki-reasoning-search"><Search size={14} /><input className="saki-reasoning-search-input" autoFocus={typeof window !== "undefined" && !window.matchMedia("(pointer: coarse)").matches} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索模型…" aria-label="搜索模型" /></label>
       <div className="saki-reasoning-models" role="listbox" aria-label="可用模型">
         {filtered.map((model) => {
           const active = sakiModelMatchesSelection(model, currentModelId);

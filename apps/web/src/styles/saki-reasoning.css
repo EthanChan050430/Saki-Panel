@@ -11,9 +11,13 @@
   background: var(--reasoning-surface);
   border-radius: 20px;
   font-family: inherit;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 0 1 auto;
 }
 .saki-reasoning-panel.is-ultra { --reasoning-accent: #a34fff; }
-.saki-reasoning-heading { display: grid; grid-template-columns: 22px 1fr 22px; align-items: center; gap: 8px; height: 23px; }
+.saki-reasoning-heading { display: grid; grid-template-columns: 22px 1fr 22px; align-items: center; gap: 8px; height: 23px; flex-shrink: 0; }
 .saki-reasoning-level { text-align: center; color: var(--reasoning-accent); font-size: 16px; font-weight: 600; line-height: 22px; }
 .saki-reasoning-bolt { opacity: 0; color: var(--reasoning-text); transition: opacity 180ms; }
 .is-ultra .saki-reasoning-bolt { opacity: 1; }
@@ -23,7 +27,7 @@
 .saki-reasoning-model { display: flex; align-items: center; justify-content: center; gap: 2px; width: 100%; margin: 2px 0 17px; padding: 0; background: transparent; border: 0; color: var(--reasoning-text); cursor: pointer; font: inherit; font-size: 14px; line-height: 21px; }
 .saki-reasoning-model span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 247px; }
 .saki-reasoning-model:hover { color: var(--reasoning-accent); }
-.saki-reasoning-slider { position: relative; height: var(--reasoning-control-height); margin: 0; }
+.saki-reasoning-slider { position: relative; height: var(--reasoning-control-height); margin: 0; flex-shrink: 0; }
 .saki-reasoning-track { position: absolute; inset: calc((var(--reasoning-control-height) - 30px) / 2) 0; overflow: hidden; border-radius: 99px; background: #e8e8ea; }
 .saki-reasoning-fill { position: absolute; inset: 0 auto 0 0; width: var(--reasoning-progress); background: var(--reasoning-accent); transition: width 160ms ease; }
 .saki-reasoning-stops { position: absolute; inset: 0 14px; display: flex; align-items: center; justify-content: space-between; }
@@ -44,10 +48,24 @@
 .saki-reasoning-particles i:nth-child(3n) { width: 3px; height: 3px; }
 @keyframes saki-reasoning-sparkle { 0%, 100% { opacity: .2; transform: translateY(3px) scale(.6); } 50% { opacity: .85; transform: translateY(-3px) scale(1); } }
 .saki-reasoning-unavailable { text-align: center; margin: 0; padding: 2px 0 6px; font-size: 12px; opacity: .7; }
-.saki-reasoning-list-heading { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; margin: -3px 0 9px; }
-.saki-reasoning-search { display: flex; gap: 7px; align-items: center; background: #f5f5f7; border-radius: 10px; padding: 7px 9px; margin-bottom: 8px; }
+.saki-reasoning-list-heading { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; margin: -3px 0 9px; flex-shrink: 0; }
+.saki-reasoning-search { display: flex; gap: 7px; align-items: center; background: #f5f5f7; border-radius: 10px; padding: 7px 9px; margin-bottom: 8px; flex-shrink: 0; }
 .saki-reasoning-search input { width: 100%; min-width: 0; background: transparent; border: 0; outline: none; color: inherit; font: inherit; font-size: 12px; }
-.saki-reasoning-models { max-height: min(300px, 50dvh); overflow-y: auto; overscroll-behavior: contain; margin: 0 -5px; }
+.saki-reasoning-panel .saki-reasoning-search-input,
+.saki-reasoning-panel .saki-reasoning-search-input:focus,
+[data-theme="dark"] .saki-reasoning-panel .saki-reasoning-search-input,
+[data-theme="dark"] .saki-reasoning-panel .saki-reasoning-search-input:focus {
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-radius: 0 !important;
+  padding: 0;
+}
+.saki-reasoning-search:focus-within { background: #ef72ad0b; }
+.saki-reasoning-models { max-height: min(300px, 50dvh); min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; margin: 0 -5px; padding-bottom: 4px; scroll-padding-bottom: 8px; }
 .saki-reasoning-models > button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px; background: transparent; border: 0; border-radius: 10px; text-align: left; color: inherit; cursor: pointer; font: inherit; font-size: 12px; }
 .saki-reasoning-models > button:hover, .saki-reasoning-models > button.is-selected { background: #ef72ad12; color: var(--reasoning-accent); }
 .saki-reasoning-model-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -57,11 +75,12 @@
 [data-theme="dark"] .saki-reasoning-panel { --reasoning-text: #b1b1bb; --reasoning-surface: #202026; }
 [data-theme="dark"] .saki-reasoning-track { background: #3c3c46; }
 [data-theme="dark"] .saki-reasoning-search { background: #ffffff08; }
-.dashboard-model-popover:has(.saki-reasoning-panel) { padding: 0; border-radius: 21px; overflow-y: auto; overscroll-behavior: contain; }
+.dashboard-model-popover:has(.saki-reasoning-panel) { padding: 0; border-radius: 21px; }
 .dashboard-model-popover > .saki-reasoning-panel, .saki-reasoning-popover > .saki-reasoning-panel { width: 100%; max-width: none; }
-.saki-reasoning-popover { overflow-y: auto !important; overscroll-behavior: contain; }
+.dashboard-model-popover:has(.saki-reasoning-panel), .saki-reasoning-popover { display: flex; flex-direction: column; overflow: hidden !important; }
 .saki-model-dropdown-wrapper:has(> .saki-reasoning-panel) { border-radius: 21px; overflow: hidden; }
-.popover-group:has(> .saki-reasoning-panel) { padding: 0; }
+.popover-group:has(> .saki-reasoning-panel) { padding: 0; min-height: 0; flex: 0 1 auto; }
+.capsule-settings-popover > .popover-group:not(:has(.saki-reasoning-panel)) { flex-shrink: 0; }
 .capsule-settings-popover:has(.saki-reasoning-panel) { width: 340px; max-width: calc(100vw - 16px); }
 .capsule-settings-popover .saki-reasoning-panel { width: 100%; max-width: none; }
 @media (max-width: 760px), (pointer: coarse) {

@@ -1664,7 +1664,7 @@
   background: var(--btn-ghost-hover);
 }
 
-[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not(.terminal-cmd-input):not(.mobile-capsule-input):not(.capsule-text-input-field),
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not(.terminal-cmd-input):not(.mobile-capsule-input):not(.capsule-text-input-field):not(.saki-reasoning-panel input):not(.dashboard-sidebar-search-input):not(.dashboard-sidebar-search input),
 [data-theme="dark"] select,
 [data-theme="dark"] textarea:not(.dashboard-input-textarea):not(.saki-input-main-row textarea) {
   background: rgba(255, 255, 255, 0.06) !important;
@@ -1676,7 +1676,7 @@
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2) !important;
 }
 
-[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not(.terminal-cmd-input):not(.mobile-capsule-input):not(.capsule-text-input-field):focus,
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not(.terminal-cmd-input):not(.mobile-capsule-input):not(.capsule-text-input-field):not(.saki-reasoning-panel input):not(.dashboard-sidebar-search-input):not(.dashboard-sidebar-search input):focus,
 [data-theme="dark"] select:focus,
 [data-theme="dark"] textarea:not(.dashboard-input-textarea):not(.saki-input-main-row textarea):focus {
   outline: none !important;
@@ -7523,7 +7523,7 @@ input.mobile-capsule-input,
   color: var(--primary) !important;
 }
 
-input:not([type="checkbox"]):not([type="radio"]):not(.terminal-cmd-input):not(.mobile-capsule-input):not(.capsule-text-input-field):not(.saki-reasoning-panel input),
+:root:not([data-theme="dark"]) input:not([type="checkbox"]):not([type="radio"]):not(.terminal-cmd-input):not(.mobile-capsule-input):not(.capsule-text-input-field):not(.saki-reasoning-panel input):not(.dashboard-sidebar-search-input):not(.dashboard-sidebar-search input),
 select,
 textarea:not(.dashboard-input-textarea):not(.saki-input-main-row textarea) {
   background: rgba(255, 255, 255, 0.6) !important;
@@ -7531,7 +7531,7 @@ textarea:not(.dashboard-input-textarea):not(.saki-input-main-row textarea) {
   border-color: var(--glass-border) !important;
 }
 
-input:not([type="checkbox"]):not([type="radio"]):not(.terminal-cmd-input):not(.mobile-capsule-input):not(.capsule-text-input-field):not(.saki-reasoning-panel input):focus,
+:root:not([data-theme="dark"]) input:not([type="checkbox"]):not([type="radio"]):not(.terminal-cmd-input):not(.mobile-capsule-input):not(.capsule-text-input-field):not(.saki-reasoning-panel input):not(.dashboard-sidebar-search-input):not(.dashboard-sidebar-search input):focus,
 select:focus,
 textarea:not(.dashboard-input-textarea):not(.saki-input-main-row textarea):focus {
   outline: 2px solid rgba(255, 117, 172, 0.3) !important;
