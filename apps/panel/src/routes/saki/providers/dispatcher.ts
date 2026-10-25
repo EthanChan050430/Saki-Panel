@@ -16,6 +16,7 @@ import {
 import { agentSystemPromptForConfig, withAgentTurnConversation } from "../agent-messages.js";
 import { buildAgentWorkspacePrefix } from "../prompt.js";
 import { toolSchemasForRuntime, withAdvertisedSakiToolSchemas } from "../tools.js";
+import { createRetryDeltaForwarder, withModelTurnRetry, type ModelTurnRetryEvent } from "./model-retry.js";
 import {
   callCopilotSdkAgentTurn,
   callCopilotSdkModel,
@@ -131,8 +132,11 @@ export async function callConfiguredAgentTurn(
   runtime: SakiAgentRuntime,
   prompt: string,
   onDelta?: (text: string) => void,
-  onThinking?: (text: string) => void
+  onThinking?: (text: string) => void,
+  onRetry?: (event: ModelTurnRetryEvent) => void
 ): Promise<SakiModelToolTurn> {
+  const nextDelta = createRetryDeltaForwarder(onDelta);
+  const nextThinking = createRetryDeltaForwarder(onThinking);
   // Bind the task abort signal into this async context so every provider HTTP
   // call made for the turn is hard-aborted the moment the task is cancelled.
   return withAgentAbortSignal(runtime.abortController?.signal, () =>
@@ -144,7 +148,15 @@ export async function callConfiguredAgentTurn(
               messages: runtime.turnMessages
             }
           : undefined,
-        () => callConfiguredAgentTurnUnfiltered(runtime, prompt, onDelta, onThinking)
+        () => withModelTurnRetry(
+          async () => {
+            const turn = await callConfiguredAgentTurnUnfiltered(runtime, prompt, nextDelta.beginAttempt(), nextThinking.beginAttempt());
+            nextDelta.completeAttempt();
+            nextThinking.completeAttempt();
+            return turn;
+          },
+          { signal: runtime.abortController?.signal, onRetry }
+        )
       )
     )
   );

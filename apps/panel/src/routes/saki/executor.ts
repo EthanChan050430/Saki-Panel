@@ -11,7 +11,8 @@ import { prisma } from "../../db.js";
 import { assertSakiSessionAccess, hasSakiProjectAccess, sakiProjectPermissions } from "./session-access.js";
 import { selectedWorkspaceTarget } from "./selected-workspaces.js";
 import { writeAuditLog } from "../../audit.js";
-import { classifyCommandRisk, findCrossInstanceCommandEscape, findDangerousCommandReason, isPosixCommandPlatform } from "../../security.js";
+import { classifyCommandRisk, findDangerousCommandReason, isPosixCommandPlatform } from "../../security.js";
+import { commandCheckpointWorkspaces, commandWorkspaceEscape, commandWorkspaceScope, referencedCommandWorkspaces } from "./command-workspaces.js";
 import { instanceAccessInclude, listVisibleInstances, loadInstanceAccessProfile, loadVisibleInstance } from "../../instance-access.js";
 import type { DaemonInstanceSpec } from "../../daemon-client.js";
 import {
@@ -125,7 +126,7 @@ import { isAuthDisabled, loadAuthDisabledCurrentUser, loadCurrentUser } from "..
 import type { SakiAuditSearchScope } from "./audit.js";
 import { assertSakiWorkspaceBinding, bindSakiWorkspace } from "./workspace-binding.js";
 import { canonicalToolSchema } from "./tools.js";
-import { withSakiWorkspaceMutation } from "./workspace-mutation.js";
+import { withSakiWorkspaceMutations } from "./workspace-mutation.js";
 
 export interface SakiExecutorHost {
   buildAuditSearchContext(query: string, canViewAudit: boolean, scope: SakiAuditSearchScope): Promise<string>;
@@ -1183,7 +1184,11 @@ export async function executeSakiAgentTool(
   if (!options.mutationLocked && /^(writefile|replaceinfile|editlines|batchedit|applypatch|uploadbase64|deletepath|renamepath|mkdir|generateimage|archivepaths|extractarchive|runcommand|runinshell|diagnosecode|sendshellinput)$/.test(normalizedAgentToolName(call.name))) {
     const args = toolArgs(call);
     const selected = runtime.context.instances ? selectedWorkspaceTarget(runtime.context, stringArg(args, "instanceId") || stringArg(args, "instance") || stringArg(args, "id")) : null;
-    return withSakiWorkspaceMutation(selected?.id ?? runtime.context.instance?.id ?? String(args.instanceId ?? "global"),
+    const target = selected ?? runtime.context.instance;
+    const ids = target && sakiCommandToolNames.has(normalizedAgentToolName(call.name))
+      ? commandWorkspaceScope(runtime.context, target).map(instance => instance.id)
+      : [target?.id ?? String(args.instanceId ?? "global")];
+    return withSakiWorkspaceMutations(ids,
       () => executeSakiAgentTool(runtime, call, { ...options, mutationLocked: true }));
   }
   const initiatingRuntime = runtime;
@@ -1220,8 +1225,8 @@ export async function executeSakiAgentTool(
       assertSakiPermissionModeAllowsTool(runtime, toolName, args);
       if (sakiCommandToolNames.has(toolName) && toolName !== "runservercommand" && isAgentSandboxEnabled(runtime)) {
         const target = await resolveAgentInstance(runtime, args);
-        const escape = findCrossInstanceCommandEscape(stringArg(args, "command"), target.workingDirectory, isPosixCommandPlatform(target.node.os));
-        if (escape) throw new RouteError(`终端命令包含工作区外路径（${escape}）。请使用工作区内路径，或为外部文件申请单次读取审批。`, 403);
+        const escape = commandWorkspaceEscape(runtime.context, target, stringArg(args, "command"));
+        if (escape) throw new RouteError(`终端命令包含已选同节点工作区以外的路径（${escape}）。执行工作区：${target.name}（${target.workingDirectory}）。请先添加该目录所属工作区；外部文件仅可申请单次读取审批。`, 403);
       }
       assertToolProfileAllowsTool(runtime, toolName);
       assertWatchToolAllowed(runtime, toolName, args);
@@ -1297,7 +1302,7 @@ export async function executeSakiAgentTool(
         let submittedCommand = command;
         if (isAgentSandboxEnabled(runtime)) {
           const workspace = serverToolWorkspace(runtime.context, node.id);
-          const escape = findCrossInstanceCommandEscape(command, workspace.workingDirectory, isPosixCommandPlatform(node.os));
+          const escape = commandWorkspaceEscape(runtime.context, workspace, command);
           if (escape) throw new RouteError(`终端命令包含工作区外路径（${escape}）。`, 403);
           if (!isPosixCommandPlatform(node.os)) throw new RouteError("此节点请使用 runCommand，在守护进程确定的终端类型下执行。", 400);
           submittedCommand = wrapSakiCommandWithCwd("posix", workspace.workingDirectory, command);
@@ -1690,7 +1695,7 @@ export async function executeSakiAgentTool(
         const commandRisk = classifyCommandRisk(command, instance.workingDirectory, isPosixCommandPlatform(instance.node.os));
         if (commandRisk.risk === "critical") throw new RouteError(commandRisk.reason, 400);
         if (isAgentSandboxEnabled(runtime)) {
-          const escapeToken = findCrossInstanceCommandEscape(command, instance.workingDirectory, isPosixCommandPlatform(instance.node.os));
+          const escapeToken = commandWorkspaceEscape(runtime.context, instance, command);
           if (escapeToken) {
             throw new RouteError(`沙箱安全拦截：终端命令包含越界目录或路径（${escapeToken}），当前实例工作目录为 ${instance.workingDirectory}，已阻止访问工作区外部文件。`, 403);
           }
@@ -1698,14 +1703,19 @@ export async function executeSakiAgentTool(
         const checkpointEnabled = ["file.read", "file.write", "file.delete"].every((code) => runtime.permissions.includes(code as PermissionCode));
         const readOnlyCommand = commandRisk.readOnly && !optionalCommandInputArg(args);
         const checkpointWarnings: string[] = [];
-        const captured = checkpointEnabled && !readOnlyCommand
-          ? await optionalTerminalCheckpoint(() => captureDaemonWorkspaceCheckpoint(instance.node, instance.id, instance.workingDirectory), "capture")
-          : undefined;
-        if (captured?.warning) checkpointWarnings.push(captured.warning);
-        const snapshot = captured?.value;
-        if (snapshot) {
-          checkpoint = { id: checkpointId(), type: "workspace", instanceId: instance.id, workspaceBinding: bindSakiWorkspace(instance), snapshotId: snapshot.snapshotId, actionId: currentActionId, createdAt: new Date().toISOString() };
-          await persistCheckpoint(runtime, checkpoint);
+        const affectedWorkspaces = referencedCommandWorkspaces(runtime.context, instance, command);
+        const snapshots: Array<{ instance: InstanceWithNode; checkpoint: Extract<SakiCheckpoint, { type: "workspace" }> }> = [];
+        if (checkpointEnabled && !readOnlyCommand) {
+          for (const workspace of commandCheckpointWorkspaces(affectedWorkspaces)) {
+            const captured = await optionalTerminalCheckpoint(() => captureDaemonWorkspaceCheckpoint(workspace.node, workspace.id, workspace.workingDirectory), "capture");
+            if (captured.warning) checkpointWarnings.push(`${workspace.name}: ${captured.warning}`);
+            if (!captured.value) continue;
+            const saved: Extract<SakiCheckpoint, { type: "workspace" }> = { id: checkpointId(), type: "workspace", instanceId: workspace.id, commandInstanceId: instance.id, workspaceBinding: bindSakiWorkspace(workspace), snapshotId: captured.value.snapshotId, actionId: currentActionId, createdAt: new Date().toISOString() };
+            await persistCheckpoint(runtime, saved);
+            snapshots.push({ instance: workspace, checkpoint: saved });
+            checkpoint ??= saved;
+            relatedCheckpointIds = snapshots.slice(1).map(item => item.checkpoint.id);
+          }
         }
         try {
           const { runResult, inputProvided, shellId, label } = await runAgentIndependentCommand(instance, args, {
@@ -1729,15 +1739,20 @@ export async function executeSakiAgentTool(
             throw error;
           }
         } finally {
-          if (snapshot) {
-            const finalized = await optionalTerminalCheckpoint(() => finalizeDaemonWorkspaceCheckpoint(instance.node, instance.id, instance.workingDirectory, snapshot.snapshotId), "finalize");
-            if (finalized.warning) checkpointWarnings.push(finalized.warning);
-            if ((!finalized.value || finalized.value.changedCount === 0) && checkpoint) {
-              await removeCheckpoint(checkpoint.id);
-              checkpoint = null;
-              terminalNoFileChanges = finalized.value?.changedCount === 0;
-            }
+          const retained: SakiCheckpoint[] = [];
+          let allUnchanged = snapshots.length > 0 && checkpointWarnings.length === 0;
+          for (const snapshot of snapshots) {
+            const workspace = snapshot.instance;
+            const finalized = await optionalTerminalCheckpoint(() => finalizeDaemonWorkspaceCheckpoint(workspace.node, workspace.id, workspace.workingDirectory, snapshot.checkpoint.snapshotId), "finalize");
+            if (finalized.warning) checkpointWarnings.push(`${workspace.name}: ${finalized.warning}`);
+            if (!finalized.value || finalized.value.changedCount !== 0) allUnchanged = false;
+            if (!finalized.value || finalized.value.changedCount === 0) await removeCheckpoint(snapshot.checkpoint.id);
+            else retained.push(snapshot.checkpoint);
           }
+          checkpoint = retained[0] ?? null;
+          relatedCheckpointIds = retained.slice(1).map(item => item.id);
+          terminalNoFileChanges = allUnchanged;
+          if (!readOnlyCommand) for (const workspace of affectedWorkspaces) invalidateInstanceFileCache(workspace.id);
           // Preserve the command's result (or original failure), even if the undo scan failed.
           if (checkpointWarnings.length) observation += `\n${checkpointWarnings.join("\n")}`;
         }

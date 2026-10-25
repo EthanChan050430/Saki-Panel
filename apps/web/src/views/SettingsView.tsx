@@ -66,6 +66,7 @@ import {
 
 export function SettingsView({
   token,
+  userId,
   onLogout,
   onSessionRefresh,
   refreshTick,
@@ -74,6 +75,7 @@ export function SettingsView({
   onLanguageChange
 }: {
   token: string;
+  userId: string;
   onLogout: () => void;
   onSessionRefresh: (token: string, user: CurrentUser) => void;
   refreshTick: number;
@@ -1043,6 +1045,7 @@ export function SettingsView({
                 />
 
                 <SettingsFeaturesTab
+                  userId={userId}
                   isActive={activeSettingsSection === "features"}
                   searchEnabled={form.searchEnabled ?? false}
                   onSearchEnabledChange={(enabled) =>

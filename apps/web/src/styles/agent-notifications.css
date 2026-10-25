@@ -1,0 +1,50 @@
+.agent-reminder-settings {
+  --reminder-ink: #263246;
+  --reminder-muted: #788396;
+  --reminder-line: rgba(120, 135, 158, .13);
+  border: 1px solid var(--reminder-line);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, .5);
+  overflow: hidden;
+  color: var(--reminder-ink);
+  transition: border-color .2s ease;
+}
+.agent-reminder-settings.is-enabled { border-color: rgba(214, 146, 179, .35); }
+.agent-reminder-heading { display: flex; align-items: center; gap: 14px; padding: 23px 24px; }
+.agent-reminder-emblem {
+  width: 43px; height: 43px; flex: 0 0 auto;
+  display: grid; place-items: center; border-radius: 14px;
+  background: linear-gradient(145deg, rgba(255, 117, 172, .13), rgba(173, 155, 237, .1));
+  color: #be7c9b;
+}
+.agent-reminder-intro { flex: 1; min-width: 0; }
+.agent-reminder-intro h4 { margin: 0 0 5px; font-size: 15px; font-weight: 650; letter-spacing: -.2px; }
+.agent-reminder-intro p { margin: 0; color: var(--reminder-muted); font-size: 12px; }
+.agent-reminder-options { margin: 0; padding: 0 24px 10px; min-width: 0; border: 0; transition: opacity .2s ease; }
+.agent-reminder-options:disabled { opacity: .42; }
+.agent-reminder-options legend { padding: 0 0 5px; font-size: 10px; letter-spacing: 1.5px; color: var(--reminder-muted); }
+.agent-reminder-row { display: flex; gap: 13px; align-items: center; min-height: 68px; padding: 10px 0; }
+.agent-reminder-row > svg { color: #9396aa; flex-shrink: 0; }
+.agent-reminder-row > div { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 5px; }
+.agent-reminder-row strong { font-size: 13px; font-weight: 550; }
+.agent-reminder-row > div > span { font-size: 11.5px; line-height: 1.5; color: var(--reminder-muted); }
+.agent-reminder-divider { height: 1px; margin: 9px 0 19px; background: var(--reminder-line); }
+.agent-reminder-eyebrow { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin: 0 0 4px; font-size: 10px; letter-spacing: 1.2px; color: var(--reminder-muted); }
+.agent-reminder-eyebrow span { font-size: 10px; letter-spacing: 0; opacity: .8; }
+.agent-reminder-permission { display: flex; align-items: center; gap: 10px; padding: 11px 13px; margin: 4px 0 10px; border-radius: 10px; background: rgba(144, 140, 176, .07); font-size: 11px; line-height: 1.7; color: var(--reminder-muted); }
+.agent-reminder-permission span { flex: 1; }
+.agent-reminder-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 24px; border-top: 1px solid var(--reminder-line); background: rgba(146, 151, 176, .025); }
+.agent-reminder-footer > span { display: flex; align-items: center; gap: 7px; color: var(--reminder-muted); font-size: 10px; line-height: 1.6; }
+.agent-reminder-footer button, .agent-reminder-permission button { flex-shrink: 0; border: 1px solid var(--reminder-line); background: transparent; border-radius: 9px; padding: 6px 12px; font-size: 11px; color: var(--reminder-ink); cursor: pointer; transition: background .2s ease; }
+.agent-reminder-footer button:hover:not(:disabled), .agent-reminder-permission button:hover { background: rgba(184, 139, 176, .08); }
+.agent-reminder-footer button:disabled { opacity: .4; cursor: default; }
+.agent-reminder-settings input:disabled + .settings-switch-slider { cursor: default; }
+[data-theme="dark"] .agent-reminder-settings { --reminder-ink: #e4e7f0; --reminder-muted: #939caf; --reminder-line: rgba(165, 175, 200, .13); background: rgba(24, 29, 43, .4); }
+@media (max-width: 640px) {
+  .agent-reminder-heading { padding: 20px 17px; gap: 11px; }
+  .agent-reminder-options { padding-left: 17px; padding-right: 17px; }
+  .agent-reminder-footer { padding: 13px 17px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-reminder-settings, .agent-reminder-options { transition: none; }
+}

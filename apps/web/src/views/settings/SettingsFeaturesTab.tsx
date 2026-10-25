@@ -2,8 +2,10 @@ import React, { memo } from "react";
 import { AlertTriangle, CheckCircle2, Cpu, Globe, ShieldCheck, Sparkles, Wrench, Zap } from "lucide-react";
 import type { PanelTextKey } from "../../i18n/index.js";
 import type { SakiVoiceEchoEngineType, WebGPUDetectionResult } from "../../components/saki/sakiVoiceEngine.js";
+import { SettingsAgentNotifications } from "./SettingsAgentNotifications.js";
 
 export interface SettingsFeaturesTabProps {
+  userId: string;
   isActive: boolean;
   searchEnabled: boolean;
   onSearchEnabledChange: (enabled: boolean) => void;
@@ -18,6 +20,7 @@ export interface SettingsFeaturesTabProps {
 }
 
 export const SettingsFeaturesTab = memo(function SettingsFeaturesTab({
+  userId,
   isActive,
   searchEnabled,
   onSearchEnabledChange,
@@ -45,6 +48,7 @@ export const SettingsFeaturesTab = memo(function SettingsFeaturesTab({
         </div>
       </div>
       <div className="settings-group-content">
+        <SettingsAgentNotifications userId={userId} />
         <div
           className="settings-switch-card"
           onClick={() => onSearchEnabledChange(!searchEnabled)}

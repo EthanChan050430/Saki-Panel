@@ -508,6 +508,9 @@ async function requestSakiChatStream(
     if (event.type !== "heartbeat") {
       logSakiBrowserDebug("stream.event", summarizeSakiStreamEvent(event));
     }
+    if (event.type === "meta" || event.type === "done" || event.type === "action" && (event.action.status === "pending_approval" || event.action.status === "pending_input")) {
+      window.dispatchEvent(new CustomEvent("saki:active_task_updated"));
+    }
     onEvent(event);
     if (event.type === "done") {
       finalResponse = event.response;
@@ -591,6 +594,9 @@ async function requestSakiTaskReconnectStream(
   const dispatch = (frame: string) => {
     const event = parseSakiStreamFrame(frame);
     if (!event) return;
+    if (event.type === "meta" || event.type === "done" || event.type === "action" && (event.action.status === "pending_approval" || event.action.status === "pending_input")) {
+      window.dispatchEvent(new CustomEvent("saki:active_task_updated"));
+    }
     onEvent(event);
     if (event.type === "done") {
       finalResponse = event.response;

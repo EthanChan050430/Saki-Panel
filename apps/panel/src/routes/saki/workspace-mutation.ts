@@ -10,3 +10,11 @@ export async function withSakiWorkspaceMutation<T>(instanceId: string, work: () 
   try { return await work(); }
   finally { release(); if (mutations.get(instanceId) === current) mutations.delete(instanceId); }
 }
+
+/** Acquire multiple instance locks in one order to avoid cross-workspace deadlocks. */
+export function withSakiWorkspaceMutations<T>(instanceIds: readonly string[], work: () => Promise<T>): Promise<T> {
+  const ids = [...new Set(instanceIds)].sort();
+  const acquire = (index: number): Promise<T> => index === ids.length ? work()
+    : withSakiWorkspaceMutation(ids[index]!, () => acquire(index + 1));
+  return acquire(0);
+}

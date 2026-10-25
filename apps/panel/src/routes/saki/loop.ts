@@ -844,7 +844,15 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
   // Race every model call against the abort signal so that cancelling a task
   // stops the loop immediately instead of waiting out a long provider request.
   const callAgentTurnWithAbort = (prompt: string): Promise<SakiModelToolTurn> => {
-    const turnPromise = callConfiguredAgentTurn(runtime, prompt, events?.delta, emitThinking);
+    const turnPromise = callConfiguredAgentTurn(runtime, prompt, events?.delta, emitThinking, retry => {
+      emitSakiWorkflow(events, {
+        id: randomUUID(),
+        stage: "retry",
+        message: `模型连接中断，${retry.delayMs / 1000} 秒后自动重连（${retry.attempt}/${retry.maxRetries}）。已保留任务进度。`,
+        status: "running",
+        detail: retry.reason
+      });
+    });
     if (!abortSignal) return turnPromise;
     return new Promise<SakiModelToolTurn>((resolve, reject) => {
       const onAbort = () => reject(new AgentAbortedError());

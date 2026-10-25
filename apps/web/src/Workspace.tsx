@@ -835,6 +835,7 @@ export function Workspace({
                 ) : null}
                 {canUseSaki ? (
                   <AgentMonitorBell
+                    userId={user.id}
                     token={token}
                     onLogout={onLogout}
                     onOpenTask={(task, instance) => {
@@ -980,6 +981,7 @@ export function Workspace({
             <ReliabilityView token={token} onLogout={onLogout} refreshTick={refreshTick} />
           ) : effectiveView === "settings" ? (
             <SettingsView
+              userId={user.id}
               token={token}
               onLogout={onLogout}
               onSessionRefresh={onSwitchUser}

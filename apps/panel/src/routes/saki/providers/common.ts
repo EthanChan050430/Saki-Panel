@@ -34,6 +34,7 @@ import { extractProviderUsage, estimateModelCallTokens, mergeModelUsage, modelUs
 import { parseToolCallsFromText } from "./catalog.js";
 import { currentAgentTurnConversation } from "../agent-messages.js";
 import { copyText } from "../text-memory.js";
+import { isModelTurnRetryManaged } from "./model-retry.js";
 
 export const defaultTemperatureOnlyModelKeys = new Set<string>();
 
@@ -108,6 +109,9 @@ export async function withRetry<T>(
   operationName: string,
   requestId: string
 ): Promise<T> {
+  // The agent retries complete turns so provider accumulators are recreated.
+  // Do not multiply that budget with retries inside each HTTP request.
+  if (isModelTurnRetryManaged()) return operation();
   let lastError: Error | undefined;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
     try {

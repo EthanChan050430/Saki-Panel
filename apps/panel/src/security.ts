@@ -1,6 +1,6 @@
 import { timingSafeEqual, randomBytes, createHash } from "node:crypto";
 import bcrypt from "bcryptjs";
-import { isAbsolutePathInsideWorkspace } from "./workspace-path.js";
+import { isAbsoluteCommandPathInsideWorkspace } from "./workspace-path.js";
 import { commandPathTokens } from "./command-policy.js";
 export { classifyCommandRisk, findDangerousCommandReason, isPosixCommandPlatform } from "./command-policy.js";
 
@@ -39,13 +39,13 @@ export function verifyToken(token: string, hash: string): boolean {
  * Detects command tokens that could reach outside the instance working
  * directory. Absolute paths inside the target workspace are allowed.
  */
-export function findCrossInstanceCommandEscape(command: string, workingDirectory?: string, posixShell = false): string | null {
+export function findCrossInstanceCommandEscape(command: string, workingDirectory?: string, posixShell = false, additionalWorkingDirectories: readonly string[] = []): string | null {
   const tokens = commandPathTokens(command, posixShell);
   for (const rawToken of tokens) {
     let token = rawToken.replace(/^["']+|["']+$/g, "");
     if (!token) continue;
     token = token.replace(/^--?[a-zA-Z0-9_-]+[:=]|^--?/, "");
-    if (isAbsolutePathInsideWorkspace(token, workingDirectory)) continue;
+    if ([workingDirectory, ...additionalWorkingDirectories].some(root => isAbsoluteCommandPathInsideWorkspace(token, root))) continue;
     if (/^[A-Za-z]:[\\/]/.test(token)) return rawToken;
     if (token.startsWith("\\\\")) return rawToken;
     if (token.startsWith("/") && (token.length > 3 || token.slice(1).includes("/") || token.includes("\\"))) return rawToken;

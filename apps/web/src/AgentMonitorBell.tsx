@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Activity, Bot, CheckCircle2, Loader2, Square, Trash2, Undo2, X, XCircle } from "lucide-react";
 import type { ManagedInstance } from "@webops/shared";
 import { api, ApiError, type SakiActiveTaskSummary } from "./api.js";
+import { useAgentTaskNotifications } from "./hooks/useAgentNotifications.js";
 
 function taskStatusLabel(status: SakiActiveTaskSummary["status"]): string {
   switch (status) {
@@ -44,14 +45,17 @@ function TaskStatusIcon({ status }: { status: SakiActiveTaskSummary["status"] })
 
 export function AgentMonitorBell({
   token,
+  userId,
   onLogout,
   onOpenTask
 }: {
   token: string;
+  userId: string;
   onLogout: () => void;
   onOpenTask: (task: SakiActiveTaskSummary, instance: ManagedInstance | null) => void;
 }) {
   const [tasks, setTasks] = useState<SakiActiveTaskSummary[]>([]);
+  const [tasksLoaded, setTasksLoaded] = useState(false);
   const [runningCount, setRunningCount] = useState(0);
   const [instances, setInstances] = useState<ManagedInstance[]>([]);
   const [open, setOpen] = useState(false);
@@ -63,6 +67,7 @@ export function AgentMonitorBell({
   const popoverRef = useRef<HTMLDivElement>(null);
   const taskRefreshSeq = useRef(0);
   const instanceRefreshSeq = useRef(0);
+  useAgentTaskNotifications(userId, tasks, tasksLoaded, () => setOpen(true));
 
   const refresh = useCallback(async () => {
     const seq = ++taskRefreshSeq.current;
@@ -70,6 +75,7 @@ export function AgentMonitorBell({
       const result = await api.sakiGetActiveTasks(token);
       if (seq !== taskRefreshSeq.current) return;
       setTasks(result.tasks);
+      setTasksLoaded(true);
       setRunningCount(result.runningCount);
     } catch (error) {
       if (seq !== taskRefreshSeq.current) return;

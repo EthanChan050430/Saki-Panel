@@ -341,7 +341,7 @@ export async function requestOpenAiCompatibleStreamingPayload<T>(
   return requestWithCompatibleParameters(provider, baseUrl, model, body, request);
 }
 
-export async function readUtf8Stream(response: Response, onChunk: (chunk: string) => void): Promise<void> {
+export async function readUtf8Stream(response: Response, onChunk: (chunk: string) => void | boolean): Promise<void> {
   const reader = response.body?.getReader();
   if (!reader) throw new RouteError("Model API stream is not readable.", 502);
   const decoder = new TextDecoder();
@@ -349,11 +349,12 @@ export async function readUtf8Stream(response: Response, onChunk: (chunk: string
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      onChunk(decoder.decode(value, { stream: true }));
+      if (onChunk(decoder.decode(value, { stream: true })) === false) return;
     }
     const tail = decoder.decode();
     if (tail) onChunk(tail);
   } finally {
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }
@@ -361,19 +362,26 @@ export async function readUtf8Stream(response: Response, onChunk: (chunk: string
 export async function readServerSentEventData(response: Response, onData: (data: string) => void): Promise<void> {
   let buffer = "";
   let completed = false;
+  let terminalMarker = false;
+  let pendingCr = false;
   const emit = (data: string) => {
-    if (data === "[DONE]") completed = true;
+    if (data === "[DONE]") completed = terminalMarker = true;
     else {
       try {
         const payload = JSON.parse(data);
         if (payload.error) throw new RouteError(`Model stream failed: ${typeof payload.error.message === "string" ? payload.error.message : "upstream error"}`, 502);
-        if (payload.type === "message_stop" || payload.choices?.some((choice: { finish_reason?: unknown }) => choice.finish_reason)) completed = true;
+        if (payload.type === "message_stop") completed = terminalMarker = true;
+        if (payload.choices?.some((choice: { finish_reason?: unknown }) => choice.finish_reason)) completed = true;
       } catch (error) { if (error instanceof RouteError) throw error; }
     }
     onData(data);
   };
-  await readUtf8Stream(response, (chunk) => {
-    buffer += chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const consumeChunk = (chunk: string, final = false): boolean => {
+    // A CRLF pair may straddle network chunks. Normalize it only once, so a
+    // split newline cannot become a spurious SSE frame boundary.
+    const text = (pendingCr ? "\r" : "") + chunk;
+    pendingCr = !final && text.endsWith("\r");
+    buffer += (pendingCr ? text.slice(0, -1) : text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     while (true) {
       const boundary = buffer.indexOf("\n\n");
       if (boundary < 0) break;
@@ -385,8 +393,13 @@ export async function readServerSentEventData(response: Response, onData: (data:
         .map((line) => line.slice(5).replace(/^ /, ""))
         .join("\n");
       if (data) emit(data);
+      if (terminalMarker) return false;
     }
-  });
+    return true;
+  };
+  await readUtf8Stream(response, consumeChunk);
+  if (terminalMarker) return;
+  if (pendingCr) consumeChunk("", true);
 
   const data = buffer
     .split("\n")

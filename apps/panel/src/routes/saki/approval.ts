@@ -35,7 +35,8 @@ import { readEffectiveSakiConfig } from "./config.js";
 import { resolveSakiContext } from "./chat.js";
 import { assertSakiSessionAccess, assertSakiTaskAccess } from "./session-access.js";
 import { assertSakiApprovalBindings } from "./workspace-binding.js";
-import { withSakiWorkspaceMutation } from "./workspace-mutation.js";
+import { withSakiWorkspaceMutations } from "./workspace-mutation.js";
+import { isCommandCheckpointForWorkspace } from "./command-workspaces.js";
 import { retainAgentToolCacheAfterAction } from "./tool-cache-policy.js";
 import { maybeFinishWatchIncident } from "../../watch/runner.js";
 import { updateIncident } from "../../watch/incidents.js";
@@ -406,7 +407,8 @@ async function rollbackSakiActionUnlocked(request: FastifyRequest, id: string): 
     const checkpoint = sakiCheckpoints.get(checkpointId);
     if (!checkpoint) continue;
     if (expectedContext && Object.hasOwn(expectedContext, "instanceId") && "instanceId" in checkpoint
-      && checkpoint.instanceId !== expectedContext.instanceId && !globalAdmin) throw new RouteError("Checkpoint does not belong to the active workspace.", 403);
+      && checkpoint.instanceId !== expectedContext.instanceId && !globalAdmin
+      && !isCommandCheckpointForWorkspace(checkpoint, existing.id, expectedContext.instanceId)) throw new RouteError("Checkpoint does not belong to the active workspace.", 403);
     await assertCheckpointRollbackAccess(request.user.sub, checkpoint);
   }
   for (const checkpointId of [...checkpointIds].reverse()) {
@@ -443,8 +445,9 @@ async function rollbackSakiActionUnlocked(request: FastifyRequest, id: string): 
 export function rollbackSakiAction(request: FastifyRequest, id: string): Promise<SakiActionDecisionResponse> {
   return withPendingSakiActionDecision(id, async () => {
     await sakiActionsReady;
-    const checkpoint = [...sakiCheckpoints.values()].find((item) => item.actionId === id || item.id === id);
-    return withSakiWorkspaceMutation(checkpoint && "instanceId" in checkpoint ? checkpoint.instanceId : "global",
+    const ids = [...sakiCheckpoints.values()].filter(item => item.actionId === id || item.id === id)
+      .map(checkpoint => "instanceId" in checkpoint ? checkpoint.instanceId : "global");
+    return withSakiWorkspaceMutations(ids,
       () => rollbackSakiActionUnlocked(request, id));
   });
 }
@@ -564,5 +567,6 @@ export async function rollbackSakiTask(request: FastifyRequest, taskId: string):
     cancelActiveSakiTask(taskId);
     await task.execution?.catch(() => undefined);
   }
-  return withSakiWorkspaceMutation(task.instanceId ?? "global", () => rollbackSakiTaskUnlocked(request, taskId));
+  const ids = task.workspaceBindings?.map(binding => binding.instanceId) ?? [task.instanceId ?? "global"];
+  return withSakiWorkspaceMutations(ids, () => rollbackSakiTaskUnlocked(request, taskId));
 }

@@ -2,6 +2,7 @@ import type { SakiAgentAction } from "@webops/shared";
 import { classifyCommandRisk, isPosixCommandPlatform } from "../../command-policy.js";
 import { isSakiReadOnlyAgentTool, normalizedAgentToolName } from "./tools.js";
 import type { SakiAgentRuntime } from "./types.js";
+import { referencedCommandWorkspaces } from "./command-workspaces.js";
 
 type CacheEntries = Array<[string, SakiAgentAction]>;
 const referenceTools = new Set(["searchweb", "browse", "crawl", "researchweb", "listskills", "searchskills", "readskill"]);
@@ -31,6 +32,9 @@ export function retainAgentToolCacheAfterAction(entries: CacheEntries, action: S
   const targetId = tool === "runtask" ? null : resolveId(action.terminal?.instanceId ?? action.args.instanceId, defaultId);
   const target = instances.find((instance) => instance.id === targetId);
   const terminal = tool === "runcommand" || tool === "runinshell";
+  const affectedIds = terminal && target && typeof action.args.command === "string"
+    ? new Set(referencedCommandWorkspaces(runtime.context, target, action.args.command).map(instance => instance.id))
+    : new Set(targetId ? [targetId] : []);
   const inspection = terminal && !action.args.input && !action.args.stdin && typeof action.args.command === "string"
     && classifyCommandRisk(action.args.command, target?.workingDirectory, isPosixCommandPlatform(target?.node.os)).readOnly;
   if (inspection) return entries;
@@ -48,7 +52,7 @@ export function retainAgentToolCacheAfterAction(entries: CacheEntries, action: S
     try {
       const parsed = JSON.parse(key) as { args?: Record<string, unknown>; activeInstanceId?: string | null };
       const cachedId = resolveId(parsed.args?.instanceId, parsed.activeInstanceId ?? null);
-      if (targetId && cachedId && targetId !== cachedId) return true;
+      if (affectedIds.size && cachedId && !affectedIds.has(cachedId)) return true;
       if (noFileChanges) return !stateReads.has(cachedTool);
       if (exactPaths && fileReads.has(cachedTool)) {
         const path = cachedTool === "readmemory" ? "SAKI.md" : relativePath(parsed.args?.path);

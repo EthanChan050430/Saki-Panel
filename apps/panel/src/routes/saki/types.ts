@@ -777,6 +777,8 @@ export type SakiCheckpoint = { userId?: string; workspaceBinding?: SakiWorkspace
       id: string;
       type: "workspace";
       instanceId: string;
+      /** Server-selected execution root for a command spanning attached workspaces. */
+      commandInstanceId?: string;
       snapshotId: string;
       actionId: string;
       taskId?: string;

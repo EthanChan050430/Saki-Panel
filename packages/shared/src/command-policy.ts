@@ -1,4 +1,4 @@
-import { isAbsolutePathInsideWorkspace } from "./workspace-path.js";
+import { isAbsoluteCommandPathInsideWorkspace } from "./workspace-path.js";
 import { classifyNetworkCommand, networkCommandPathArguments } from "./network-command-policy.js";
 
 export interface CommandRisk {
@@ -298,7 +298,7 @@ function classifySegment(tokens: string[], workingDirectory?: string): CommandRi
     const value = pathValue(token);
     if (windowsReadSwitches[executable]?.has(token.toLowerCase())) return false;
     if (/^https?:\/\//i.test(value)) return false;
-    if (isAbsolutePathInsideWorkspace(value, workingDirectory)) return false;
+    if (isAbsoluteCommandPathInsideWorkspace(value, workingDirectory)) return false;
     return /^(?:[a-z]:|\\\\|~|\/)|(?:^|[\\/])\.\.(?:[\\/]|$)/i.test(value);
   });
   if (external) return result("high", "Command references an absolute, home, or parent path outside the relative workspace boundary");
