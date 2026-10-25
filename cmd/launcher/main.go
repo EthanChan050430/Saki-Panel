@@ -22,7 +22,7 @@ import (
 	"time"
 )
 
-var version = "5.0.0"
+var version = "5.1.0"
 
 func getAppDir() string {
 	exePath, err := os.Executable()
