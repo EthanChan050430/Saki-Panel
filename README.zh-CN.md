@@ -8,7 +8,7 @@
 
 在一个 Web 控制台管理 Minecraft、Steam、Docker 和常规进程；Saki 可以结合实时日志、文件与节点指标协助排障，并在授权后执行操作。
 
-[官网]((https://dreamstarry.top/saki-panel/) · [排障实测](docs/case-studies/port-recovery/README.md) · [快速开始](#快速开始) · [下载发行版](https://github.com/EthanChan050430/Saki-Panel/releases/latest) · [English](README.md)
+[官网](https://dreamstarry.top/saki-panel/) · [排障实测](docs/case-studies/port-recovery/README.md) · [快速开始](#快速开始) · [下载发行版](https://github.com/EthanChan050430/Saki-Panel/releases/latest) · [English](README.md)
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![check](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml/badge.svg)](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml)
