@@ -1,11 +1,14 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DashboardAgentMessage, type DashboardChatMessage } from "./DashboardAgentConversation.js";
 import type { ComponentProps } from "react";
 
 type MessageProps = ComponentProps<typeof DashboardAgentMessage>;
 const pageSize = 40;
 
-export function DashboardMessageList({ messages, rollbackCodeMessageIds, ...props }: Omit<MessageProps, "message" | "canRollbackCode" | "selectedActionId"> & {
+export function DashboardMessageList({ messages, rollbackCodeMessageIds, hasEarlierMessages, earlierLoading, onLoadEarlierMessages, ...props }: Omit<MessageProps, "message" | "canRollbackCode" | "selectedActionId"> & {
+  hasEarlierMessages?: boolean;
+  earlierLoading?: boolean;
+  onLoadEarlierMessages?: () => Promise<void>;
   messages: DashboardChatMessage[];
   rollbackCodeMessageIds: Set<string>;
   selectedTool: { messageId: string; actionId: string } | null;
@@ -13,6 +16,8 @@ export function DashboardMessageList({ messages, rollbackCodeMessageIds, ...prop
   const [earliestId, setEarliestId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const prependRef = useRef<{ top: number; height: number } | null>(null);
+  const showLoadedRef = useRef(false);
+  const loadingRef = useRef(false);
   const callbacksRef = useRef(props);
   callbacksRef.current = props;
   const onSelectAction = useCallback<NonNullable<MessageProps["onSelectAction"]>>((...args) => callbacksRef.current.onSelectAction(...args), []);
@@ -21,24 +26,43 @@ export function DashboardMessageList({ messages, rollbackCodeMessageIds, ...prop
   const onPreviewAttachment = useCallback<NonNullable<MessageProps["onPreviewAttachment"]>>((...args) => callbacksRef.current.onPreviewAttachment?.(...args), []);
   const visible = useMemo(() => messages.filter((message) => !message.rollbackJournal), [messages]);
   const anchorIndex = earliestId ? visible.findIndex((message) => message.id === earliestId) : -1;
-  const start = anchorIndex >= 0 ? anchorIndex : Math.max(0, visible.length - pageSize);
+  const start = showLoadedRef.current ? 0 : anchorIndex >= 0 ? anchorIndex : Math.max(0, visible.length - pageSize);
+
+  const loadMore = async () => {
+    if (loadingRef.current || earlierLoading || start === 0 && !hasEarlierMessages) return;
+    const stream = containerRef.current?.closest<HTMLElement>(".dashboard-chat-stream");
+    if (stream) prependRef.current = { top: stream.scrollTop, height: stream.scrollHeight };
+    if (start > 0) {
+      setEarliestId(visible[Math.max(0, start - pageSize)]!.id);
+    } else if (hasEarlierMessages && onLoadEarlierMessages) {
+      loadingRef.current = true;
+      showLoadedRef.current = true;
+      try { await onLoadEarlierMessages(); }
+      finally { loadingRef.current = false; }
+    }
+  };
+  const loadMoreRef = useRef(loadMore);
+  loadMoreRef.current = loadMore;
+  useEffect(() => {
+    const stream = containerRef.current?.closest<HTMLElement>(".dashboard-chat-stream");
+    const onScroll = () => { if (stream && stream.scrollTop < 120) void loadMoreRef.current(); };
+    stream?.addEventListener("scroll", onScroll);
+    return () => stream?.removeEventListener("scroll", onScroll);
+  }, []);
 
   useLayoutEffect(() => {
     const previous = prependRef.current;
     const stream = containerRef.current?.closest<HTMLElement>(".dashboard-chat-stream");
-    if (previous && stream) {
+    if (previous && stream && !earlierLoading) {
       stream.scrollTop = previous.top + stream.scrollHeight - previous.height;
       prependRef.current = null;
     }
-  }, [earliestId]);
+  }, [earliestId, messages, earlierLoading]);
 
   return <div ref={containerRef} className="dashboard-message-list">
-    {start > 0 ? <div className="dashboard-history-more">
-      <button className="secondary-button" type="button" onClick={() => {
-        const stream = containerRef.current?.closest<HTMLElement>(".dashboard-chat-stream");
-        if (stream) prependRef.current = { top: stream.scrollTop, height: stream.scrollHeight };
-        setEarliestId(visible[Math.max(0, start - pageSize)]!.id);
-      }}>显示更早的消息（还有 {start} 条）</button>
+    {start > 0 || hasEarlierMessages ? <div className="dashboard-history-more">
+      <button className="secondary-button" type="button" disabled={earlierLoading} onClick={() => void loadMore()}>
+        {earlierLoading ? "正在加载…" : start > 0 ? `显示更早的消息（还有 ${start} 条）` : "加载更早的消息"}</button>
     </div> : null}
     {visible.slice(start).map((message) => <DashboardAgentMessage key={message.id} message={message}
       busyId={props.busyId} selectedActionId={props.selectedTool?.messageId === message.id ? props.selectedTool.actionId : undefined}

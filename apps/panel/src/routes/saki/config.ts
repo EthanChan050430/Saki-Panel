@@ -11,6 +11,7 @@ import {
   localProviderUrls,
   minAgentModelRequestTimeoutMs,
   normalizeProviderId,
+  normalizeSakiAgentPermissionMode,
   normalizeTimeout,
   objectValue,
   providerConfigFor,
@@ -72,6 +73,7 @@ export async function readEffectiveSakiConfig(): Promise<SakiConfigResponse> {
   const providerConfig = providerConfigFor(providerConfigs, provider);
   const systemPrompt = settings.systemPrompt !== undefined ? settings.systemPrompt : null;
   return {
+    defaultAgentPermissionMode: normalizeSakiAgentPermissionMode(settings.defaultAgentPermissionMode),
     requestTimeoutMs: settings.requestTimeoutMs ?? panelConfig.sakiRequestTimeoutMs,
     provider,
     model: trimString(providerConfig.model) || (provider === "ollama" ? "llama3" : ""),
@@ -140,6 +142,7 @@ export async function saveSakiConfig(input: UpdateSakiConfigRequest): Promise<Sa
   }
 
   const next: PanelSakiSettings = {
+    defaultAgentPermissionMode: normalizeSakiAgentPermissionMode(input.defaultAgentPermissionMode ?? current.defaultAgentPermissionMode),
     requestTimeoutMs: normalizeTimeout(input.requestTimeoutMs, current.requestTimeoutMs),
     provider: nextProvider,
     model: trimString(providerConfigs[nextProvider]?.model) || (nextProvider === "ollama" ? "llama3" : ""),

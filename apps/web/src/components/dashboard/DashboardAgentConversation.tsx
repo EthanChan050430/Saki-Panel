@@ -202,6 +202,7 @@ function DashboardToolGroup({
 }) {
   const hasSelected = group.items.some((item) => item.id === selectedActionId);
   const [isOpen, setIsOpen] = useState(hasSelected);
+  const [visibleCount, setVisibleCount] = useState(20);
 
   useEffect(() => {
     if (hasSelected) {
@@ -217,8 +218,9 @@ function DashboardToolGroup({
       onToggle={(event) => setIsOpen(event.currentTarget.open)}
     >
       <summary>已完成 {group.items.length} 个步骤</summary>
-      <div className="dashboard-tool-group-content">
-        {group.items.map((action) => (
+      {isOpen ? <div className="dashboard-tool-group-content">
+        {group.items.length > visibleCount ? <button className="secondary-button" type="button" onClick={() => setVisibleCount(count => count + 20)}>加载更早的步骤</button> : null}
+        {group.items.slice(-visibleCount).map((action) => (
           <DashboardToolEntry
             key={action.id}
             action={action}
@@ -229,7 +231,7 @@ function DashboardToolGroup({
             onDecide={onDecide}
           />
         ))}
-      </div>
+      </div> : null}
     </details>
   );
 }
@@ -247,6 +249,7 @@ export const DashboardAgentMessage = memo(function DashboardAgentMessage({ messa
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState("");
+  const [timelineLimit, setTimelineLimit] = useState(60);
   const disabled = Boolean(busyId || message.isStreaming);
   const operate = (operation: DashboardMessageOperation) => { setMenuOpen(false); void onMessageOperation?.(message.id, operation).catch(() => {}); };
   const hasPendingAction = Boolean(
@@ -266,7 +269,7 @@ export const DashboardAgentMessage = memo(function DashboardAgentMessage({ messa
     <DashboardToolEntry key={item.id} action={item.action} messageId={message.id} selected={selectedActionId === item.action.id}
       busyId={busyId} onSelectAction={onSelectAction} onDecide={onDecide} />
   );
-  return <article className={`dashboard-message-row ${message.role}${editing ? " is-editing" : ""}${menuOpen ? " is-menu-open" : ""}`}>
+  return <article className={`dashboard-message-row ${message.role}${editing ? " is-editing" : ""}${menuOpen ? " is-menu-open" : ""}`} style={{ contentVisibility: menuOpen || editing ? "visible" : "auto", containIntrinsicSize: "auto 180px" }}>
     <div className="dashboard-message-meta">{message.role === "assistant" ? "Saki" : "你"}</div>
     <div className="dashboard-message-content">
       {message.attachments && message.attachments.length > 0 ? (
@@ -283,7 +286,8 @@ export const DashboardAgentMessage = memo(function DashboardAgentMessage({ messa
       {parsed.thinking && !timeline.some((item) => item.kind === "text" && (item.thinking || parseThinkingContent(item.content).thinking)) ? <SakiThinkingActionCard thinking={parsed.thinking} durationSec={message.thinkingDurationSec}
         streaming={Boolean(message.isStreaming && message.isThinking)} completedLabel="Think for" /> : null}
       {message.role === "assistant" && timeline.length > 0 && !editing ? <div className="dashboard-message-timeline">
-        {timeline.map((item) => {
+        {timeline.length > timelineLimit ? <button className="secondary-button" type="button" onClick={() => setTimelineLimit(count => count + 60)}>加载更早的步骤（还有 {timeline.length - timelineLimit} 项）</button> : null}
+        {timeline.slice(-timelineLimit).map((item) => {
           if (item.kind === "action" || item.kind === "group") return <div className="dashboard-actions-container" key={item.id}>{renderAction(item)}</div>;
           if (item.kind === "pending") return <div key={item.id} className="dashboard-streaming-placeholder" role="status">
             <span className="dashboard-streaming-pulse-dot" /><span>{item.message}</span>

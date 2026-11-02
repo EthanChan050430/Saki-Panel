@@ -1,8 +1,11 @@
 import React, { useMemo } from "react";
 import { Plus, Trash2, X } from "lucide-react";
 import { sakiConversationTimestamp, sortSakiConversationsByTime, type StoredSakiConversation } from "../SakiComponents.js";
+import { SakiConversationExportButton } from "./SakiConversationExportButton.js";
 
 export interface SakiHistoryDrawerProps {
+  token: string;
+  onExportError: (message: string) => void;
   isOpen: boolean;
   activeConversationId: string | null;
   storedConversations: StoredSakiConversation[];
@@ -14,6 +17,8 @@ export interface SakiHistoryDrawerProps {
 }
 
 export const SakiHistoryDrawer = React.memo(function SakiHistoryDrawer({
+  token,
+  onExportError,
   isOpen,
   activeConversationId,
   storedConversations,
@@ -58,6 +63,7 @@ export const SakiHistoryDrawer = React.memo(function SakiHistoryDrawer({
                 <strong>{conversation.title}</strong>
                 <span>{conversation.label} · {formatDate(lastActiveAt)}</span>
               </button>
+              <SakiConversationExportButton token={token} conversationId={conversation.id} onError={onExportError} />
               <button
                 className="icon-button mini danger-action"
                 type="button"

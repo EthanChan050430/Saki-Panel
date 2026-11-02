@@ -32,7 +32,9 @@ export function dashboardTaskIsPending(task: SakiActiveTaskSummary): boolean {
 export function dashboardTaskNeedsSync(current: DashboardChatMessage[], task: SakiActiveTaskSummary): boolean {
   if (dashboardTaskIsPending(task)) return true;
   const id = task.assistantMessageId ?? `${task.id}-assistant`;
-  return current.some((message) => message.id === id && (message.isStreaming || message.taskId !== task.id));
+  return current.some((message) => message.id === id && (message.isStreaming || message.taskId !== task.id ||
+    Boolean(task.response && (message.content !== task.response.message ||
+      task.response.timelineEvents?.length && message.timelineEvents?.length !== task.response.timelineEvents.length))));
 }
 
 // A task snapshot updates only its own assistant row. Earlier turns and local

@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import type {
   SakiAntigravityAuthStatusResponse,
+  SakiAgentPermissionMode,
   SakiAntigravityLoginUrlResponse,
   SakiConfigResponse,
   SakiCopilotAuthStatusResponse,
@@ -72,6 +73,7 @@ import {
 } from "./settingsHelpers.js";
 
 export interface SettingsModelTabProps {
+  onDefaultPermissionModeChange: (mode: SakiAgentPermissionMode) => void;
   isActive: boolean;
   form: SakiConfigResponse;
   changeProvider: (provider: string) => void;
@@ -132,6 +134,7 @@ export interface SettingsModelTabProps {
 }
 
 export const SettingsModelTab = memo(function SettingsModelTab({
+  onDefaultPermissionModeChange,
   isActive,
   form,
   changeProvider,
@@ -1274,6 +1277,17 @@ export const SettingsModelTab = memo(function SettingsModelTab({
       </div>
 
       <div className="settings-group-content ai-models-container">
+        <label className="settings-field">
+          <span className="settings-field-label">对话默认权限策略</span>
+          <select className="settings-select" value={form.defaultAgentPermissionMode ?? "acceptEdits"} disabled={loading}
+            onChange={event => onDefaultPermissionModeChange(event.target.value as SakiAgentPermissionMode)}>
+            <option value="ask">请求批准</option>
+            <option value="acceptEdits">帮我批准</option>
+            <option value="plan">仅规划（只读）</option>
+            <option value="bypassPermissions">完全访问权限</option>
+          </select>
+          <small className="settings-field-hint">用于新对话；对话中仍可单独切换。所有策略均遵守账号权限与安全规则。</small>
+        </label>
         {/* ==================================================================
             1. Active Model Overview & Global Routing Hero Card
             ================================================================== */}

@@ -405,7 +405,7 @@ export async function prepareSakiChatInvocation(
     contextText: trimContextText(body.contextText) || null,
     auditSearch: trimString(body.auditSearch) || null,
     mode,
-    agentPermissionMode: normalizeSakiAgentPermissionMode(body.agentPermissionMode),
+    agentPermissionMode: normalizeSakiAgentPermissionMode(body.agentPermissionMode ?? config.defaultAgentPermissionMode),
     reasoningEffort: config.reasoningEffort ?? "auto",
     terminalSandbox: body.terminalSandbox !== false,
     selectedSkillIds: Array.isArray(body.selectedSkillIds) ? body.selectedSkillIds.map(trimString).filter(Boolean) : [],

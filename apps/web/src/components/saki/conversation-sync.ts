@@ -4,6 +4,7 @@ export class ConversationSyncQueue<T extends { id: string }> {
   private tails = new Map<string, Promise<void>>();
   constructor(private write: (value: T, baseUpdatedAt?: string) => Promise<{ updatedAt: string }>, private conflict: (id: string, error: unknown) => void) {}
   version(id: string): string | undefined { return this.versions.get(id); }
+  isPending(id: string): boolean { return this.tails.has(id); }
   observe(id: string, updatedAt: string): void {
     const previous = this.versions.get(id);
     if (previous && updatedAt <= previous) return;

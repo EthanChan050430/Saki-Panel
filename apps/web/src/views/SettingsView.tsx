@@ -396,6 +396,7 @@ export function SettingsView({
     const topLevelApiKey = form.provider === "antigravity" && antigravityConfig ? (antigravityConfig.apiKey ?? "") : form.apiKey;
     return {
       requestTimeoutMs: Number(form.requestTimeoutMs) || defaultSakiRequestTimeoutMs,
+      defaultAgentPermissionMode: form.defaultAgentPermissionMode ?? "acceptEdits",
       provider: form.provider,
       model: form.model,
       ollamaUrl: form.ollamaUrl,
@@ -980,6 +981,7 @@ export function SettingsView({
                 />
 
                 <SettingsModelTab
+                  onDefaultPermissionModeChange={(defaultAgentPermissionMode) => setForm(current => ({ ...current, defaultAgentPermissionMode }))}
                   isActive={activeSettingsSection === "model"}
                   form={form}
                   changeProvider={changeProvider}

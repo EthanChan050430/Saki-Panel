@@ -142,7 +142,6 @@ npm run build               # 构建全部工作区
 npm run check               # TypeScript 检查
 npm run test:watch          # Watch 审批与诊断上下文回归测试
 npm run db:push             # 同步 SQLite schema
-npm run verify:operation-packs
 ~~~
 
 开发与贡献见 [CONTRIBUTING.md](CONTRIBUTING.md)；报告安全问题见 [SECURITY.md](SECURITY.md)。

@@ -2,6 +2,7 @@ import { prisma } from "../../db.js";
 import { RouteError, type SakiActiveTask } from "./types.js";
 import type { SakiChatResponse, SakiTimelineEvent } from "@webops/shared";
 import { sakiWorkspaceContextKey } from "@webops/shared";
+import { mergeConversationMessages } from "./conversation-history.js";
 
 const writes = new Map<string, Promise<unknown>>();
 export async function withSakiConversationLock<T>(id: string, work: () => Promise<T>): Promise<T> {
@@ -16,13 +17,20 @@ export async function saveClientSakiConversation(userId: string, id: string, bod
   return withSakiConversationLock(id, async () => {
     const existing = await prisma.sakiConversation.findUnique({ where: { id } });
     if (existing && existing.userId !== userId) throw new RouteError("Forbidden", 403);
+    let messages = body.messages as Record<string, unknown>[];
+    if (body.messagesLoaded === false) throw new RouteError("Load conversation messages before saving.", 400);
+    if (body.historyBeforeId != null) {
+      if (typeof body.historyBeforeId !== "string") throw new RouteError("Invalid history cursor.", 400);
+      try { messages = mergeConversationMessages(JSON.parse(existing?.messages ?? "[]"), messages, body.historyBeforeId); }
+      catch { throw new RouteError("History changed. Reload the conversation before saving.", 409); }
+    }
     const data = {
       contextKey: typeof body.contextKey === "string" ? body.contextKey : existing?.contextKey ?? "global",
       title: typeof body.title === "string" ? body.title : existing?.title ?? "新对话",
       label: typeof body.label === "string" ? body.label : existing?.label ?? "Saki",
       detail: typeof body.detail === "string" ? body.detail : existing?.detail ?? "",
       instanceId: typeof body.instanceId === "string" ? body.instanceId : body.instanceId === null ? null : existing?.instanceId ?? null,
-      messages: JSON.stringify(body.messages)
+      messages: JSON.stringify(messages)
     };
     if (body.workspaceInstanceIds !== undefined) {
       try { data.contextKey = sakiWorkspaceContextKey(data.instanceId, body.workspaceInstanceIds as string[]); }

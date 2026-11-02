@@ -2,6 +2,8 @@ import { SakiModelPicker } from "../components/saki/SakiModelReasoningPanel.js";
 import { useSakiReasoningEffort } from "../components/saki/useSakiReasoningEffort.js";
 import { sakiReasoningEffortLabel } from "@webops/shared";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { readCachedConversation } from "../components/saki/conversation-storage.js";
+import { SakiConversationExportButton } from "../components/saki/chat/SakiConversationExportButton.js";
 import {
   Activity,
   ArrowRight,
@@ -414,6 +416,9 @@ export function DashboardView({
   const messageMutationRef = useRef(false);
   const localHistoryOnlyRef = useRef(false);
   const historyVersionsRef = useRef(new Map<string, string>());
+  const historyCursorsRef = useRef(new Map<string, string | null>());
+  const [earlierHistoryLoading, setEarlierHistoryLoading] = useState(false);
+  const earlierHistoryLoadingRef = useRef(false);
   const [selectedTool, setSelectedTool] = useState<{ messageId: string; actionId: string } | null>(null);
   const selectedToolAction = selectedTool ? visibleSakiActions(messages.find((message) => message.id === selectedTool.messageId)?.actions).find((action) => action.id === selectedTool.actionId) : undefined;
   const [terminalPanelOpen, setTerminalPanelOpen] = useState(false);
@@ -726,13 +731,25 @@ export function DashboardView({
     return () => window.removeEventListener("saki:attach_instance_file", handleAttachInstanceFile);
   }, [activeInstanceId, token]);
   const taskRefreshSeq = useRef(0);
+  const selectedTaskDetailRef = useRef<{ key: string; task: SakiActiveTaskSummary } | null>(null);
   const refreshTasks = useCallback(async () => {
     const seq = ++taskRefreshSeq.current;
     try {
-      const result = await api.sakiGetActiveTasks(token);
+      const result = await api.sakiGetActiveTasks(token, { excludeResponse: true });
+      const selected = result.tasks.find(task => dashboardTaskSessionId(task) === activeSessionId && task.status !== "running");
+      if (selected) {
+        const key = `${token}:${selected.id}:${selected.updatedAt}:${selected.runVersion ?? 1}`;
+        let detail = selectedTaskDetailRef.current?.key === key ? selectedTaskDetailRef.current.task : undefined;
+        if (!detail) {
+          detail = await api.sakiGetTask(token, selected.id);
+          if (seq !== taskRefreshSeq.current) return;
+          selectedTaskDetailRef.current = { key, task: detail };
+        }
+        result.tasks = result.tasks.map(task => task.id === selected.id ? detail! : task);
+      }
       if (seq === taskRefreshSeq.current && Array.isArray(result.tasks)) setTasks(result.tasks);
     } catch { /* Keep the last known state during temporary disconnects. */ }
-  }, [token]);
+  }, [token, activeSessionId]);
   useEffect(() => {
     if (!canUseAgent) return;
     void refreshTasks();
@@ -881,6 +898,13 @@ export function DashboardView({
         ? isEn ? "Executed per current account and project permissions" : isTw ? "按目前帳號與專案權限執行" : "按当前账号与项目权限执行"
         : isEn ? "Current project only, per account permissions; external files require single approval" : isTw ? "僅限目前專案，按帳號權限執行；外部檔案需單次審批" : "仅限当前项目，按账号权限执行；外部文件需单次审批";
   const [agentPermission, setAgentPermission] = useState<SakiAgentPermissionMode>("acceptEdits");
+  const defaultAgentPermissionRef = useRef<SakiAgentPermissionMode>("acceptEdits");
+  const permissionSelectedRef = useRef(false);
+  useEffect(() => {
+    if (activeSessionId) return;
+    permissionSelectedRef.current = false;
+    setAgentPermission(defaultAgentPermissionRef.current);
+  }, [activeSessionId]);
   const activePermission = permissionOptions.find((option) => option.id === agentPermission) || permissionOptions[1];
   const PermissionIcon = activePermission.icon;
   const [detailsTab, setDetailsTab] = useState<"action" | "terminal" | "changes">("action");
@@ -977,6 +1001,7 @@ export function DashboardView({
         const write = await prepareMessageHistoryWrite();
         const updatedAt = write.localOnly ? new Date().toISOString() : (await api.sakiSaveConversation(token, {
           id: activeSessionId, instanceId: primaryId, workspaceInstanceIds: nextIds,
+          historyBeforeId: historyCursorsRef.current.get(activeSessionId) ?? null,
           baseUpdatedAt: write.baseUpdatedAt, messages: messages.map(message => ({ ...message, streaming: false }))
         })).updatedAt;
         historyVersionsRef.current.set(activeSessionId, updatedAt);
@@ -1207,6 +1232,8 @@ export function DashboardView({
     try {
       if (!canConfigureSaki) {
         const status = await api.sakiStatus(token);
+        defaultAgentPermissionRef.current = status.defaultAgentPermissionMode ?? "acceptEdits";
+        if (!permissionSelectedRef.current) setAgentPermission(defaultAgentPermissionRef.current);
         if (status.model) {
           const model = { id: status.model, name: status.model, label: status.model, provider: status.provider ?? "" };
           setAvailableModels([model]);
@@ -1215,6 +1242,8 @@ export function DashboardView({
         return;
       }
       const config = await api.sakiConfig(token);
+      defaultAgentPermissionRef.current = config.defaultAgentPermissionMode ?? "acceptEdits";
+      if (!permissionSelectedRef.current) setAgentPermission(defaultAgentPermissionRef.current);
       const configuredKey = config.model
         ? sakiModelSelectionKey({ id: config.model, provider: config.provider })
         : "";
@@ -1383,6 +1412,7 @@ export function DashboardView({
                   aria-pressed={isSelected}
                   onClick={() => {
                     setAgentPermission(option.id);
+                    permissionSelectedRef.current = true;
                     setPermissionDropdownOpen(false);
                   }}
                 >
@@ -1617,12 +1647,16 @@ export function DashboardView({
     ));
     try {
       // A local cache is display-only until the authoritative history is loaded.
-      const remote = localHistoryOnlyRef.current && cached ? cached : await api.sakiGetConversation(token, sessionId);
+      const remote = localHistoryOnlyRef.current
+        ? (await readCachedConversation(userId, sessionId).catch(() => undefined)) ?? cached
+        : await api.sakiGetConversation(token, sessionId, { limit: 30 });
+      if (!remote || remote.messagesLoaded === false) throw new Error("会话内容尚未加载，请恢复连接后重试。");
       if (!isCurrent() || streamRunsRef.current.has(sessionId)) return;
       const formatted = (remote.messages || []).map((m: any, idx: number) =>
         formatStoredChatMessage(m, idx, remote.updatedAt, language)
       );
       historyVersionsRef.current.set(remote.id, remote.updatedAt);
+      historyCursorsRef.current.set(remote.id, remote.historyBeforeId ?? null);
       hydratedSessionIdsRef.current.add(sessionId);
       setMessages(formatted);
       setActiveInstanceId(remote.instanceId ?? null);
@@ -1637,6 +1671,30 @@ export function DashboardView({
       setSessionLoadError(error instanceof Error ? error.message : "会话加载失败，请重试。");
     }
   }, [language, token, userId]);
+
+  async function loadEarlierSessionMessages() {
+    const id = activeSessionIdRef.current;
+    const cursor = id ? historyCursorsRef.current.get(id) : null;
+    if (!id || !cursor || earlierHistoryLoadingRef.current || sessionLoadingRef.current) return;
+    earlierHistoryLoadingRef.current = true;
+    setEarlierHistoryLoading(true);
+    const generation = sessionRequestGenerationRef.current;
+    try {
+      const page = await api.sakiGetConversation(token, id, { limit: 30, beforeId: cursor });
+      if (activeSessionIdRef.current !== id || generation !== sessionRequestGenerationRef.current) return;
+      const older = page.messages.map((message: any, index: number) => formatStoredChatMessage(message, index, page.updatedAt, language));
+      historyCursorsRef.current.set(id, page.historyBeforeId ?? null);
+      publishSessionMessages(id, current => {
+        const ids = new Set(current.map(message => message.id));
+        return [...older.filter(message => !ids.has(message.id)), ...current];
+      });
+    } catch (error) {
+      setMessageNotice(error instanceof Error ? error.message : "较早记录加载失败，请重试。");
+    } finally {
+      earlierHistoryLoadingRef.current = false;
+      setEarlierHistoryLoading(false);
+    }
+  }
 
   useEffect(() => {
     hydratedSessionIdsRef.current.clear();
@@ -1759,7 +1817,11 @@ export function DashboardView({
         if (run.detached || run.controller.signal.aborted) return;
         timeline = dashboardStreamTimeline(timeline, event);
         patch({ timeline });
-        if (event.type === "meta") patch({ content: "", thinking: "" });
+        if (event.type === "snapshot") {
+          content = event.response.message;
+          thinking = event.response.thinking ?? "";
+          patch({ content, thinking, actions: event.response.actions ?? [], isThinking: false });
+        } else if (event.type === "meta") patch({ content: "", thinking: "" });
         else if (event.type === "delta") { content += event.text; patch({ content, isThinking: false, workflowMessage: undefined }); }
         else if (event.type === "thinking") { thinking += event.text; patch({ thinking, isThinking: true }); }
         else if (event.type === "action") {
@@ -2008,6 +2070,7 @@ export function DashboardView({
         const stored = readSakiConversations(userId);
         const previous = stored.find((session) => session.id === convId);
         writeSakiConversations([{ id: convId, contextKey: sakiWorkspaceContextKey(activeInstanceId, selectedWorkspaceIds),
+          historyBeforeId: historyCursorsRef.current.get(convId) ?? null, messagesLoaded: true,
           title: sessionTitle, label: interactionMode === "agent" ? "Agent" : "Chat", detail: currentModelDisplayName || "",
           instanceId: activeInstanceId, workspaceInstanceIds: selectedWorkspaceIds, createdAt: previous?.createdAt ?? createdAt, updatedAt: new Date().toISOString(),
           messages: next.map((message) => {
@@ -2026,7 +2089,7 @@ export function DashboardView({
       };
       persistLocal(initialSession.messages!);
 
-      const historyPayload: SakiChatMessage[] = sourceMessages.filter((message) => !message.rollbackJournal).map((m) => ({
+      const historyPayload: SakiChatMessage[] = sourceMessages.filter((message) => !message.rollbackJournal).slice(-12).map((m) => ({
         role: m.role,
         content: m.content
       }));
@@ -2089,7 +2152,14 @@ export function DashboardView({
             finalTimeline = dashboardStreamTimeline(finalTimeline, event);
             const timeline = finalTimeline;
             updateMessages((current) => current.map((message) => message.id === assistantMsgId ? { ...message, timeline } : message));
-            if (event.type === "delta") {
+            if (event.type === "snapshot") {
+              finalContent = event.response.message;
+              finalThinking = event.response.thinking ?? "";
+              finalActions = event.response.actions ?? [];
+              updateMessages(current => current.map(message => message.id === assistantMsgId ? {
+                ...message, content: finalContent, thinking: finalThinking, actions: finalActions, isThinking: false
+              } : message));
+            } else if (event.type === "delta") {
               const thinkingDurationSec = finishThinking();
               finalContent += event.text;
               updateMessages((prev) =>
@@ -2238,6 +2308,7 @@ export function DashboardView({
           if (interactionMode === "chat" && !abortController.signal.aborted) {
             const saved = await api.sakiSaveConversation(token, {
               id: convId,
+              historyBeforeId: historyCursorsRef.current.get(convId) ?? null,
               title: sessionTitle,
               label: "Chat",
               detail: currentModelDisplayName || requestedModel || undefined,
@@ -2417,7 +2488,9 @@ export function DashboardView({
         throw err;
       }
     }
-    if (remote && !dashboardHistoryMatches(remote.messages, messages)) throw new Error("对话已在其他设备更新，请重新打开后再操作。");
+    const cursor = historyCursorsRef.current.get(activeSessionId);
+    const cursorIndex = cursor ? remote?.messages.findIndex(message => message.id === cursor) ?? -1 : 0;
+    if (cursorIndex < 0 || remote && !dashboardHistoryMatches(remote.messages.slice(cursorIndex), messages)) throw new Error("对话已在其他设备更新，请重新打开后再操作。");
     if (!remote && sessions.find((session) => session.id === activeSessionId)?.updatedAt) throw new Error("对话已被删除，请重新打开历史记录。");
     return { localOnly: false, baseUpdatedAt: remote?.updatedAt };
   }
@@ -2428,11 +2501,12 @@ export function DashboardView({
     const previous = cached.find((conversation) => conversation.id === activeSessionId);
     const title = next.find((message) => message.role === "user")?.content.slice(0, 24) || "新对话";
     const conversation = {
+      historyBeforeId: historyCursorsRef.current.get(activeSessionId) ?? null, messagesLoaded: true,
       id: activeSessionId, contextKey: sakiWorkspaceContextKey(activeInstanceId, selectedWorkspaceIds), title,
       label: previous?.label ?? (interactionMode === "agent" ? "Agent" : "Chat"), detail: previous?.detail ?? "",
       instanceId: activeInstanceId, workspaceInstanceIds: selectedWorkspaceIds, createdAt: previous?.createdAt ?? updatedAt, updatedAt,
       messages: next.map((message) => ({ id: message.id, role: message.role, content: message.content,
-        thinking: message.thinking ?? "", thinkingDurationSec: message.thinkingDurationSec, actions: message.actions ?? [], timeline: message.timeline ?? [], timelineBase: message.timelineBase,
+        thinking: message.thinking ?? "", thinkingDurationSec: message.thinkingDurationSec, actions: message.actions ?? [], ...(message.timeline ? { timeline: message.timeline } : {}), timelineEvents: message.timelineEvents, timelineBase: message.timelineBase,
         taskId: message.taskId, rollbackJournal: message.rollbackJournal,
         ...(message.attachments ? { attachments: message.attachments } : {}), createdAt: message.createdAt ?? updatedAt }))
     };
@@ -2448,6 +2522,7 @@ export function DashboardView({
     if (!write.localOnly) {
       const saved = await api.sakiSaveConversation(token, {
         id: activeSessionId, instanceId: activeInstanceId, workspaceInstanceIds: selectedWorkspaceIds, contextKey: sakiWorkspaceContextKey(activeInstanceId, selectedWorkspaceIds),
+        historyBeforeId: historyCursorsRef.current.get(activeSessionId) ?? null,
         title: next.find((message) => message.role === "user")?.content.slice(0, 24) || "新对话",
         baseUpdatedAt: write.baseUpdatedAt,
         messages: next.map((message) => ({ ...message, createdAt: message.createdAt ?? updatedAt, streaming: false }))
@@ -2597,7 +2672,12 @@ export function DashboardView({
             if (streamRun?.detached || controller.signal.aborted) return;
             if (event.type !== "meta") timeline = dashboardStreamTimeline(timeline, event);
             publish({ timeline });
-            if (event.type === "delta") {
+            if (event.type === "snapshot") {
+              content = event.response.message;
+              thinking = event.response.thinking ?? "";
+              actions = event.response.actions ?? [];
+              publish({ content, thinking, actions, isThinking: false });
+            } else if (event.type === "delta") {
               content += event.text;
               publish({ content, isThinking: false, workflowMessage: undefined });
             } else if (event.type === "thinking") {
@@ -2759,6 +2839,9 @@ export function DashboardView({
                       <span className="dashboard-session-waiting" role="status" aria-label="任务等待处理" title="任务等待审批或回答"><Activity size={13} aria-hidden="true" /></span> : null}
                   </button>
                   <div className="dashboard-sidebar-item-actions">
+                    <SakiConversationExportButton token={token} conversationId={session.id}
+                      className="dashboard-sidebar-item-export" onError={setError}
+                      onExported={() => setMessageNotice("完整对话已导出为 Markdown。")} />
                     <button
                       className="dashboard-sidebar-item-delete"
                       type="button"
@@ -2862,6 +2945,9 @@ export function DashboardView({
             </div>
 
             <div className="dashboard-topbar-right">
+              {activeSessionId ? <SakiConversationExportButton token={token} conversationId={activeSessionId}
+                className="dashboard-icon-btn" onError={setError}
+                onExported={() => setMessageNotice("完整对话已导出为 Markdown。")} /> : null}
               <button className="dashboard-icon-btn" type="button" title="打开终端详情" aria-label="打开终端详情"
                 onClick={() => setTerminalPanelOpen((open) => !open)}><Terminal size={16} /></button>
               <div className="dashboard-pill-switcher" role="tablist">
@@ -3445,6 +3531,9 @@ export function DashboardView({
                         </div>
                       ) : null}
                       <DashboardMessageList key={activeSessionId ?? "new"} messages={messages}
+                        hasEarlierMessages={Boolean(activeSessionId && historyCursorsRef.current.get(activeSessionId))}
+                        earlierLoading={earlierHistoryLoading}
+                        onLoadEarlierMessages={loadEarlierSessionMessages}
                         busyId={sessionLoading || sessionLoadError ? "history-loading" : isStreaming ? "streaming" : actionBusyId}
                         selectedTool={selectedTool} onSelectAction={selectTool} onDecide={decideAction}
                         onMessageOperation={handleMessageOperation} copiedMessageId={copiedMessageId}

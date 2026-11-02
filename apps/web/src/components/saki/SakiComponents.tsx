@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { cacheConversations } from "./conversation-storage.js";
+import { replaySakiTimeline } from "./timeline-replay.js";
 import {
   Activity,
   AlertTriangle,
@@ -315,6 +317,8 @@ export const sakiLauncherAttachedSize = { width: 58, height: 92 };
 export const sakiConversationStorageKey = "webops.saki.conversations.v1";
 
 export interface StoredSakiConversation {
+  messagesLoaded?: boolean | undefined;
+  historyBeforeId?: string | null | undefined;
   id: string;
   contextKey: string;
   workspaceInstanceIds?: string[] | undefined;
@@ -381,12 +385,14 @@ export function readSakiConversations(userId?: string): StoredSakiConversation[]
             instanceId: value.instanceId ?? null,
             title: value.title ?? "新对话",
             messages: value.messages,
+            messagesLoaded: value.messagesLoaded,
+            historyBeforeId: value.historyBeforeId,
             createdAt: value.createdAt ?? new Date().toISOString(),
             updatedAt: value.updatedAt ?? new Date().toISOString()
           };
         })
         .filter((item): item is StoredSakiConversation => Boolean(item))
-        .filter((conversation) => hasPersistableSakiSpeech(conversation.messages))
+        .filter((conversation) => conversation.messagesLoaded === false || hasPersistableSakiSpeech(conversation.messages))
     ).slice(0, 80);
     sakiConversationReadCache = { userId, raw: raw ?? null, conversations };
     return conversations;
@@ -397,30 +403,10 @@ export function readSakiConversations(userId?: string): StoredSakiConversation[]
 
 export function writeSakiConversations(conversations: StoredSakiConversation[], userId?: string) {
   if (!userId) return;
-  const sorted = sortSakiConversationsByTime(conversations);
-  try {
-    globalThis.localStorage?.setItem(
-      `${sakiConversationStorageKey}:user:${encodeURIComponent(userId)}`,
-      JSON.stringify(sorted.slice(0, 80))
-    );
-  } catch {
-    // If storage is constrained (e.g. quota exceeded), try persisting fewer recent conversations
-    try {
-      globalThis.localStorage?.setItem(
-        `${sakiConversationStorageKey}:user:${encodeURIComponent(userId)}`,
-        JSON.stringify(sorted.slice(0, 30))
-      );
-    } catch {
-      try {
-        globalThis.localStorage?.setItem(
-          `${sakiConversationStorageKey}:user:${encodeURIComponent(userId)}`,
-          JSON.stringify(sorted.slice(0, 10))
-        );
-      } catch {
-        // Storage is completely unavailable or quota exhausted
-      }
-    }
-  }
+  const sorted = sortSakiConversationsByTime(conversations).slice(0, 80);
+  const key = `${sakiConversationStorageKey}:user:${encodeURIComponent(userId)}`;
+  try { sakiConversationReadCache = { userId, raw: localStorage.getItem(key), conversations: sorted }; } catch {}
+  cacheConversations(sorted, userId, key);
 }
 
 export function sakiConversationTitle(messages: LocalSakiMessage[]): string {
@@ -1527,14 +1513,23 @@ export function upsertSakiTimelineAction(timeline: LocalSakiTimelineItem[] | und
 }
 
 export function mergeSakiTimelineActions(timeline: LocalSakiTimelineItem[] | undefined, actions: SakiAgentAction[] | undefined): LocalSakiTimelineItem[] {
-  return (actions ?? []).reduce<LocalSakiTimelineItem[]>((current, action) => {
+  if (!actions?.length) return timeline ?? [];
+  const latest = new Map(actions.map(action => [action.id, action]));
+  const existingIds = new Set<string>();
+  const updated = (timeline ?? []).map(item => {
+    if (item.kind !== "action") return item;
+    existingIds.add(item.action.id);
+    const action = latest.get(item.action.id);
+    return action && action !== item.action ? { ...item, action } : item;
+  });
+  return actions.filter(action => !existingIds.has(action.id)).reduce<LocalSakiTimelineItem[]>((current, action) => {
     const settled = settleSakiTimelinePending(current, action);
     if (settled.length === current.length) return settled;
     const timestamp = Date.parse(action.createdAt);
     const before = current.findIndex(entry => Date.parse(entry.createdAt) > timestamp);
     const item = settled.at(-1)!;
     return before < 0 ? settled : [...current.slice(0, before), item, ...current.slice(before)];
-  }, timeline ?? []);
+  }, updated);
 }
 
 export function mergeSakiActionList(
@@ -1618,29 +1613,7 @@ function timelineTextIsVisible(entry: Extract<LocalSakiTimelineItem, { kind: "te
 }
 
 export function recordedSakiTimeline(events: SakiTimelineEvent[] | undefined): LocalSakiTimelineItem[] {
-  let result: LocalSakiTimelineItem[] = [];
-  for (const event of events ?? []) {
-    const payload = event.payload;
-    const previousIds = new Set(result.map(item => item.id));
-    if (event.type === "delta" && typeof payload.text === "string") result = appendSakiTimelineDelta(result, payload.text);
-    else if (event.type === "thinking" && typeof payload.text === "string") result = appendSakiTimelineThinking(result, payload.text);
-    else if (event.type === "action" && payload.action) result = settleSakiTimelinePending(sealSakiTimelineDelta(result), payload.action as SakiAgentAction);
-    else if (event.type === "workflow") {
-      const workflow = { type: "workflow", ...payload } as Extract<SakiChatStreamEvent, { type: "workflow" }>;
-      const text = workflowEventChatText(workflow);
-      if (text) result = upsertSakiTimelineText(sealSakiTimelineDelta(result), { id: `workflow:${workflow.id}`, content: text, source: "workflow", createdAt: new Date(event.ts).toISOString() });
-      else if (workflow.tool && workflow.stage === "tool" && workflow.status === "running") result = upsertSakiTimelinePending(result, { id: workflow.id, tool: workflow.tool, ...(workflow.call ? { call: workflow.call } : {}), message: workflow.message, createdAt: new Date(event.ts).toISOString() });
-    }
-    result = result.map(item => !previousIds.has(item.id) && item.kind === "text" && item.source === "delta" ? {
-      ...item, id: `recorded:${event.id}`, createdAt: new Date(event.ts).toISOString(), ...(item.thinking ? { thinkingStartedAt: event.ts } : {})
-    } : item);
-  }
-  return sealSakiTimelineDelta(result).map((item, index) => {
-    if (item.kind !== "text" || !item.thinking || !item.thinkingStartedAt) return item;
-    const next = result[index + 1];
-    const end = next ? Date.parse(next.createdAt) : events?.at(-1)?.ts ?? item.thinkingStartedAt;
-    return { ...item, thinkingDurationSec: Math.max(1, Math.round((end - item.thinkingStartedAt) / 1000)) };
-  });
+  return replaySakiTimeline(events);
 }
 
 export function mergeSakiResponseTimeline(timeline: LocalSakiTimelineItem[] | undefined, response: SakiChatResponse, actions = response.actions): LocalSakiTimelineItem[] {
@@ -1648,7 +1621,16 @@ export function mergeSakiResponseTimeline(timeline: LocalSakiTimelineItem[] | un
   return mergeSakiFinalTimeline(mergeSakiTimelineActions(recorded, actions), response.message);
 }
 
+const renderableTimelineCache = new WeakMap<LocalSakiMessage, LocalSakiTimelineItem[]>();
 export function renderableSakiTimeline(message: LocalSakiMessage): LocalSakiTimelineItem[] {
+  const cached = renderableTimelineCache.get(message);
+  if (cached) return cached;
+  const result = buildRenderableSakiTimeline(message);
+  renderableTimelineCache.set(message, result);
+  return result;
+}
+
+function buildRenderableSakiTimeline(message: LocalSakiMessage): LocalSakiTimelineItem[] {
   const visibleActions = visibleSakiActions(message.actions);
   const latestActions = new Map(visibleActions.map((action) => [action.id, action]));
   const seenActions = new Set<string>();

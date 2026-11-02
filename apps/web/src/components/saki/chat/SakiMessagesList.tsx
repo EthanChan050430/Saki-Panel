@@ -31,6 +31,10 @@ import {
 } from "../SakiComponents.js";
 
 export interface SakiMessagesListProps {
+  conversationId?: string;
+  historyLoading?: boolean;
+  hasEarlierMessages?: boolean;
+  onLoadEarlierMessages?: () => void;
   mode?: SakiChatMode;
   messagesRef: React.RefObject<HTMLDivElement | null>;
   onScroll: (event: React.UIEvent<HTMLDivElement>) => void;
@@ -76,6 +80,10 @@ function findPrecedingUserMessage(messages: LocalSakiMessage[], assistantId: str
 }
 
 export const SakiMessagesList = React.memo(function SakiMessagesList({
+  conversationId,
+  historyLoading,
+  hasEarlierMessages,
+  onLoadEarlierMessages,
   mode = "chat",
   messagesRef,
   onScroll,
@@ -109,12 +117,29 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
   onRevertAllChanges,
   onRestoreAllChanges
 }: SakiMessagesListProps) {
+  const [timelineLimits, setTimelineLimits] = React.useState<Record<string, number>>({});
+  const scrollAnchor = React.useRef<{ top: number; height: number } | null>(null);
+  React.useEffect(() => setTimelineLimits({}), [conversationId]);
+  React.useLayoutEffect(() => {
+    const element = messagesRef.current;
+    if (element && scrollAnchor.current) {
+      element.scrollTop = scrollAnchor.current.top + element.scrollHeight - scrollAnchor.current.height;
+      scrollAnchor.current = null;
+    }
+  }, [timelineLimits, messagesRef]);
+  const revealTimeline = (id: string) => {
+    const element = messagesRef.current;
+    if (element) scrollAnchor.current = { top: element.scrollTop, height: element.scrollHeight };
+    setTimelineLimits(current => ({ ...current, [id]: (current[id] ?? 60) + 60 }));
+  };
   const activeChangesSummary = React.useMemo(() => {
     return filterGitChangesForSession(changesSummary, messages);
   }, [changesSummary, messages]);
 
   return (
     <div className={`saki-messages${mode === "agent" ? " saki-messages-agent" : ""}`} ref={messagesRef} onScroll={onScroll}>
+      {historyLoading ? <p className="saki-history-loading" role="status">正在加载历史记录…</p> : null}
+      {hasEarlierMessages && !historyLoading ? <button className="small-button saki-history-load-earlier" type="button" onClick={onLoadEarlierMessages}>加载更早的消息</button> : null}
       {messages.filter((message) => !message.rollbackJournal).map((message) => {
         const actionItems = visibleSakiActions(message.actions).filter((action) => action.tool.toLowerCase() !== "managetodos");
         const fileRollbackActions = actionItems.filter(isSakiFileRollbackAction);
@@ -137,7 +162,7 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
         };
 
         return (
-          <div className={`saki-message saki-message-${message.role}`} key={message.id}>
+          <div className={`saki-message saki-message-${message.role}`} key={message.id} style={{ contentVisibility: "auto", containIntrinsicSize: "auto 180px" }}>
             <div className="saki-message-meta">
               {message.role === "assistant" ? (
                 <img className="saki-message-avatar" src={avatar} alt="" />
@@ -186,14 +211,11 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
               </div>
             ) : message.role === "assistant" && timelineItems.length > 0 ? (
               <div className="saki-message-timeline">
-                {timelineItems.map((item) => {
+                {timelineItems.length > (timelineLimits[message.id] ?? 60) ? <button className="small-button" type="button" onClick={() => revealTimeline(message.id)}>加载更早的步骤（还有 {timelineItems.length - (timelineLimits[message.id] ?? 60)} 项）</button> : null}
+                {timelineItems.slice(-(timelineLimits[message.id] ?? 60)).map((item) => {
                   if (item.kind === "tool-group") {
-                    return <details className="saki-tool-group" key={item.id}>
-                      <summary>已完成 {item.items.length} 个步骤</summary>
-                      {item.items.map((entry) => <SakiToolActionCard key={entry.id} action={entry.action} actionBusyId={actionBusyId}
-                        onDecision={(targetAction, decision) => void onDecideAction(targetAction, decision)}
-                        onAnswer={onAnswerQuestion} onOpenPath={onOpenPath} />)}
-                    </details>;
+                    return <LazyToolGroup key={item.id} items={item.items} actionBusyId={actionBusyId}
+                      onDecision={onDecideAction} onAnswer={onAnswerQuestion} onOpenPath={onOpenPath} />;
                   }
                   if (item.kind === "pending") {
                     return (
@@ -491,3 +513,22 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
     </div>
   );
 });
+
+function LazyToolGroup({ items, actionBusyId, onDecision, onAnswer, onOpenPath }: {
+  items: Extract<import("../../../types/app.js").LocalSakiTimelineItem, { kind: "action" }>[];
+  actionBusyId: SakiMessagesListProps["actionBusyId"];
+  onDecision: SakiMessagesListProps["onDecideAction"];
+  onAnswer: SakiMessagesListProps["onAnswerQuestion"];
+  onOpenPath: SakiMessagesListProps["onOpenPath"];
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [limit, setLimit] = React.useState(20);
+  return <details className="saki-tool-group" onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary>已完成 {items.length} 个步骤</summary>
+    {open ? <>
+      {items.length > limit ? <button className="small-button" type="button" onClick={() => setLimit(current => current + 20)}>加载更早的步骤</button> : null}
+      {items.slice(-limit).map(entry => <SakiToolActionCard key={entry.id} action={entry.action} actionBusyId={actionBusyId}
+        onDecision={onDecision} onAnswer={onAnswer} onOpenPath={onOpenPath} />)}
+    </> : null}
+  </details>;
+}

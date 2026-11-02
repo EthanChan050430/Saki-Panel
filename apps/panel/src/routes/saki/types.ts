@@ -32,6 +32,7 @@ import type { SakiWorkspaceBinding } from "./workspace-binding.js";
 export type InstanceWithNode = InstanceWithAccess;
 
 export interface PanelSakiSettings {
+  defaultAgentPermissionMode?: SakiAgentPermissionMode;
   requestTimeoutMs?: number;
   provider?: string;
   model?: string;

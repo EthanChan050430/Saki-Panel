@@ -72,7 +72,7 @@ export function AgentMonitorBell({
   const refresh = useCallback(async () => {
     const seq = ++taskRefreshSeq.current;
     try {
-      const result = await api.sakiGetActiveTasks(token);
+      const result = await api.sakiGetActiveTasks(token, { excludeResponse: true });
       if (seq !== taskRefreshSeq.current) return;
       setTasks(result.tasks);
       setTasksLoaded(true);

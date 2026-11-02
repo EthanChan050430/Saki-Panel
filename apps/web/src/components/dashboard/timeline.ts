@@ -10,6 +10,7 @@ import {
 /** Keep text and tools in arrival order, including narration between calls. */
 export function dashboardStreamTimeline(timeline: LocalSakiTimelineItem[] | undefined, event: SakiChatStreamEvent): LocalSakiTimelineItem[] {
   const current = timeline ?? [];
+  if (event.type === "snapshot") return mergeSakiResponseTimeline([], { ...event.response, message: "" });
   if (event.type === "meta") return []; // Reconnect replays the task from the start.
   if (event.type === "delta") return appendSakiTimelineDelta(current, event.text);
   if (event.type === "thinking") return appendSakiTimelineThinking(current, event.text);
@@ -47,13 +48,18 @@ export function dashboardFinalTimeline(timeline: LocalSakiTimelineItem[] | undef
 /** Replay the current run after its previous runs, updating shared action IDs in place. */
 export function dashboardMergeTimeline(base: LocalSakiTimelineItem[] | undefined, incoming: LocalSakiTimelineItem[]): LocalSakiTimelineItem[] {
   const baseActions = (base ?? []).flatMap(item => item.kind === "action" ? [item.action.id] : []);
-  if (incoming.some(item => item.id.startsWith("recorded:")) && baseActions.length && baseActions.every(id => incoming.some(item => item.kind === "action" && item.action.id === id))) return incoming;
+  const incomingActions = new Set(incoming.flatMap(item => item.kind === "action" ? [item.action.id] : []));
+  if (incoming.some(item => item.id.startsWith("recorded:")) && baseActions.length && baseActions.every(id => incomingActions.has(id))) return incoming;
   const result = [...(base ?? [])];
+  const ids = new Map(result.map((item, index) => [item.id, index]));
+  const actions = new Map(result.flatMap((item, index) => item.kind === "action" ? [[item.action.id, index] as const] : []));
   for (const item of incoming) {
-    const index = result.findIndex((entry) => entry.id === item.id ||
-      (entry.kind === "action" && item.kind === "action" && entry.action.id === item.action.id));
-    if (index < 0) result.push(item);
+    const index = ids.get(item.id) ?? (item.kind === "action" ? actions.get(item.action.id) : undefined);
+    const position = index ?? result.length;
+    if (index === undefined) result.push(item);
     else result[index] = item;
+    ids.set(item.id, position);
+    if (item.kind === "action") actions.set(item.action.id, position);
   }
   return result;
 }

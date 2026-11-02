@@ -391,6 +391,7 @@ export type SakiChatStreamEvent =
       status?: string;
     }
   | { type: "heartbeat"; ts?: number }
+  | { type: "snapshot"; response: SakiChatResponse }
   | ({ type: "workflow" } & SakiChatWorkflowUpdate)
   | { type: "delta"; text: string }
   | { type: "thinking"; text: string }
@@ -424,6 +425,8 @@ export interface SakiActiveTaskSummary {
 }
 
 export interface SakiSavedConversation {
+  messagesLoaded?: boolean;
+  historyBeforeId?: string | null;
   id: string;
   contextKey: string;
   workspaceInstanceIds?: string[] | undefined;
@@ -578,7 +581,7 @@ async function requestSakiTaskReconnectStream(
   if (signal) {
     requestInit.signal = signal;
   }
-  const response = await fetch(new URL(`/api/saki/tasks/${encodeURIComponent(taskId)}/stream`, API_BASE), requestInit);
+  const response = await fetch(new URL(`/api/saki/tasks/${encodeURIComponent(taskId)}/stream?snapshot=1`, API_BASE), requestInit);
   if (!response.ok) {
     throw new ApiError(await responseErrorMessage(response), response.status);
   }
@@ -1942,9 +1945,9 @@ export const api = {
   sakiGetTask(token: string, taskId: string) {
     return requestJson<SakiActiveTaskSummary>(`/api/saki/tasks/${encodeURIComponent(taskId)}`, {}, token);
   },
-  sakiGetActiveTasks(token: string) {
+  sakiGetActiveTasks(token: string, options?: { excludeResponse?: boolean }) {
     return requestJson<{ tasks: SakiActiveTaskSummary[]; runningCount: number }>(
-      `/api/saki/active-tasks`,
+      `/api/saki/active-tasks${options?.excludeResponse ? "?excludeResponse=1" : ""}`,
       {},
       token
     );
@@ -2005,12 +2008,24 @@ export const api = {
     }
     return response.blob();
   },
+  async sakiExportConversation(token: string, id: string) {
+    const response = await fetch(new URL(`/api/saki/conversations/${encodeURIComponent(id)}/export`, API_BASE), {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    if (!response.ok) throw new ApiError(await responseErrorMessage(response), response.status);
+    const fileName = parseContentDispositionFileName(response.headers.get("content-disposition") ?? "", `conversation-${id}.md`);
+    triggerBlobDownload(await response.blob(), fileName);
+  },
   sakiListConversations(token: string, options?: { excludeMessages?: boolean }) {
     const query = options?.excludeMessages ? "?excludeMessages=true" : "";
     if (options?.excludeMessages) return loadResourceSnapshot(token, "conversations", () => requestJson<SakiSavedConversation[]>(`/api/saki/conversations${query}`, {}, token));
     return requestJson<SakiSavedConversation[]>(`/api/saki/conversations${query}`, {}, token);
   },
-  sakiGetConversation(token: string, id: string) {
+  sakiGetConversation(token: string, id: string, page?: { limit: number; beforeId?: string }) {
+    if (page) {
+      const query = new URLSearchParams({ limit: String(page.limit), ...(page.beforeId ? { beforeId: page.beforeId } : {}) });
+      return requestJson<SakiSavedConversation>(`/api/saki/conversations/${encodeURIComponent(id)}?${query}`, {}, token);
+    }
     return loadResourceSnapshot(token, `conversation:${id}`, () => requestJson<SakiSavedConversation>(`/api/saki/conversations/${encodeURIComponent(id)}`, {}, token));
   },
   sakiSaveConversation(
@@ -2024,6 +2039,8 @@ export const api = {
       detail?: string | undefined;
       instanceId?: string | null | undefined;
       messages: any[];
+      messagesLoaded?: boolean | undefined;
+      historyBeforeId?: string | null | undefined;
       baseUpdatedAt?: string | undefined;
     }
   ) {

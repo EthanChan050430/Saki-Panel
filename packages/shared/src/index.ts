@@ -1950,6 +1950,7 @@ export interface SakiChatResponse {
 }
 
 export interface SakiStatusResponse {
+  defaultAgentPermissionMode?: SakiAgentPermissionMode;
   reachable: boolean;
   configured: boolean;
   skills: SakiSkillSummary[];
@@ -2261,6 +2262,7 @@ export function sanitizeSakiImageGenConfig(value: unknown): SakiImageGenConfig {
 }
 
 export interface SakiConfigResponse {
+  defaultAgentPermissionMode?: SakiAgentPermissionMode;
   requestTimeoutMs: number;
   /** Per-request override, never persisted as the global model configuration. */
   reasoningEffort?: import("./saki-reasoning.js").SakiReasoningEffort;
@@ -2284,6 +2286,7 @@ export interface SakiConfigResponse {
 }
 
 export interface UpdateSakiConfigRequest {
+  defaultAgentPermissionMode?: SakiAgentPermissionMode;
   requestTimeoutMs?: number;
   provider?: string;
   model?: string;

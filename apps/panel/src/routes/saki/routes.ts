@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { Readable } from "node:stream";
 import { sakiWorkspaceContextKey, sakiWorkspaceIdsFromContextKey } from "@webops/shared";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -69,6 +70,8 @@ import { createSakiTerminal } from "./terminals.js";
 import { assertSakiWorkspaceBinding, bindSakiWorkspace } from "./workspace-binding.js";
 import { runTrackedSakiTask, trackedSakiTaskEvents } from "./task-runner.js";
 import { saveClientSakiConversation, withSakiConversationLock } from "./conversations.js";
+import { pageConversationMessages } from "./conversation-history.js";
+import { conversationMarkdownFileName, conversationMarkdownParts, snapshotConversationForExport } from "./conversation-export.js";
 import {
   cancelActiveSakiTask,
   activeSakiTasks,
@@ -218,6 +221,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
       reachable: configured,
       configured,
       skills: skillsState.skills,
+      defaultAgentPermissionMode: config.defaultAgentPermissionMode ?? "acceptEdits",
       provider,
       model: config.model
     };
@@ -611,11 +615,12 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/saki/active-tasks", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    const includeResponse = (request.query as { excludeResponse?: string }).excludeResponse !== "1";
     const candidates = listSakiActiveTasks(request.user.sub);
     const access = await Promise.all(candidates.map(async (task) => { try { await assertSakiTaskAccess(request.user.sub, task); return true; } catch { return false; } }));
     const tasks = candidates.filter((_, index) => access[index]);
     return {
-      tasks: tasks.map(toSakiActiveTaskSummary),
+      tasks: tasks.map(task => toSakiActiveTaskSummary(task, includeResponse)),
       runningCount: tasks.filter((task) => task.status === "running").length
     };
   });
@@ -857,6 +862,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
         instanceId: r.instanceId,
         title: r.title,
         messages: [],
+        messagesLoaded: false,
         createdAt: r.createdAt.toISOString(),
         updatedAt: r.updatedAt.toISOString()
       }));
@@ -887,8 +893,36 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
+  app.get("/api/saki/conversations/:id/export", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const row = await prisma.sakiConversation.findFirst({ where: { id, userId: request.user.sub } });
+    const tasks = [...activeSakiTasks.values()].filter(task => task.userId === request.user.sub
+      && (task.input.conversationId ?? `task-${task.id}`) === id && (task.status === "running" || task.pendingHistorySync));
+    if (!row && !tasks.length) throw new RouteError("Conversation not found", 404);
+    for (const task of tasks) await assertSakiTaskAccess(request.user.sub, task);
+    let messages: unknown[] = [];
+    try {
+      const parsed: unknown = JSON.parse(row?.messages ?? "[]");
+      if (!Array.isArray(parsed)) throw new Error("Invalid history");
+      messages = parsed;
+    } catch { throw new RouteError("会话存档无法解析，导出已停止，原始记录仍保留。", 500); }
+    const conversation = snapshotConversationForExport({ id, title: row?.title ?? tasks[0]!.input.message.slice(0, 80),
+      contextKey: row?.contextKey ?? "global", label: row?.label ?? "Agent", detail: row?.detail ?? "",
+      instanceId: row?.instanceId ?? tasks[0]?.instanceId ?? null,
+      workspaceInstanceIds: row ? sakiWorkspaceIdsFromContextKey(row.contextKey, row.instanceId) : tasks[0]?.input.workspaceInstanceIds ?? [],
+      createdAt: row?.createdAt.toISOString() ?? tasks[0]?.startedAt,
+      updatedAt: row?.updatedAt.toISOString() ?? tasks[0]?.updatedAt, messages }, tasks);
+    const fileName = conversationMarkdownFileName(conversation.title, id);
+    const encodedName = encodeURIComponent(fileName).replace(/['()*]/g, character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+    reply.header("content-type", "text/markdown; charset=utf-8");
+    reply.header("cache-control", "no-store");
+    reply.header("content-disposition", `attachment; filename="conversation.md"; filename*=UTF-8''${encodedName}`);
+    return reply.send(Readable.from(conversationMarkdownParts(conversation), { objectMode: false }));
+  });
+
   app.get("/api/saki/conversations/:id", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
     const { id } = request.params as { id: string };
+    const query = request.query as { limit?: string; beforeId?: string };
     const r = await prisma.sakiConversation.findFirst({
       where: { id, userId: request.user.sub }
     });
@@ -899,6 +933,15 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     try {
       parsedMessages = JSON.parse(r.messages);
     } catch {}
+    parsedMessages = parsedMessages.map(message => message?.streaming && message.taskId && activeSakiTasks.get(message.taskId)?.status !== "running"
+      ? { ...message, streaming: false, isStreaming: false } : message);
+    let page;
+    if (query.limit !== undefined) {
+      const limit = Number(query.limit);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new RouteError("Invalid page size.", 400);
+      try { page = pageConversationMessages(parsedMessages, limit, query.beforeId); }
+      catch { throw new RouteError("History changed. Reload the conversation.", 409); }
+    }
     return {
       id: r.id,
       contextKey: r.contextKey,
@@ -908,6 +951,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
       instanceId: r.instanceId,
       title: r.title,
       messages: parsedMessages,
+      ...page,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString()
     };

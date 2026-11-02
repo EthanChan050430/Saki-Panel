@@ -17,12 +17,27 @@ export function runTrackedSakiTask(task: SakiActiveTask, work: () => Promise<Sak
   if (task.execution) return task.execution;
   const execution = Promise.resolve().then(async () => {
     let response: SakiChatResponse;
+    let checkpoint: Promise<void> | undefined;
+    let savedAt = "";
+    // Serialize periodic snapshots with the final write. A browser disconnect
+    // must not be able to take an entire running task's transcript with it.
+    const timer = setInterval(() => {
+      if (checkpoint || task.updatedAt === savedAt) return;
+      const updatedAt = task.updatedAt;
+      checkpoint = persistSakiTaskConversation(task).then(() => { savedAt = updatedAt; })
+        .catch(error => console.warn("[Saki] Task checkpoint failed; will retry:", error))
+        .finally(() => { checkpoint = undefined; });
+    }, 5000);
+    timer.unref();
     try {
       await persistSakiTaskConversation(task);
       response = await work();
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       response = { source: "local-fallback", message: reason, retry: { reason, taskId: task.id } };
+    } finally {
+      clearInterval(timer);
+      await checkpoint;
     }
     await syncSakiTaskResult(task, response);
     finishActiveSakiTask(task.id, "completed", response);

@@ -130,7 +130,6 @@ npm run build               # Build all workspaces
 npm run check               # TypeScript checks
 npm run test:watch          # Watch approval and diagnostic-context regressions
 npm run db:push             # Sync the SQLite schema
-npm run verify:operation-packs
 ~~~
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to contribute and [SECURITY.md](SECURITY.md) to report a vulnerability.

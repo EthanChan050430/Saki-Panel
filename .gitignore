@@ -100,3 +100,9 @@ tmp_saki_plugins/
 doc/
 docs/
 
+# Standalone local official website
+/official-website/
+
+
+spec.md
+tasks.md

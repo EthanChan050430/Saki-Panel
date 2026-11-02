@@ -576,6 +576,7 @@ export function enqueueSakiTaskSteer(taskId: string, message: string): boolean {
   emitActiveSakiTaskEvent(taskId, "workflow", {
     id: `steer:${Date.now()}`,
     stage: "steer",
+    detail: text.slice(0, 8000),
     message: `收到新指示：${text.slice(0, 160)}`,
     status: "running"
   });
@@ -647,7 +648,7 @@ export function deleteSakiTask(taskId: string, userId: string): boolean {
   return true;
 }
 
-export function toSakiActiveTaskSummary(task: SakiActiveTask): SakiActiveTaskSummary {
+export function toSakiActiveTaskSummary(task: SakiActiveTask, includeResponse = true): SakiActiveTaskSummary {
   const actionCount = task.eventsBuffer.filter((e) => e.type === "action").length;
   const lastWorkflow = [...task.eventsBuffer].reverse().find((e) => e.type === "workflow");
   const progressMessage = trimString(lastWorkflow?.payload?.message);
@@ -698,7 +699,7 @@ export function toSakiActiveTaskSummary(task: SakiActiveTask): SakiActiveTaskSum
           }
         }
       : {}),
-    ...(task.response ? { response: task.response } : {}),
+    ...(includeResponse && task.response ? { response: task.response } : {}),
     ...(task.error ? { error: task.error } : {})
   };
 }

@@ -2,12 +2,18 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import type { SakiActiveTask, SakiActiveTaskEvent } from "./types.js";
 import { effectiveSakiAgentPermissionMode } from "./types.js";
 import { startSakiEventStream } from "./stream.js";
+import { sakiTaskHistorySnapshot } from "./task-history.js";
 
 export function connectSakiTaskStream(task: SakiActiveTask, request: FastifyRequest, reply: FastifyReply, validateAccess?: () => Promise<void>): void {
   const stream = startSakiEventStream(request, reply);
   stream.send("meta", { source: "direct-model", mode: task.input.mode ?? "agent", agentPermissionMode: effectiveSakiAgentPermissionMode(task.input), terminalSandbox: task.input.terminalSandbox !== false, taskId: task.id, status: task.status, runVersion: task.runVersion ?? 1 });
-  for (const event of task.eventsBuffer) {
-    if (event.type !== "done" && event.type !== "error") stream.send(event.type, event.payload);
+  const snapshot = (request.query as { snapshot?: string } | undefined)?.snapshot === "1";
+  if (snapshot) {
+    if (task.status === "running" || !task.response) stream.send("snapshot", { response: sakiTaskHistorySnapshot([...(task.historyEvents ?? []), ...task.eventsBuffer]) });
+  } else {
+    for (const event of [...(task.historyEvents ?? []), ...task.eventsBuffer]) {
+      if (event.type !== "done" && event.type !== "error") stream.send(event.type, event.payload);
+    }
   }
   if (task.status !== "running") {
     if (task.status === "cancelled") stream.send("error", { message: "任务已取消。" });
