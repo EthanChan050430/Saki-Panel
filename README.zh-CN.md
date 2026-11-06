@@ -8,7 +8,7 @@
 
 在一个 Web 控制台管理 Minecraft、Steam、Docker 和常规进程；Saki 可以结合实时日志、文件与节点指标协助排障，并在授权后执行操作。
 
-[官网](https://dreamstarry.top/saki-panel/) · [排障实测](docs/case-studies/port-recovery/README.md) · [快速开始](#快速开始) · [下载发行版](https://github.com/EthanChan050430/Saki-Panel/releases/latest) · [English](README.md)
+[官网](https://dreamstarry.top/saki-panel/) · [快速开始](#快速开始) · [下载发行版](https://github.com/EthanChan050430/Saki-Panel/releases/latest) · [English](README.md)
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![check](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml/badge.svg)](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml)
@@ -128,10 +128,6 @@ Saki 能结合当前实例的状态、日志、文件与资源指标回答问题
 5. 应用补丁后进行重启与验证。若验证检测到相同故障或配置的健康检查失败，且存在可用的回滚检查点和操作用户，系统尝试撤销本次修改；其他情况会在事件中说明，供人工处理。
 
 Watch 还支持冷却时间、运行次数限制、通知渠道与升级提醒。相关选项可在实例设置及系统设置中配置。
-
-### 可复现排障实测
-
-[端口配置错误：诊断、审批与恢复](docs/case-studies/port-recovery/README.md) 提供故意注入故障的示例服务，以及实际 Ollama 模型调用、原始补丁、审批前后配置、健康检查和界面截图。本次实测先发现并修复了 Watch 文件编辑绕过审批的问题，再完成重测；报告保留了此前的连接失败和错误端口修复被回滚的记录，并注明使用的源码修订和限制。
 
 ## 面板与扩展
 

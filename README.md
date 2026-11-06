@@ -8,7 +8,7 @@
 
 Manage Minecraft, Steam, Docker, and ordinary processes from one web console. Saki uses live logs, files, and node metrics to help investigate incidents and can act after authorization.
 
-[Website](https://dreamstarry.top/saki-panel/) · [Incident walkthrough (中文)](docs/case-studies/port-recovery/README.md) · [Quick start](#quick-start) · [Download a release](https://github.com/EthanChan050430/Saki-Panel/releases/latest) · [简体中文](README.zh-CN.md)
+[Website](https://dreamstarry.top/saki-panel/) · [Quick start](#quick-start) · [Download a release](https://github.com/EthanChan050430/Saki-Panel/releases/latest) · [简体中文](README.zh-CN.md)
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![check](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml/badge.svg)](https://github.com/EthanChan050430/Saki-Panel/actions/workflows/check.yml)
@@ -116,10 +116,6 @@ For example, ask it to inspect logs before a crash and identify a likely configu
 5. After a patch, Watch restarts and verifies the instance. If verification finds the same failure or a configured health check fails, and a usable checkpoint and acting user exist, it attempts to roll back that change. Other outcomes are recorded for manual follow-up.
 
 Watch also supports cooldowns, run limits, notification channels, and escalation reminders. Configure these in instance and system settings.
-
-### Reproducible incident walkthrough
-
-The [port configuration walkthrough (Chinese)](docs/case-studies/port-recovery/README.md) includes a deliberately broken sample service, actual Ollama calls, the proposed patch, pre-approval and post-approval configuration, health checks, and original UI captures. The exercise exposed and fixed a Watch file-edit approval bypass before the successful rerun. Earlier connection failures and a wrong-port change that was rolled back are retained, with the tested source revision and limitations stated explicitly.
 
 ## Panel and extensions
 

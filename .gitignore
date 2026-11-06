@@ -119,3 +119,6 @@ tasks.md
 /papers/
 /算法研究/
 /研究文档/
+
+# Windows shortcuts
+*.lnk
