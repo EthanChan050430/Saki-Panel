@@ -15,7 +15,6 @@ import {
   getModelPointsMultiplier,
   maxAgentCompactedScratchpadChars,
   maxAgentCompactedScratchpadTokens,
-  maxAgentLoops,
   maxAgentProgressOnlyRetries,
   maxAgentPromptObservationChars,
   maxAgentPromptObservationTokens,
@@ -70,6 +69,7 @@ import {
   stuckOutputMessage
 } from "./agent-guard.js";
 import { bootstrapAgentSkills } from "./skills.js";
+import { agentBudgetStopMessage, agentContinuationCheckpointLoops, agentRunBudgets } from "./agent-run-policy.js";
 import {
   completedSakiActions,
   extractConfirmedTodos,
@@ -862,11 +862,14 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
     skillCount: runtime.skills.length
   });
 
-  const loopLimit = Math.max(1, Math.min(runtime.maxLoops ?? maxAgentLoops, maxAgentLoops));
+  const budgets = agentRunBudgets(runtime.maxLoops);
+  const loopLimit = budgets.maxLoops;
   logSakiModelEvent("agent.run.start", {
     mode: runtime.input.mode ?? "agent",
     permissionMode: agentPermissionMode,
     maxLoops: loopLimit,
+    maxTokens: budgets.maxTokens,
+    maxDurationMs: budgets.maxDurationMs,
     kind: runtime.kind ?? "chat",
     resumed: Boolean(resume),
     messageChars: runtime.input.message.length,
@@ -1010,7 +1013,7 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
     return {
       source: "direct-model",
       message,
-      ...(["model_error", "round_limit", "incomplete", "invalid_output"].includes(reason) || reason.startsWith("stuck_") ? { retry: { reason: message, ...((runtime.taskId ?? resume?.taskId) ? { taskId: (runtime.taskId ?? resume?.taskId)! } : {}) } } : {}),
+      ...(["model_error", "round_limit", "budget_limit", "incomplete", "invalid_output"].includes(reason) || reason.startsWith("stuck_") ? { retry: { reason: message, ...((runtime.taskId ?? resume?.taskId) ? { taskId: (runtime.taskId ?? resume?.taskId)! } : {}) } } : {}),
       ...(accumulatedThinking.trim() ? { thinking: accumulatedThinking.trim() } : {}),
       workspace: runtime.context.workspace,
       agentPermissionMode,
@@ -1299,12 +1302,26 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
     return null;
   };
 
-  for (let loop = 0; loop < loopLimit; loop += 1) {
-    runtime.loopsRemaining = Math.max(1, loopLimit - loop);
+  for (let loop = 0; loopLimit === null || loop < loopLimit; loop += 1) {
+    if (loopLimit === null) delete runtime.loopsRemaining;
+    else runtime.loopsRemaining = Math.max(1, loopLimit - loop);
     flushTurnNotes();
     if (acceptPendingSteers()) await persistSteering();
     if (abortSignal?.aborted) {
       return finishAgentResponse("aborted", abortedMessage());
+    }
+    const budgetStop = agentBudgetStopMessage(budgets, totalTokensUsed, Date.now() - runStartedAt);
+    if (budgetStop) return finishAgentResponse("budget_limit", budgetStop);
+    // Continue in the same run, retaining guards, billing and steering state.
+    // Never recursively restart the agent or replay already confirmed tools.
+    if (loop > 0 && loop % agentContinuationCheckpointLoops === 0) {
+      const pending = extractConfirmedTodos(actions, agentScratchpadEntries).filter(todo => /^- \[[ -]\]/.test(todo));
+      appendAgentScratchpad(`\n[Long task continuation]: ${loop} model rounds completed. Continue the original task from confirmed results and the latest user instructions. Verify completion before responding. Do not repeat completed work.${pending.length ? `\nUnfinished checklist:\n${pending.join("\n").slice(0, 3000)}` : ""}\n`);
+      flushTurnNotes();
+      try { await persistProgress("Long task in progress; continue from confirmed results and the remaining checklist."); }
+      catch (error) { logSakiModelEvent("agent.checkpoint.error", { error: error instanceof Error ? error.message : String(error) }); }
+      emitSakiWorkflow(events, { id: randomUUID(), stage: "continuation", status: "completed",
+        message: `已执行 ${loop} 轮，正在从已有进度继续任务。` });
     }
     loopsUsed = loop + 1;
     turnMadeProgress = false;
@@ -1492,6 +1509,8 @@ IMPORTANT: ${sakiFileToolGuidance}\nPrevious output:\n${turn.content.slice(0, 12
       if (abortSignal?.aborted) {
         return finishAgentResponse("aborted", abortedMessage());
       }
+      const toolBudgetStop = agentBudgetStopMessage(budgets, totalTokensUsed, Date.now() - runStartedAt);
+      if (toolBudgetStop) return finishAgentResponse("budget_limit", toolBudgetStop);
       if (acceptPendingSteers() || steeringRevision !== turnSteeringRevision) {
         await persistSteering();
         break;

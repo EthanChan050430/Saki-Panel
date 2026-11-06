@@ -89,7 +89,7 @@ export class BrowseHttpError extends RouteError {
   }
 }
 
-export const maxAgentLoops = 400;
+export { maxAgentLoops } from "./agent-run-policy.js";
 export const maxAgentProgressOnlyRetries = 3;
 export const maxAgentVerificationRetries = 2;
 export const maxAgentObservationTokens = 1500;

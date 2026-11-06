@@ -107,6 +107,8 @@ Saki combines the current instance's state, logs, files, and resource metrics wi
 
 For example, ask it to inspect logs before a crash and identify a likely configuration error, or to restart a service and watch its new logs. You can attach screenshots and log files. Save recurring procedures as Skills or connect external tools through MCP.
 
+Ordinary Agent tasks can continue beyond 400 rounds, with automatic context compaction and progress checkpoints. Set optional per-run budgets in `.env` with `SAKI_AGENT_MAX_LOOPS`, `SAKI_AGENT_MAX_TOKENS`, and `SAKI_AGENT_MAX_DURATION_MS` (non-negative integers; unset or `0` disables that budget). Token and duration budgets are checked between calls, so an in-flight call can exceed them. Cancellation, approvals, and stuck guards still stop execution; budget-limited work can be retried from saved progress. Watch and subagents retain their smaller round limits.
+
 ## How Saki Watch responds to incidents
 
 1. After an unexpected exit, the Daemon records exit details and an error fingerprint. By default, no model call happens yet.
