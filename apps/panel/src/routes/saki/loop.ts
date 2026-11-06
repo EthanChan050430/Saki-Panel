@@ -23,6 +23,7 @@ import {
   maxAgentScratchpadChars,
   maxAgentScratchpadTokens,
   maxParallelReadOnlyTools,
+  agentReadOnlyCheckpointIntervalMs,
   normalizeSakiAgentPermissionMode,
   rawStringArg,
   redactSensitiveText,
@@ -52,7 +53,8 @@ import {
   serializeTurnMessagesForPrompt,
   type SakiAgentTurnMessage
 } from "./agent-messages.js";
-import { loadWorkspaceGitSummary } from "./executor.js";
+import { codingPlanFromMessage, editedPathsFromTool, formatPlanArtifact } from "./coding-harness.js";
+import { loadWorkspaceGitSummary, runPostEditDiagnostics } from "./executor.js";
 import { sakiModelProfile, xmlToolFormatReminder } from "./model-profile.js";
 import {
   fingerprintAgentText,
@@ -220,6 +222,8 @@ function toolIntentMessage(call: ParsedToolCall): string {
   if (toolName === "readskill" || toolName === "loadskill" || toolName === "useskill" || toolName === "getskill" || toolName === "applyskill") {
     return "\u6211\u8981\u8BFB\u53D6\u8FD9\u4E2A\u6280\u80FD\u89C4\u8303\u3002";
   }
+  if (toolName === "listmcptools") return "\u6211\u8981\u67E5\u770B\u63D2\u4EF6\u63D0\u4F9B\u7684 MCP \u5DE5\u5177\u3002";
+  if (toolName === "callmcptool") return "\u6211\u8981\u8C03\u7528\u63D2\u4EF6\u7684 MCP \u5DE5\u5177\u3002";
   if (toolName === "applypatch" || toolName === "apply_patch" || toolName === "applydiff") {
     return pathArg ? `\u6B63\u5728\u8865\u4E01 ${pathArg}\u3002` : "\u6B63\u5728\u5E94\u7528\u4EE3\u7801\u8865\u4E01\u3002";
   }
@@ -263,6 +267,8 @@ function toolOutcomeMessage(call: ParsedToolCall, action: SakiAgentAction): stri
   ) {
     return "\u6280\u80FD\u89C4\u8303\u770B\u5B8C\u4E86\u3002";
   }
+  if (toolName === "listmcptools") return "MCP \u5DE5\u5177\u5217\u8868\u770B\u5230\u4E86\u3002";
+  if (toolName === "callmcptool") return "MCP \u5DE5\u5177\u8C03\u7528\u5B8C\u6210\u4E86\u3002";
   return "\u8FD9\u4E00\u6B65\u5B8C\u6210\u4E86\u3002";
 }
 
@@ -375,6 +381,9 @@ function promptObservationLimit(action: SakiAgentAction, modelId?: string): numb
 }
 
 export function observationForAgentPrompt(action: SakiAgentAction): string {
+  // NOTE: promptObservationLimit's token-mode branch is intentionally not used
+  // here. truncateText() divides non-default limits by 4 when given a modelId,
+  // so passing one would shrink observations ~4x. Unify units before enabling.
   const limit = promptObservationLimit(action);
   const observation = truncateText(redactSensitiveText(action.observation), limit);
   const status = action.status ?? (action.ok ? "completed" : "failed");
@@ -404,6 +413,7 @@ export const cacheableReadOnlyAgentToolNames = new Set([
   "useskill",
   "getskill",
   "applyskill",
+  "listmcptools",
   "readmemory",
   "getenvironmentinfo",
   "diagnosecode",
@@ -607,14 +617,14 @@ function isParallelizableReadOnlyCall(call: ParsedToolCall): boolean {
   return toolName !== "reportprogress" && toolName !== "respond" && toolName !== "askuser" && toolName !== "managetodos" && isSakiReadOnlyAgentTool(toolName);
 }
 
-function billedAgentTurnTokens(modelId: string, prompt: string, turn: SakiModelToolTurn): number {
+function billedAgentTurnTokens(modelId: string, prompt: string, turn: SakiModelToolTurn, toolSchemasJson: string): number {
   if (turn.usageTokens && turn.usageTokens > 0) return turn.usageTokens;
   return estimateModelCallTokens(
     prompt,
     turn.content,
     turn.toolCalls,
     modelId,
-    JSON.stringify(advertisedSakiToolSchemas())
+    toolSchemasJson
   );
 }
 
@@ -631,7 +641,7 @@ export function restoreAgentTurnMessages(runtime: SakiAgentRuntime, resume?: Sak
     if (action.status === "pending_approval" || action.status === "pending_input") continue;
     const call = { id: `restored-${action.id}`, name: action.tool, args: action.args };
     messages.push({ role: "assistant", content: "", toolCalls: [call] },
-      { role: "tool", toolCallId: call.id, name: call.name, content: observationForAgentPrompt(action) });
+      { role: "tool", toolCallId: call.id, name: call.name, content: observationForAgentPrompt(action), ...(action.ok && action.attachments?.some(image => image.dataUrl?.startsWith("data:image/")) ? { images: action.attachments.filter(image => image.dataUrl?.startsWith("data:image/")) } : {}) });
   }
   if (resume?.scratchpadEntries.length) messages.push({ role: "user", content: `[Recovered task progress — retain decisions and completed work]\n${renderAgentScratchpad(resume.scratchpadEntries)}` });
   return messages;
@@ -665,16 +675,30 @@ export async function runSakiAgent(
     if (readOnlyToolCache.size > 100) readOnlyToolCache.delete(readOnlyToolCache.keys().next().value!);
   };
   let currentPrompt = basePrompt;
+  // Cache the serialised tool schema once per run — re-serialising on every
+  // turn for token estimation is wasteful when the schema never changes.
+  const advertisedToolSchemasJson = JSON.stringify(advertisedSakiToolSchemas());
   const modelProfile = sakiModelProfile(runtime.config.provider, runtime.config.model);
   const systemPrompt = runtime.systemPromptOverride || buildStaticAgentSystemPrompt(modelProfile);
   const questionGuidance = runtime.kind !== "watch" && runtime.toolProfile !== "research" && !systemPrompt.includes(sakiUserQuestionGuidance)
     ? `\n\n${sakiUserQuestionGuidance}` : "";
-  const agentSystemPrompt = `${systemPrompt}${questionGuidance}
+  let agentSystemPrompt = `${systemPrompt}${questionGuidance}
 
 ${buildAgentWorkspacePrefix(runtime)}
 
 Current UTC date: ${new Date().toISOString().slice(0, 10)}.
 ${runtime.config.searchEnabled ? "Web search and public-page browsing are available. Use them to verify uncertain or current facts." : "Web search is disabled. Do not claim online verification; disclose uncertainty about current facts."}`;
+  if (resume?.codingPlan) runtime.codingPlan = resume.codingPlan;
+  const planArtifact = formatPlanArtifact(runtime.codingPlan);
+  if (planArtifact) agentSystemPrompt = `${agentSystemPrompt}\n\n${planArtifact}`;
+  if (runtime.input.agentIntent === "review" || runtime.input.agentIntent === "diff") {
+    agentSystemPrompt += "\n\nReview/diff mode: read and report only. Do not edit files, run commands, or spawn workers.";
+  }
+  if (runtime.input.agentIntent === "compact" && turnMessages.length > 2) {
+    const compactedNow = compactAgentTurnMessages(turnMessages, 20000);
+    if (compactedNow !== turnMessages) turnMessages.splice(0, turnMessages.length, ...compactedNow);
+    runtime.input = { ...runtime.input, agentIntent: "default" };
+  }
   runtime.agentSystemPrompt = agentSystemPrompt;
   let invalidReplies = 0;
   let truncatedReplies = 0;
@@ -695,13 +719,23 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
   let toolCacheInvalidations = 0;
   let totalTokensUsed = 0;
 
+  // Track the message-array length at the last compaction check so we can skip
+  // the O(n) reduce inside compactAgentTurnMessages when nothing was pushed.
+  let lastCompactInputLength = -1;
+
   const rebuildCurrentPrompt = (): void => {
     if (agentScratchpadEntries.reduce((total, entry) => total + entry.length, 0) > maxAgentScratchpadChars) {
       const rendered = renderAgentScratchpad(agentScratchpadEntries);
       agentScratchpadEntries.splice(0, agentScratchpadEntries.length, rendered);
     }
-    const compacted = compactAgentTurnMessages(turnMessages);
+    const len = turnMessages.length;
+    const compacted = len !== lastCompactInputLength
+      ? compactAgentTurnMessages(turnMessages)
+      : turnMessages;
+    lastCompactInputLength = len;
     if (compacted !== turnMessages) {
+      // The array was rewritten; invalidate so the next call re-evaluates.
+      lastCompactInputLength = -1;
       turnMessages.splice(0, turnMessages.length, ...compacted);
     }
     runtime.turnMessages = turnMessages;
@@ -725,7 +759,6 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
     pendingTurnNotes.length = 0;
     rebuildCurrentPrompt();
   };
-
   const createResumeState = (): SakiAgentResumeState => ({
     input: resume ? { ...runtime.input, message: resume.input.message, attachments: resume.input.attachments ?? [] } : runtime.input,
     workspaceBinding,
@@ -736,35 +769,56 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
     toolExecutions,
     turnMessages: [...turnMessages],
     readOnlyToolCache: [...readOnlyToolCache.entries()].slice(-100),
-    ...((runtime.taskId ?? resume?.taskId) ? { taskId: (runtime.taskId ?? resume?.taskId)! } : {})
+    ...((runtime.taskId ?? resume?.taskId) ? { taskId: (runtime.taskId ?? resume?.taskId)! } : {}),
+    ...(runtime.codingPlan ? { codingPlan: runtime.codingPlan } : {})
   });
 
-  const persistProgress = async (summary: string, resumeState = createResumeState()): Promise<void> => {
+  // Checkpoint throttling: every write serializes the whole resume state, so
+  // replayable read-only results are coalesced. Mutations, steering and the
+  // final response still persist synchronously via persistProgress.
+  let lastCheckpointAt = 0;
+  let checkpointDirty = false;
+  const persistProgress = async (summary: string, resumeState?: SakiAgentResumeState): Promise<void> => {
     // Read-only chat turns must not replace a coding task's resume checkpoint
     // for the same user/workspace (including another device's active task).
-    if (runtime.toolProfile === "chat") return;
+    if (runtime.toolProfile === "chat" || runtime.subagentRole) return;
     await persistSessionAgentMemory({
       userId: runtime.userId,
       instanceId: runtime.context.workspace?.instanceId ?? null,
-      resumeState,
+      resumeState: resumeState ?? createResumeState(),
       workingFiles: getRecentWorkingFiles(runtime.userId, runtime.context.workspace?.instanceId ?? null),
       lastGoal: resumeGoal || runtime.input.message,
       lastSummary: summary,
       todos: extractConfirmedTodos(actions, agentScratchpadEntries),
       updatedAt: Date.now()
     });
+    lastCheckpointAt = Date.now();
+    checkpointDirty = false;
+  };
+  const persistReplayableProgress = async (summary: string, force = false): Promise<void> => {
+    if (runtime.toolProfile === "chat") return;
+    if (!force && Date.now() - lastCheckpointAt < agentReadOnlyCheckpointIntervalMs) {
+      checkpointDirty = true;
+      return;
+    }
+    await persistProgress(summary);
   };
 
   let steeringRevision = 0;
   const acceptPendingSteers = (): boolean => {
-    if (!runtime.taskId) return false;
+    if (!runtime.taskId || runtime.subagentRole) return false;
     const steers = takeSakiTaskSteers(runtime.taskId);
     if (!steers.length) return false;
     const closed = closeInterruptedToolCalls(turnMessages, "This call was not executed because the user supplied newer instructions. Follow those instructions before choosing further tools.");
     turnMessages.splice(0, turnMessages.length, ...closed);
     for (const steer of steers) {
-      turnMessages.push({ role: "user", content: steer });
-      emitAgentNarration(events, `收到新指示：${steer.slice(0, 200)}`);
+      const text = typeof steer === "string" ? steer : steer.message;
+      const attachments = typeof steer === "string" ? [] : steer.attachments ?? [];
+      const attachmentText = attachments.filter(attachment => attachment.text).map(attachment => `Attachment: ${attachment.name}\n${attachment.text}`).join("\n\n");
+      turnMessages.push({ role: "user", content: [text, attachmentText].filter(Boolean).join("\n\n"), ...(attachments.length ? { images: attachments } : {}) });
+      if (attachments.length) runtime.input.attachments = [...new Map([...(runtime.input.attachments ?? []), ...attachments]
+        .map(attachment => [attachment.id ?? attachment.name, attachment])).values()];
+      emitAgentNarration(events, `收到新指示：${text.slice(0, 200)}`);
     }
     steeringRevision += 1;
     rebuildCurrentPrompt();
@@ -843,48 +897,83 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
 
   // Race every model call against the abort signal so that cancelling a task
   // stops the loop immediately instead of waiting out a long provider request.
-  const callAgentTurnWithAbort = (prompt: string): Promise<SakiModelToolTurn> => {
-    const turnPromise = callConfiguredAgentTurn(runtime, prompt, events?.delta, emitThinking, retry => {
+  const callAgentTurnWithAbort = async (prompt: string, thinkStepId: string): Promise<SakiModelToolTurn> => {
+    const startedAt = Date.now();
+    let receivedOutput = false;
+    let retryAttempt = 0;
+    let retryReason: string | undefined;
+    const waitingTimer = setInterval(() => {
+      if (receivedOutput || abortSignal?.aborted) return;
+      const seconds = Math.round((Date.now() - startedAt) / 1000);
       emitSakiWorkflow(events, {
-        id: randomUUID(),
+        id: thinkStepId,
+        stage: retryAttempt ? "retry" : "thinking",
+        message: retryAttempt
+          ? `正在重新连接模型（第 ${retryAttempt} 次重试，已等待 ${seconds} 秒）。`
+          : `正在等待模型响应（已等待 ${seconds} 秒）。`,
+        status: "running",
+        ...(retryReason ? { detail: retryReason } : {})
+      });
+    }, 15_000);
+    const turnPromise = callConfiguredAgentTurn(runtime, prompt, events?.delta ? text => {
+      receivedOutput = true;
+      events?.delta?.(text);
+    } : undefined, text => {
+      receivedOutput = true;
+      emitThinking(text);
+    }, retry => {
+      receivedOutput = false;
+      retryAttempt = retry.attempt;
+      retryReason = retry.reason;
+      emitSakiWorkflow(events, {
+        id: thinkStepId,
         stage: "retry",
         message: `模型连接中断，${retry.delayMs / 1000} 秒后自动重连（${retry.attempt}/${retry.maxRetries}）。已保留任务进度。`,
         status: "running",
         detail: retry.reason
       });
     });
-    if (!abortSignal) return turnPromise;
-    return new Promise<SakiModelToolTurn>((resolve, reject) => {
-      const onAbort = () => reject(new AgentAbortedError());
-      if (abortSignal.aborted) {
-        onAbort();
-        return;
-      }
-      abortSignal.addEventListener("abort", onAbort, { once: true });
-      turnPromise.then(
-        (value) => {
-          abortSignal.removeEventListener("abort", onAbort);
-          resolve(value);
-        },
-        (error: unknown) => {
-          abortSignal.removeEventListener("abort", onAbort);
-          reject(error instanceof Error ? error : new Error(String(error)));
+    try {
+      if (!abortSignal) return await turnPromise;
+      return await new Promise<SakiModelToolTurn>((resolve, reject) => {
+        const onAbort = () => reject(new AgentAbortedError());
+        if (abortSignal.aborted) {
+          // Observe the already-started request even if cancellation wins here.
+          void turnPromise.catch(() => undefined);
+          onAbort();
+          return;
         }
-      );
-    });
+        abortSignal.addEventListener("abort", onAbort, { once: true });
+        turnPromise.then(
+          (value) => {
+            abortSignal.removeEventListener("abort", onAbort);
+            resolve(value);
+          },
+          (error: unknown) => {
+            abortSignal.removeEventListener("abort", onAbort);
+            reject(error instanceof Error ? error : new Error(String(error)));
+          }
+        );
+      });
+    } finally {
+      clearInterval(waitingTimer);
+    }
   };
 
   let contextOverflowRecoveries = 0;
   let completionRetries = 0;
 
   const finishAgentResponse = async (reason: string, message: string): Promise<SakiChatResponse> => {
+    if (agentPermissionMode === "plan" && message.trim()) {
+      runtime.codingPlan = codingPlanFromMessage(message);
+    }
     flushTurnNotes();
     // Stop accepting new steers before the asynchronous persistence/billing
     // phase. Already accepted instructions remain in the resume record.
-    if (runtime.taskId) sealSakiTaskSteers(runtime.taskId);
+    if (runtime.taskId && !runtime.subagentRole) sealSakiTaskSteers(runtime.taskId);
     acceptPendingSteers();
     logSakiModelEvent("agent.run.finish", { reason, durationMs: Date.now() - runStartedAt, loopsUsed,
-      toolExecutions, toolCacheHits, toolCacheMisses, toolCacheInvalidations, totalTokensUsed });
+      toolExecutions, toolCacheHits, toolCacheMisses, toolCacheInvalidations, totalTokensUsed, checkpointDirty });
     try {
       const currentResumeState = createResumeState();
       if (reason !== "pending_approval" && reason !== "pending_input") currentResumeState.turnMessages = closeInterruptedToolCalls(turnMessages);
@@ -1036,6 +1125,7 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
     if (webReason) return webReason;
     const pending = extractConfirmedTodos(actions, agentScratchpadEntries).filter((todo) => /^- \[[ -]\]/.test(todo));
     if (pending.length) return `The checklist still has unfinished work:\n${pending.join("\n")}\nContinue these steps and update manageTodos only after each result is confirmed. If blocked, explain the specific blocker.`;
+    if (runtime.subagentRole === "implement") return "";
     const lastEdit = actions.reduce((last, item, index) => item.ok && fileEditTools.has(normalizedAgentToolName(item.tool)) ? index : last, -1);
     const verification = actions.slice(lastEdit + 1).filter((item) => {
       const name = normalizedAgentToolName(item.tool);
@@ -1092,6 +1182,10 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
       return finishAgentResponse(correction ? "incomplete" : "respond_tool", correction ? `任务尚未确认完成，已保存进度，可重试继续。\n\n${finalMessage}` : finalMessage);
     }
     action.workflowId = toolStepId;
+    for (const delegated of action.delegatedActions ?? []) {
+      actions.push(delegated);
+      events?.action?.(delegated);
+    }
     actions.push(action);
     events?.action?.(action);
     emitSakiWorkflow(events, {
@@ -1115,13 +1209,17 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
       role: "tool",
       toolCallId: ensureToolCallId(call),
       name: call.name,
-      content: observation
+      content: observation,
+      ...(action.ok && action.attachments?.some(image => image.dataUrl?.startsWith("data:image/")) ? { images: action.attachments.filter(image => image.dataUrl?.startsWith("data:image/")) } : {})
     }, cacheHit && action.ok && cacheableReadOnlyAgentToolNames.has(normalizedAgentToolName(call.name)));
     agentScratchpadEntries.push(`\nAssistant: ${renderToolCall(call)}\nObservation:\n${observationForAgentPrompt(action)}\n`);
     rebuildCurrentPrompt();
 
     // Deadlock / repetition detection and error self-healing
     const toolName = normalizedAgentToolName(call.name);
+    if (toolName === "generatevideo" && !action.ok) {
+      return finishAgentResponse("video_generation_failed", `视频生成未完成：${action.observation}\n\n已保留任务记录。本次不会自动重复提交，也不会用本地动画替代生成结果。`);
+    }
     const args = toolArgs(call);
     const argsStr = JSON.stringify(args);
     const targetFile = String(args.path || args.filePath || "");
@@ -1148,14 +1246,15 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
       }
       const obsLower = action.observation.toLowerCase();
       if (obsLower.includes("oldtext was not found") || obsLower.includes("oldtext matched")) {
-        appendAgentScratchpad(`\n[Self-Healing Guidance]: The text was not matched in the file. Tip: Use editLines with exact line numbers from outlineFile/readFile to make the change deterministically.\n`);
+        appendAgentScratchpad(`\n[Self-Healing Guidance]: The text was not matched in the file. Re-read the current lines, then retry with applyPatch.\n`);
       } else if (obsLower.includes("enoent") || obsLower.includes("not found")) {
         appendAgentScratchpad(`\n[Self-Healing Guidance]: File not found. Use findFiles to locate the exact path before attempting further operations.\n`);
       } else if (obsLower.includes("permission") || obsLower.includes("safety") || obsLower.includes("instance not found")) {
         appendAgentScratchpad("If the error is caused by missing permission, blocked safety policy, or missing active instance, stop and respond with a concise explanation. Otherwise adjust your plan and continue.\n");
       }
-    } else if (targetFile && (toolName === "editlines" || toolName === "replaceinfile" || toolName === "writefile" || toolName === "batchedit")) {
-      failedAttemptsByTarget.delete(targetFile);
+    } else if (fileEditTools.has(toolName)) {
+      for (const editedPath of editedPathsFromTool(toolName, args)) failedAttemptsByTarget.delete(editedPath);
+      if (targetFile) failedAttemptsByTarget.delete(targetFile);
     }
 
     if (!action.ok) {
@@ -1167,11 +1266,32 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
       consecutiveFailedTools = 0;
       if (!cacheHit) turnMadeProgress = true;
     }
+    const editedPaths = action.ok ? editedPathsFromTool(toolName, args) : [];
+    // Persist the edit before running diagnostics, which may wait on the daemon.
+    if (editedPaths.length) {
+      try {
+        await persistProgress("Task in progress; continue from the confirmed tool results.");
+      } catch (error) {
+        logSakiModelEvent("agent.checkpoint.error", { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    if (editedPaths.length && runtime.kind !== "watch" && runtime.toolProfile !== "research" && runtime.toolProfile !== "chat") {
+      const diagnostics = await runPostEditDiagnostics(runtime, args, editedPaths).catch(() => null);
+      if (diagnostics?.ran) {
+        appendAgentScratchpad(`\n[Diagnostics]: ${diagnostics.observation}\n`);
+        const diagnosticAction = diagnostics.action!;
+        actions.push(diagnosticAction);
+        events?.action?.(diagnosticAction);
+      }
+    }
 
     // Persist each confirmed result, so a process restart can resume without
-    // replaying mutations whose success was already recorded.
+    // replaying mutations whose success was already recorded. Read-only results
+    // are coalesced to avoid serialising the full state on every tool call —
+    // mutations and the final response always checkpoint immediately.
     try {
-      await persistProgress("Task in progress; continue from the confirmed tool results.");
+      await persistReplayableProgress("Task in progress; continue from the confirmed tool results.",
+        !isSakiReadOnlyAgentTool(toolName) || editedPaths.length > 0);
     } catch (error) {
       logSakiModelEvent("agent.checkpoint.error", { error: error instanceof Error ? error.message : String(error) });
     }
@@ -1180,6 +1300,7 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
   };
 
   for (let loop = 0; loop < loopLimit; loop += 1) {
+    runtime.loopsRemaining = Math.max(1, loopLimit - loop);
     flushTurnNotes();
     if (acceptPendingSteers()) await persistSteering();
     if (abortSignal?.aborted) {
@@ -1191,18 +1312,18 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
     emitSakiWorkflow(events, {
       id: thinkStepId,
       stage: "thinking",
-      message: "正在分析下一步...",
+      message: "正在连接模型，等待响应...",
       status: "running"
     });
     let turn: SakiModelToolTurn;
     try {
-      turn = await callAgentTurnWithAbort(currentPrompt);
+      turn = await callAgentTurnWithAbort(currentPrompt, thinkStepId);
       contextOverflowRecoveries = 0;
-      totalTokensUsed += billedAgentTurnTokens(runtime.config.model, currentPrompt, turn);
+      totalTokensUsed += billedAgentTurnTokens(runtime.config.model, currentPrompt, turn, advertisedToolSchemasJson);
       emitSakiWorkflow(events, {
         id: thinkStepId,
         stage: "thinking",
-        message: accumulatedThinking.trim() ? "思考完成，开始执行。" : "正在分析下一步...",
+        message: "模型已响应。",
         status: "completed"
       });
     } catch (error) {
@@ -1411,7 +1532,7 @@ IMPORTANT: ${sakiFileToolGuidance}\nPrevious output:\n${turn.content.slice(0, 12
         }
 
         const reads = new Map<string, Promise<ToolResult>>();
-        const results = await Promise.all(batch.map((item) => {
+        const settled = await Promise.allSettled(batch.map((item) => {
           const cacheKey = agentReadOnlyToolCacheKey(runtime, item.call);
           const key = cacheKey ? `${cacheKey}::refresh=${!Array.isArray(item.call.args) && item.call.args.refresh === true}` : null;
           const shared = key ? reads.get(key) : undefined;
@@ -1419,6 +1540,24 @@ IMPORTANT: ${sakiFileToolGuidance}\nPrevious output:\n${turn.content.slice(0, 12
           if (key && !shared) reads.set(key, result);
           return result;
         }));
+        const results: ToolResult[] = settled.map((result, index) => {
+          if (result.status === "fulfilled") return result.value;
+          const item = batch[index]!;
+          return {
+            call: item.call,
+            toolStepId: item.toolStepId,
+            action: {
+              id: actionId(),
+              tool: item.call.name,
+              args: toolCallArgsForDisplay(item.call),
+              ok: false,
+              status: "failed",
+              observation: `Parallel tool execution failed: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+              createdAt: new Date().toISOString()
+            },
+            durationMs: 0
+          };
+        });
         for (const result of results) {
           const finalResponse = await handleToolResult(result);
           if (finalResponse) return finalResponse;
@@ -1460,7 +1599,7 @@ IMPORTANT: ${sakiFileToolGuidance}\nPrevious output:\n${turn.content.slice(0, 12
         return finishAgentResponse("stuck_no_progress", stuckNoProgressMessage());
       }
       appendAgentScratchpad(
-        `\n[No progress]: The last ${noProgressStreak} turn(s) repeated work or did not change the workspace. Do something new: edit, diagnoseCode, or respond.\n`
+        `\n[No progress]: The last ${noProgressStreak} turn(s) repeated work or did not change the workspace. Do something new: applyPatch, runCommand, or respond.\n`
       );
     }
   }

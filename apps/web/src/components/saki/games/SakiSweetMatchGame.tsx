@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { Sparkles, Trophy, Volume2, VolumeX, X, ArrowLeft, RotateCcw, Zap, Bomb, Hammer, Shuffle, Clock, Heart, Flame } from "lucide-react";
-import { usePanelLanguage } from "../../../i18n/index.js";
+import { translateDomText, usePanelLanguage } from "../../../i18n/index.js";
 
 interface SakiSweetMatchGameProps {
   onClose: () => void;
@@ -335,7 +335,7 @@ function createInitialBoard(): MatchTile[][] {
 }
 
 export function SakiSweetMatchGame({ onClose, onFinish, onBackToPhone }: SakiSweetMatchGameProps) {
-  const { t } = usePanelLanguage();
+  const { t, language } = usePanelLanguage();
   const [board, setBoard] = useState<MatchTile[][]>(() => createInitialBoard());
   const [selectedPos, setSelectedPos] = useState<{ r: number; c: number } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -1114,7 +1114,7 @@ export function SakiSweetMatchGame({ onClose, onFinish, onBackToPhone }: SakiSwe
                     >
                       <img
                         src={GEM_ICONS[tile.type]}
-                        alt={GEM_NAMES[tile.type]}
+                        alt={translateDomText(GEM_NAMES[tile.type], language)}
                         draggable={false}
                       />
                     </div>
@@ -1146,11 +1146,11 @@ export function SakiSweetMatchGame({ onClose, onFinish, onBackToPhone }: SakiSwe
               className="saki-booster-btn"
               type="button"
               disabled={shuffleCharges <= 0 || isProcessing}
-              title="银河洗牌：随机重新打乱全屏所有方块"
+              title={translateDomText("银河洗牌：随机重新打乱全屏所有方块", language)}
               onClick={handleShuffle}
             >
               <Shuffle size={18} style={{ color: "#38bdf8" }} />
-              <span className="saki-booster-label">洗牌</span>
+              <span className="saki-booster-label">{translateDomText("洗牌", language)}</span>
               <span className="saki-booster-badge">{shuffleCharges}</span>
             </button>
 
@@ -1159,11 +1159,11 @@ export function SakiSweetMatchGame({ onClose, onFinish, onBackToPhone }: SakiSwe
               className="saki-booster-btn"
               type="button"
               disabled={timeCharges <= 0 || isProcessing}
-              title="时光沙漏：立刻增加 10 秒挑战时间"
+              title={translateDomText("时光沙漏：立刻增加 10 秒挑战时间", language)}
               onClick={handleAddTime}
             >
               <Clock size={18} style={{ color: "#4ade80" }} />
-              <span className="saki-booster-label">+10秒</span>
+              <span className="saki-booster-label">{translateDomText("+10秒", language)}</span>
               <span className="saki-booster-badge">{timeCharges}</span>
             </button>
           </div>

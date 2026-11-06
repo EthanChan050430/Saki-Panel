@@ -37,6 +37,7 @@ import { assertSakiSessionAccess, assertSakiTaskAccess } from "./session-access.
 import { assertSakiApprovalBindings } from "./workspace-binding.js";
 import { withSakiWorkspaceMutations } from "./workspace-mutation.js";
 import { isCommandCheckpointForWorkspace } from "./command-workspaces.js";
+import { alreadyRolledBackSakiAction } from "./rollback-state.js";
 import { retainAgentToolCacheAfterAction } from "./tool-cache-policy.js";
 import { maybeFinishWatchIncident } from "../../watch/runner.js";
 import { updateIncident } from "../../watch/incidents.js";
@@ -362,6 +363,12 @@ export function answerPendingSakiQuestion(request: FastifyRequest, id: string, i
 async function rollbackSakiActionUnlocked(request: FastifyRequest, id: string): Promise<SakiActionDecisionResponse> {
   await sakiActionsReady;
   let existing = completedSakiActions.get(id);
+  if (existing?.status === "rolled_back") {
+    const expected = request.body as { instanceId?: string | null } | undefined;
+    await assertSakiSessionAccess(request.user.sub, expected?.instanceId ?? null);
+    const action = await alreadyRolledBackSakiAction(request.user.sub, existing, expected?.instanceId);
+    if (action) return { action, message: "此操作已撤回，无需重复还原文件。" };
+  }
   if (!existing?.approval?.checkpointId) {
     const matchedCheckpoints: SakiCheckpoint[] = [];
     for (const cp of sakiCheckpoints.values()) {
@@ -417,7 +424,7 @@ async function rollbackSakiActionUnlocked(request: FastifyRequest, id: string): 
     observations.push(await rollbackCheckpoint(request.user.sub, checkpoint));
     await removeCheckpoint(checkpoint.id);
   }
-  if (observations.length === 0) throw new RouteError("Rollback checkpoint expired or was already removed.", 404);
+  if (observations.length === 0) throw new RouteError("此操作的文件检查点已丢失，无法确认文件已还原。对话记录已保留，请先检查工作区。", 409);
   const observation = observations.join("\n");
   const action: SakiAgentAction = {
     ...existing,

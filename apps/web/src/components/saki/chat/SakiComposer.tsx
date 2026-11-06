@@ -45,10 +45,11 @@ import type { SakiInstanceFileDragPayload } from "../../../types/app.js";
 import { SakiMiniChat } from "./SakiMiniChat.js";
 import { LiquidGlassContainer } from "../../common/LiquidGlass.js";
 import { sampleLuminanceAtPoint } from "../sakiLuminance.js";
+import { SakiFollowUpQueue } from "./SakiFollowUpQueue.js";
 
 export interface SakiComposerProps {
   // Submission & form
-  onSubmit: (event?: React.FormEvent<HTMLFormElement>, options?: { message?: string; steer?: boolean }) => Promise<void> | void;
+  onSubmit: (event?: React.FormEvent<HTMLFormElement>, options?: { message?: string }) => Promise<void> | void;
   imageInputRef: React.RefObject<HTMLInputElement | null>;
   attachmentInputRef: React.RefObject<HTMLInputElement | null>;
   onAddFiles: (files: File[], kind: "image" | "file") => Promise<void> | void;
@@ -96,6 +97,8 @@ export interface SakiComposerProps {
   onPreviewAttachment: (preview: { attachment: SakiInputAttachment; editable: boolean }) => void;
   onRemoveAttachment: (attachment: SakiInputAttachment) => void;
   followUpQueue: Array<{ id: string; message: string }>;
+  serverFollowUps?: ReturnType<typeof import("../useSakiFollowUps.js").useSakiFollowUps>;
+  onWithdrawFollowUp?: (id?: string) => Promise<void>;
   onRemoveFollowUp: (id: string) => void;
   composerNotice: string | null;
 
@@ -171,6 +174,8 @@ export const SakiComposer = React.memo(function SakiComposer({
   onPreviewAttachment,
   onRemoveAttachment,
   followUpQueue,
+  serverFollowUps,
+  onWithdrawFollowUp,
   onRemoveFollowUp,
   composerNotice,
   listening,
@@ -477,6 +482,8 @@ export const SakiComposer = React.memo(function SakiComposer({
           ) : null}
 
           {/* Follow-up Queue */}
+          {serverFollowUps && onWithdrawFollowUp ? <SakiFollowUpQueue items={serverFollowUps.items} busy={serverFollowUps.busy}
+            running={loading} error={serverFollowUps.error} onChange={serverFollowUps.change} onWithdraw={onWithdrawFollowUp} /> : null}
           {followUpQueue.length > 0 ? (
             <div className="saki-followup-queue saki-composer-queue">
               {followUpQueue.map((job, index) => (
@@ -554,9 +561,9 @@ export const SakiComposer = React.memo(function SakiComposer({
                     return;
                   }
                 }
-                if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                   event.preventDefault();
-                  if (!loading && (draft.trim() || attachments.length > 0)) {
+                  if (draft.trim() || attachments.length > 0) {
                     void onSubmit();
                   }
                 }
@@ -678,28 +685,16 @@ export const SakiComposer = React.memo(function SakiComposer({
                 </button>
               </div>
 
-              {/* Steer Button */}
-              {loading && draft.trim() ? (
-                <button
-                  className="saki-steer-btn saki-chip-interactive"
-                  type="button"
-                  title="插入当前任务，当前步骤后生效"
-                  onClick={() => void onSubmit(undefined, { message: draft, steer: true })}
-                >
-                  插入
-                </button>
-              ) : null}
-
               {/* Liquid Gradient Action Button (Send / Stop) */}
               <button
-                className={`primary-button send-btn saki-send-action-btn ${loading && !draft.trim() ? "stop" : ""}`}
-                type={loading && !draft.trim() ? "button" : "submit"}
-                title={loading && draft.trim() ? "加入队列，当前任务结束后开始" : loading ? "停止生成" : "Ctrl+Enter 发送"}
-                aria-label={loading && draft.trim() ? "加入队列" : loading ? "停止生成" : "Ctrl+Enter 发送"}
-                disabled={!loading && !draft.trim() && attachments.length === 0}
-                onClick={loading && !draft.trim() ? onStopSakiGeneration : undefined}
+                className={`primary-button send-btn saki-send-action-btn ${loading && !draft.trim() && !attachments.length ? "stop" : ""}`}
+                type={loading && !draft.trim() && !attachments.length ? "button" : "submit"}
+                title={loading && (draft.trim() || attachments.length) ? "加入队列" : loading ? "停止生成" : "发送消息"}
+                aria-label={loading && (draft.trim() || attachments.length) ? "加入队列" : loading ? "停止生成" : "发送消息"}
+                disabled={serverFollowUps?.busy || (!loading && !draft.trim() && attachments.length === 0)}
+                onClick={loading && !draft.trim() && !attachments.length ? onStopSakiGeneration : undefined}
               >
-                {loading && !draft.trim() ? <Square size={13} /> : <ArrowRight size={16} />}
+                {loading && !draft.trim() && !attachments.length ? <Square size={13} /> : <ArrowRight size={16} />}
               </button>
             </div>
           </div>

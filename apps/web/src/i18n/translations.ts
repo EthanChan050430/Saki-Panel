@@ -468,6 +468,9 @@ export const panelText = {
     "plugins.type.skin": "交互形象",
     "plugins.type.game": "互动游戏",
     "plugins.type.widget": "功能组件",
+    "plugins.type.bundle": "能力包",
+    "plugins.mcp.restart": "重启 MCP 服务",
+    "plugins.mcp.restarted": "MCP 服务已重启",
 
     // Search & Filter
     "plugins.search.placeholder": "搜索扩展名称、作者...",
@@ -536,6 +539,12 @@ export const panelText = {
     "plugins.installModal.cancel": "取消",
     "plugins.installModal.confirm": "确认安装",
     "plugins.installModal.downloading": "正在下载部署...",
+    "plugins.installModal.modeGithub": "GitHub 仓库",
+    "plugins.installModal.modeLocal": "本地目录",
+    "plugins.installModal.localPathLabel": "本地插件目录路径:",
+    "plugins.installModal.localPathPlaceholder": "例如: D:\\plugins\\my-plugin",
+    "plugins.installModal.localPathHelp": "填写面板所在服务器上的绝对路径，可以是单个插件目录，也可以是包含多个插件的目录。含 MCP 的插件仅超级管理员可安装。",
+    "plugins.installModal.installingLocal": "正在安装...",
 
     // Dev Guide Modal
     "plugins.guideModal.title": "扩展开发规范",
@@ -752,6 +761,7 @@ export const panelText = {
     "saki.phone.app.plantSlayer": "植物特攻",
     "saki.phone.app.music": "音乐盒",
     "saki.phone.app.photos": "相册",
+    "saki.phone.badge.extension": "扩展",
     "saki.phone.app.messages": "信息",
     "saki.phone.app.feed": "投喂",
     "saki.phone.app.decor": "装修",
@@ -872,7 +882,59 @@ export const panelText = {
     "points.usage.pointsTooltip": "扣除积分:",
     "points.usage.recentRecords": "最近使用明细",
     "points.usage.colBalanceAfter": "变动后余额",
-    "points.usage.emptyRecords": "暂无使用记录"
+    "points.usage.emptyRecords": "暂无使用记录",
+    "announcement.level.info": "通知",
+    "announcement.level.warning": "重要",
+    "announcement.level.critical": "紧急",
+    "announcement.insertImage": "图片",
+    "announcement.insertLink": "链接",
+    "announcement.linkUrl": "请输入链接地址（https://...）",
+    "announcement.linkText": "请输入链接文字",
+    "announcement.imageUrl": "请输入图片地址（https://...）",
+    "announcement.imageAlt": "请输入图片说明（可选）",
+    "announcement.editorPlaceholder": "支持 Markdown、图片和链接，也可以直接粘贴 Word 内容",
+    "announcement.editorHint": "支持 Markdown，也可以直接粘贴 Word 内容",
+    "announcement.publisher": "发布者：{0}",
+    "announcement.closeDetails": "关闭公告详情",
+    "announcement.markAllRead": "全部已读",
+    "announcement.empty": "暂无公告",
+    "announcement.loading": "加载中…",
+    "announcement.edit": "编辑",
+    "announcement.delete": "删除",
+    "announcement.cancel": "取消",
+    "announcement.save": "保存",
+    "announcement.publish": "发布",
+    "announcement.title": "标题",
+    "announcement.body": "正文",
+    "announcement.titlePlaceholder": "公告标题",
+    "announcement.pinned": "置顶",
+    "announcement.popup": "登录弹窗（每人仅弹一次）",
+    "announcement.startsAt": "生效时间（可空）",
+    "announcement.expiresAt": "过期时间（可空）",
+    "announcement.specificUsersMeta": "指定 {0} 人",
+    "announcement.popupShownMeta": "登录弹窗（已弹 {0}）",
+    "announcement.readMeta": "已读 {0}",
+    "announcement.expiredMeta": "过期 {0}",
+    "announcement.audience": "接收对象",
+    "announcement.allUsers": "全部用户",
+    "announcement.specificUsers": "指定用户",
+    "announcement.searchUsers": "搜索用户名 / 昵称",
+    "announcement.selectAll": "全选",
+    "announcement.clear": "取消",
+    "announcement.selectedUsers": "已选 {0} 人",
+    "announcement.noMatchingUsers": "没有匹配的用户",
+    "announcement.confirmDelete": "确认删除公告「{0}」？",
+    "announcement.operationFailed": "操作失败",
+    "announcement.titleBodyRequired": "标题和正文不能为空",
+    "announcement.userRequired": "请至少选择一位用户"
+    ,"announcement.tabDuty": "值班"
+    ,"announcement.tabAnnouncements": "公告"
+    ,"announcement.manage": "管理公告"
+    ,"announcement.new": "新建公告"
+    ,"announcement.back": "返回"
+    ,"announcement.next": "还有 {0} 条"
+    ,"announcement.gotItNext": "知道了，下一条"
+    ,"announcement.gotIt": "知道了"
   },
   "zh-TW": {
     "common.loading": "載入中",
@@ -1278,6 +1340,9 @@ export const panelText = {
     "plugins.type.skin": "互動形象",
     "plugins.type.game": "互動遊戲",
     "plugins.type.widget": "功能組件",
+    "plugins.type.bundle": "能力包",
+    "plugins.mcp.restart": "重新啟動 MCP 服務",
+    "plugins.mcp.restarted": "MCP 服務已重新啟動",
 
     // Search & Filter
     "plugins.search.placeholder": "搜尋擴充名稱、作者...",
@@ -1346,6 +1411,12 @@ export const panelText = {
     "plugins.installModal.cancel": "取消",
     "plugins.installModal.confirm": "確認安裝",
     "plugins.installModal.downloading": "正在下載部署...",
+    "plugins.installModal.modeGithub": "GitHub 倉庫",
+    "plugins.installModal.modeLocal": "本機目錄",
+    "plugins.installModal.localPathLabel": "本機插件目錄路徑:",
+    "plugins.installModal.localPathPlaceholder": "例如: D:\\plugins\\my-plugin",
+    "plugins.installModal.localPathHelp": "填寫面板所在伺服器上的絕對路徑，可以是單個插件目錄，也可以是包含多個插件的目錄。含 MCP 的插件僅超級管理員可安裝。",
+    "plugins.installModal.installingLocal": "正在安裝...",
 
     // Dev Guide Modal
     "plugins.guideModal.title": "擴充開發規範",
@@ -1562,6 +1633,7 @@ export const panelText = {
     "saki.phone.app.plantSlayer": "植物特攻",
     "saki.phone.app.music": "音樂盒",
     "saki.phone.app.photos": "相冊",
+    "saki.phone.badge.extension": "擴充",
     "saki.phone.app.messages": "訊息",
     "saki.phone.app.feed": "投餵",
     "saki.phone.app.decor": "裝修",
@@ -1682,7 +1754,59 @@ export const panelText = {
     "points.usage.pointsTooltip": "扣除積分:",
     "points.usage.recentRecords": "最近使用明細",
     "points.usage.colBalanceAfter": "變動後餘額",
-    "points.usage.emptyRecords": "暫無使用記錄"
+    "points.usage.emptyRecords": "暫無使用記錄",
+    "announcement.level.info": "通知",
+    "announcement.level.warning": "重要",
+    "announcement.level.critical": "緊急",
+    "announcement.insertImage": "圖片",
+    "announcement.insertLink": "連結",
+    "announcement.linkUrl": "請輸入連結地址（https://...）",
+    "announcement.linkText": "請輸入連結文字",
+    "announcement.imageUrl": "請輸入圖片地址（https://...）",
+    "announcement.imageAlt": "請輸入圖片說明（可選）",
+    "announcement.editorPlaceholder": "支援 Markdown、圖片和連結，也可以直接貼上 Word 內容",
+    "announcement.editorHint": "支援 Markdown，也可以直接貼上 Word 內容",
+    "announcement.publisher": "發布者：{0}",
+    "announcement.closeDetails": "關閉公告詳情",
+    "announcement.markAllRead": "全部已讀",
+    "announcement.empty": "暫無公告",
+    "announcement.loading": "載入中…",
+    "announcement.edit": "編輯",
+    "announcement.delete": "刪除",
+    "announcement.cancel": "取消",
+    "announcement.save": "儲存",
+    "announcement.publish": "發布",
+    "announcement.title": "標題",
+    "announcement.body": "正文",
+    "announcement.titlePlaceholder": "公告標題",
+    "announcement.pinned": "置頂",
+    "announcement.popup": "登入彈窗（每人僅彈一次）",
+    "announcement.startsAt": "生效時間（可空）",
+    "announcement.expiresAt": "過期時間（可空）",
+    "announcement.specificUsersMeta": "指定 {0} 人",
+    "announcement.popupShownMeta": "登入彈窗（已彈 {0}）",
+    "announcement.readMeta": "已讀 {0}",
+    "announcement.expiredMeta": "過期 {0}",
+    "announcement.audience": "接收對象",
+    "announcement.allUsers": "全部使用者",
+    "announcement.specificUsers": "指定使用者",
+    "announcement.searchUsers": "搜尋使用者名稱 / 暱稱",
+    "announcement.selectAll": "全選",
+    "announcement.clear": "取消",
+    "announcement.selectedUsers": "已選 {0} 人",
+    "announcement.noMatchingUsers": "沒有符合的使用者",
+    "announcement.confirmDelete": "確認刪除公告「{0}」？",
+    "announcement.operationFailed": "操作失敗",
+    "announcement.titleBodyRequired": "標題和正文不能為空",
+    "announcement.userRequired": "請至少選擇一位使用者"
+    ,"announcement.tabDuty": "值班"
+    ,"announcement.tabAnnouncements": "公告"
+    ,"announcement.manage": "管理公告"
+    ,"announcement.new": "新增公告"
+    ,"announcement.back": "返回"
+    ,"announcement.next": "還有 {0} 條"
+    ,"announcement.gotItNext": "知道了，下一則"
+    ,"announcement.gotIt": "知道了"
   },
   "en-US": {
 
@@ -2089,6 +2213,9 @@ export const panelText = {
     "plugins.type.skin": "Skins",
     "plugins.type.game": "Games",
     "plugins.type.widget": "Widgets",
+    "plugins.type.bundle": "Bundles",
+    "plugins.mcp.restart": "Restart MCP",
+    "plugins.mcp.restarted": "MCP servers restarted",
 
     // Search & Filter
     "plugins.search.placeholder": "Search plugins by name, author...",
@@ -2157,6 +2284,12 @@ export const panelText = {
     "plugins.installModal.cancel": "Cancel",
     "plugins.installModal.confirm": "Install",
     "plugins.installModal.downloading": "Downloading & deploying...",
+    "plugins.installModal.modeGithub": "GitHub repository",
+    "plugins.installModal.modeLocal": "Local folder",
+    "plugins.installModal.localPathLabel": "Local plugin folder path:",
+    "plugins.installModal.localPathPlaceholder": "e.g. D:\\plugins\\my-plugin",
+    "plugins.installModal.localPathHelp": "Absolute path on the server running the panel. Can be a single plugin folder or a folder containing several plugins. Plugins with MCP servers require a super administrator.",
+    "plugins.installModal.installingLocal": "Installing...",
 
     // Dev Guide Modal
     "plugins.guideModal.title": "Plugin Development Guide",
@@ -2373,6 +2506,7 @@ export const panelText = {
     "saki.phone.app.plantSlayer": "Plant Slayer",
     "saki.phone.app.music": "Music",
     "saki.phone.app.photos": "Photos",
+    "saki.phone.badge.extension": "Ext",
     "saki.phone.app.messages": "Messages",
     "saki.phone.app.feed": "Feed",
     "saki.phone.app.decor": "Decor",
@@ -2493,7 +2627,59 @@ export const panelText = {
     "points.usage.pointsTooltip": "Points Deducted:",
     "points.usage.recentRecords": "Recent Usage History",
     "points.usage.colBalanceAfter": "Balance After",
-    "points.usage.emptyRecords": "No usage records found"
+    "points.usage.emptyRecords": "No usage records found",
+    "announcement.level.info": "Notice",
+    "announcement.level.warning": "Important",
+    "announcement.level.critical": "Critical",
+    "announcement.insertImage": "Image",
+    "announcement.insertLink": "Link",
+    "announcement.linkUrl": "Enter the link URL (https://...)",
+    "announcement.linkText": "Enter the link text",
+    "announcement.imageUrl": "Enter the image URL (https://...)",
+    "announcement.imageAlt": "Enter an image description (optional)",
+    "announcement.editorPlaceholder": "Supports Markdown, images and links, or paste from Word",
+    "announcement.editorHint": "Supports Markdown, or paste formatted content from Word",
+    "announcement.publisher": "Published by: {0}",
+    "announcement.closeDetails": "Close announcement details",
+    "announcement.markAllRead": "Mark all as read",
+    "announcement.empty": "No announcements",
+    "announcement.loading": "Loading…",
+    "announcement.edit": "Edit",
+    "announcement.delete": "Delete",
+    "announcement.cancel": "Cancel",
+    "announcement.save": "Save",
+    "announcement.publish": "Publish",
+    "announcement.title": "Title",
+    "announcement.body": "Body",
+    "announcement.titlePlaceholder": "Announcement title",
+    "announcement.pinned": "Pin",
+    "announcement.popup": "Show on login (once per user)",
+    "announcement.startsAt": "Start time (optional)",
+    "announcement.expiresAt": "Expiry time (optional)",
+    "announcement.specificUsersMeta": "{0} specific users",
+    "announcement.popupShownMeta": "Login popup ({0} shown)",
+    "announcement.readMeta": "{0} read",
+    "announcement.expiredMeta": "Expired {0}",
+    "announcement.audience": "Audience",
+    "announcement.allUsers": "All users",
+    "announcement.specificUsers": "Specific users",
+    "announcement.searchUsers": "Search username / display name",
+    "announcement.selectAll": "Select all",
+    "announcement.clear": "Clear",
+    "announcement.selectedUsers": "{0} users selected",
+    "announcement.noMatchingUsers": "No matching users",
+    "announcement.confirmDelete": "Delete announcement “{0}”?",
+    "announcement.operationFailed": "Operation failed",
+    "announcement.titleBodyRequired": "Title and body are required",
+    "announcement.userRequired": "Select at least one user"
+    ,"announcement.tabDuty": "Duty"
+    ,"announcement.tabAnnouncements": "Announcements"
+    ,"announcement.manage": "Manage announcements"
+    ,"announcement.new": "New announcement"
+    ,"announcement.back": "Back"
+    ,"announcement.next": "{0} more"
+    ,"announcement.gotItNext": "Got it, next"
+    ,"announcement.gotIt": "Got it"
   }
 } as const;
 
@@ -2539,4 +2725,3 @@ export function panelT(language: PanelLanguage, key: PanelTextKey): string {
   // 兜底 zh-CN
   return panelText["zh-CN"][key];
 }
-

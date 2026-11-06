@@ -5703,7 +5703,134 @@ const domExactTranslationsEn: Record<string, string> = {
   "今天有什么想探索或排查的？": "What would you like to explore or troubleshoot today?",
   "集群运行正常，随时听候您的指令。": "Cluster is running smoothly. Ready for your instructions.",
   "有什么我可以协助你的？": "How can I assist you today?",
-  "准备好开始本次的集群维护与开发任务了吗？": "Ready to start today's cluster maintenance and DevOps tasks?"
+  "准备好开始本次的集群维护与开发任务了吗？": "Ready to start today's cluster maintenance and DevOps tasks?",
+
+  // Chat history, export, and notifications
+  "请等待当前任务或历史记录加载完成后再切换对话。": "Wait for the current task or history to finish loading before switching conversations.",
+  "暂时无法连接服务器，已显示本地保存的记录。": "Cannot reach the server right now. Showing locally saved history.",
+  "无法读取这段历史，请重试。": "Could not read this history. Please try again.",
+  "历史记录加载失败，请重试。": "Failed to load history. Please try again.",
+  "较早记录加载失败，请重试。": "Failed to load earlier history. Please try again.",
+  "正在加载历史记录，请稍候。": "Loading history. Please wait.",
+  "完整对话已导出为 Markdown。": "The full conversation was exported as Markdown.",
+  "会话内容尚未加载，请恢复连接后重试。": "This conversation has not loaded yet. Reconnect and try again.",
+  "导出完整对话为 Markdown（含工具输入、返回及审批记录）": "Export the full conversation as Markdown (tool input, output, and approvals)",
+  "导出完整对话为 Markdown": "Export full conversation as Markdown",
+  "导出失败，请重试。": "Export failed. Please try again.",
+  "打开任务查看详情": "Open the task to view details",
+  "正在加载…": "Loading…",
+  "正在加载...": "Loading...",
+  "加载更早的消息": "Load earlier messages",
+  "加载更早的步骤（还有": "Load earlier steps (",
+  "项）": " more)",
+  "显示更早的消息（还有": "Show earlier messages (",
+  "条）": " more)",
+
+  // Short labels missed by the exact dictionary
+  "未读": "Unread",
+  "检测中...": "Checking...",
+  "检测中…": "Checking…",
+  "清空搜索": "Clear search",
+  "清除搜索": "Clear search",
+  "载入中": "Loading",
+  "免费": "Free",
+  "命令": "Command",
+  "全部": "All",
+  "公告": "Announcements",
+  "值班事件与公告": "On-call events and announcements",
+  "清空全部日志需输入 \"CLEAR\" 确认。": "Type \"CLEAR\" to confirm wiping all logs.",
+  "全局": "Global",
+
+  // Phone dock and sweet-match labels (alt is not walked; titles are)
+  "接甜点": "Catch Desserts",
+  "消消乐": "Sweet Match",
+  "植物特攻": "Plant Strike",
+  "音乐盒": "Music Box",
+  "相册": "Album",
+  "星钻棱镜": "Star Prism",
+  "闪电宝石": "Lightning Gem",
+  "甜蜜炸弹": "Sweet Bomb",
+  "彩虹愿望星": "Rainbow Wish",
+  "银河洗牌：随机重新打乱全屏所有方块": "Galaxy Shuffle: randomly rearrange every tile",
+  "时光沙漏：立刻增加 10 秒挑战时间": "Hourglass: add 10 seconds immediately",
+  "洗牌": "Shuffle",
+  "+10秒": "+10s",
+  "写点什么…": "Write something…",
+  "全部忽略": "Ignore all",
+  "删除本条审计记录": "Delete this audit record",
+  "全局审计日志": "Global audit log",
+  "Saki 用户会话全景审计": "Saki conversation audit",
+  "已删除 1 条审计日志": "Deleted 1 audit log",
+  "保存失败": "Save failed",
+  "请输入 \"CLEAR\" 以确认清空全部": "Type \"CLEAR\" to confirm clearing everything",
+  "允许超级管理员在界面手动勾选删除记录": "Allow super admins to select and delete records in the UI",
+  "上次自动/手动清理：": "Last automatic/manual cleanup: ",
+  "已清理数量：": "Cleaned: ",
+  "环境:": "Environment:",
+  "最后更新:": "Last updated:",
+  "此工作区已有正在执行或等待回答的任务，请先连接、处理或停止该任务。": "This workspace already has a task running or waiting for an answer. Connect, handle, or stop it first.",
+  "任务正在停止，执行结束后可以删除。": "The task is stopping. You can delete it after execution ends.",
+  "任务结果正在同步，保存完成后可以删除。": "Task results are syncing. You can delete it after saving finishes.",
+
+  // Desktop pet bubbles and widget controls
+  "🪑 Saki 乖乖坐好啦～": "🪑 Saki is sitting nicely~",
+  "🛌 Saki 想要躺平休息～": "🛌 Saki wants to lie down and rest~",
+  "🌀 Saki 开心地打了个滚！": "🌀 Saki rolled over happily!",
+  "✨ Saki 站起来啦！": "✨ Saki is standing up!",
+  "点击展开完整聊天": "Click to open the full chat",
+  "关闭便签": "Close note",
+  "移除贴图": "Remove sticker",
+  "添加": "Add",
+  "番茄钟": "Pomodoro",
+
+  // Audit page, node key hint, and plugin mirror labels
+  "Saki 对话记录": "Saki conversations",
+  "文件变更记录": "File changes",
+  "创建 Saki Skill": "Create Saki Skill",
+  "Saki 对话交互": "Saki conversation",
+  "用户提问": "User question",
+  "Saki 回答": "Saki reply",
+  "异常原因": "Error cause",
+  "在 Saki 会话全景中查找该用户": "Find this user in Saki conversations",
+  "复制参数": "Copy arguments",
+  "复制结果": "Copy result",
+  "在线预览该文件": "Preview this file",
+  "查此用户": "This user",
+  "查同资源": "Same resource",
+  "查同动作": "Same action",
+  "删除选中": "Delete selected",
+  "模式:": "Mode:",
+  "引擎:": "Engine:",
+  "工具调用:": "Tool calls:",
+  "Saki 研判": "Ask Saki",
+  "筛选": "Filter",
+  "导出 CSV 表格": "Export CSV",
+  "导出 JSON 结构": "Export JSON",
+  "Saki 审查": "Saki review",
+  "重置": "Reset",
+  "清空历史": "Clear history",
+  "退出": "Exit",
+  "正在加载 Saki 对话记录...": "Loading Saki conversations...",
+  "正在加载对话...": "Loading conversation...",
+  "查看完整对话": "View full conversation",
+  "启用后台自动定时清理过期日志 (每 12 小时检查一次)": "Automatically clean expired logs in the background (checked every 12 hours)",
+  "强制保护审计治理日志 (禁止自动与手动删除任何 audit.* 记录以防篡改)": "Protect audit governance logs (block automatic and manual deletion of any audit.* record)",
+  "保留所有失败/异常操作记录 (不随常规策略自动清除)": "Keep all failed or abnormal records (do not auto-clear them with the regular policy)",
+  "立即执行过期清理": "Clean expired logs now",
+  "深度思考过程 (Thinking Trace)": "Thinking trace",
+  "在目标机器终端执行 npm run daemon:key": "Run npm run daemon:key on the target machine",
+  "GitHub 官方直连": "GitHub direct",
+  "GHFast 镜像 (国内首选推荐)": "GHFast mirror (recommended in mainland China)",
+  "GHProxy Net (备用加速)": "GHProxy Net (backup)",
+  "KKGitHub (域名直换)": "KKGitHub (domain swap)",
+  "GitClone 加速": "GitClone accelerator",
+  "自定义加速镜像 / 反代": "Custom accelerator / reverse proxy",
+  "高速、低延迟，支持 Releases 与 Raw 资源直接代理": "Fast and low-latency. Proxies Releases and Raw assets directly",
+  "经典免费开源 GitHub 代理加速节点": "Classic free open-source GitHub proxy",
+  "国内可直连的 GitHub Web 镜像与 Raw 镜像": "GitHub web and Raw mirror reachable from mainland China",
+  "专注于 Git 仓库克隆加速服务": "Focused on accelerating Git repository clones",
+  "直接连接 GitHub 官方服务器 (海外或已开梯子环境使用)": "Connect directly to GitHub (for overseas networks or when a proxy is already on)",
+  "自行配置的反代地址或前缀 (例如: https://my-gh-proxy.com/)": "Your own reverse-proxy URL or prefix (for example: https://my-gh-proxy.com/)"
 };
 
 
@@ -6338,6 +6465,135 @@ const domExactTranslationsTw: Record<string, string> = {
   "个步骤": "個步驟",
   "历史记录": "歷史記錄",
   "实例会话": "執行個體對話",
+  "请等待当前任务或历史记录加载完成后再切换对话。": "請等待目前工作或歷史記錄載入完成後再切換對話。",
+  "暂时无法连接服务器，已显示本地保存的记录。": "暫時無法連線伺服器，已顯示本機儲存的記錄。",
+  "无法读取这段历史，请重试。": "無法讀取這段歷史，請重試。",
+  "历史记录加载失败，请重试。": "歷史記錄載入失敗，請重試。",
+  "较早记录加载失败，请重试。": "較早記錄載入失敗，請重試。",
+  "正在加载历史记录，请稍候。": "正在載入歷史記錄，請稍候。",
+  "完整对话已导出为 Markdown。": "完整對話已匯出為 Markdown。",
+  "会话内容尚未加载，请恢复连接后重试。": "對話內容尚未載入，請恢復連線後重試。",
+  "导出完整对话为 Markdown（含工具输入、返回及审批记录）": "匯出完整對話為 Markdown（含工具輸入、回傳及審批記錄）",
+  "导出完整对话为 Markdown": "匯出完整對話為 Markdown",
+  "导出失败，请重试。": "匯出失敗，請重試。",
+  "打开任务查看详情": "開啟工作檢視詳情",
+  "正在加载…": "正在載入…",
+  "正在加载...": "正在載入...",
+  "加载更早的消息": "載入更早的訊息",
+  "加载更早的步骤（还有": "載入更早的步驟（還有",
+  "显示更早的消息（还有": "顯示更早的訊息（還有",
+  "连接刚刚中断了，当前回复可能不完整。你可以直接继续说，我会接着处理。": "連線剛剛中斷了，目前回覆可能不完整。你可以直接繼續說，我會接著處理。",
+  "未读": "未讀",
+  "检测中...": "檢測中...",
+  "检测中…": "檢測中…",
+  "清空搜索": "清空搜尋",
+  "清除搜索": "清除搜尋",
+  "载入中": "載入中",
+  "免费": "免費",
+  "命令": "指令",
+  "全部": "全部",
+  "公告": "公告",
+  "值班事件与公告": "值班事件與公告",
+  "清空全部日志需输入 \"CLEAR\" 确认。": "清空全部日誌需輸入 \"CLEAR\" 確認。",
+  "全局": "全域",
+  "接甜点": "接甜點",
+  "消消乐": "消消樂",
+  "植物特攻": "植物特攻",
+  "音乐盒": "音樂盒",
+  "相册": "相簿",
+  "星钻棱镜": "星鑽稜鏡",
+  "闪电宝石": "閃電寶石",
+  "甜蜜炸弹": "甜蜜炸彈",
+  "彩虹愿望星": "彩虹願望星",
+  "银河洗牌：随机重新打乱全屏所有方块": "銀河洗牌：隨機重新打亂全螢幕所有方塊",
+  "时光沙漏：立刻增加 10 秒挑战时间": "時光沙漏：立刻增加 10 秒挑戰時間",
+  "洗牌": "洗牌",
+  "+10秒": "+10秒",
+  "写点什么…": "寫點什麼…",
+  "全部忽略": "全部忽略",
+  "当前分类下没有待处理事件": "目前分類下沒有待處理事件",
+  "已永久静默该类告警（可在下方规则列表撤销）": "已永久靜默該類告警（可在下方規則列表撤銷）",
+  "删除本条审计记录": "刪除本條稽核記錄",
+  "全局审计日志": "全域稽核日誌",
+  "Saki 用户会话全景审计": "Saki 使用者工作階段全景稽核",
+  "已删除 1 条审计日志": "已刪除 1 條稽核日誌",
+  "保留策略已保存": "保留原則已儲存",
+  "保存失败": "儲存失敗",
+  "确定立即清理过期日志？": "確定立即清理過期日誌？",
+  "清理失败": "清理失敗",
+  "即将永久删除该条审计日志。此操作不可逆。": "即將永久刪除該條稽核日誌。此操作不可逆。",
+  "即将清空全部历史审计日志（受保护的治理日志将自动保留）。": "即將清空全部歷史稽核日誌（受保護的治理日誌將自動保留）。",
+  "操作原因与批注 (必填，将作为治理留证记录)": "操作原因與批註（必填，將作為治理留證記錄）",
+  "如：合规归档清理、测试数据移除...": "如：合規歸檔清理、測試資料移除...",
+  "请输入 \"CLEAR\" 以确认清空全部": "請輸入 \"CLEAR\" 以確認清空全部",
+  "允许超级管理员在界面手动勾选删除记录": "允許超級管理員在介面手動勾選刪除記錄",
+  "上次自动/手动清理：": "上次自動/手動清理：",
+  "已清理数量：": "已清理數量：",
+  "用户:": "使用者:",
+  "环境:": "環境:",
+  "最后更新:": "最後更新:",
+  "每页": "每頁",
+  "确认删除审计日志留证": "確認刪除稽核日誌留證",
+  "此工作区已有正在执行或等待回答的任务，请先连接、处理或停止该任务。": "此工作區已有正在執行或等待回答的任務，請先連接、處理或停止該任務。",
+  "任务正在停止，执行结束后可以删除。": "任務正在停止，執行結束後可以刪除。",
+  "任务结果正在同步，保存完成后可以删除。": "任務結果正在同步，儲存完成後可以刪除。",
+  "🪑 Saki 乖乖坐好啦～": "🪑 Saki 乖乖坐好啦～",
+  "🛌 Saki 想要躺平休息～": "🛌 Saki 想要躺平休息～",
+  "🌀 Saki 开心地打了个滚！": "🌀 Saki 開心地打了個滾！",
+  "✨ Saki 站起来啦！": "✨ Saki 站起來啦！",
+  "点击展开完整聊天": "點擊展開完整聊天",
+  "关闭便签": "關閉便籤",
+  "移除贴图": "移除貼圖",
+  "添加": "新增",
+  "番茄钟": "番茄鐘",
+
+  "Saki 对话记录": "Saki 對話記錄",
+  "文件变更记录": "檔案變更記錄",
+  "创建 Saki Skill": "建立 Saki Skill",
+  "Saki 对话交互": "Saki 對話互動",
+  "用户提问": "使用者提問",
+  "Saki 回答": "Saki 回答",
+  "异常原因": "異常原因",
+  "在 Saki 会话全景中查找该用户": "在 Saki 工作階段全景中尋找該使用者",
+  "复制参数": "複製參數",
+  "复制结果": "複製結果",
+  "在线预览该文件": "線上預覽該檔案",
+  "查此用户": "查此使用者",
+  "查同资源": "查同資源",
+  "查同动作": "查同動作",
+  "删除选中": "刪除選取",
+  "模式:": "模式:",
+  "引擎:": "引擎:",
+  "工具调用:": "工具呼叫:",
+  "Saki 研判": "Saki 研判",
+  "筛选": "篩選",
+  "导出 CSV 表格": "匯出 CSV 表格",
+  "导出 JSON 结构": "匯出 JSON 結構",
+  "Saki 审查": "Saki 審查",
+  "重置": "重設",
+  "清空历史": "清空歷史",
+  "退出": "退出",
+  "正在加载 Saki 对话记录...": "正在載入 Saki 對話記錄...",
+  "正在加载对话...": "正在載入對話...",
+  "查看完整对话": "查看完整對話",
+  "启用后台自动定时清理过期日志 (每 12 小时检查一次)": "啟用背景自動定時清理過期日誌（每 12 小時檢查一次）",
+  "强制保护审计治理日志 (禁止自动与手动删除任何 audit.* 记录以防篡改)": "強制保護稽核治理日誌（禁止自動與手動刪除任何 audit.* 記錄以防竄改）",
+  "保留所有失败/异常操作记录 (不随常规策略自动清除)": "保留所有失敗／異常操作記錄（不隨常規原則自動清除）",
+  "立即执行过期清理": "立即執行過期清理",
+  "深度思考过程 (Thinking Trace)": "深度思考過程 (Thinking Trace)",
+  "在目标机器终端执行 npm run daemon:key": "在目標機器終端機執行 npm run daemon:key",
+  "GitHub 官方直连": "GitHub 官方直連",
+  "GHFast 镜像 (国内首选推荐)": "GHFast 鏡像（國內首選推薦）",
+  "GHProxy Net (备用加速)": "GHProxy Net（備用加速）",
+  "KKGitHub (域名直换)": "KKGitHub（網域直換）",
+  "GitClone 加速": "GitClone 加速",
+  "自定义加速镜像 / 反代": "自訂加速鏡像／反代",
+  "高速、低延迟，支持 Releases 与 Raw 资源直接代理": "高速、低延遲，支援 Releases 與 Raw 資源直接代理",
+  "经典免费开源 GitHub 代理加速节点": "經典免費開源 GitHub 代理加速節點",
+  "国内可直连的 GitHub Web 镜像与 Raw 镜像": "國內可直連的 GitHub Web 鏡像與 Raw 鏡像",
+  "专注于 Git 仓库克隆加速服务": "專注於 Git 儲存庫複製加速服務",
+  "直接连接 GitHub 官方服务器 (海外或已开梯子环境使用)": "直接連接 GitHub 官方伺服器（海外或已開啟代理環境使用）",
+  "自行配置的反代地址或前缀 (例如: https://my-gh-proxy.com/)": "自行設定的反代位址或前綴（例如：https://my-gh-proxy.com/）"
 };
 
 
@@ -6412,8 +6668,12 @@ export function translateDomText(value: string, language: PanelLanguage = "en-US
       .replace(/^(\d+)\s*个同名项，请选择覆盖或跳过$/, "$1 個同名項，請選擇覆蓋或略過")
       .replace(/^目标目录\s*(.+)\s*中已有$/, (_, name: string) => "目標目錄 " + protectTw(name) + " 中已有")
       .replace(/^共\s*(\d+)\s*项$/, "共 $1 項")
+      .replace(/^(\d+)\s*项$/, "$1 項")
       .replace(/^共\s*(\d+)\s*条记录$/, "共 $1 筆記錄")
       .replace(/^第\s*(\d+)\s*页$/, "第 $1 頁")
+      .replace(/^第\s*(\d+)\s*\/\s*(\d+)\s*页$/, "第 $1 / $2 頁")
+      .replace(/^共\s*(\d+)\s*个对话会话$/, "共 $1 個對話工作階段")
+      .replace(/^共\s*(\d+)\s*条消息$/, "共 $1 則訊息")
       .replace(/^已选择\s*(\d+)\s*项$/, "已選擇 $1 項")
       .replace(/^已选择\s*(\d+)\s*个文件$/, "已選擇 $1 個檔案")
       .replace(/^(\d+)\s*个文件$/, "$1 個檔案")
@@ -6436,7 +6696,50 @@ export function translateDomText(value: string, language: PanelLanguage = "en-US
       .replace(/^最多只能附加\s*(\d+)\s*个项目，已自动忽略多余文件。?$/, "最多只能附加 $1 個項目，已自動忽略多餘檔案。")
       .replace(/^查看附件：(.+)$/, (_, name) => "檢視附件：" + protectTw(name))
       .replace(/^查看已上传的\s*(\d+)\s*个附件$/, "檢視已上傳的 $1 個附件")
+      .replace(/^显示更早的消息（还有\s*(\d+)\s*条）$/, "顯示更早的訊息（還有 $1 條）")
+      .replace(/^加载更早的步骤（还有\s*(\d+)\s*项）$/, "載入更早的步驟（還有 $1 項）")
+      .replace(/^已忽略至\s*(.+)$/, "已忽略至 $1")
+      .replace(/^(\d+)\s*条已忽略，(\d+)\s*条失败，请稍后重试。$/, "$1 條已忽略，$2 條失敗，請稍後重試。")
+      .replace(/^已忽略\s*(\d+)\s*条事件（1 小时）$/, "已忽略 $1 條事件（1 小時）")
+      .replace(/^(\d+)\s*条$/, "$1 條")
+      .replace(/^等\s*(\d+)\s*个实例$/, "等 $1 個執行個體")
+      .replace(/^(\d+)\s*条未完成$/, "$1 條未完成")
+      .replace(/^(\d+)\s*条未读$/, "$1 條未讀")
+      .replace(/^忽略当前分类下全部\s*(\d+)\s*条待处理事件（1 小时）$/, "忽略目前分類下全部 $1 條待處理事件（1 小時）")
+      .replace(/^(\d+)\s*条值班事件$/, "$1 條值班事件")
+      .replace(/^(\d+)\s*条未读公告$/, "$1 條未讀公告")
+      .replace(/^已导出\s*(.+)\s*审计报表$/, "已匯出 $1 稽核報表")
+      .replace(/^已删除\s*(\d+)\s*条审计日志$/, "已刪除 $1 條稽核日誌")
+      .replace(/^已清空\s*(\d+)\s*条历史日志$/, "已清空 $1 條歷史日誌")
+      .replace(/^清理完成，共移除\s*(\d+)\s*条过期日志$/, "清理完成，共移除 $1 條過期日誌")
+      .replace(/^受控删除模式：已选\s*(\d+)\s*条记录$/, "受控刪除模式：已選 $1 條記錄")
+      .replace(/^共\s*(\d+)\s*条记录$/, "共 $1 條記錄")
+      .replace(/^(\d+)\s*条对话$/, "$1 條對話")
+      .replace(/^即将永久删除选中的\s*(\d+)\s*条审计日志。此操作不可逆。$/, "即將永久刪除選取的 $1 條稽核日誌。此操作不可逆。")
+      .replace(/^收到新指示：(.+)$/, "收到新指示：$1")
       .replace(/^执行遇到错误:\s*(.+)$/, "執行遇到錯誤: $1")
+      .replace(/^Saki 已完成诊断，等待你接手。$/, "Saki 已完成診斷，等待你接手。")
+      .replace(/^实例仍未运行，需要手动启动。$/, "執行個體仍未執行，需要手動啟動。")
+      .replace(/^实例已不存在。$/, "執行個體已不存在。")
+      .replace(/^需要拥有 saki\.agent 权限的账号确认后，才能开始诊断。$/, "需要擁有 saki.agent 權限的帳號確認後，才能開始診斷。")
+      .replace(/^检测到崩溃循环，Saki 正在诊断。$/, "偵測到崩潰循環，Saki 正在診斷。")
+      .replace(/^实例崩溃，Saki 正在诊断。$/, "執行個體崩潰，Saki 正在診斷。")
+      .replace(/^Saki 值班诊断失败，请稍后重试或人工接手。$/, "Saki 值班診斷失敗，請稍後重試或人工接手。")
+      .replace(/^本小时诊断次数已达上限，Saki 完全自治已暂停触发以保护模型额度。$/, "本小時診斷次數已達上限，Saki 完全自治已暫停觸發以保護模型額度。")
+      .replace(/^【Saki 完全自治】未找到具备 saki\.agent 权限的可用负责人账号，请手动确认诊断。$/, "【Saki 完全自治】未找到具備 saki.agent 權限的可用負責人帳號，請手動確認診斷。")
+      .replace(/^【Saki 完全自治】负责人账号可用模型额度不足，已暂停自动诊断。$/, "【Saki 完全自治】負責人帳號可用模型額度不足，已暫停自動診斷。")
+      .replace(/^【Saki 完全自治】无法校验模型额度，请手动确认诊断。$/, "【Saki 完全自治】無法校驗模型額度，請手動確認診斷。")
+      .replace(/^【Saki 完全自治】已自动触发模型诊断（内置同报错与连续失败双重熔断保护）…$/, "【Saki 完全自治】已自動觸發模型診斷（內建同報錯與連續失敗雙重熔斷保護）…")
+      .replace(/^【Saki 完全自治】自动启动诊断时遇到冲突或异常，已退回待人工确认状态。$/, "【Saki 完全自治】自動啟動診斷時遇到衝突或異常，已退回待人工確認狀態。")
+      .replace(/^本小时诊断次数已达上限，未消耗新的模型额度。$/, "本小時診斷次數已達上限，未消耗新的模型額度。")
+      .replace(/^你已确认本次诊断。Saki 即将开始（会消耗模型额度）。$/, "你已確認本次診斷。Saki 即將開始（會消耗模型額度）。")
+      .replace(/^该实例已有另一个诊断正在进行，请稍后再确认。额度未继续消耗。$/, "該執行個體已有另一個診斷正在進行，請稍後再確認。額度未繼續消耗。")
+      .replace(/^未能开始诊断，请稍后重试。额度未继续消耗。$/, "未能開始診斷，請稍後重試。額度未繼續消耗。")
+      .replace(/^诊断任务未能在取消后正常结束，已强制中止并退回待确认状态。$/, "診斷任務未能在取消後正常結束，已強制中止並退回待確認狀態。")
+      .replace(/^【Saki 自治熔断】该相同报错此前已诊断过或自动修复未成功（可能为服务端\/外部故障），为防止重复消耗 Token，已暂停自动诊断并转交人工确认。$/, "【Saki 自治熔斷】該相同報錯此前已診斷過或自動修復未成功（可能為伺服器端／外部故障），為防止重複消耗 Token，已暫停自動診斷並轉交人工確認。")
+      .replace(/^【Saki 自治熔断】该实例上次自动诊断未能恢复运行，疑似外部或服务端顽固故障；为防止变化报错循环消耗 Token，已暂停自动诊断并转交人工确认。$/, "【Saki 自治熔斷】該執行個體上次自動診斷未能恢復執行，疑似外部或伺服器端頑固故障；為防止變化報錯循環消耗 Token，已暫停自動診斷並轉交人工確認。")
+      .replace(/^【Saki 完全自治】距离上次诊断不足\s*(\d+)\s*秒冷却期（剩余约\s*(\d+)\s*秒），已暂缓自动调用模型，你也可以手动点击确认诊断。$/, "【Saki 完全自治】距離上次診斷不足 $1 秒冷卻期（剩餘約 $2 秒），已暫緩自動呼叫模型，你也可以手動點擊確認診斷。")
+      .replace(/^距离上次诊断不足\s*(\d+)\s*秒的冷却期，请约\s*(\d+)\s*秒后再试。$/, "距離上次診斷不足 $1 秒的冷卻期，請約 $2 秒後再試。")
       .replace(/^请求失败:\s*(.+)$/, "請求失敗: $1")
       .replace(/^已撤回\s*(\d+)\s*次代码更改，对话记录已保留。?$/, "已復原 $1 次程式碼變更，對話記錄已保留。")
       .replace(/^已撤回到此处，并还原\s*(\d+)\s*次修改。?$/, "已復原至此處，並還原 $1 次變更。")
@@ -6534,8 +6837,12 @@ export function translateDomText(value: string, language: PanelLanguage = "en-US
     .replace(/^(\d+)\s*个同名项，请选择覆盖或跳过$/, "$1 items with the same name, please choose overwrite or skip")
     .replace(/^目标目录\s*(.+)\s*中已有$/, "Target directory $1 already has")
     .replace(/^共\s*(\d+)\s*项$/, "Total $1 items")
+    .replace(/^(\d+)\s*项$/, "$1 items")
     .replace(/^共\s*(\d+)\s*条记录$/, "Total $1 records")
     .replace(/^第\s*(\d+)\s*页$/, "Page $1")
+    .replace(/^第\s*(\d+)\s*\/\s*(\d+)\s*页$/, "Page $1 / $2")
+    .replace(/^共\s*(\d+)\s*个对话会话$/, "$1 conversations")
+    .replace(/^共\s*(\d+)\s*条消息$/, "$1 messages")
     .replace(/^已选择\s*(\d+)\s*项$/, "Selected $1 item(s)")
     .replace(/^已选择\s*(\d+)\s*个文件$/, "Selected $1 file(s)")
     .replace(/^(\d+)\s*个文件$/, "$1 files")
@@ -6649,6 +6956,7 @@ export function translateDomText(value: string, language: PanelLanguage = "en-US
     .replace(new RegExp("^审计事件[：:](.+)$", "m"), "Audit event: $1")
     .replace(new RegExp("^共 (.+) 条记录$", "m"), "Total $1 records")
     .replace(new RegExp("^共 (.+) 个对话会话$", "m"), "Total $1 conversation sessions")
+    .replace(new RegExp("^共 (.+) 条消息$", "m"), "$1 messages")
     .replace(new RegExp("^上次自动/手动清理[：:](.+)$", "m"), "Last auto/manual cleanup: $1")
     .replace(new RegExp("^已清理数量[：:](.+) 条$", "m"), "Cleaned count: $1 items")
     .replace(new RegExp("^即将永久删除选中的 (.+) 条审计日志。此操作不可逆。$", "m"), "About to permanently delete $1 selected audit logs. This action is irreversible.")
@@ -6886,7 +7194,50 @@ export function translateDomText(value: string, language: PanelLanguage = "en-US
     .replace(/^最多只能附加\s*(\d+)\s*个项目，已自动忽略多余文件。?$/, "You can attach up to $1 items; excess files were ignored.")
     .replace(/^查看附件：(.+)$/, "View attachment: $1")
     .replace(/^查看已上传的\s*(\d+)\s*个附件$/, "View $1 uploaded attachment(s)")
+    .replace(/^显示更早的消息（还有\s*(\d+)\s*条）$/, "Show earlier messages ($1 more)")
+    .replace(/^加载更早的步骤（还有\s*(\d+)\s*项）$/, "Load earlier steps ($1 more)")
+    .replace(/^已忽略至\s*(.+)$/, "Ignored until $1")
+    .replace(/^(\d+)\s*条已忽略，(\d+)\s*条失败，请稍后重试。$/, "Ignored $1; $2 failed. Try again later.")
+    .replace(/^已忽略\s*(\d+)\s*条事件（1 小时）$/, "Ignored $1 event(s) for 1 hour")
+    .replace(/^(\d+)\s*条$/, "$1")
+    .replace(/^等\s*(\d+)\s*个实例$/, "and $1 more instances")
+    .replace(/^(\d+)\s*条未完成$/, "$1 open")
+    .replace(/^(\d+)\s*条未读$/, "$1 unread")
+    .replace(/^忽略当前分类下全部\s*(\d+)\s*条待处理事件（1 小时）$/, "Ignore all $1 open events in this category (1 hour)")
+    .replace(/^(\d+)\s*条值班事件$/, "$1 on-call event(s)")
+    .replace(/^(\d+)\s*条未读公告$/, "$1 unread announcement(s)")
+    .replace(/^已导出\s*(.+)\s*审计报表$/, "Exported $1 audit report")
+    .replace(/^已删除\s*(\d+)\s*条审计日志$/, "Deleted $1 audit log(s)")
+    .replace(/^已清空\s*(\d+)\s*条历史日志$/, "Cleared $1 historical log(s)")
+    .replace(/^清理完成，共移除\s*(\d+)\s*条过期日志$/, "Cleanup finished; removed $1 expired log(s)")
+    .replace(/^受控删除模式：已选\s*(\d+)\s*条记录$/, "Controlled delete: $1 selected")
+    .replace(/^共\s*(\d+)\s*条记录$/, "$1 records")
+    .replace(/^(\d+)\s*条对话$/, "$1 messages")
+    .replace(/^即将永久删除选中的\s*(\d+)\s*条审计日志。此操作不可逆。$/, "About to permanently delete $1 selected audit logs. This cannot be undone.")
+    .replace(/^收到新指示：(.+)$/, "New instruction: $1")
     .replace(/^执行遇到错误:\s*(.+)$/, "Execution error: $1")
+    .replace(/^Saki 已完成诊断，等待你接手。$/, "Saki finished diagnosing and is waiting for you.")
+    .replace(/^实例仍未运行，需要手动启动。$/, "The instance is still not running and needs a manual start.")
+    .replace(/^实例已不存在。$/, "The instance no longer exists.")
+    .replace(/^需要拥有 saki\.agent 权限的账号确认后，才能开始诊断。$/, "An account with the saki.agent permission must confirm before diagnosis can start.")
+    .replace(/^检测到崩溃循环，Saki 正在诊断。$/, "Crash loop detected. Saki is diagnosing.")
+    .replace(/^实例崩溃，Saki 正在诊断。$/, "The instance crashed. Saki is diagnosing.")
+    .replace(/^Saki 值班诊断失败，请稍后重试或人工接手。$/, "Saki on-call diagnosis failed. Retry later or take over manually.")
+    .replace(/^本小时诊断次数已达上限，Saki 完全自治已暂停触发以保护模型额度。$/, "Hourly diagnosis limit reached. Full autonomy is paused to protect model quota.")
+    .replace(/^【Saki 完全自治】未找到具备 saki\.agent 权限的可用负责人账号，请手动确认诊断。$/, "[Saki autonomy] No available owner with saki.agent. Confirm diagnosis manually.")
+    .replace(/^【Saki 完全自治】负责人账号可用模型额度不足，已暂停自动诊断。$/, "[Saki autonomy] The owner is out of model quota. Auto diagnosis is paused.")
+    .replace(/^【Saki 完全自治】无法校验模型额度，请手动确认诊断。$/, "[Saki autonomy] Could not verify model quota. Confirm diagnosis manually.")
+    .replace(/^【Saki 完全自治】已自动触发模型诊断（内置同报错与连续失败双重熔断保护）…$/, "[Saki autonomy] Model diagnosis started automatically (duplicate-error and consecutive-failure circuit breakers are on)…")
+    .replace(/^【Saki 完全自治】自动启动诊断时遇到冲突或异常，已退回待人工确认状态。$/, "[Saki autonomy] Auto diagnosis hit a conflict or error and was returned for manual confirmation.")
+    .replace(/^本小时诊断次数已达上限，未消耗新的模型额度。$/, "Hourly diagnosis limit reached. No additional model quota was used.")
+    .replace(/^你已确认本次诊断。Saki 即将开始（会消耗模型额度）。$/, "Diagnosis confirmed. Saki is about to start (this uses model quota).")
+    .replace(/^该实例已有另一个诊断正在进行，请稍后再确认。额度未继续消耗。$/, "Another diagnosis is already running for this instance. Confirm again later. No further quota was used.")
+    .replace(/^未能开始诊断，请稍后重试。额度未继续消耗。$/, "Could not start diagnosis. Retry later. No further quota was used.")
+    .replace(/^诊断任务未能在取消后正常结束，已强制中止并退回待确认状态。$/, "The diagnosis did not finish after cancellation. It was force-stopped and returned for confirmation.")
+    .replace(/^【Saki 自治熔断】该相同报错此前已诊断过或自动修复未成功（可能为服务端\/外部故障），为防止重复消耗 Token，已暂停自动诊断并转交人工确认。$/, "[Saki circuit breaker] This same error was already diagnosed or auto-repair failed (possible server or external fault). Auto diagnosis is paused to avoid repeated token use.")
+    .replace(/^【Saki 自治熔断】该实例上次自动诊断未能恢复运行，疑似外部或服务端顽固故障；为防止变化报错循环消耗 Token，已暂停自动诊断并转交人工确认。$/, "[Saki circuit breaker] The last auto diagnosis did not restore this instance (likely a stubborn external or server fault). Auto diagnosis is paused to avoid a changing-error token loop.")
+    .replace(/^【Saki 完全自治】距离上次诊断不足\s*(\d+)\s*秒冷却期（剩余约\s*(\d+)\s*秒），已暂缓自动调用模型，你也可以手动点击确认诊断。$/, "[Saki autonomy] Last diagnosis was less than $1s ago (about $2s left). Auto model calls are paused; you can still confirm diagnosis manually.")
+    .replace(/^距离上次诊断不足\s*(\d+)\s*秒的冷却期，请约\s*(\d+)\s*秒后再试。$/, "Diagnosis cooldown is $1s. Try again in about $2s.")
     .replace(/^请求失败:\s*(.+)$/, "Request failed: $1")
     .replace(/^已撤回\s*(\d+)\s*次代码更改，对话记录已保留。?$/, "Reverted $1 code change(s); conversation preserved.")
     .replace(/^已撤回到此处，并还原\s*(\d+)\s*次修改。?$/, "Undone to this point, restoring $1 change(s).")

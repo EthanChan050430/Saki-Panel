@@ -1,4 +1,6 @@
+import { cachedSakiModelPreference, persistSakiModelPreference, waitForSakiModelPreference } from "./useSakiModelPreference.js";
 import { useSakiReasoningEffort } from "./useSakiReasoningEffort.js";
+import { useSakiFollowUps } from "./useSakiFollowUps.js";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ConversationSyncQueue } from "./conversation-sync.js";
 import { SakiConversationExportButton } from "./chat/SakiConversationExportButton.js";
@@ -134,11 +136,14 @@ import type {
   SakiChatResponse,
   SakiInputAttachment,
   SakiModelOption,
-  SakiSkillSummary
+  SakiSkillSummary,
+  SakiPluginMentionSummary
 } from "@webops/shared";
 import {
   activeSakiMentionQuery,
   filterSakiMentionCandidates,
+  filterSakiPluginMentionCandidates,
+  sakiPluginMentionToken,
   filterSakiSkillMentionCandidates,
   filterSakiWorkspaceFileCandidates,
   insertSakiMention,
@@ -537,6 +542,8 @@ export function SakiFloatingChat({
   ), [token]);
   const [activeConversationId, setActiveConversationId] = useState(() => newClientId());
   const activeConversationIdRef = useRef(activeConversationId);
+  const serverFollowUps = useSakiFollowUps(token, activeConversationId);
+  const followUpRequestRef = useRef<import("@webops/shared").SakiChatRequest | null>(null);
   const historyLoadingRef = useRef(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyBeforeId, setHistoryBeforeId] = useState<string | null>(null);
@@ -1024,34 +1031,25 @@ export function SakiFloatingChat({
     setSakiEchoState("idle");
   }, [open, listening, miniGameActive, sakiLieMode, mobileActiveTab]);
 
+  const modelRefreshSeq = useRef(0);
   const refreshSakiModels = useCallback(async () => {
-    let currentModel = "";
+    const seq = ++modelRefreshSeq.current;
+    const previous = cachedSakiModelPreference(userId);
     try {
-      const config = await api.sakiConfig(token);
-      currentModel = config.model ? sakiModelSelectionKey({ id: config.model, provider: config.provider }) : "";
-      setModelPointsMultipliers(config.modelPointsMultipliers || {});
-      onCurrentModelIdChange(currentModel);
-      const result = await api.sakiModels(token, {
-        provider: config.provider,
-        model: config.model,
-        ollamaUrl: config.ollamaUrl,
-        baseUrl: config.baseUrl,
-        apiKey: config.apiKey,
-        providerConfigs: config.providerConfigs
-      });
+      await waitForSakiModelPreference(userId);
+      const result = await api.sakiUserModels(token);
+      if (seq !== modelRefreshSeq.current) return;
+      setModelPointsMultipliers(result.modelPointsMultipliers);
       onAvailableModelsChange(result.models);
-      const current = result.models.find((m) => sakiModelMatchesSelection(m, currentModel));
-      if (current) {
-        onCurrentModelNameChange(current.label || current.name || current.id);
-      } else if (currentModel) {
-        onCurrentModelNameChange(config.model);
-      }
-    } catch {
-      if (currentModel) {
-        onCurrentModelNameChange(parseSakiModelSelection(currentModel).model);
-      }
-    }
-  }, [token, onCurrentModelIdChange, onCurrentModelNameChange, onAvailableModelsChange]);
+      if (cachedSakiModelPreference(userId) === previous) onCurrentModelIdChange(result.selection);
+    } catch { /* Keep the last model during a catalog/network outage. */ }
+  }, [token, userId, onCurrentModelIdChange, onAvailableModelsChange]);
+
+  useEffect(() => () => { modelRefreshSeq.current += 1; }, [token, userId]);
+  useEffect(() => {
+    const model = availableModels.find(item => sakiModelMatchesSelection(item, currentModelId));
+    onCurrentModelNameChange(model?.label || model?.name || parseSakiModelSelection(currentModelId).model);
+  }, [currentModelId, availableModels, onCurrentModelNameChange]);
 
   useEffect(() => {
     void refreshSakiModels();
@@ -1119,6 +1117,7 @@ export function SakiFloatingChat({
     : sakiModelSupportsVision(parseSakiModelSelection(currentModelId).model, parseSakiModelSelection(currentModelId).provider);
 
   const [workspaceFiles, setWorkspaceFiles] = useState<SakiWorkspaceFileCandidate[]>([]);
+  const [mentionPlugins, setMentionPlugins] = useState<SakiPluginMentionSummary[]>([]);
   const workspaceFilesCacheRef = useRef<Map<string, SakiWorkspaceFileCandidate[]>>(new Map());
   const workspaceFilesLoadingRef = useRef<Set<string>>(new Set());
 
@@ -1206,6 +1205,22 @@ export function SakiFloatingChat({
     };
   }, [activeInstance?.id, token]);
 
+  useEffect(() => {
+    if (!open) return;
+    let disposed = false;
+    void api
+      .pluginMentions(token)
+      .then((res) => {
+        if (!disposed) setMentionPlugins(res.plugins ?? []);
+      })
+      .catch(() => {
+        if (!disposed) setMentionPlugins([]);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [open, token]);
+
   const mentionCandidates = useMemo((): SakiMentionCandidate[] => {
     const active = activeSakiMentionQuery(draft, mentionCaret);
     if (!active || mentionDismissedStart === active.start) return [];
@@ -1213,6 +1228,7 @@ export function SakiFloatingChat({
 
     const matchedAttachments = filterSakiMentionCandidates(attachments, query);
     const matchedSkills = filterSakiSkillMentionCandidates(skills, query);
+    const matchedPlugins = filterSakiPluginMentionCandidates(mentionPlugins, query);
     const matchedFiles = activeInstance?.id
       ? filterSakiWorkspaceFileCandidates(workspaceFiles, query, 15)
       : [];
@@ -1243,13 +1259,22 @@ export function SakiFloatingChat({
       skill: skill
     }));
 
-    return [...attachmentItems, ...fileItems, ...skillItems].slice(0, 25);
-  }, [activeInstance?.id, attachments, draft, mentionCaret, mentionDismissedStart, skills, workspaceFiles]);
+    const pluginItems: SakiMentionCandidate[] = matchedPlugins.map((plugin) => ({
+      kind: "plugin" as const,
+      id: plugin.id,
+      name: plugin.displayName,
+      token: sakiPluginMentionToken(plugin),
+      description: plugin.description,
+      plugin
+    }));
+
+    return [...attachmentItems, ...fileItems, ...pluginItems, ...skillItems].slice(0, 25);
+  }, [activeInstance?.id, attachments, draft, mentionCaret, mentionDismissedStart, mentionPlugins, skills, workspaceFiles]);
 
   const mentionMenuOpen =
     Boolean(activeSakiMentionQuery(draft, mentionCaret)) &&
     mentionDismissedStart !== activeSakiMentionQuery(draft, mentionCaret)?.start &&
-    (attachments.length > 0 || skills.length > 0 || (activeInstance ? workspaceFiles.length > 0 : false));
+    (attachments.length > 0 || skills.length > 0 || mentionPlugins.length > 0 || (activeInstance ? workspaceFiles.length > 0 : false));
 
   useEffect(() => {
     setMentionIndex(0);
@@ -1657,20 +1682,19 @@ export function SakiFloatingChat({
   }, [token, activeInstance?.id]);
 
   async function selectModel(modelId: string) {
-    onCurrentModelIdChange(modelId);
     const found = availableModels.find((m) => sakiModelMatchesSelection(m, modelId));
+    const key = found ? sakiModelSelectionKey(found) : modelId;
+    onCurrentModelIdChange(key);
     if (found) {
       onCurrentModelNameChange(found.label || found.name || found.id);
     } else {
       onCurrentModelNameChange(parseSakiModelSelection(modelId).model);
     }
     try {
-      const selection = parseSakiModelSelection(modelId, found?.provider);
-      await api.updateSakiConfig(token, {
-        model: selection.model,
-        ...(selection.provider ? { provider: selection.provider } : {})
-      });
-    } catch {}
+      await persistSakiModelPreference(token, userId, key);
+    } catch (error) {
+      setPanelError(`个人模型选择保存失败：${error instanceof Error ? error.message : "请重试"}`);
+    }
   }
 
   function handleSakiMessagesScroll(event: React.UIEvent<HTMLDivElement>) {
@@ -3551,22 +3575,28 @@ export function SakiFloatingChat({
     const submittedAttachments = override?.attachments ?? attachments;
     const value = (override?.message ?? draft).trim() || (submittedAttachments.length ? "请分析附件内容。" : "");
     if (!value && submittedAttachments.length === 0) return;
-    if (loading) {
-      if (override?.steer && activeTaskIdRef.current && token && value) {
-        const steerMessage: LocalSakiMessage = {
-          id: newClientId(),
-          role: "user",
-          content: value,
-          createdAt: new Date().toISOString()
-        };
-        setMessages((current) => [...current, steerMessage]);
-        setDraft("");
-        showComposerNotice("已插入指示，Saki 会在当前步骤后读到。");
-        void api.sakiSteerTask(token, activeTaskIdRef.current, value).catch((err) => {
-          showComposerNotice(err instanceof Error ? err.message : "插入指示失败");
+    if (mode === "agent" && (loading || serverFollowUps.items.some(item => item.status !== "paused"))) {
+      const conversationId = activeConversationIdRef.current;
+      const previous = followUpRequestRef.current?.conversationId === conversationId ? followUpRequestRef.current : null;
+      try {
+        await serverFollowUps.add({ ...(previous ?? {}), message: value, conversationId, mode: "agent",
+          instanceId: previous?.instanceId ?? activeInstance?.id ?? null,
+          agentPermissionMode: permissionMode, terminalSandbox, reasoningEffort,
+          selectedSkillIds, attachments: submittedAttachments,
+          ...(currentModelId.trim() ? parseSakiModelSelection(currentModelId) : {})
+        }, {
+          ...(activeTaskIdRef.current ? { afterTaskId: activeTaskIdRef.current } : {}),
+          ...(previous?.clientRequestId ? { afterRequestId: previous.clientRequestId } : {})
         });
-        return;
-      }
+        if (activeConversationIdRef.current === conversationId) {
+          setDraft(current => current.trim() === (override?.message ?? draft).trim() ? "" : current);
+          setAttachments(current => current.filter(attachment => !submittedAttachments.includes(attachment)));
+          showComposerNotice("已加入队列。");
+        }
+      } catch (error) { showComposerNotice(error instanceof Error ? error.message : "提交未确认，内容已保留，请先查看队列。"); }
+      return;
+    }
+    if (loading) {
       if (!value && submittedAttachments.length === 0) return;
       const job: SakiFollowUpJob = {
         id: newClientId(),
@@ -3659,6 +3689,7 @@ export function SakiFloatingChat({
       reasoningEffort,
       ...(currentModelId.trim() ? parseSakiModelSelection(currentModelId) : {})
     };
+    followUpRequestRef.current = request;
     if (requestMode === "agent") {
       window.dispatchEvent(new CustomEvent("saki:active_task_updated"));
     }
@@ -4930,6 +4961,16 @@ export function SakiFloatingChat({
           setAttachments((current) => current.filter((item) => (item.id ?? item.name) !== (attachment.id ?? attachment.name)))
         }
         followUpQueue={followUpQueue}
+        serverFollowUps={serverFollowUps}
+        onWithdrawFollowUp={async (id) => {
+          const conversationId = activeConversationIdRef.current;
+          const items = await serverFollowUps.withdraw(id);
+          if (activeConversationIdRef.current !== conversationId) return;
+          setDraft(current => [current, ...items.map(item => item.input.message)].filter(Boolean).join("\n\n"));
+          const restored = items.flatMap(item => item.input.attachments ?? []);
+          setAttachments(current => [...new Map([...current, ...restored].map(item => [item.id ?? item.name, item])).values()]);
+          composerTextareaRef.current?.focus();
+        }}
         onRemoveFollowUp={(id) => setFollowUpQueue((current) => current.filter((item) => item.id !== id))}
         composerNotice={composerNotice}
         listening={listening}

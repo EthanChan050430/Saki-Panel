@@ -30,6 +30,7 @@ export interface PluginContextValue {
     ref?: string;
     pluginName?: string;
   }) => Promise<InstalledPlugin[]>;
+  installFromLocal: (input: { localPath: string; pluginName?: string }) => Promise<InstalledPlugin[]>;
   saveMirrorConfig: (mirrorId: string, customMirrorUrl?: string) => Promise<void>;
   checkUpdates: (ids?: string[]) => Promise<Record<string, PluginUpdateStatus>>;
   updatePlugin: (id: string) => Promise<InstalledPlugin | null>;
@@ -271,6 +272,16 @@ export function PluginProvider({
     throw new Error(res.message || "安装失败");
   }, [token, refreshPlugins]);
 
+  const installFromLocal = useCallback(async (input: { localPath: string; pluginName?: string }): Promise<InstalledPlugin[]> => {
+    if (!token) throw new Error("未登录");
+    const res = await api.installLocalPlugin(token, input);
+    if (res.ok && res.plugins?.length) {
+      await refreshPlugins();
+      return res.plugins;
+    }
+    throw new Error(res.message || "安装失败");
+  }, [token, refreshPlugins]);
+
   const saveMirrorConfig = useCallback(async (mirrorId: string, customMirrorUrl?: string): Promise<void> => {
     if (!token) return;
     const payload = customMirrorUrl !== undefined ? { mirrorId, customMirrorUrl } : { mirrorId };
@@ -366,6 +377,7 @@ export function PluginProvider({
     setActiveSkin,
     uninstallPlugin,
     installFromGithub,
+    installFromLocal,
     saveMirrorConfig,
     checkUpdates,
     updatePlugin
@@ -388,6 +400,7 @@ export function PluginProvider({
     setActiveSkin,
     uninstallPlugin,
     installFromGithub,
+    installFromLocal,
     saveMirrorConfig,
     checkUpdates,
     updatePlugin

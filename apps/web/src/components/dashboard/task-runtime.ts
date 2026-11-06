@@ -17,8 +17,21 @@ export interface DashboardStreamRun {
   controller: AbortController;
   mode: "agent" | "chat";
   taskId?: string;
+  clientRequestId?: string;
+  taskKnownAt?: number;
   cancelRequested?: boolean;
   detached?: boolean;
+}
+
+/** A successful task-list poll can settle a stuck observer, never a newer submission. */
+export function dashboardStoppedStreams(runs: ReadonlyMap<string, DashboardStreamRun>, tasks: SakiActiveTaskSummary[], polledAt: number) {
+  const byId = new Map(tasks.map(task => [task.id, task]));
+  return [...runs].flatMap(([sessionId, run]) => {
+    if (run.detached || !run.taskId || run.taskKnownAt === undefined || run.taskKnownAt >= polledAt) return [];
+    const task = byId.get(run.taskId);
+    if (task?.status === "running") return [];
+    return [{ sessionId, run, task }];
+  });
 }
 
 export function dashboardTaskSessionId(task: SakiActiveTaskSummary): string {

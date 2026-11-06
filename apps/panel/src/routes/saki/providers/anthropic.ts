@@ -1,4 +1,4 @@
-import type { SakiChatRequest, SakiConfigResponse } from "@webops/shared";
+import { normalizeSakiReasoningEffort, sakiReasoningBudgetTokens, type SakiChatRequest, type SakiConfigResponse, type SakiReasoningEffort } from "@webops/shared";
 import type { ParsedToolCall, SakiAgentRuntime, SakiModelToolTurn } from "../types.js";
 import {
   chatTextFromContent,
@@ -16,7 +16,7 @@ import { anthropicToolSchemas, normalizeStructuredToolCall, parseJsonMaybe, tool
 import { buildDirectMessages, buildDirectSystemPrompt } from "../prompt.js";
 import { buildAnthropicAgentMessages, buildPromptFallbackMessages, currentAgentTurnConversation } from "../agent-messages.js";
 import { extractProviderUsage, mergeModelUsage, type ModelUsage } from "../../../tokenizer.js";
-import { anthropicSupportsThinking } from "../model-profile.js";
+import { anthropicSupportsThinking, anthropicUsesAdaptiveThinking } from "../model-profile.js";
 import { modelOutputWasTruncated, streamPromptAgentTurnWithFilteredDelta, withTurnUsage } from "./common.js";
 import { anthropicAgentCacheOptions } from "./prompt-cache.js";
 import { parseStreamJsonPayload, readServerSentEventData, requestJsonPayload, requestStreamingPayload } from "./http.js";
@@ -39,12 +39,23 @@ function anthropicRequestHeaders(apiKey: string, model: string): Record<string, 
   };
 }
 
-function anthropicRequestBody(model: string, rest: Record<string, unknown>): Record<string, unknown> {
+function anthropicRequestBody(model: string, rest: Record<string, unknown>, reasoningEffort?: SakiReasoningEffort): Record<string, unknown> {
+  const effort = normalizeSakiReasoningEffort(reasoningEffort, model, "anthropic");
+  if (anthropicUsesAdaptiveThinking(model)) {
+    return {
+      model,
+      max_tokens: 16000,
+      thinking: { type: "adaptive" },
+      ...(effort !== "auto" ? { output_config: { effort } } : {}),
+      ...rest
+    };
+  }
   if (!anthropicSupportsThinking(model)) return { model, max_tokens: 4096, ...rest };
+  const budget = sakiReasoningBudgetTokens(effort, "claude") ?? 4096;
   return {
     model,
-    max_tokens: 16000,
-    thinking: { type: "enabled", budget_tokens: 4096 },
+    max_tokens: Math.max(16000, budget + 8192),
+    thinking: { type: "enabled", budget_tokens: budget },
     ...rest
   };
 }
@@ -63,7 +74,7 @@ export async function callAnthropicModel(config: SakiConfigResponse, input: Saki
           system: agentFallback ? directMessages.find((message) => message.role === "system")?.content : buildDirectSystemPrompt(config),
           ...anthropicAgentCacheOptions(baseUrl, agentFallback),
           messages
-        })
+        }, config.reasoningEffort)
       )
     },
     config.requestTimeoutMs
@@ -116,7 +127,7 @@ export async function callAnthropicModelStream(
           ...anthropicAgentCacheOptions(baseUrl, agentFallback),
           messages,
           stream: true
-        })
+        }, config.reasoningEffort)
       )
     },
     config.requestTimeoutMs,
@@ -149,7 +160,7 @@ export async function callAnthropicAgentTurn(config: SakiConfigResponse, input: 
           ...anthropicAgentCacheOptions(baseUrl, true),
           messages,
           tools: anthropicToolSchemas()
-        })
+        }, config.reasoningEffort)
       )
     },
     config.requestTimeoutMs
@@ -301,7 +312,7 @@ export async function callAnthropicAgentTurnStream(
           messages,
           stream: true,
           tools: anthropicToolSchemas()
-        })
+        }, config.reasoningEffort)
       )
     },
     config.requestTimeoutMs,

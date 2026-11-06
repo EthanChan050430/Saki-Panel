@@ -26,7 +26,9 @@ export async function authorizeSakiTool(runtime: SakiAgentRuntime, call: ParsedT
   if (context) requireUserPermission(permissions, "instance.view");
   const required = requiredSakiToolPermissions(lower, args);
   const properties = canonicalToolSchema(call.name)?.parameters.properties as Record<string, unknown> | undefined;
-  const hasInstanceParameter = Boolean(properties?.instanceId) && !(lower === "generateimage" && !stringArg(args, "path"));
+  const hasInstanceParameter = Boolean(properties?.instanceId)
+    && !(lower === "generateimage" && !stringArg(args, "path"))
+    && !(lower === "generatevideo" && !stringArg(args, "imagePath"));
   if (!context && (required.length || hasInstanceParameter) && lower !== "listinstances" && !user.isSuperAdmin) throw new RouteError("无项目：请先选择一个已授权项目，再使用项目工具。", 403);
   const restrictToContext = !user.isSuperAdmin || effectiveSakiTerminalSandbox(runtime.input, runtime.config);
   if (context && context.workingDirectory !== runtime.context.instance?.workingDirectory) throw new RouteError("Workspace changed. Start a new request.", 409);

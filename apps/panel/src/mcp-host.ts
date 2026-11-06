@@ -60,6 +60,7 @@ interface McpServerProcess {
   }>;
   buffer: string;
   initialized: boolean;
+  lastError: string;
 }
 
 const mcpServers = new Map<string, McpServerProcess>();
@@ -90,7 +91,7 @@ function parseJsonRpcMessages(buffer: string): { messages: JsonRpcResponse[]; re
     if (end === -1) break;
     try {
       const json = JSON.parse(remaining.slice(start, end + 1));
-      if (json.jsonrpc === "2.0" && json.id !== undefined) {
+      if (json.jsonrpc === "2.0" && json.id !== undefined && json.method === undefined) {
         messages.push(json as JsonRpcResponse);
       }
     } catch { /* skip malformed */ }
@@ -117,13 +118,20 @@ async function sendMcpRequest(server: McpServerProcess, method: string, params?:
   });
 }
 
+function sendMcpNotification(server: McpServerProcess, method: string, params?: Record<string, unknown>): void {
+  const stdin = server.process?.stdin;
+  if (!stdin || stdin.destroyed) return;
+  const notification = { jsonrpc: "2.0", method, ...(params ? { params } : {}) };
+  stdin.write(JSON.stringify(notification) + "\n");
+}
+
 async function initializeMcpServer(server: McpServerProcess): Promise<void> {
   const result = await sendMcpRequest(server, "initialize", {
     protocolVersion: "2024-11-05",
     capabilities: {},
     clientInfo: { name: "saki-panel", version: PANEL_VERSION }
   }) as { capabilities?: Record<string, unknown> };
-  await sendMcpRequest(server, "notifications/initialized");
+  sendMcpNotification(server, "notifications/initialized");
   server.initialized = true;
   await refreshMcpServerTools(server);
 }
@@ -155,17 +163,43 @@ export async function startMcpServer(config: McpServerConfig): Promise<void> {
     requestId: 0,
     pendingRequests: new Map(),
     buffer: "",
-    initialized: false
+    initialized: false,
+    lastError: ""
   };
 
   try {
     server.process = spawn(config.command, config.args ?? [], {
       env: { ...process.env, ...(config.env ?? {}) },
-      stdio: ["pipe", "pipe", "pipe"]
+      stdio: ["pipe", "pipe", "pipe"],
+      // npx/uvx are .cmd shims on Windows and need a shell to resolve.
+      shell: process.platform === "win32",
+      windowsHide: true
     });
   } catch (error) {
     throw new Error(`Failed to start MCP server "${config.name}": ${error instanceof Error ? error.message : String(error)}`);
   }
+
+  const failPending = (reason: string) => {
+    server.initialized = false;
+    for (const [, pending] of server.pendingRequests) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error(reason));
+    }
+    server.pendingRequests.clear();
+  };
+  server.process.on("error", (error) => {
+    server.lastError = error.message;
+    failPending(`MCP server "${config.name}" failed: ${error.message}`);
+  });
+  server.process.on("close", (code) => {
+    failPending(`MCP server "${config.name}" exited (code ${code ?? "null"})${server.lastError ? `: ${server.lastError}` : ""}`);
+    if (mcpServers.get(config.id) === server) mcpServers.delete(config.id);
+  });
+  server.process.stderr?.on("data", (chunk: Buffer) => {
+    server.lastError = (server.lastError + chunk.toString()).slice(-600);
+  });
+  server.process.stdin?.on("error", () => { /* surfaced through request failures */ });
+  mcpServers.set(config.id, server);
 
   if (server.process.stdout) {
     server.process.stdout.on("data", (chunk: Buffer) => {
@@ -187,8 +221,13 @@ export async function startMcpServer(config: McpServerConfig): Promise<void> {
     });
   }
 
-  await initializeMcpServer(server);
-  mcpServers.set(config.id, server);
+  try {
+    await initializeMcpServer(server);
+  } catch (error) {
+    const detail = server.lastError.trim();
+    await stopMcpServer(config.id);
+    throw new Error(`${error instanceof Error ? error.message : String(error)}${detail ? ` | ${detail.slice(-300)}` : ""}`);
+  }
 }
 
 export async function stopMcpServer(serverId: string): Promise<void> {
@@ -242,6 +281,16 @@ export function getMcpResources(): Array<{ serverId: string; serverName: string;
     }
   }
   return result;
+}
+
+export function getMcpServerStatus(serverId: string): { running: boolean; toolCount: number; error?: string } {
+  const server = mcpServers.get(serverId);
+  if (!server) return { running: false, toolCount: 0 };
+  return {
+    running: server.initialized,
+    toolCount: server.tools.length,
+    ...(server.lastError ? { error: server.lastError.slice(-300) } : {})
+  };
 }
 
 export function getActiveMcpServers(): Array<{ id: string; name: string; toolCount: number; resourceCount: number }> {

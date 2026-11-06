@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import { Readable } from "node:stream";
-import { sakiWorkspaceContextKey, sakiWorkspaceIdsFromContextKey } from "@webops/shared";
+import { sakiModelSelectionKey, sakiWorkspaceContextKey, sakiWorkspaceIdsFromContextKey } from "@webops/shared";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type {
@@ -37,6 +37,9 @@ import { readEffectiveSakiConfig, saveSakiConfig } from "./config.js";
 import { startAppearanceEventStream } from "./appearance-events.js";
 import { executeSakiAgentTool } from "./executor.js";
 import { readSakiGeneratedImage } from "./generated-images.js";
+import { openSakiGeneratedVideo } from "./generated-videos.js";
+import { detectSakiImageModels } from "./image-models.js";
+import { detectSakiVideoModels } from "./video-models.js";
 import { emitAgentFinalText, runSakiAgent } from "./loop.js";
 import { buildChatModeSystemPrompt } from "./prompt.js";
 import { assertUserHasSpendablePoints, recordAgentTokenUsage } from "../../points.js";
@@ -64,6 +67,9 @@ import {
 import { prisma } from "../../db.js";
 import { createSakiAgentEvents, startSakiEventStream } from "./stream.js";
 import { connectSakiTaskStream } from "./task-stream.js";
+import { cancelRestoredSakiTask } from "./task-cancellation.js";
+import { registerSakiFollowUpRoutes } from "./follow-up-routes.js";
+import { readSakiModelPreference, resolveSakiUserModel, saveSakiModelPreference } from "./model-preferences.js";
 import { assertSakiSessionAccess, assertSakiTaskAccess, hasSakiProjectAccess, sakiProjectPermissions } from "./session-access.js";
 import { withSakiWorkspaceMutation } from "./workspace-mutation.js";
 import { createSakiTerminal } from "./terminals.js";
@@ -93,6 +99,7 @@ import {
   formatSessionFollowUpContext,
   getSessionAgentMemory,
   sessionAgentMemoriesReady,
+  sessionAgentMemories,
   sakiActionsReady,
   startSakiTaskMaintenance,
   toSakiActiveTaskSummary
@@ -126,7 +133,7 @@ async function sakiGitTarget(request: FastifyRequest, instanceId: string, mutati
   return instance;
 }
 
-export async function startSakiTaskInvocation(request: FastifyRequest, prepared: Awaited<ReturnType<typeof prepareSakiChatInvocation>>) {
+export async function startSakiTaskInvocation(request: FastifyRequest, prepared: Awaited<ReturnType<typeof prepareSakiChatInvocation>>, admission?: () => Promise<boolean>) {
   const { modelInput, context, skills } = prepared;
   const scopeKey = sakiWorkspaceContextKey(modelInput.instanceId, modelInput.workspaceInstanceIds);
   const matchesScope = (input: SakiChatRequest) => scopeKey === sakiWorkspaceContextKey(input.instanceId, input.workspaceInstanceIds);
@@ -139,7 +146,7 @@ export async function startSakiTaskInvocation(request: FastifyRequest, prepared:
   }
   const instanceId = context.workspace?.instanceId ?? null;
   let memory = getSessionAgentMemory(request.user.sub, instanceId);
-  const continuation = Boolean(modelInput.resumeTaskId) || isSakiContinuationMessage(modelInput.message);
+  const continuation = Boolean(modelInput.resumeTaskId) || isSakiContinuationMessage(modelInput.message) || modelInput.agentIntent === "compact";
   if (memory && !matchesScope(memory.resumeState.input)) {
     if (continuation) throw new RouteError("工作区选择已改变，请描述一个新任务。", 409);
     memory = null;
@@ -169,6 +176,7 @@ export async function startSakiTaskInvocation(request: FastifyRequest, prepared:
     if (!matchesScope(concurrent.input) || concurrent.input.conversationId !== modelInput.conversationId) throw new RouteError("Client request belongs to another workspace or conversation.", 409);
     return concurrent;
   }
+  if (admission && !await admission()) throw new RouteError("队列已暂停，消息已保留。", 409);
   assertSakiTaskContextAvailable(request.user.sub, instanceId);
   const abortController = new AbortController();
   const task = createActiveSakiTask(randomUUID(), request.user.sub, instanceId, modelInput, abortController);
@@ -191,6 +199,7 @@ async function acceptQueryBearer(request: FastifyRequest, _reply: FastifyReply):
 
 export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
   ensureSakiModulesReady();
+  const followUps = await registerSakiFollowUpRoutes(app, startSakiTaskInvocation);
   const stopTaskMaintenance = startSakiTaskMaintenance();
   app.addHook("onClose", async () => stopTaskMaintenance());
   app.get("/api/saki/appearance", async () => {
@@ -437,6 +446,28 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     return readEffectiveSakiConfig();
   });
 
+  app.get("/api/saki/user-models", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    const config = await readEffectiveSakiConfig();
+    await sessionAgentMemoriesReady;
+    const [catalog, preference] = await Promise.all([detectSakiModels(), readSakiModelPreference(request.user.sub, sessionAgentMemories.values())]);
+    const selection = resolveSakiUserModel(config, preference, catalog);
+    return { ...catalog, selection,
+      defaultSelection: config.model ? sakiModelSelectionKey({ provider: config.provider, id: config.model }) : "",
+      defaultAgentPermissionMode: config.defaultAgentPermissionMode ?? "acceptEdits",
+      modelPointsMultipliers: config.modelPointsMultipliers ?? {} };
+  });
+
+  app.put("/api/saki/model-preference", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    const body = objectValue(request.body);
+    const provider = trimString(body?.provider);
+    const model = trimString(body?.model);
+    if (!provider || !model || provider.length > 100 || model.length > 200) throw new RouteError("请选择有效的模型。", 400);
+    const config = await readEffectiveSakiConfig();
+    if (config.providerConfigs[provider]?.enabled !== true) throw new RouteError("该模型服务商已关闭，请选择其他模型。", 400);
+    await saveSakiModelPreference(request.user.sub, { provider, model });
+    return { provider, model };
+  });
+
   app.put("/api/saki/config", { preHandler: requirePermission("saki.configure") }, async (request) => {
     const body = request.body as UpdateSakiConfigRequest;
     const saved = await saveSakiConfig(body);
@@ -453,11 +484,21 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
         mcpEnabled: saved.mcpEnabled,
         imageGenEnabled: saved.imageGen.enabled,
         imageGenProvider: saved.imageGen.provider,
+        videoGenEnabled: saved.videoGen.enabled,
+        videoGenProvider: saved.videoGen.provider,
         requestTimeoutMs: saved.requestTimeoutMs,
         appearanceTitle: saved.appearance.appTitle
       }
     });
     return saved;
+  });
+
+  app.post("/api/saki/image-models", { preHandler: requirePermission("saki.configure") }, async (request) => {
+    return detectSakiImageModels(request.body);
+  });
+
+  app.post("/api/saki/video-models", { preHandler: requirePermission("saki.configure") }, async (request) => {
+    return detectSakiVideoModels(request.body);
   });
 
   app.post("/api/saki/models", { preHandler: requirePermission("saki.configure") }, async (request) => {
@@ -530,7 +571,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
         skills
       });
       let response: SakiChatResponse;
-      if (config.imageGen?.enabled || config.searchEnabled) {
+      if (config.imageGen?.enabled || config.videoGen?.enabled || config.searchEnabled) {
         response = await runSakiAgent(
           {
             request,
@@ -543,7 +584,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
             kind: "chat",
             toolProfile: "chat",
             maxLoops: 12,
-            systemPromptOverride: buildChatModeSystemPrompt(Boolean(config.imageGen?.enabled), config.systemPrompt, config.searchEnabled),
+            systemPromptOverride: buildChatModeSystemPrompt(Boolean(config.imageGen?.enabled), config.systemPrompt, config.searchEnabled, Boolean(config.videoGen?.enabled)),
             abortController: taskAbortController
           },
           events,
@@ -658,7 +699,14 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/saki/tasks/:taskId/cancel", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
     const { taskId } = request.params as { taskId: string };
     const task = getActiveSakiTaskById(taskId);
-    if (!task || task.userId !== request.user.sub) {
+    if (task?.userId === request.user.sub) {
+      const conversationId = task.input.conversationId ?? `task-${task.id}`;
+      await followUps.pause(request.user.sub, conversationId);
+      for (const queued of activeSakiTasks.values()) if (queued.id !== taskId && queued.userId === request.user.sub && queued.input.conversationId === conversationId
+        && queued.input.clientRequestId?.startsWith("queue-") && queued.status === "running") cancelActiveSakiTask(queued.id);
+    }
+    if (!task) return cancelRestoredSakiTask(request.user.sub, taskId);
+    if (task.userId !== request.user.sub) {
       throw new RouteError("Task not found.", 404);
     }
     const cancelled = cancelActiveSakiTask(taskId);
@@ -685,6 +733,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post("/api/saki/tasks/cancel-all", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+    await followUps.pause(request.user.sub);
     const cancelledCount = cancelAllRunningSakiTasks(request.user.sub);
     await writeAuditLog({
       request,
@@ -768,7 +817,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
 
     try {
       const config = withRequestedSakiModel(await readEffectiveSakiConfig(), modelInput);
-      if (config.imageGen?.enabled || config.searchEnabled) {
+      if (config.imageGen?.enabled || config.videoGen?.enabled || config.searchEnabled) {
         const response = await runSakiAgent(
           {
             request,
@@ -781,7 +830,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
             kind: "chat",
             toolProfile: "chat",
             maxLoops: 12,
-            systemPromptOverride: buildChatModeSystemPrompt(Boolean(config.imageGen?.enabled), config.systemPrompt, config.searchEnabled)
+            systemPromptOverride: buildChatModeSystemPrompt(Boolean(config.imageGen?.enabled), config.systemPrompt, config.searchEnabled, Boolean(config.videoGen?.enabled))
           },
           undefined,
           undefined,
@@ -832,6 +881,16 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
       return reply.send(bytes);
     }
   );
+
+  app.get("/api/saki/generated-videos/:id", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { name, stream } = await openSakiGeneratedVideo(request.user.sub, id);
+    return reply.type("video/mp4")
+      .header("cache-control", "private, no-store")
+      .header("x-content-type-options", "nosniff")
+      .header("content-disposition", `inline; filename="${name}"`)
+      .send(stream);
+  });
 
   app.get("/api/saki/conversations", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
     const query = request.query as { excludeMessages?: string; summary?: string; brief?: string } | undefined;

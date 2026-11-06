@@ -1,11 +1,13 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
-import type { SakiChatRequest, SakiConfigResponse } from "@webops/shared";
+import type { SakiChatRequest, SakiConfigResponse, SakiInputAttachment } from "@webops/shared";
+import { currentAgentTurnConversation, currentAgentToolImages } from "./agent-turn-context.js";
+export { withAgentTurnConversation, currentAgentTurnConversation } from "./agent-turn-context.js";
 import type { ParsedToolCall, SakiAssistantState } from "./types.js";
 import { imageAttachments, trimString } from "./types.js";
 import type { DirectChatMessage, DirectProviderMessage } from "./prompt.js";
 import { buildDirectMessages, buildDirectSystemPrompt, buildStaticAgentSystemPrompt } from "./prompt.js";
 import { sakiModelProfile, xmlToolFormatReminder } from "./model-profile.js";
+import { progressPrefaceFromMessages } from "./coding-harness.js";
 import { advertisedSakiToolSchemas } from "./tools.js";
 import {
   withAnthropicImageInputs,
@@ -22,6 +24,8 @@ export interface SakiAgentTurnMessage {
   assistantState?: SakiAssistantState;
   /** Local-only reference; expanded before compaction can remove its source. */
   toolResultReference?: string;
+  /** Pixels returned by an authorized image read, kept outside textual observations. */
+  images?: SakiInputAttachment[];
 }
 
 export interface SakiAgentTurnConversation {
@@ -45,17 +49,6 @@ export function closeInterruptedToolCalls(messages: SakiAgentTurnMessage[], inte
   }
   close();
   return result;
-}
-
-const agentTurnConversationStore = new AsyncLocalStorage<SakiAgentTurnConversation>();
-
-export function withAgentTurnConversation<T>(conversation: SakiAgentTurnConversation | undefined, fn: () => T): T {
-  if (!conversation?.messages.length) return fn();
-  return agentTurnConversationStore.run(conversation, fn);
-}
-
-export function currentAgentTurnConversation(): SakiAgentTurnConversation | undefined {
-  return agentTurnConversationStore.getStore();
 }
 
 export function ensureToolCallId(call: ParsedToolCall): string {
@@ -85,12 +78,34 @@ function xmlArgs(call: ParsedToolCall): string {
     .join("\n");
 }
 
+function toolImageTurns(messages: SakiAgentTurnMessage[]): SakiAgentTurnMessage[] {
+  const latest = new Map<string, number>();
+  messages.forEach((turn, index) => imageAttachments({ message: "", attachments: turn.images ?? [] }).forEach(image => {
+    latest.delete(image.dataUrl);
+    latest.set(image.dataUrl, index);
+  }));
+  const selected = new Set([...latest.keys()].slice(-8));
+  const result: SakiAgentTurnMessage[] = [];
+  let pending: SakiInputAttachment[] = [];
+  const flush = () => {
+    if (pending.length) result.push({ role: "user", content: `Images returned by file tools: ${pending.map(image => image.name).join(", ")}`, images: pending });
+    pending = [];
+  };
+  messages.forEach((turn, index) => {
+    if (turn.role !== "tool") flush();
+    result.push(turn);
+    if (turn.role === "tool") pending.push(...(turn.images ?? []).filter(image => image.dataUrl && selected.has(image.dataUrl) && latest.get(image.dataUrl) === index));
+  });
+  flush();
+  return result;
+}
+
 export function toOpenAiMessages(conversation: SakiAgentTurnConversation): DirectProviderMessage[] {
   const messages: DirectProviderMessage[] = [];
   if (conversation.systemPrompt.trim()) {
     messages.push({ role: "system", content: conversation.systemPrompt });
   }
-  for (const turn of conversation.messages) {
+  for (const turn of toolImageTurns(conversation.messages)) {
     if (turn.role === "tool") {
       messages.push({
         role: "tool",
@@ -115,6 +130,12 @@ export function toOpenAiMessages(conversation: SakiAgentTurnConversation): Direc
       continue;
     }
     if (turn.role === "user") {
+      const images = imageAttachments({ message: "", attachments: turn.images ?? [] });
+      if (images.length) {
+        messages.push({ role: "user", content: [{ type: "text", text: turn.content },
+          ...images.map(image => ({ type: "image_url", image_url: { url: image.dataUrl } }))] });
+        continue;
+      }
       const last = messages[messages.length - 1];
       if (last?.role === "user" && typeof last.content === "string") {
         last.content = `${last.content}\n\n${turn.content}`;
@@ -141,9 +162,12 @@ export function toAnthropicMessages(conversation: SakiAgentTurnConversation): Di
     messages.push({ role, content });
   };
 
-  for (const turn of conversation.messages) {
+  for (const turn of toolImageTurns(conversation.messages)) {
     if (turn.role === "user") {
-      if (turn.content.trim()) push("user", [{ type: "text", text: turn.content }]);
+      const blocks: unknown[] = turn.content.trim() ? [{ type: "text", text: turn.content }] : [];
+      blocks.push(...imageAttachments({ message: "", attachments: turn.images ?? [] }).map(image => ({ type: "image",
+        source: { type: "base64", media_type: image.mimeType, data: image.base64 } })));
+      if (blocks.length) push("user", blocks);
       continue;
     }
     if (turn.role === "assistant") {
@@ -174,13 +198,14 @@ export function toAnthropicMessages(conversation: SakiAgentTurnConversation): Di
 export function toOllamaMessages(conversation: SakiAgentTurnConversation): DirectProviderMessage[] {
   const messages: DirectProviderMessage[] = [];
   if (conversation.systemPrompt.trim()) messages.push({ role: "system", content: conversation.systemPrompt });
-  for (const turn of conversation.messages) {
+  for (const turn of toolImageTurns(conversation.messages)) {
     if (turn.role === "tool") {
       messages.push({ role: "tool", content: turn.content, ...(turn.name ? { tool_name: turn.name } : {}) });
     } else {
       messages.push({
         role: turn.role,
         content: turn.content,
+        ...(turn.role === "user" && turn.images?.length ? { images: imageAttachments({ message: "", attachments: turn.images ?? [] }).map(image => image.base64) } : {}),
         ...(turn.role === "assistant" && turn.assistantState?.reasoningContent !== undefined ? { thinking: turn.assistantState.reasoningContent } : {}),
         ...(turn.toolCalls?.length ? {
           tool_calls: turn.toolCalls.map((call, index) => ({
@@ -220,17 +245,17 @@ export function serializeTurnMessagesForPrompt(conversation: SakiAgentTurnConver
 }
 
 function attachOpenAiImages(messages: DirectProviderMessage[], input: SakiChatRequest): DirectProviderMessage[] {
-  const images = imageAttachments(input);
+  const images = imageAttachments(input).slice(0, Math.max(0, 8 - currentAgentToolImages().length));
   if (images.length === 0) return messages;
   const index = messages.findIndex((message) => message.role === "user");
   if (index < 0) return messages;
   const target = messages[index]!;
-  const text = typeof target.content === "string" ? target.content : "";
+  const blocks = Array.isArray(target.content) ? target.content : [{ type: "text", text: String(target.content ?? "") }];
   const next = [...messages];
   next[index] = {
     ...target,
     content: [
-      { type: "text", text },
+      ...blocks,
       ...images.map((image) => ({
         type: "image_url",
         image_url: { url: image.dataUrl }
@@ -241,7 +266,7 @@ function attachOpenAiImages(messages: DirectProviderMessage[], input: SakiChatRe
 }
 
 function attachAnthropicImages(messages: DirectProviderMessage[], input: SakiChatRequest): DirectProviderMessage[] {
-  const images = imageAttachments(input);
+  const images = imageAttachments(input).slice(0, Math.max(0, 8 - currentAgentToolImages().length));
   if (images.length === 0) return messages;
   const index = messages.findIndex((message) => message.role === "user");
   if (index < 0) return messages;
@@ -266,14 +291,14 @@ function attachAnthropicImages(messages: DirectProviderMessage[], input: SakiCha
 }
 
 function attachOllamaImages(messages: DirectProviderMessage[], input: SakiChatRequest): DirectProviderMessage[] {
-  const images = imageAttachments(input);
+  const images = imageAttachments(input).slice(0, Math.max(0, 8 - currentAgentToolImages().length));
   if (images.length === 0) return messages;
   const index = messages.findIndex((message) => message.role === "user");
   if (index < 0) return messages;
   const next = [...messages];
   next[index] = {
     ...next[index]!,
-    images: images.map((image) => image.base64)
+    images: [...(next[index]?.images ?? []), ...images.map((image) => image.base64)]
   };
   return next;
 }
@@ -348,6 +373,7 @@ export function appendAgentToolObservation(messages: SakiAgentTurnMessage[], mes
 
 export function compactAgentTurnMessages(messages: SakiAgentTurnMessage[], maxChars = 60000): SakiAgentTurnMessage[] {
   const sizeOf = (message: SakiAgentTurnMessage) => message.content.length
+    + (message.images?.length ?? 0) * 2000
     + (message.toolCalls ? JSON.stringify(message.toolCalls).length : 0)
     + (message.assistantState ? JSON.stringify(message.assistantState).length : 0);
   if (messages.reduce((sum, message) => sum + sizeOf(message), 0) <= maxChars) return messages;
@@ -403,9 +429,10 @@ export function compactAgentTurnMessages(messages: SakiAgentTurnMessage[], maxCh
     if (latestTodos) break;
   }
   const firstSize = sizeOf(first);
-  const memoryBudget = Math.max(400, Math.min(8000, Math.floor(maxChars / 3), maxChars - firstSize - 300));
+  const progressPreface = progressPrefaceFromMessages(messages, messages.find((message) => message.role === "user")?.content ?? "");
+  const memoryBudget = Math.max(400, Math.min(8000, Math.floor(maxChars / 3), maxChars - firstSize - progressPreface.length - 300));
   const todoBudget = latestTodos ? Math.min(5000, Math.floor(memoryBudget / 2)) : 0;
-  const summary = (): SakiAgentTurnMessage => ({ role: "user", content: `[Compacted execution history — retain completed work; continue the unfinished step]\n${latestTodos ? `Current checklist:\n${latestTodos.slice(0, todoBudget)}\n` : ""}${summaries.slice(-20).join("\n").slice(-(memoryBudget - todoBudget))}` });
+  const summary = (): SakiAgentTurnMessage => ({ role: "user", content: `[Compacted execution history — retain completed work; continue the unfinished step]\n${progressPreface}\n${latestTodos ? `Current checklist:\n${latestTodos.slice(0, todoBudget)}\n` : ""}${summaries.slice(-20).join("\n").slice(-(memoryBudget - todoBudget))}` });
   const remember = (text: string) => {
     summaries.push(text);
     if (summaries.length > 20) summaries.shift();

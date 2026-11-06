@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="300" viewBox="0 0 640 300" role="img" aria-labelledby="title desc">
+  <title id="title">拓展市场</title>
+  <desc id="desc">让工作区，有你的风格。主题、形象、游戏、组件与语言包。</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#102a32"/><stop offset="1" stop-color="#101827"/></linearGradient>
+    <radialGradient id="glow"><stop stop-color="#56dfc2" stop-opacity=".18"/><stop offset="1" stop-color="#56dfc2" stop-opacity="0"/></radialGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="#9bf6df" stroke-opacity=".05"/></pattern>
+  </defs>
+  <rect x="1" y="1" width="638" height="298" rx="24" fill="url(#bg)" stroke="#315254"/>
+  <rect x="1" y="1" width="638" height="298" rx="24" fill="url(#grid)"/>
+  <ellipse cx="551" cy="134" rx="180" ry="170" fill="url(#glow)"/>
+  <g fill="none" stroke="#85ead1" transform="translate(511 104) rotate(-12)">
+    <rect x="-51" y="-51" width="44" height="44" rx="12" fill="#85ead1" fill-opacity=".16"/>
+    <rect x="7" y="-51" width="44" height="44" rx="12" stroke-opacity=".5"/>
+    <rect x="-51" y="7" width="44" height="44" rx="12" stroke-opacity=".5"/>
+    <rect x="7" y="7" width="44" height="44" rx="12" fill="#85ead1" fill-opacity=".08"/>
+    <path d="M29 19v20M19 29h20" stroke-width="2" stroke-linecap="round"/>
+    <path d="M-29-40v22M-40-29h22" stroke-width="2" stroke-linecap="round"/>
+  </g>
+  <g font-family="Segoe UI, Microsoft YaHei, Arial, sans-serif">
+    <text x="36" y="43" fill="#85ead1" font-size="16" font-weight="600" letter-spacing="3">01 / EXTENSIONS</text>
+    <text x="36" y="120" fill="#f2fffb" font-size="48" font-weight="700">拓展市场</text>
+    <text x="36" y="162" fill="#b6d8d1" font-size="25">让工作区，有你的风格。</text>
+    <text x="36" y="200" fill="#98beb7" font-size="21">主题 · 形象 · 游戏 · 组件 · 语言包</text>
+    <path d="M36 226H604" stroke="#85ead1" stroke-opacity=".2"/>
+    <text x="36" y="267" fill="#85ead1" font-size="22" font-weight="600">挑选灵感，创造不同</text>
+    <path d="M572 260l20-20m-17 0h17v17" fill="none" stroke="#85ead1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

@@ -58,7 +58,11 @@ function isPrivateAddress(address: string): boolean {
       normalized.startsWith("::ffff:127.") ||
       normalized.startsWith("::ffff:10.") ||
       normalized.startsWith("::ffff:192.168.") ||
-      /^::ffff:172\.(1[6-9]|2\d|3[0-1])\./.test(normalized)
+      normalized.startsWith("::ffff:169.254.") ||
+      normalized.startsWith("::ffff:0.") ||
+      normalized.startsWith("64:ff9b:") ||
+      /^::ffff:172\.(1[6-9]|2\d|3[0-1])\./.test(normalized) ||
+      /^::ffff:100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(normalized)
     );
   }
   return false;

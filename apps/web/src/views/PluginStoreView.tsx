@@ -26,9 +26,17 @@ import {
   MoreHorizontal,
   Play,
   ExternalLink,
-  Sparkles
+  Sparkles,
+  Puzzle,
+  Server
 } from "lucide-react";
-import type { CurrentUser, InstalledPlugin, PluginRegistryItem, PluginType } from "@webops/shared";
+import type {
+  CurrentUser,
+  InstalledPlugin,
+  PluginRegistryItem,
+  PluginType,
+  SakiPluginCapabilitySummary
+} from "@webops/shared";
 import { api } from "../api.js";
 import { usePlugins } from "../plugins/PluginContext.js";
 import { PluginGameModal } from "../plugins/PluginGameModal.js";
@@ -58,6 +66,7 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
     setActiveSkin,
     uninstallPlugin,
     installFromGithub,
+    installFromLocal,
     saveMirrorConfig,
     checkUpdates,
     updatePlugin
@@ -88,6 +97,8 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
 
   // Install Modal
   const [installModalOpen, setInstallModalOpen] = useState(false);
+  const [installMode, setInstallMode] = useState<"github" | "local">("github");
+  const [installLocalPathInput, setInstallLocalPathInput] = useState("");
   const [installRepoInput, setInstallRepoInput] = useState("");
   const [installRefInput, setInstallRefInput] = useState("main");
   const [installCustomMirror, setInstallCustomMirror] = useState("");
@@ -96,6 +107,8 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
   const [installError, setInstallError] = useState<string | null>(null);
   const [toastNotice, setToastNotice] = useState<string | null>(null);
   const [toastError, setToastError] = useState<string | null>(null);
+  const [capabilityMap, setCapabilityMap] = useState<Record<string, SakiPluginCapabilitySummary | undefined>>({});
+  const [restartingMcpId, setRestartingMcpId] = useState<string | null>(null);
 
   // Developer Guide Modal
   const [guideModalOpen, setGuideModalOpen] = useState(false);
@@ -304,6 +317,50 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
     void loadRegistry();
   }, [loadRegistry]);
 
+  // Load skills/MCP capability summaries for installed plugins that declare them
+  useEffect(() => {
+    let cancelled = false;
+    const targets = installedPlugins.filter(
+      (p) => p.enabled && (p.manifest.type === "bundle" || p.manifest.skills || p.manifest.mcp)
+    );
+    void Promise.all(
+      targets.map(async (p) => {
+        try {
+          const res = await api.pluginCapabilities(token, p.id);
+          return res.ok ? ([p.id, res.capabilities] as const) : null;
+        } catch {
+          return null;
+        }
+      })
+    ).then((entries) => {
+      if (cancelled) return;
+      const next: Record<string, SakiPluginCapabilitySummary | undefined> = {};
+      for (const entry of entries) {
+        if (entry) next[entry[0]] = entry[1];
+      }
+      setCapabilityMap(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [installedPlugins, token]);
+
+  const handleRestartMcp = async (id: string) => {
+    setRestartingMcpId(id);
+    setToastError(null);
+    try {
+      const res = await api.restartPluginMcp(token, id);
+      if (res.ok) {
+        setCapabilityMap((prev) => ({ ...prev, [id]: res.capabilities }));
+        setToastNotice(t("plugins.mcp.restarted"));
+      }
+    } catch (err) {
+      setToastError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRestartingMcpId(null);
+    }
+  };
+
   // Click outside to close menus & dropdowns
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
@@ -350,12 +407,21 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
 
   const handleInstallSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!installRepoInput.trim()) return;
+    const isLocal = installMode === "local";
+    if (isLocal ? !installLocalPathInput.trim() : !installRepoInput.trim()) return;
 
     setInstalling(true);
     setInstallError(null);
     setToastError(null);
     try {
+      if (isLocal) {
+        const installedLocal = await installFromLocal({ localPath: installLocalPathInput.trim() });
+        setInstallModalOpen(false);
+        setInstallLocalPathInput("");
+        setToastNotice(tFormat("plugins.install.success", installedLocal.map((p) => p.manifest.displayName).join("、")));
+        setActiveTab("installed");
+        return;
+      }
       const payload: { repoOrUrl: string; ref?: string; mirrorId?: string; customMirrorUrl?: string } = {
         repoOrUrl: installRepoInput.trim()
       };
@@ -470,6 +536,8 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
       case "widget":
       case "locale":
         return <Wrench size={13} />;
+      case "bundle":
+        return <Puzzle size={13} />;
       default:
         return <Layers size={13} />;
     }
@@ -486,6 +554,8 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
       case "widget":
       case "locale":
         return t("plugins.type.widget");
+      case "bundle":
+        return t("plugins.type.bundle");
       default:
         return type;
     }
@@ -663,7 +733,7 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
         </div>
 
         <div className="plugin-filter-group">
-          {(["all", "theme", "skin", "game", "widget"] as const).map((type) => (
+          {(["all", "bundle", "theme", "skin", "game", "widget"] as const).map((type) => (
             <button
               key={type}
               type="button"
@@ -817,6 +887,21 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                                   </button>
                                 ) : null}
 
+                                {canManage && p.enabled && p.manifest.mcp ? (
+                                  <button
+                                    type="button"
+                                    className="plugin-art-menu-item"
+                                    onClick={() => {
+                                      setActiveCardMenuId(null);
+                                      void handleRestartMcp(p.id);
+                                    }}
+                                    disabled={restartingMcpId === p.id}
+                                  >
+                                    <Server size={13} />
+                                    <span>{t("plugins.mcp.restart")}</span>
+                                  </button>
+                                ) : null}
+
                                 {hasUpdate ? (
                                   <button
                                     type="button"
@@ -887,6 +972,32 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                     <p className="plugin-art-desc" title={p.manifest.description}>
                       {p.manifest.description}
                     </p>
+
+                    {p.manifest.skills || p.manifest.mcp ? (
+                      <div className="plugin-cap-row">
+                        {p.manifest.skills ? (
+                          <span className="plugin-cap-badge is-skills">
+                            <BookOpen size={11} /> Skills
+                            {capabilityMap[p.id] ? ` · ${capabilityMap[p.id]!.skills.length}` : ""}
+                          </span>
+                        ) : null}
+                        {(capabilityMap[p.id]?.mcpServers ?? []).map((server) => (
+                          <span
+                            key={server.id}
+                            className={`plugin-cap-badge is-mcp ${server.running ? "is-running" : "is-stopped"}`}
+                            title={server.error || server.description || server.command}
+                          >
+                            <Server size={11} /> {server.name}
+                            {server.running ? ` · ${server.toolCount}` : ""}
+                          </span>
+                        ))}
+                        {!capabilityMap[p.id] && p.manifest.mcp ? (
+                          <span className="plugin-cap-badge is-mcp">
+                            <Server size={11} /> MCP
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
 
                     <div className="plugin-art-footer">
                       {p.manifest.type === "theme" ? (
@@ -1063,6 +1174,22 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                     <p className="plugin-art-desc" title={item.description}>
                       {item.description}
                     </p>
+
+                    {item.category || item.capabilities?.length ? (
+                      <div className="plugin-cap-row">
+                        {item.capabilities?.includes("skills") ? (
+                          <span className="plugin-cap-badge is-skills">
+                            <BookOpen size={11} /> Skills
+                          </span>
+                        ) : null}
+                        {item.capabilities?.includes("mcp") ? (
+                          <span className="plugin-cap-badge is-mcp">
+                            <Server size={11} /> MCP
+                          </span>
+                        ) : null}
+                        {item.category ? <span className="plugin-cap-badge">{item.category}</span> : null}
+                      </div>
+                    ) : null}
 
                     <div className="plugin-art-footer">
                       {isInstalled ? (
@@ -1405,6 +1532,42 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                 </div>
 
                 <form className="plugin-modal-form" onSubmit={handleInstallSubmit}>
+                  <div className="plugin-install-mode-tabs" role="tablist">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={installMode === "github"}
+                      className={installMode === "github" ? "active" : ""}
+                      onClick={() => { setInstallMode("github"); setInstallError(null); }}
+                    >
+                      {t("plugins.installModal.modeGithub")}
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={installMode === "local"}
+                      className={installMode === "local" ? "active" : ""}
+                      onClick={() => { setInstallMode("local"); setInstallError(null); }}
+                    >
+                      {t("plugins.installModal.modeLocal")}
+                    </button>
+                  </div>
+
+                  {installMode === "local" ? (
+                    <div className="plugin-form-item">
+                      <label>{t("plugins.installModal.localPathLabel")}</label>
+                      <input
+                        type="text"
+                        className="plugin-field-input"
+                        placeholder={t("plugins.installModal.localPathPlaceholder")}
+                        value={installLocalPathInput}
+                        onChange={(e) => setInstallLocalPathInput(e.target.value)}
+                        required
+                      />
+                      <small>{t("plugins.installModal.localPathHelp")}</small>
+                    </div>
+                  ) : (
+                  <>
                   <div className="plugin-form-item">
                     <label>{t("plugins.installModal.repoLabel")}</label>
                     <input
@@ -1461,6 +1624,8 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                       />
                     </div>
                   ) : null}
+                  </>
+                  )}
 
                   {installError ? (
                     <div
@@ -1495,7 +1660,7 @@ export function PluginStoreView({ token, currentUser }: PluginStoreViewProps) {
                       {installing ? (
                         <>
                           <RefreshCw size={14} className="spin" />
-                          <span>{t("plugins.installModal.downloading")}</span>
+                          <span>{t(installMode === "local" ? "plugins.installModal.installingLocal" : "plugins.installModal.downloading")}</span>
                         </>
                       ) : (
                         <span>{t("plugins.installModal.confirm")}</span>

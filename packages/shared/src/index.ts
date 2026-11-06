@@ -1,4 +1,4 @@
-export const PANEL_VERSION = "5.0";
+export const PANEL_VERSION = "6.0";
 
 export { wrapSakiCommandWithCwd, quoteAgentShellArgument, type AgentShellKind } from "./terminal.js";
 
@@ -1339,6 +1339,17 @@ export interface AuditRangeSummary {
   latestLogAt?: string | null;
 }
 
+export interface SakiAuditMessage {
+  id?: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  timestamp?: string;
+  model?: string;
+  thinking?: string;
+  actions?: any[];
+  usage?: any;
+}
+
 export interface SakiAuditConversationItem {
   id: string;
   userId: string;
@@ -1353,18 +1364,13 @@ export interface SakiAuditConversationItem {
   title: string;
   messageCount: number;
   lastMessagePreview: string;
-  messages: Array<{
-    id?: string;
-    role: "user" | "assistant" | "system";
-    content: string;
-    timestamp?: string;
-    model?: string;
-    thinking?: string;
-    actions?: any[];
-    usage?: any;
-  }>;
+  messages: SakiAuditMessage[];
   createdAt: string;
   updatedAt: string;
+  /** Present when the transcript was requested with page/limit. */
+  messagePage?: number;
+  messageLimit?: number;
+  messageTotalPages?: number;
 }
 
 export interface SakiAuditConversationListResponse {
@@ -1534,7 +1540,7 @@ export interface SakiChatMessage {
 
 export type SakiChatMode = "chat" | "agent";
 export type SakiAgentPermissionMode = "ask" | "acceptEdits" | "plan" | "bypassPermissions";
-export type SakiInputAttachmentKind = "image" | "file" | "screenshot";
+export type SakiInputAttachmentKind = "image" | "file" | "screenshot" | "video";
 
 export interface SakiInputAttachment {
   id?: string;
@@ -1549,6 +1555,7 @@ export interface SakiInputAttachment {
    * persisting the raw base64 payload in conversation history.
    */
   generatedImageId?: string;
+  generatedVideoId?: string;
   width?: number;
   height?: number;
   capturedAt?: string;
@@ -1595,7 +1602,7 @@ export interface SakiWorkspaceFileCandidate {
 }
 
 export interface SakiMentionCandidate {
-  kind: "attachment" | "skill" | "file";
+  kind: "attachment" | "skill" | "file" | "plugin";
   id: string;
   name: string;
   token: string;
@@ -1604,6 +1611,66 @@ export interface SakiMentionCandidate {
   attachment?: SakiInputAttachment | undefined;
   skill?: SakiSkillSummary | undefined;
   file?: SakiWorkspaceFileCandidate | undefined;
+  plugin?: SakiPluginMentionSummary | undefined;
+}
+
+export interface SakiPluginMentionSummary {
+  id: string;
+  name: string;
+  displayName: string;
+  description: string;
+  icon?: string | undefined;
+  category?: string | undefined;
+  skillCount: number;
+  mcpCount: number;
+  skillIds: string[];
+  mcpServerIds: string[];
+}
+
+export function sakiPluginMentionToken(plugin: Pick<SakiPluginMentionSummary, "id" | "name">): string {
+  const id = (plugin.id || "").trim();
+  if (id && !/[\s@"'\\]/.test(id)) {
+    return `@plugin:${id}`;
+  }
+  const name = (plugin.name || "").trim() || id || "plugin";
+  return `@"plugin:${name.replace(/"/g, "")}"`;
+}
+
+export function resolveSakiMentionedPlugins(
+  message: string,
+  plugins: SakiPluginMentionSummary[]
+): SakiPluginMentionSummary[] {
+  const queries = parseSakiAttachmentMentionQueries(message)
+    .map((query) => query.trim().toLowerCase())
+    .filter((query) => query.startsWith("plugin:"))
+    .map((query) => query.replace(/^plugin:\s*/, "").trim())
+    .filter(Boolean);
+  if (queries.length === 0) return [];
+  const resolved: SakiPluginMentionSummary[] = [];
+  const seen = new Set<string>();
+  for (const query of queries) {
+    const found = plugins.find((plugin) =>
+      plugin.id.toLowerCase() === query ||
+      plugin.name.toLowerCase() === query ||
+      plugin.displayName.toLowerCase() === query
+    );
+    if (!found || seen.has(found.id)) continue;
+    seen.add(found.id);
+    resolved.push(found);
+  }
+  return resolved;
+}
+
+export function filterSakiPluginMentionCandidates(
+  plugins: SakiPluginMentionSummary[],
+  query: string
+): SakiPluginMentionSummary[] {
+  const needle = query.trim().toLowerCase().replace(/^plugin:\s*/, "").trim();
+  const sorted = [...plugins].sort((a, b) => a.displayName.localeCompare(b.displayName));
+  if (!needle) return sorted.slice(0, 20);
+  return sorted.filter((plugin) =>
+    `${plugin.displayName} ${plugin.name} ${plugin.id} ${plugin.description} ${plugin.category ?? ""}`.toLowerCase().includes(needle)
+  );
 }
 
 export function parseSakiWorkspaceFileMentions(message: string): string[] {
@@ -1756,6 +1823,7 @@ export function sakiModelSupportsVision(modelId: string, provider?: string): boo
   const haystack = `${provider ?? ""} ${modelId}`.toLowerCase();
   if (!modelId.trim()) return false;
   if (modelId.trim().toLowerCase() === sakiNvidiaDefaultModel) return true;
+  if (/(?:^|\/)glm[-.]5[-.]3-flash(?:$|[-:])/i.test(modelId.trim())) return true;
   if (/(gpt-3\.5|o1-mini|o1-preview|text-embedding|whisper|\btts\b|[-_/]voice\b)/i.test(haystack)) return false;
   if (/(deepseek-(chat|reasoner|coder|v3)|deepseek-r1)/i.test(haystack) && !/(vl|vision|janus)/i.test(haystack)) {
     return false;
@@ -1858,6 +1926,8 @@ export interface SakiAgentAction {
   answer?: { selection?: string; customText?: string; skipped?: boolean };
   todos?: Array<{ text: string; completed: boolean; inProgress?: boolean }>;
   attachments?: SakiInputAttachment[];
+  /** Actions completed by a delegated task, including their checkpoints. */
+  delegatedActions?: SakiAgentAction[];
   /** Server-selected independent terminal associated with this tool call. */
   terminal?: { instanceId: string; shellId: string; label?: string };
   createdAt: string;
@@ -1869,6 +1939,36 @@ export interface SakiActionDecisionResponse {
   response?: SakiChatResponse;
   /** The approved action finished; subscribe to this task for the ongoing follow-up. */
   taskId?: string;
+}
+
+export type SakiAgentIntent = "default" | "review" | "compact" | "diff";
+
+export interface SakiEditorContext {
+  activeFile?: string;
+  openFiles?: string[];
+  selection?: string;
+  diagnostics?: string[];
+}
+
+export type SakiFollowUpBehavior = "queue" | "steer";
+
+export interface SakiQueuedFollowUp {
+  id: string;
+  conversationId: string;
+  input: SakiChatRequest;
+  intent: SakiFollowUpBehavior;
+  status: "pending" | "sending" | "paused";
+  createdAt: string;
+  afterTaskId?: string;
+  afterRequestId?: string;
+  reason?: string;
+  editing?: { status: "pending" | "paused"; reason?: string };
+  steerSequence?: number;
+}
+
+export interface SakiFollowUpQueueState {
+  revision: number;
+  items: SakiQueuedFollowUp[];
 }
 
 export interface SakiChatRequest {
@@ -1896,6 +1996,8 @@ export interface SakiChatRequest {
   attachments?: SakiInputAttachment[];
   model?: string | null;
   provider?: string | null;
+  editorContext?: SakiEditorContext | null;
+  agentIntent?: SakiAgentIntent;
 }
 
 export const maxSakiWorkspaces = 8;
@@ -2261,6 +2363,68 @@ export function sanitizeSakiImageGenConfig(value: unknown): SakiImageGenConfig {
   };
 }
 
+export interface SakiImageModelListResponse {
+  models: string[];
+  unclassified: string[];
+}
+
+export const sakiVideoGenPresets = {
+  seedance: {
+    label: "火山方舟 Seedance",
+    baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+    model: "doubao-seedance-2-0-260128"
+  },
+  wan: {
+    label: "阿里云百炼 Wan",
+    baseUrl: "https://dashscope.aliyuncs.com/api/v1",
+    model: "wan2.6-t2v"
+  },
+  minimax: {
+    label: "MiniMax H3",
+    baseUrl: "https://api.minimaxi.com",
+    model: "MiniMax-H3"
+  },
+  xai: {
+    label: "xAI Grok Imagine Video",
+    baseUrl: "https://api.x.ai/v1",
+    model: "grok-imagine-video-1.5"
+  },
+  custom: {
+    label: "自定义 / 中转站",
+    baseUrl: "",
+    model: ""
+  }
+} as const;
+
+export type SakiVideoGenProvider = keyof typeof sakiVideoGenPresets;
+export const sakiVideoGenProtocols = ["openai", "relay", "seedance", "cloudwise-seedance", "wan", "minimax", "xai"] as const;
+export type SakiVideoGenProtocol = (typeof sakiVideoGenProtocols)[number];
+
+export interface SakiVideoGenConfig {
+  enabled: boolean;
+  provider: SakiVideoGenProvider;
+  protocol: SakiVideoGenProtocol;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+export function sanitizeSakiVideoGenConfig(value: unknown): SakiVideoGenConfig {
+  const item = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const providerId = trimSharedString(item.provider);
+  const provider = Object.hasOwn(sakiVideoGenPresets, providerId) ? providerId as SakiVideoGenProvider : "seedance";
+  const preset = sakiVideoGenPresets[provider];
+  const protocol = trimSharedString(item.protocol) as SakiVideoGenProtocol;
+  return {
+    enabled: item.enabled === true,
+    provider,
+    protocol: provider === "custom" ? (sakiVideoGenProtocols.includes(protocol) ? protocol : "openai") : provider,
+    baseUrl: trimSharedString(item.baseUrl) || preset.baseUrl,
+    apiKey: trimSharedString(item.apiKey),
+    model: trimSharedString(item.model) || preset.model
+  };
+}
+
 export interface SakiConfigResponse {
   defaultAgentPermissionMode?: SakiAgentPermissionMode;
   requestTimeoutMs: number;
@@ -2279,6 +2443,7 @@ export interface SakiConfigResponse {
   memoryEnabled?: boolean;
   allowCrossInstanceEnforcement?: boolean;
   imageGen: SakiImageGenConfig;
+  videoGen: SakiVideoGenConfig;
   systemPrompt?: string | null;
   appearance: PanelAppearanceSettings;
   configPath: string;
@@ -2301,6 +2466,7 @@ export interface UpdateSakiConfigRequest {
   memoryEnabled?: boolean;
   allowCrossInstanceEnforcement?: boolean;
   imageGen?: SakiImageGenConfig;
+  videoGen?: SakiVideoGenConfig;
   systemPrompt?: string | null;
   appearance?: Partial<PanelAppearanceSettings>;
 }
@@ -2343,6 +2509,18 @@ export interface SakiModelListResponse {
     message: string;
   }>;
   message?: string;
+}
+
+export interface SakiModelPreference {
+  provider: string;
+  model: string;
+}
+
+export interface SakiUserModelListResponse extends SakiModelListResponse {
+  selection: string;
+  defaultSelection: string;
+  defaultAgentPermissionMode: SakiAgentPermissionMode;
+  modelPointsMultipliers: Record<string, number>;
 }
 
 export interface SakiCopilotAuthStatusResponse {
@@ -2688,9 +2866,45 @@ export function extractVersionString(raw: string): string {
 // Plugin System Interfaces & Types
 // ==========================================
 
-export type PluginType = "theme" | "skin" | "game" | "widget" | "locale";
+export type PluginType = "theme" | "skin" | "game" | "widget" | "locale" | "bundle";
+
+export interface SakiPluginMcpServer {
+  command: string;
+  args?: string[] | undefined;
+  env?: Record<string, string> | undefined;
+  description?: string | undefined;
+}
+
+export interface SakiPluginMcpConfig {
+  /** Map of server key -> launch config (same shape as `.mcp.json` mcpServers). */
+  servers: Record<string, SakiPluginMcpServer>;
+}
+
+export interface SakiPluginInterface {
+  category?: string | undefined;
+  tags?: string[] | undefined;
+  defaultPrompt?: string[] | undefined;
+  websiteUrl?: string | undefined;
+}
+
+export interface SakiPluginCapabilitySummary {
+  skills: Array<{ id: string; name: string; description: string }>;
+  mcpServers: Array<{
+    id: string;
+    name: string;
+    command: string;
+    description?: string | undefined;
+    running: boolean;
+    toolCount: number;
+    error?: string | undefined;
+  }>;
+}
 
 export interface SakiPluginManifest {
+  /** Codex-style capabilities: MCP servers (inline or via .mcp.json) and a skills/ directory. */
+  mcp?: SakiPluginMcpConfig | undefined;
+  skills?: string | undefined;
+  interface?: SakiPluginInterface | undefined;
   name: string;
   version: string;
   displayName: string;
@@ -2755,6 +2969,8 @@ export interface InstalledPlugin {
   sourceRepo?: string | undefined;
   sourceRef?: string | undefined;
   sourceCommit?: string | undefined;
+  /** Set when installed from a local folder on the server. */
+  sourceLocalPath?: string | undefined;
   localPath: string;
 }
 
@@ -2807,6 +3023,8 @@ export interface PluginRegistryItem {
   stars?: number | undefined;
   downloads?: number | undefined;
   featured?: boolean | undefined;
+  category?: string | undefined;
+  capabilities?: Array<"skills" | "mcp"> | undefined;
 }
 
 export interface PluginStoreState {

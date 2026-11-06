@@ -106,3 +106,16 @@ docs/
 
 spec.md
 tasks.md
+
+# Local agent plugins and research material
+/.codex/
+/.claude/
+/.codex-plugin/
+/.claude-plugin/
+/.mcp.json
+/plugins/
+/research/
+/algorithm-research/
+/papers/
+/算法研究/
+/研究文档/

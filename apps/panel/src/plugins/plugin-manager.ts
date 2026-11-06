@@ -115,24 +115,26 @@ export class PluginManager {
       const pluginDir = path.join(this.baseDir, pluginId);
       const manifestPath = path.join(pluginDir, "saki-plugin.json");
 
-      if (fs.existsSync(manifestPath)) {
-        try {
-          const raw = fs.readFileSync(manifestPath, "utf-8");
-          const manifest = JSON.parse(raw) as SakiPluginManifest;
-          const existing = this.store.installed.find((p) => p.id === pluginId);
+      try {
+        const manifest = fs.existsSync(manifestPath)
+          ? JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as SakiPluginManifest
+          : this.synthesizeBundleManifest(pluginDir);
+        if (!manifest) continue;
+        const existing = this.store.installed.find((p) => p.id === pluginId);
 
-          updatedList.push({
-            id: pluginId,
-            manifest,
-            enabled: existing ? existing.enabled : true,
-            installedAt: existing?.installedAt ?? new Date().toISOString(),
-            sourceRepo: existing?.sourceRepo,
-            sourceRef: existing?.sourceRef,
-            localPath: pluginDir
-          });
-        } catch (err) {
-          console.warn(`Skipping invalid plugin manifest in ${pluginDir}:`, err);
-        }
+        updatedList.push({
+          id: pluginId,
+          manifest,
+          enabled: existing ? existing.enabled : true,
+          installedAt: existing?.installedAt ?? new Date().toISOString(),
+          sourceRepo: existing?.sourceRepo,
+          sourceRef: existing?.sourceRef,
+          sourceCommit: existing?.sourceCommit,
+          sourceLocalPath: existing?.sourceLocalPath,
+          localPath: pluginDir
+        });
+      } catch (err) {
+        console.warn(`Skipping invalid plugin manifest in ${pluginDir}:`, err);
       }
     }
 
@@ -358,7 +360,7 @@ export class PluginManager {
    */
   public async updatePlugin(
     id: string,
-    options?: { mirrorId?: string; customMirrorUrl?: string }
+    options?: { mirrorId?: string; customMirrorUrl?: string; allowMcp?: boolean }
   ): Promise<InstalledPlugin> {
     if (!isSafePluginId(id)) {
       throw new Error("无效的插件标识");
@@ -371,24 +373,21 @@ export class PluginManager {
       throw new Error("该插件非 GitHub 来源，无法自动更新");
     }
 
-    // Wipe the old install so installFromGithub can re-clone fresh
-    const localDir = path.join(this.baseDir, id);
-    if (fs.existsSync(localDir)) {
-      fs.rmSync(localDir, { recursive: true, force: true });
-    }
-    const idx = this.store.installed.findIndex((p) => p.id === id);
-    if (idx !== -1) this.store.installed.splice(idx, 1);
-    this.saveState();
-
     const mirrorId = options?.mirrorId ?? this.store.selectedMirrorId;
     const customMirrorUrl = options?.customMirrorUrl ?? this.store.customMirrorUrl;
 
     return this.installFromGithub({
       repoOrUrl: existing.sourceRepo,
       ref: existing.sourceRef,
+      pluginName: existing.manifest.name,
+      allowMcp: options?.allowMcp === true,
       mirrorId,
       customMirrorUrl
-    }).then((installed) => installed.find((p) => p.id === id) ?? installed[0]!);
+    }).then((installed) => {
+      const updated = installed.find((p) => p.id === id)!;
+      this.togglePlugin(id, existing.enabled);
+      return updated;
+    });
   }
 
   /**
@@ -454,6 +453,7 @@ export class PluginManager {
     customMirrorUrl?: string | undefined;
     ref?: string | undefined;
     pluginName?: string | undefined;
+    allowMcp?: boolean;
   }): Promise<InstalledPlugin[]> {
     const { repoOrUrl, mirrorId = this.store.selectedMirrorId, customMirrorUrl } = options;
     const trimmed = repoOrUrl.trim();
@@ -608,61 +608,162 @@ export class PluginManager {
         targetManifests = allManifests;
       }
 
-      const installedItems: InstalledPlugin[] = [];
-
-      for (const item of targetManifests) {
-        const { manifest, sourceDir } = item;
-        if (!manifest.name || !manifest.type || !manifest.displayName) {
-          continue;
-        }
-
-        const pluginId = manifest.name.toLowerCase().replace(/[^a-z0-9-_]/g, "-");
-        if (!isSafePluginId(pluginId)) continue;
-        const targetDir = path.join(this.baseDir, pluginId);
-
-        if (fs.existsSync(targetDir)) {
-          fs.rmSync(targetDir, { recursive: true, force: true });
-        }
-
-        fs.cpSync(sourceDir, targetDir, { recursive: true });
-
-        const gitMetaDir = path.join(targetDir, ".git");
-        if (fs.existsSync(gitMetaDir)) {
-          fs.rmSync(gitMetaDir, { recursive: true, force: true });
-        }
-
-        const installedItem: InstalledPlugin = {
-          id: pluginId,
-          manifest,
-          enabled: true,
-          installedAt: new Date().toISOString(),
-          sourceRepo: repoIdentifier,
-          sourceRef: targetRef,
-          sourceCommit: currentCommit,
-          localPath: targetDir
-        };
-
-        const existingIdx = this.store.installed.findIndex((p) => p.id === pluginId);
-        if (existingIdx !== -1) {
-          this.store.installed[existingIdx] = installedItem;
-        } else {
-          this.store.installed.push(installedItem);
-        }
-        installedItems.push(installedItem);
-      }
-
-      if (installedItems.length === 0) {
-        throw new Error("saki-plugin.json 缺少必要字段 (name, type, displayName)");
-      }
-
-      this.saveState();
-      return installedItems;
+      return this.installManifests(targetManifests, {
+        allowMcp: options.allowMcp === true,
+        sourceRepo: repoIdentifier,
+        sourceRef: targetRef,
+        sourceCommit: currentCommit
+      });
     } finally {
       // Clean tempDir
       try {
         if (fs.existsSync(tempDir)) {
           fs.rmSync(tempDir, { recursive: true, force: true });
         }
+      } catch {}
+    }
+  }
+
+
+  /**
+   * Copies resolved plugin sources into baseDir, replaces any existing plugin
+   * with the same id and persists state. Shared by GitHub and local installs.
+   */
+  private installManifests(
+    targets: Array<{ manifest: SakiPluginManifest; sourceDir: string }>,
+    source: { allowMcp: boolean; sourceRepo?: string | undefined; sourceRef?: string | undefined; sourceCommit?: string | undefined; sourceLocalPath?: string | undefined }
+  ): InstalledPlugin[] {
+    const installedItems: InstalledPlugin[] = [];
+
+    if (!source.allowMcp && targets.some(({ manifest, sourceDir }) =>
+      Object.keys(manifest.mcp?.servers ?? {}).length > 0 || fs.existsSync(path.join(sourceDir, ".mcp.json")))) {
+      throw new Error("Only super administrators can install or update plugins that execute MCP server commands.");
+    }
+
+    for (const item of targets) {
+      const { manifest, sourceDir } = item;
+      if (!manifest.name || !manifest.type || !manifest.displayName) {
+        continue;
+      }
+
+      const pluginId = manifest.name.toLowerCase().replace(/[^a-z0-9-_]/g, "-");
+      if (!isSafePluginId(pluginId)) continue;
+      const targetDir = path.join(this.baseDir, pluginId);
+
+      if (fs.existsSync(targetDir)) {
+        fs.rmSync(targetDir, { recursive: true, force: true });
+      }
+
+      fs.cpSync(sourceDir, targetDir, { recursive: true });
+      if (!fs.existsSync(path.join(targetDir, "saki-plugin.json"))) {
+        fs.writeFileSync(path.join(targetDir, "saki-plugin.json"), JSON.stringify(manifest, null, 2), "utf8");
+      }
+
+      const gitMetaDir = path.join(targetDir, ".git");
+      if (fs.existsSync(gitMetaDir)) {
+        fs.rmSync(gitMetaDir, { recursive: true, force: true });
+      }
+
+      const installedItem: InstalledPlugin = {
+        id: pluginId,
+        manifest,
+        enabled: true,
+        installedAt: new Date().toISOString(),
+        sourceRepo: source.sourceRepo,
+        sourceRef: source.sourceRef,
+        sourceCommit: source.sourceCommit,
+        sourceLocalPath: source.sourceLocalPath,
+        localPath: targetDir
+      };
+
+      const existingIdx = this.store.installed.findIndex((p) => p.id === pluginId);
+      if (existingIdx !== -1) {
+        this.store.installed[existingIdx] = installedItem;
+      } else {
+        this.store.installed.push(installedItem);
+      }
+      installedItems.push(installedItem);
+    }
+
+    if (installedItems.length === 0) {
+      throw new Error("未找到有效插件：saki-plugin.json 缺少必要字段 (name, type, displayName)，或目录中没有 skills/*/SKILL.md、.mcp.json");
+    }
+
+    this.saveState();
+    return installedItems;
+  }
+
+  /**
+   * Installs plugin(s) from a directory on the server's filesystem. The source
+   * is staged into a temp dir first (symlinks, .git and node_modules skipped).
+   */
+  public async installFromLocal(options: {
+    localPath: string;
+    pluginName?: string | undefined;
+    allowMcp?: boolean;
+  }): Promise<InstalledPlugin[]> {
+    const raw = (options.localPath ?? "").trim().replace(/^["']|["']$/g, "");
+    if (!raw) throw new Error("请填写本地插件目录路径");
+    if (raw.includes("\0")) throw new Error("无效的路径");
+    if (!path.isAbsolute(raw)) throw new Error("请使用绝对路径");
+
+    const sourceRoot = path.resolve(raw);
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(sourceRoot);
+    } catch {
+      throw new Error(`路径不存在: ${sourceRoot}`);
+    }
+    if (stat.isSymbolicLink()) throw new Error("不支持符号链接路径");
+    if (!stat.isDirectory()) throw new Error("该路径不是目录");
+
+    const baseResolved = path.resolve(this.baseDir);
+    const rel = path.relative(baseResolved, sourceRoot);
+    if (rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) {
+      throw new Error("不能从插件安装目录内部安装");
+    }
+
+    fs.mkdirSync(this.baseDir, { recursive: true });
+    const tempDir = path.join(this.baseDir, `.tmp_install_${Date.now()}`);
+    try {
+      fs.cpSync(sourceRoot, tempDir, {
+        recursive: true,
+        filter: (src) => {
+          const name = path.basename(src);
+          if (name === ".git" || name === "node_modules") return false;
+          try {
+            return !fs.lstatSync(src).isSymbolicLink();
+          } catch {
+            return false;
+          }
+        }
+      });
+
+      const allManifests = this.findAllPluginManifests(tempDir);
+      if (allManifests.length === 0) {
+        throw new Error("该目录中未找到插件：需要 saki-plugin.json、.codex-plugin/plugin.json，或 skills/*/SKILL.md、.mcp.json");
+      }
+
+      const identifier = options.pluginName?.trim();
+      let targets = allManifests;
+      if (identifier) {
+        const lower = identifier.toLowerCase();
+        const match = allManifests.find((m) =>
+          m.manifest.name.toLowerCase() === lower || path.basename(m.sourceDir).toLowerCase() === lower);
+        if (!match) {
+          const available = allManifests.map((m) => m.manifest.displayName || m.manifest.name).join("、");
+          throw new Error(`目录中未找到名为「${identifier}」的插件。可用插件: ${available}`);
+        }
+        targets = [match];
+      }
+
+      return this.installManifests(targets, {
+        allowMcp: options.allowMcp === true,
+        sourceLocalPath: sourceRoot
+      });
+    } finally {
+      try {
+        if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
       } catch {}
     }
   }
@@ -693,6 +794,13 @@ export class PluginManager {
       }
     }
 
+    const isMultiPluginRoot = depth === 0 && fs.existsSync(path.join(dir, "plugins"));
+    const synthesized = isMultiPluginRoot ? null : this.synthesizeBundleManifest(dir);
+    if (synthesized) {
+      results.push({ manifest: synthesized, sourceDir: dir });
+      return results;
+    }
+
     try {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
@@ -710,6 +818,81 @@ export class PluginManager {
     }
 
     return results;
+  }
+
+  /**
+   * Codex/Claude-style plugins have no saki-plugin.json: derive a "bundle" manifest from
+   * `.codex-plugin/plugin.json` (or `.claude-plugin/plugin.json`), `skills/*\/SKILL.md` and `.mcp.json`.
+   */
+  private synthesizeBundleManifest(dir: string): SakiPluginManifest | null {
+    let meta: Record<string, unknown> = {};
+    let hasMetaFile = false;
+    for (const rel of [".codex-plugin/plugin.json", ".claude-plugin/plugin.json"]) {
+      const file = path.join(dir, rel);
+      if (!fs.existsSync(file)) continue;
+      try {
+        const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as unknown;
+        if (parsed && typeof parsed === "object") {
+          meta = parsed as Record<string, unknown>;
+          hasMetaFile = true;
+          break;
+        }
+      } catch {
+        // Ignore invalid manifest
+      }
+    }
+
+    const skillsRel =
+      typeof meta.skills === "string" && meta.skills.trim()
+        ? meta.skills.trim().replace(/^\.\//, "").replace(/\/+$/, "")
+        : "skills";
+    const skillsRoot = path.resolve(dir, skillsRel);
+    const insideDir = skillsRoot === path.resolve(dir) || skillsRoot.startsWith(path.resolve(dir) + path.sep);
+    let hasSkills = false;
+    if (insideDir && fs.existsSync(skillsRoot)) {
+      try {
+        hasSkills = fs
+          .readdirSync(skillsRoot, { withFileTypes: true })
+          .some((entry) => entry.isDirectory() && fs.existsSync(path.join(skillsRoot, entry.name, "SKILL.md")));
+      } catch {
+        hasSkills = false;
+      }
+    }
+    const hasMcp = fs.existsSync(path.join(dir, ".mcp.json"));
+    if (!hasMetaFile && !hasSkills && !hasMcp) return null;
+    if (!hasSkills && !hasMcp) return null;
+
+    const str = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
+    const ui = meta.interface && typeof meta.interface === "object" ? (meta.interface as Record<string, unknown>) : {};
+    const authorRaw = meta.author;
+    const author =
+      typeof authorRaw === "string"
+        ? authorRaw
+        : authorRaw && typeof authorRaw === "object"
+          ? str((authorRaw as Record<string, unknown>).name)
+          : "";
+    const name = (str(meta.name) || path.basename(dir)).toLowerCase().replace(/[^a-z0-9-_]/g, "-");
+    const tags = Array.isArray(meta.keywords)
+      ? meta.keywords.filter((item): item is string => typeof item === "string")
+      : undefined;
+    return {
+      name,
+      version: str(meta.version) || "1.0.0",
+      displayName: str(ui.displayName) || str(meta.displayName) || str(meta.name) || path.basename(dir),
+      description: str(meta.description) || str(ui.shortDescription) || str(ui.longDescription),
+      author: author || str(ui.developerName) || "unknown",
+      type: "bundle",
+      homepage: str(meta.homepage) || undefined,
+      skills: skillsRel,
+      interface: {
+        category: str(ui.category) || undefined,
+        tags,
+        defaultPrompt: Array.isArray(ui.defaultPrompt)
+          ? str(ui.defaultPrompt[0])
+          : str(ui.defaultPrompt) || undefined,
+        websiteUrl: str(ui.websiteURL) || str(ui.websiteUrl) || undefined
+      }
+    } as SakiPluginManifest;
   }
 
   /**
@@ -781,7 +964,32 @@ export class PluginManager {
         repo: "EthanChan050430/saki-plugins",
         ref: "master",
         featured: true
-      }
+      },
+      ...(
+        [
+          ["saki-context7", "Context7 文档查询", "接入 Context7 MCP，实时查询开源库最新文档与代码示例。", "开发", ["skills", "mcp"]],
+          ["saki-memory", "长期记忆图谱", "基于知识图谱的长期记忆 MCP，跨对话保存偏好与项目事实。", "效率", ["skills", "mcp"]],
+          ["saki-sequential-thinking", "分步推理", "把复杂问题拆成可修订的思考步骤。", "效率", ["skills", "mcp"]],
+          ["saki-web-fetch", "网页抓取", "抓取网页并转换为 Markdown。", "网络", ["skills", "mcp"]],
+          ["saki-playwright", "浏览器自动化", "Playwright MCP：真实浏览器点击、填表、截图。", "开发", ["skills", "mcp"]],
+          ["saki-github", "GitHub", "GitHub MCP：搜索仓库、读取并创建 Issue / PR。", "开发", ["skills", "mcp"]],
+          ["saki-dev-workflow", "开发工作流技能包", "代码审查、排错、提交信息、技术文档四个常用技能。", "开发", ["skills"]]
+        ] as Array<[string, string, string, string, Array<"skills" | "mcp">]>
+      ).map(
+        ([name, displayName, description, category, capabilities]): PluginRegistryItem => ({
+          name,
+          displayName,
+          description,
+          author: "DreamStarry",
+          type: "bundle",
+          version: "1.0.0",
+          repo: "EthanChan050430/saki-plugins",
+          ref: "master",
+          category,
+          capabilities,
+          featured: true
+        })
+      )
     ];
 
     // Resolve icon URLs now — the frontend just consumes a ready-to-use URL

@@ -2,6 +2,7 @@ import type { SakiChatResponse } from "@webops/shared";
 import type { SakiActiveTask, SakiAgentRunEvents } from "./types.js";
 import { emitActiveSakiTaskEvent, finishActiveSakiTask } from "./state.js";
 import { persistSakiTaskConversation, syncSakiTaskResult } from "./conversations.js";
+import { sakiTaskHistorySnapshot } from "./task-history.js";
 
 export function trackedSakiTaskEvents(taskId: string): Required<SakiAgentRunEvents> {
   return {
@@ -37,10 +38,12 @@ export function runTrackedSakiTask(task: SakiActiveTask, work: () => Promise<Sak
       response = { source: "local-fallback", message: reason, retry: { reason, taskId: task.id } };
     } finally {
       clearInterval(timer);
-      await checkpoint;
     }
-    await syncSakiTaskResult(task, response);
+    // A slow history write must not leave finished work marked as running.
+    response.timelineEvents = sakiTaskHistorySnapshot([...(task.historyEvents ?? []), ...task.eventsBuffer]).timelineEvents ?? [];
     finishActiveSakiTask(task.id, "completed", response);
+    await checkpoint;
+    await syncSakiTaskResult(task, response);
     return response;
   });
   task.execution = execution;

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { translateDomText, usePanelLanguage } from "../../i18n/index.js";
 import { DashboardAgentMessage, type DashboardChatMessage } from "./DashboardAgentConversation.js";
 import type { ComponentProps } from "react";
 
@@ -13,6 +14,7 @@ export function DashboardMessageList({ messages, rollbackCodeMessageIds, hasEarl
   rollbackCodeMessageIds: Set<string>;
   selectedTool: { messageId: string; actionId: string } | null;
 }) {
+  const { language } = usePanelLanguage();
   const [earliestId, setEarliestId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const prependRef = useRef<{ top: number; height: number } | null>(null);
@@ -62,9 +64,10 @@ export function DashboardMessageList({ messages, rollbackCodeMessageIds, hasEarl
   return <div ref={containerRef} className="dashboard-message-list">
     {start > 0 || hasEarlierMessages ? <div className="dashboard-history-more">
       <button className="secondary-button" type="button" disabled={earlierLoading} onClick={() => void loadMore()}>
-        {earlierLoading ? "正在加载…" : start > 0 ? `显示更早的消息（还有 ${start} 条）` : "加载更早的消息"}</button>
+        {translateDomText(earlierLoading ? "正在加载…" : start > 0 ? `显示更早的消息（还有 ${start} 条）` : "加载更早的消息", language)}</button>
     </div> : null}
     {visible.slice(start).map((message) => <DashboardAgentMessage key={message.id} message={message}
+      token={props.token}
       busyId={props.busyId} selectedActionId={props.selectedTool?.messageId === message.id ? props.selectedTool.actionId : undefined}
       onSelectAction={onSelectAction} onDecide={onDecide}
       {...(props.onMessageOperation ? { onMessageOperation } : {})}

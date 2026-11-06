@@ -48,7 +48,8 @@ import type {
   SakiCopilotLoginResponse,
   SakiImageGenConfig,
   SakiModelOption,
-  SakiProviderConfig
+  SakiProviderConfig,
+  SakiVideoGenConfig
 } from "@webops/shared";
 import { sakiModelSelectionKey, sakiNvidiaDefaultModel } from "@webops/shared";
 import type { PanelTextKey } from "../../i18n/index.js";
@@ -71,8 +72,11 @@ import {
   withImageGenSizeDefaults,
   type AntigravityMode
 } from "./settingsHelpers.js";
+import { SakiImageModelPicker } from "./SakiImageModelPicker.js";
+import { SettingsVideoGen } from "./SettingsVideoGen.js";
 
 export interface SettingsModelTabProps {
+  token: string;
   onDefaultPermissionModeChange: (mode: SakiAgentPermissionMode) => void;
   isActive: boolean;
   form: SakiConfigResponse;
@@ -92,6 +96,7 @@ export interface SettingsModelTabProps {
   customModelMode: boolean;
   setCustomModelMode: React.Dispatch<React.SetStateAction<boolean>>;
   onImageGenChange: (patch: Partial<SakiImageGenConfig>) => void;
+  onVideoGenChange: (patch: Partial<SakiVideoGenConfig>) => void;
   // Copilot
   copilotAuthStatus: SakiCopilotAuthStatusResponse | null;
   copilotLoginState: SakiCopilotLoginResponse | null;
@@ -134,6 +139,7 @@ export interface SettingsModelTabProps {
 }
 
 export const SettingsModelTab = memo(function SettingsModelTab({
+  token,
   onDefaultPermissionModeChange,
   isActive,
   form,
@@ -153,6 +159,7 @@ export const SettingsModelTab = memo(function SettingsModelTab({
   customModelMode,
   setCustomModelMode,
   onImageGenChange,
+  onVideoGenChange,
   copilotAuthStatus,
   copilotLoginState,
   copilotBusy,
@@ -1851,15 +1858,7 @@ export const SettingsModelTab = memo(function SettingsModelTab({
             </div>
 
             <div className="settings-form-row">
-              <label className="settings-field">
-                <span className="settings-field-label">默认画图模型</span>
-                <input
-                  className="settings-input"
-                  value={imageGen.model}
-                  onChange={(event) => onImageGenChange({ model: event.target.value })}
-                  placeholder="例如 dall-e-3, sd-xl 等"
-                />
-              </label>
+              <SakiImageModelPicker token={token} config={imageGen} model={form.imageGen?.model ?? imageGen.model} onChange={(model) => onImageGenChange({ model })} />
 
               <label className="settings-field">
                 <span className="settings-field-label">默认画幅比例</span>
@@ -1897,6 +1896,8 @@ export const SettingsModelTab = memo(function SettingsModelTab({
             </div>
           </div>
         </div>
+
+        <SettingsVideoGen token={token} config={form.videoGen} onChange={onVideoGenChange} />
 
         {/* ==================================================================
             5. Model Points Multipliers (模型积分消耗乘区 - 只显示开启的服务商)

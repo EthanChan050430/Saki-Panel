@@ -102,12 +102,23 @@
   }
 
   .topbar-inner {
-    gap: 10px;
-    padding-left: 12px;
+    gap: 6px;
+    padding: 4px 8px 4px 10px;
   }
 
   .topbar-actions {
-    padding-left: 8px;
+    gap: 4px;
+    padding-left: 6px;
+  }
+
+  .topbar-server-time-btn .topbar-clock-digits {
+    display: none;
+  }
+
+  .topbar-server-time-btn {
+    padding: 5px;
+    min-width: 28px;
+    justify-content: center;
   }
 
   .metrics-grid {
@@ -2320,48 +2331,29 @@
 
 @media (max-width: 900px) {
   .about-page {
-    padding: 14px 12px 34px;
+    padding: 12px 10px 48px;
   }
 
   .about-wiki-layout {
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
   }
 
   .about-side-column {
-    order: -1;
-    position: static;
-    align-self: auto;
+    display: contents;
   }
 
   .about-toc {
-    display: flex;
-    gap: 6px;
-    overflow-x: auto;
-    padding: 10px;
+    order: 1;
   }
 
-  .about-toc-heading {
-    flex: 0 0 auto;
-    display: inline-flex;
-    align-items: center;
-    border-right: 1px solid rgba(226, 232, 240, 0.9);
-    border-bottom: 0;
-    padding: 0 12px 0 2px;
-  }
-
-  .about-toc a {
-    flex: 0 0 auto;
-    border-left: 0;
-    border-bottom: 3px solid transparent;
-    white-space: nowrap;
-  }
-
-  .about-toc a:hover,
-  .about-toc a:focus-visible {
-    border-bottom-color: #ff75ac;
+  .about-article {
+    order: 2;
   }
 
   .about-infobox {
+    order: 3;
     grid-column: auto;
     grid-template-columns: 1fr;
   }

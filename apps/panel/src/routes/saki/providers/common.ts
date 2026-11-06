@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { normalizeSakiReasoningEffort, type SakiReasoningEffort, type SakiChatRequest, type SakiConfigResponse, type SakiModelOption } from "@webops/shared";
+import { normalizeSakiReasoningEffort, sakiReasoningBudgetTokens, type SakiReasoningEffort, type SakiChatRequest, type SakiConfigResponse, type SakiModelOption } from "@webops/shared";
 import { sakiNvidiaDefaultModel } from "@webops/shared";
 import type { SakiModelToolTurn } from "../types.js";
 import {
@@ -196,15 +196,23 @@ export function openAiCompatibleChatBody(
   // rather than every model hosted by NVIDIA's OpenAI-compatible API.
   const isNvidiaNemotron = provider === "nvidia" && model.trim().toLowerCase() === sakiNvidiaDefaultModel;
   const effort = normalizeSakiReasoningEffort(reasoningEffort, model, provider);
-  const explicitThinking = effort !== "auto" && /(?:^|\/)(?:deepseek-|glm-)/i.test(model)
+  const modelId = model.trim().toLowerCase().split("/").pop() ?? "";
+  const explicitThinking = effort !== "auto" && /(?:^|\/)(?:deepseek-|glm-|doubao-seed-)/i.test(model)
     ? { thinking: { type: "enabled" } } : {};
+  // Qwen 3.5-3.7 only take a token budget; Qwen 3.8 takes reasoning_effort directly.
+  const qwenBudget = effort !== "auto" && /^qwen3\.[5-7]-/.test(modelId)
+    ? { enable_thinking: true, thinking_budget: sakiReasoningBudgetTokens(effort, "qwen") } : {};
+  const qwenEffort = effort !== "auto" && /^qwen3\.8-/.test(modelId) ? { enable_thinking: true } : {};
+  const sendsEffortField = effort !== "auto" && !/^qwen3\.[5-7]-/.test(modelId) && !/^claude-/.test(modelId);
   const withThinking = {
     ...(isNvidiaNemotron ? { max_tokens: 65536, reasoning_budget: 16384, top_p: 0.95 } : {}),
     ...body,
     ...nativeThinkingChatExtras(provider, model),
     ...explicitThinking,
+    ...qwenBudget,
+    ...qwenEffort,
     ...(isGlm53Flash(model) && currentAgentTurnConversation() ? glmPreservedThinkingOptions(baseUrl) : {}),
-    ...(effort !== "auto" ? { reasoning_effort: effort } : {})
+    ...(sendsEffortField ? { reasoning_effort: effort } : {})
   };
   if (!shouldSendCustomTemperature(provider, baseUrl, model)) return withThinking;
   return { ...withThinking, temperature: isNvidiaNemotron ? 0.6 : preferredTemperature };
@@ -222,13 +230,14 @@ export function withoutNativeThinking(body: Record<string, unknown>): Record<str
   delete next.thinking;
   delete next.reasoning_effort;
   delete next.reasoning_budget;
+  delete next.thinking_budget;
   delete next.reasoning;
   return next;
 }
 
 export function isThinkingRequestError(error: unknown): boolean {
   const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
-  return /enable_thinking|reasoning_effort|reasoning_budget|\bthinking\b/.test(message) && /unsupported|unknown|invalid|unrecognized|not\s+support|unexpected/.test(message);
+  return /enable_thinking|reasoning_effort|reasoning_budget|thinking_budget|\bthinking\b/.test(message) && /unsupported|unknown|invalid|unrecognized|not\s+support|unexpected/.test(message);
 }
 
 export function isContextOverflowError(error: unknown): boolean {

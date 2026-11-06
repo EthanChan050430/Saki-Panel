@@ -1,6 +1,6 @@
 {
   "name": "@webops/panel",
-  "version": "5.1.0",
+  "version": "6.0.0",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
@@ -28,6 +28,7 @@
     "ssh2": "^1.17.0",
     "tesseract.js": "^5.1.1",
     "tiktoken": "^1.0.22",
+    "undici": "^6.29.1",
     "ws": "^8.20.0"
   },
   "devDependencies": {

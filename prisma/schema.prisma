@@ -57,8 +57,56 @@ model User {
   pointRecords        PointRecord[]
   sakiConversations   SakiConversation[]
   createdTemplates    Template[]
+  createdAnnouncements Announcement[]       @relation("AnnouncementCreator")
+  announcementTargets AnnouncementTarget[]
+  announcementReceipts AnnouncementReceipt[]
 
   @@map("users")
+}
+
+model Announcement {
+  id          String                 @id @default(cuid())
+  title       String
+  body        String
+  level       String                 @default("info")
+  pinned      Boolean                @default(false)
+  popup       Boolean                @default(false)
+  audience    String                 @default("ALL")
+  startsAt    DateTime?
+  expiresAt   DateTime?
+  createdById String?
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  createdBy   User?                  @relation("AnnouncementCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  targets     AnnouncementTarget[]
+  receipts    AnnouncementReceipt[]
+
+  @@index([createdAt])
+  @@map("announcements")
+}
+
+model AnnouncementTarget {
+  announcementId String
+  userId         String
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([announcementId, userId])
+  @@index([userId])
+  @@map("announcement_targets")
+}
+
+model AnnouncementReceipt {
+  announcementId String
+  userId         String
+  popupShownAt   DateTime?
+  readAt         DateTime?
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([announcementId, userId])
+  @@index([userId])
+  @@map("announcement_receipts")
 }
 
 model Role {

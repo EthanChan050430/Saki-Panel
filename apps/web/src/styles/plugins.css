@@ -19,6 +19,8 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  position: relative;
+  z-index: 10;
   gap: 12px;
   min-height: 48px;
   height: 48px;
@@ -1211,6 +1213,20 @@
   max-height: calc(85vh - 120px);
 }
 
+.plugin-modal-form .modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.plugin-modal-form .modal-actions > button {
+  box-sizing: border-box;
+  width: 116px;
+  height: 42px;
+  padding: 0 12px;
+}
+
 .plugin-form-item {
   display: flex;
   flex-direction: column;
@@ -1227,6 +1243,32 @@
   font-size: 11px;
   color: var(--text-secondary, #86868b);
   line-height: 1.4;
+}
+
+.plugin-install-mode-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--input-bg, rgba(255, 255, 255, 0.6));
+  border: 1px solid var(--surface-border-subtle, rgba(226, 232, 240, 0.8));
+}
+
+.plugin-install-mode-tabs button {
+  flex: 1;
+  height: 32px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-secondary, #86868b);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.plugin-install-mode-tabs button.active {
+  background: var(--primary, #ff75ac);
+  color: #fff;
 }
 
 .plugin-field-input {
@@ -2403,3 +2445,45 @@
   }
 }
 
+/* Plugin capability badges (skills / MCP) */
+.plugin-cap-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.plugin-cap-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 18px;
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
+  color: var(--text-muted, #888);
+  background: rgba(128, 128, 128, 0.08);
+}
+
+.plugin-cap-badge.is-skills {
+  color: #8b5cf6;
+  border-color: rgba(139, 92, 246, 0.4);
+  background: rgba(139, 92, 246, 0.1);
+}
+
+.plugin-cap-badge.is-mcp {
+  color: #0ea5e9;
+  border-color: rgba(14, 165, 233, 0.4);
+  background: rgba(14, 165, 233, 0.1);
+}
+
+.plugin-cap-badge.is-running {
+  color: #22c55e;
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.plugin-cap-badge.is-stopped {
+  color: #9ca3af;
+}

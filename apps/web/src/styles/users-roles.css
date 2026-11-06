@@ -172,6 +172,14 @@
   display: none;
 }
 
+/* 桌面端始终显示创建用户面板。窄屏样式会把它折叠，这里用更高优先级把桌面端钉回可见。 */
+@media (min-width: 769px) {
+  .panel-block.user-form-panel,
+  .panel-block.user-form-panel.mobile-open {
+    display: block !important;
+  }
+}
+
 /* 移动端专属断点（<= 768px） */
 @media (max-width: 768px) {
   .desktop-users-table {
@@ -272,7 +280,7 @@
     flex: 1;
   }
 
-  /* 可折叠的创建用户面板 */
+  /* 创建用户面板只在窄屏折叠；桌面端始终展开，不受 mobile-open 影响。 */
   .user-form-panel {
     display: none;
     animation: slide-down 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);

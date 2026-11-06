@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSakiModelPreference } from "./components/saki/useSakiModelPreference.js";
 import {
   Activity,
   AlertTriangle,
@@ -125,6 +126,8 @@ import { SettingsView } from "./views/SettingsView.js";
 import { ReliabilityView } from "./views/ReliabilityView.js";
 import { PluginStoreView } from "./views/PluginStoreView.js";
 import { IncidentBell } from "./IncidentInbox.js";
+import { AnnouncementPopup } from "./AnnouncementPopup.js";
+import { useAnnouncements } from "./useAnnouncements.js";
 import { AgentMonitorBell } from "./AgentMonitorBell.js";
 import { cssImageUrl } from "./utils/appearance.js";
 import { parseHashRoute, routeIcon, updateHashRoute, validViews } from "./utils/route.js";
@@ -168,7 +171,7 @@ export function Workspace({
   const [fileManagerOpen, setFileManagerOpen] = useState(false);
   const globalFileDragDepthRef = useRef(0);
   const [sakiFileDropRequest, setSakiFileDropRequest] = useState<SakiInstanceFileDropRequest | null>(null);
-  const [sakiCurrentModelId, setSakiCurrentModelId] = useState<string>("");
+  const [sakiCurrentModelId, setSakiCurrentModelId] = useSakiModelPreference(user.id);
   const [sakiCurrentModelName, setSakiCurrentModelName] = useState<string>("");
   const [sakiAvailableModels, setSakiAvailableModels] = useState<SakiModelOption[]>([]);
   const [sidebarHidden, setSidebarHidden] = useState(false);
@@ -343,6 +346,7 @@ export function Workspace({
   const canUseSakiChat = user.permissions.includes("saki.chat");
   const canUseSakiAgent = user.permissions.includes("saki.agent");
   const canUseSaki = canUseSakiChat || canUseSakiAgent;
+  const announcements = useAnnouncements(token, onLogout);
   const canUseSakiSkills = user.permissions.includes("saki.skills");
   const canConfigureSaki = user.permissions.includes("saki.configure");
   const canOpenDashboard = user.permissions.includes("dashboard.view");
@@ -648,6 +652,7 @@ export function Workspace({
 
   return (
     <>
+      <AnnouncementPopup key={`announcements:${user.id}`} items={announcements.items} loaded={announcements.loaded} ack={announcements.ack} />
       <div className={`app-shell ${sidebarHidden ? "sidebar-hidden" : ""}`}>
         <aside id="workspace-sidebar" ref={sidebarRef} className="sidebar glass-sidebar" inert={sidebarHidden || undefined}>
           <div className="sidebar-brand">
@@ -852,15 +857,16 @@ export function Workspace({
                     }}
                   />
                 ) : null}
-                {canUseSaki ? (
-                  <IncidentBell
-                    token={token}
-                    onLogout={onLogout}
-                    onOpenIncident={(incident) => {
-                      void openIncidentInWorkspace(incident);
-                    }}
-                  />
-                ) : null}
+                <IncidentBell
+                  token={token}
+                  onLogout={onLogout}
+                  canUseSaki={canUseSaki}
+                  isAdmin={user.isAdmin || user.isSuperAdmin}
+                  announcements={announcements}
+                  onOpenIncident={(incident) => {
+                    void openIncidentInWorkspace(incident);
+                  }}
+                />
                 {hasAnyAccessibleView ? (
                   <button className="topbar-refresh-btn" type="button" onClick={() => setRefreshTick((value) => value + 1)} title={t("common.refresh")}>
                     <RefreshCw size={14} />
@@ -1018,7 +1024,7 @@ export function Workspace({
       />
       {canUseSaki ? (
         <SakiFloatingChat
-          key={user.id}
+          key={`saki-chat:${user.id}`}
           token={token}
           userId={user.id}
           instance={sakiInstance}

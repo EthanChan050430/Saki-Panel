@@ -20,6 +20,25 @@ https://github.com/user-attachments/assets/99a8d410-c079-4368-86c9-f847413d4580
 
 </div>
 
+## Beyond the panel
+
+Make the workspace your own, or bring Saki to your desktop. Two more places to explore in the Saki family.
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="https://github.com/EthanChan050430/saki-plugins"><img src=".github/assets/explore-extensions-en.svg" width="640" alt="Extension Market — explore the saki-plugins repository" /></a>
+      <p>Themes, Saki skins, games, widgets, and locales. Discover ready-made plugins, learn from examples, and build something of your own.</p>
+      <p><a href="https://github.com/EthanChan050430/saki-plugins"><strong>Explore the extension repository ↗</strong></a></p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="https://github.com/EthanChan050430/Saki-AI"><img src=".github/assets/explore-saki-ai-en.svg" width="640" alt="Saki AI — explore the local desktop AI assistant" /></a>
+      <p>A local desktop AI assistant for conversations, documents, research, and everyday tasks. Explore the companion project beyond server operations.</p>
+      <p><a href="https://github.com/EthanChan050430/Saki-AI"><strong>Meet Saki AI ↗</strong></a></p>
+    </td>
+  </tr>
+</table>
+
 ## Screenshots
 
 Version 5.0 puts Saki Assistant, live system metrics, and multiple workspaces on the overview page. The poster above uses an unmodified capture of the running app; click it to open the original screenshot. The examples use local demo services.

@@ -15,6 +15,7 @@ import type {
   DeleteAuditLogsResponse,
   SakiAuditConversationItem,
   SakiAuditConversationListResponse,
+  SakiAuditMessage,
   UpdateAuditRetentionPolicyRequest
 } from "@webops/shared";
 import { prisma } from "../db.js";
@@ -39,6 +40,15 @@ function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
 function positiveInt(value: unknown, fallback: number, max: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 1 ? Math.min(Math.floor(parsed), max) : fallback;
+}
+
+function parseSakiAuditMessages(raw: string): SakiAuditMessage[] {
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as SakiAuditMessage[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 async function readAuditRetentionPolicy(): Promise<AuditRetentionPolicy> {
@@ -928,17 +938,9 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
     const instanceMap = new Map(instances.map((i) => [i.id, i.name]));
 
     const data: SakiAuditConversationItem[] = rows.map((r) => {
-      let parsedMessages: any[] = [];
-      try {
-        parsedMessages = JSON.parse(r.messages);
-      } catch {}
-      if (!Array.isArray(parsedMessages)) parsedMessages = [];
-
-      let lastMessagePreview = "";
-      if (parsedMessages.length > 0) {
-        const last = parsedMessages[parsedMessages.length - 1];
-        lastMessagePreview = typeof last?.content === "string" ? last.content.slice(0, 150) : "";
-      }
+      const parsedMessages = parseSakiAuditMessages(r.messages);
+      const last = parsedMessages[parsedMessages.length - 1];
+      const lastMessagePreview = typeof last?.content === "string" ? last.content.slice(0, 150) : "";
 
       return {
         id: r.id,
@@ -954,7 +956,7 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
         title: r.title,
         messageCount: parsedMessages.length,
         lastMessagePreview,
-        messages: parsedMessages,
+        messages: [],
         createdAt: r.createdAt.toISOString(),
         updatedAt: r.updatedAt.toISOString()
       };
@@ -974,6 +976,10 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/audit/saki/conversations/:id", { preHandler: requireSuperAdmin() }, async (request, reply) => {
     const { id } = request.params as { id: string };
+    const query = request.query as { page?: string; limit?: string; all?: string };
+    const includeAll = query.all === "1" || query.all === "true";
+    const messagePage = positiveInt(query.page, 1, 1_000_000);
+    const messageLimit = positiveInt(query.limit, 20, 100);
     const row = await prisma.sakiConversation.findUnique({
       where: { id },
       include: {
@@ -999,11 +1005,14 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
       instanceName = inst?.name ?? null;
     }
 
-    let parsedMessages: any[] = [];
-    try {
-      parsedMessages = JSON.parse(row.messages);
-    } catch {}
-    if (!Array.isArray(parsedMessages)) parsedMessages = [];
+    const parsedMessages = parseSakiAuditMessages(row.messages);
+    const messageTotal = parsedMessages.length;
+    const messageTotalPages = Math.ceil(messageTotal / messageLimit) || 1;
+    const safePage = Math.min(messagePage, messageTotalPages);
+    const pageMessages = includeAll
+      ? parsedMessages
+      : parsedMessages.slice((safePage - 1) * messageLimit, safePage * messageLimit);
+    const last = parsedMessages[parsedMessages.length - 1];
 
     const item: SakiAuditConversationItem = {
       id: row.id,
@@ -1017,9 +1026,12 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
       instanceId: row.instanceId,
       instanceName,
       title: row.title,
-      messageCount: parsedMessages.length,
-      lastMessagePreview: parsedMessages[parsedMessages.length - 1]?.content?.slice(0, 150) ?? "",
-      messages: parsedMessages,
+      messageCount: messageTotal,
+      lastMessagePreview: typeof last?.content === "string" ? last.content.slice(0, 150) : "",
+      messages: pageMessages,
+      messagePage: includeAll ? 1 : safePage,
+      messageLimit: includeAll ? messageTotal : messageLimit,
+      messageTotalPages: includeAll ? 1 : messageTotalPages,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString()
     };

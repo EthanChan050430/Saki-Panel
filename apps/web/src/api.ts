@@ -1,4 +1,5 @@
 import { sakiChatErrorMessage } from "./components/saki/chat-error.js";
+import { readSakiEventFrames } from "./components/saki/saki-event-stream.js";
 import { invalidateResourceSnapshots, loadResourceSnapshot } from "./utils/resourceSnapshot.js";
 import type {
   InstanceGitStatus,
@@ -97,10 +98,17 @@ import type {
   SakiCopilotLoginResponse,
   SakiConfigResponse,
   SakiModelListResponse,
+  SakiUserModelListResponse,
+  SakiModelPreference,
+  SakiImageGenConfig,
+  SakiImageModelListResponse,
+  SakiVideoGenConfig,
   SakiAgentAction,
   SakiActionDecisionResponse,
   SakiSkillDetail,
   SakiSkillSummary,
+  SakiPluginCapabilitySummary,
+  SakiPluginMentionSummary,
   SakiStatusResponse,
   CreateSakiSkillRequest,
   DownloadSakiSkillRequest,
@@ -500,14 +508,11 @@ async function requestSakiChatStream(
     throw new ApiError("Saki stream response is not readable", 0);
   }
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
   let finalResponse: SakiChatResponse | null = null;
 
   const dispatch = (frame: string) => {
     const event = parseSakiStreamFrame(frame);
-    if (!event) return;
+    if (!event) return true;
     if (event.type !== "heartbeat") {
       logSakiBrowserDebug("stream.event", summarizeSakiStreamEvent(event));
     }
@@ -518,23 +523,11 @@ async function requestSakiChatStream(
     if (event.type === "done") {
       finalResponse = event.response;
     }
+    return event.type !== "done" && event.type !== "error";
   };
 
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-      while (true) {
-        const boundary = buffer.indexOf("\n\n");
-        if (boundary < 0) break;
-        dispatch(buffer.slice(0, boundary));
-        buffer = buffer.slice(boundary + 2);
-      }
-    }
-    const tail = decoder.decode();
-    if (tail) buffer += tail.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    if (buffer.trim()) dispatch(buffer);
+    await readSakiEventFrames(response.body, dispatch, signal);
   } catch (error) {
     if (finalResponse) return finalResponse;
     if (signal?.aborted) throw error;
@@ -544,8 +537,6 @@ async function requestSakiChatStream(
       error: error instanceof Error ? error.message : String(error)
     });
     throw new ApiError(normalizeStreamError(error), 0);
-  } finally {
-    reader.releaseLock();
   }
 
   const completedResponse = finalResponse as SakiChatResponse | null;
@@ -589,14 +580,11 @@ async function requestSakiTaskReconnectStream(
     throw new ApiError("Saki task stream is not readable", 0);
   }
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
   let finalResponse: SakiChatResponse | null = null;
 
   const dispatch = (frame: string) => {
     const event = parseSakiStreamFrame(frame);
-    if (!event) return;
+    if (!event) return true;
     if (event.type === "meta" || event.type === "done" || event.type === "action" && (event.action.status === "pending_approval" || event.action.status === "pending_input")) {
       window.dispatchEvent(new CustomEvent("saki:active_task_updated"));
     }
@@ -604,29 +592,15 @@ async function requestSakiTaskReconnectStream(
     if (event.type === "done") {
       finalResponse = event.response;
     }
+    return event.type !== "done" && event.type !== "error";
   };
 
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-      while (true) {
-        const boundary = buffer.indexOf("\n\n");
-        if (boundary < 0) break;
-        dispatch(buffer.slice(0, boundary));
-        buffer = buffer.slice(boundary + 2);
-      }
-    }
-    const tail = decoder.decode();
-    if (tail) buffer += tail.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    if (buffer.trim()) dispatch(buffer);
+    await readSakiEventFrames(response.body, dispatch, signal);
   } catch (error) {
     if (finalResponse) return finalResponse;
     if (signal?.aborted) throw error;
     throw new ApiError(normalizeStreamError(error), 0);
-  } finally {
-    reader.releaseLock();
   }
 
   const completedResponse = finalResponse as SakiChatResponse | null;
@@ -755,7 +729,69 @@ function triggerBlobDownload(blob: Blob, fileName: string) {
   }, 1000);
 }
 
+export type AnnouncementLevel = "info" | "warning" | "critical";
+export type AnnouncementAudience = "ALL" | "USERS";
+
+export interface AnnouncementItem {
+  id: string;
+  title: string;
+  body: string;
+  level: AnnouncementLevel;
+  pinned: boolean;
+  popup: boolean;
+  startsAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  createdByName: string | null;
+  createdByAvatarDataUrl: string | null;
+  readAt: string | null;
+  popupShownAt: string | null;
+}
+
+export interface ManagedAnnouncement {
+  id: string;
+  title: string;
+  body: string;
+  level: AnnouncementLevel;
+  pinned: boolean;
+  popup: boolean;
+  audience: AnnouncementAudience;
+  userIds: string[];
+  startsAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  createdByName: string | null;
+  readCount: number;
+  popupShownCount: number;
+}
+
+export interface AnnouncementAudienceUser {
+  id: string;
+  username: string;
+  displayName: string | null;
+}
+
+export interface AnnouncementInput {
+  title: string;
+  body: string;
+  level: AnnouncementLevel;
+  pinned: boolean;
+  popup: boolean;
+  audience: AnnouncementAudience;
+  userIds: string[];
+  startsAt: string | null;
+  expiresAt: string | null;
+}
+
 export const api = {
+  sakiUserModels(token: string) {
+    return requestJson<SakiUserModelListResponse>("/api/saki/user-models", {}, token);
+  },
+  saveSakiModelPreference(token: string, preference: SakiModelPreference) {
+    return requestJson<SakiModelPreference>("/api/saki/model-preference", { method: "PUT", body: JSON.stringify(preference) }, token);
+  },
   instanceGitStatus(token: string, id: string) {
     return requestJson<InstanceGitStatus>(`/api/instances/${id}/git/status`, {}, token);
   },
@@ -1648,8 +1684,16 @@ export const api = {
     }
     return requestJson<SakiAuditConversationListResponse>(pathWithQuery("/api/audit/saki/conversations", params), {}, token);
   },
-  auditGetSakiConversation(token: string, id: string) {
-    return requestJson<SakiAuditConversationItem>(`/api/audit/saki/conversations/${encodeURIComponent(id)}`, {}, token);
+  auditGetSakiConversation(token: string, id: string, query: { page?: number; limit?: number; all?: boolean } = {}) {
+    const params: Record<string, string | undefined> = {};
+    if (query.page !== undefined) params.page = String(query.page);
+    if (query.limit !== undefined) params.limit = String(query.limit);
+    if (query.all) params.all = "1";
+    return requestJson<SakiAuditConversationItem>(
+      pathWithQuery(`/api/audit/saki/conversations/${encodeURIComponent(id)}`, params),
+      {},
+      token
+    );
   },
   users(token: string) {
     return requestJson<ManagedUser[]>("/api/users", {}, token);
@@ -1868,6 +1912,9 @@ export const api = {
   sakiSkills(token: string, query = "") {
     return requestJson<SakiSkillSummary[]>(pathWithQuery("/api/saki/skills", { q: query || undefined }), {}, token);
   },
+  pluginMentions(token: string) {
+    return requestJson<{ ok: boolean; plugins: SakiPluginMentionSummary[] }>("/api/plugins/mentions", {}, token);
+  },
   sakiAllSkills(token: string) {
     return requestJson<SakiSkillSummary[]>(pathWithQuery("/api/saki/skills", { all: "1" }), {}, token);
   },
@@ -1942,13 +1989,13 @@ export const api = {
       token
     );
   },
-  sakiGetTask(token: string, taskId: string) {
-    return requestJson<SakiActiveTaskSummary>(`/api/saki/tasks/${encodeURIComponent(taskId)}`, {}, token);
+  sakiGetTask(token: string, taskId: string, signal?: AbortSignal) {
+    return requestJson<SakiActiveTaskSummary>(`/api/saki/tasks/${encodeURIComponent(taskId)}`, signal ? { signal } : {}, token);
   },
-  sakiGetActiveTasks(token: string, options?: { excludeResponse?: boolean }) {
+  sakiGetActiveTasks(token: string, options?: { excludeResponse?: boolean; signal?: AbortSignal }) {
     return requestJson<{ tasks: SakiActiveTaskSummary[]; runningCount: number }>(
       `/api/saki/active-tasks${options?.excludeResponse ? "?excludeResponse=1" : ""}`,
-      {},
+      options?.signal ? { signal: options.signal } : {},
       token
     );
   },
@@ -1997,6 +2044,15 @@ export const api = {
       token
     );
   },
+  sakiFollowUps(token: string, includeAttachments = false) {
+    return requestJson<import("@webops/shared").SakiFollowUpQueueState>(`/api/saki/follow-ups${includeAttachments ? "?includeAttachments=1" : ""}`, { signal: AbortSignal.timeout(10_000) }, token);
+  },
+  sakiAddFollowUp(token: string, input: { id: string; input: SakiChatRequest; intent: "queue"; afterTaskId?: string; afterRequestId?: string }) {
+    return requestJson<import("@webops/shared").SakiFollowUpQueueState>("/api/saki/follow-ups", { method: "POST", body: JSON.stringify(input), signal: AbortSignal.timeout(15_000) }, token);
+  },
+  sakiChangeFollowUps(token: string, conversationId: string, input: { revision: number; action: string; id?: string; message?: string; ids?: string[] }) {
+    return requestJson<import("@webops/shared").SakiFollowUpQueueState>(`/api/saki/follow-ups/${encodeURIComponent(conversationId)}`, { method: "PATCH", body: JSON.stringify(input), signal: AbortSignal.timeout(15_000) }, token);
+  },
   async sakiGeneratedImageBlob(token: string, id: string): Promise<Blob> {
     const response = await fetch(new URL(`/api/saki/generated-images/${encodeURIComponent(id)}`, API_BASE), {
       headers: {
@@ -2006,6 +2062,14 @@ export const api = {
     if (!response.ok) {
       throw new ApiError(await responseErrorMessage(response), response.status);
     }
+    return response.blob();
+  },
+  async sakiGeneratedVideoBlob(token: string, id: string, signal: AbortSignal): Promise<Blob> {
+    const response = await fetch(new URL(`/api/saki/generated-videos/${encodeURIComponent(id)}`, API_BASE), {
+      headers: { authorization: `Bearer ${token}` },
+      signal
+    });
+    if (!response.ok) throw new ApiError(await responseErrorMessage(response), response.status);
     return response.blob();
   },
   async sakiExportConversation(token: string, id: string) {
@@ -2111,6 +2175,39 @@ export const api = {
       { method: "POST", body: JSON.stringify(input) },
       token
     );
+  },
+  announcements(token: string) {
+    return requestJson<AnnouncementItem[]>("/api/announcements", {}, token);
+  },
+  ackAnnouncement(token: string, id: string, input: { popupShown?: boolean; read?: boolean }) {
+    return requestJson<{ ok: boolean }>(
+      `/api/announcements/${id}/ack`,
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  manageAnnouncements(token: string) {
+    return requestJson<ManagedAnnouncement[]>("/api/announcements/manage", {}, token);
+  },
+  announcementAudienceUsers(token: string) {
+    return requestJson<AnnouncementAudienceUser[]>("/api/announcements/audience-users", {}, token);
+  },
+  createAnnouncement(token: string, input: AnnouncementInput) {
+    return requestJson<ManagedAnnouncement>(
+      "/api/announcements",
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  updateAnnouncement(token: string, id: string, input: AnnouncementInput) {
+    return requestJson<ManagedAnnouncement>(
+      `/api/announcements/${id}`,
+      { method: "PUT", body: JSON.stringify(input) },
+      token
+    );
+  },
+  deleteAnnouncement(token: string, id: string) {
+    return requestJson<{ ok: boolean }>(`/api/announcements/${id}`, { method: "DELETE" }, token);
   },
   silenceRules(token: string) {
     return requestJson<{ rules: ManagedSilenceRule[] }>("/api/incidents/silences", {}, token);
@@ -2316,6 +2413,16 @@ export const api = {
       { method: "POST", body: JSON.stringify(input) },
       token
     );
+  },
+  sakiImageModels(token: string, input: SakiImageGenConfig, signal: AbortSignal) {
+    return requestJson<SakiImageModelListResponse>(
+      "/api/saki/image-models",
+      { method: "POST", body: JSON.stringify(input), signal },
+      token
+    );
+  },
+  sakiVideoModels(token: string, input: SakiVideoGenConfig, signal: AbortSignal) {
+    return requestJson<SakiImageModelListResponse>("/api/saki/video-models", { method: "POST", body: JSON.stringify(input), signal }, token);
   },
   sakiCopilotStatus(token: string) {
     return requestJson<SakiCopilotAuthStatusResponse>("/api/saki/copilot/status", {}, token);
@@ -2527,6 +2634,22 @@ export const api = {
   plugins(token: string) {
     return requestJson<{ ok: boolean; state: PluginStoreState }>("/api/plugins", {}, token);
   },
+  pluginCapabilities(token: string, id: string) {
+    return requestJson<{ ok: boolean; capabilities: SakiPluginCapabilitySummary }>(
+      `/api/plugins/${encodeURIComponent(id)}/capabilities`,
+      {},
+      token
+    );
+  },
+
+  restartPluginMcp(token: string, id: string) {
+    return requestJson<{ ok: boolean; capabilities: SakiPluginCapabilitySummary }>(
+      `/api/plugins/${encodeURIComponent(id)}/mcp/restart`,
+      { method: "POST" },
+      token
+    );
+  },
+
   pluginRegistry(token: string) {
     return requestJson<{ ok: boolean; items: PluginRegistryItem[] }>("/api/plugins/registry", {}, token);
   },
@@ -2546,6 +2669,13 @@ export const api = {
   }) {
     return requestJson<{ ok: boolean; plugins: InstalledPlugin[]; message: string }>(
       "/api/plugins/install",
+      { method: "POST", body: JSON.stringify(input) },
+      token
+    );
+  },
+  installLocalPlugin(token: string, input: { localPath: string; pluginName?: string }) {
+    return requestJson<{ ok: boolean; plugins: InstalledPlugin[]; message: string }>(
+      "/api/plugins/install-local",
       { method: "POST", body: JSON.stringify(input) },
       token
     );
@@ -2606,4 +2736,3 @@ export const api = {
     );
   }
 };
-

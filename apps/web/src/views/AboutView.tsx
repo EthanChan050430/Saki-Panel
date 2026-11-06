@@ -346,7 +346,8 @@ export function AboutView({ token }: AboutViewProps = {}) {
 
     if (sections.length === 0) return;
 
-    const stickyTop = 80;
+    const isMobile = typeof window !== "undefined" && window.innerWidth <= 900;
+    const stickyTop = isMobile ? 116 : 80;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -404,8 +405,14 @@ export function AboutView({ token }: AboutViewProps = {}) {
     const listRect = tocList.getBoundingClientRect();
     const itemRect = activeItem.getBoundingClientRect();
 
-    if (itemRect.top < listRect.top || itemRect.bottom > listRect.bottom) {
-      activeItem.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    if (window.innerWidth <= 900) {
+      if (itemRect.left < listRect.left || itemRect.right > listRect.right) {
+        activeItem.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+      }
+    } else {
+      if (itemRect.top < listRect.top || itemRect.bottom > listRect.bottom) {
+        activeItem.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
     }
   }, [activeChapterId]);
 
@@ -415,7 +422,8 @@ export function AboutView({ token }: AboutViewProps = {}) {
     setActiveChapterId(chapterId);
     const elem = document.getElementById(chapterId);
     if (elem) {
-      const navOffset = 80;
+      const isMobile = typeof window !== "undefined" && window.innerWidth <= 900;
+      const navOffset = isMobile ? 116 : 80;
       const elementPosition = elem.getBoundingClientRect().top;
       const offsetPosition = elementPosition + window.pageYOffset - navOffset;
       window.scrollTo({
@@ -863,7 +871,7 @@ export function AboutView({ token }: AboutViewProps = {}) {
               ))}
             </div>
 
-            <div style={{ padding: "8px 10px 2px", fontSize: "11px", color: "#64748b", borderTop: "1px solid rgba(226, 232, 240, 0.6)" }}>
+            <div className="about-toc-hint" style={{ padding: "8px 10px 2px", fontSize: "11px", color: "#64748b", borderTop: "1px solid rgba(226, 232, 240, 0.6)" }}>
               💡 {t("about.wiki.slashHint")} <kbd style={{ padding: "1px 4px", borderRadius: 3, background: "rgba(148,163,184,0.18)", fontSize: "10px" }}>/</kbd> {t("about.wiki.slashHintAfter")}
             </div>
           </nav>

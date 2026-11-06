@@ -26,6 +26,7 @@ import {
   KeyRound,
   LayoutTemplate,
   ListChecks,
+  ListFilter,
   Lock,
   Maximize2,
   MessageSquare,
@@ -68,6 +69,7 @@ import { SakiEmptyState } from "../components/saki/SakiEmptyState.js";
 import { FilePreviewModal } from "../components/common/FilePreviewModal.js";
 import { AuditDiffLens } from "../components/audit/AuditDiffLens.js";
 import { firstAuditText } from "../components/audit/auditDiff.js";
+import { translateDomText, usePanelLanguage } from "../i18n/index.js";
 import { formatBytes, formatDate } from "../utils/path.js";
 
 const auditActionLabels: Record<string, string> = {
@@ -235,7 +237,8 @@ function renderAuditPayloadDetails(
   onPreview: (instanceId: string, path: string, action: string) => void,
   onCopy: (key: string, text: string) => void,
   copiedKey: string | null,
-  onOpenUserSakiChat?: ((username: string) => void) | undefined
+  onOpenUserSakiChat?: ((username: string) => void) | undefined,
+  tr: (value: string) => string = (value) => value
 ) {
   if (!log.payload) {
     return <div className="audit-payload-empty">无载荷数据</div>;
@@ -258,10 +261,10 @@ function renderAuditPayloadDetails(
               <Bot size={12} />
               Saki 对话交互
             </span>
-            {parsed.mode && <span className="meta-tag">模式: {parsed.mode}</span>}
-            {parsed.source && <span className="meta-tag">引擎: {parsed.source}</span>}
+            {parsed.mode && <span className="meta-tag">{tr("模式:")} {parsed.mode}</span>}
+            {parsed.source && <span className="meta-tag">{tr("引擎:")} {parsed.source}</span>}
             {parsed.actionCount !== undefined && (
-              <span className="meta-tag">工具调用: {parsed.actionCount} 项</span>
+              <span className="meta-tag">{tr("工具调用:")} {parsed.actionCount} {tr("项")}</span>
             )}
           </div>
 
@@ -543,6 +546,8 @@ export function AuditView({
   darkMode: boolean;
   currentUser?: CurrentUser | null;
 }) {
+  const { language } = usePanelLanguage();
+  const tr = (value: string) => translateDomText(value, language);
   const isSuperAdmin = currentUser?.isSuperAdmin ?? canDeleteLogs;
 
   const [activeTab, setActiveTab] = useState<"logs" | "saki_conversations">("logs");
@@ -614,7 +619,7 @@ export function AuditView({
 
   const [sakiConversations, setSakiConversations] = useState<SakiAuditConversationItem[]>([]);
   const [sakiConvPage, setSakiConvPage] = useState(1);
-  const [sakiConvLimit] = useState(20);
+  const [sakiConvLimit, setSakiConvLimit] = useState(12);
   const [sakiConvTotal, setSakiConvTotal] = useState(0);
   const [sakiConvTotalPages, setSakiConvTotalPages] = useState(1);
   const [sakiConvLoading, setSakiConvLoading] = useState(false);
@@ -629,6 +634,11 @@ export function AuditView({
   const [selectedSakiConv, setSelectedSakiConv] = useState<SakiAuditConversationItem | null>(null);
   const [sakiConvDrawerOpen, setSakiConvDrawerOpen] = useState(false);
   const [sakiModalFullscreen, setSakiModalFullscreen] = useState(false);
+  const [sakiMsgPage, setSakiMsgPage] = useState(1);
+  const [sakiMsgLimit, setSakiMsgLimit] = useState(20);
+  const [sakiMsgLoading, setSakiMsgLoading] = useState(false);
+  const [sakiTranscriptId, setSakiTranscriptId] = useState<string | null>(null);
+  const transcriptBodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -859,10 +869,10 @@ export function AuditView({
     setError("");
     try {
       await api.exportAuditLogs(token, { ...currentQueryParams, format });
-      setNotice(`已导出 ${format.toUpperCase()} 审计报表`);
+      setNotice(tr(`已导出 ${format.toUpperCase()} 审计报表`));
       setTimeout(() => setNotice(""), 3000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "导出失败");
+      setError(err instanceof Error ? err.message : tr("导出失败"));
     } finally {
       setExporting(null);
     }
@@ -871,7 +881,7 @@ export function AuditView({
   const executeDelete = async () => {
     if (!deleteConfirmModal) return;
     if (!deleteReason.trim()) {
-      setError("请填写删除原因。");
+      setError(tr("请填写删除原因。"));
       return;
     }
     if (deleteConfirmModal.type === "clear" && deleteChallengeInput !== "CLEAR") {
@@ -885,14 +895,14 @@ export function AuditView({
     try {
       if (deleteConfirmModal.type === "single" && deleteConfirmModal.targetId) {
         await api.deleteAuditLog(token, deleteConfirmModal.targetId, deleteReason.trim());
-        setNotice(`已删除 1 条审计日志`);
+        setNotice(tr("已删除 1 条审计日志"));
       } else if (deleteConfirmModal.type === "batch" && deleteConfirmModal.targetIds) {
         const res = await api.deleteAuditLogs(token, deleteConfirmModal.targetIds, deleteReason.trim());
-        setNotice(`已删除 ${res.deleted} 条审计日志`);
+        setNotice(tr(`已删除 ${res.deleted} 条审计日志`));
         setSelectedLogIds([]);
       } else if (deleteConfirmModal.type === "clear") {
         const res = await api.clearAuditLogs(token, deleteReason.trim());
-        setNotice(`已清空 ${res.deleted} 条历史日志`);
+        setNotice(tr(`已清空 ${res.deleted} 条历史日志`));
         setSelectedLogIds([]);
       }
       setDeleteConfirmModal(null);
@@ -904,7 +914,7 @@ export function AuditView({
         onLogout();
         return;
       }
-      setError(err instanceof Error ? err.message : "删除失败");
+      setError(err instanceof Error ? err.message : tr("删除失败"));
     } finally {
       setDeleting(false);
     }
@@ -918,27 +928,27 @@ export function AuditView({
     try {
       const updated = await api.updateAuditRetention(token, retention);
       setRetention(updated);
-      setNotice("保留策略已保存");
+      setNotice(tr("保留策略已保存"));
       setRetentionModalOpen(false);
       setTimeout(() => setNotice(""), 3000);
       await fetchLogs();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "保存失败");
+      setError(err instanceof Error ? err.message : tr("保存失败"));
     } finally {
       setSavingRetention(false);
     }
   };
 
   const handleImmediateCleanup = async () => {
-    if (!window.confirm("确定立即清理过期日志？")) return;
+    if (!window.confirm(tr("确定立即清理过期日志？"))) return;
     setCleaningExpired(true);
     setError("");
     try {
       const res = await api.cleanupExpiredAuditLogs(token);
-      setNotice(`清理完成，共移除 ${res.deleted} 条过期日志`);
+      setNotice(tr(`清理完成，共移除 ${res.deleted} 条过期日志`));
       await fetchLogs();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "清理失败");
+      setError(err instanceof Error ? err.message : tr("清理失败"));
     } finally {
       setCleaningExpired(false);
     }
@@ -1170,7 +1180,8 @@ export function AuditView({
               },
               copyToClipboard,
               copiedKey,
-              isSuperAdmin ? openUserSakiChatHistory : undefined
+              isSuperAdmin ? openUserSakiChatHistory : undefined,
+              tr
             )}
           </div>
         </div>
@@ -1188,7 +1199,7 @@ export function AuditView({
               }}
             >
               <Trash2 size={12} />
-              删除本条审计记录
+              {tr("删除本条审计记录")}
             </button>
           </div>
         )}
@@ -1196,9 +1207,57 @@ export function AuditView({
     </>
   );
 
-  const copyConversationTranscript = (conv: SakiAuditConversationItem, format: "markdown" | "json") => {
+  const openSakiConversation = (conv: SakiAuditConversationItem) => {
+    setSelectedSakiConv({ ...conv, messages: [] });
+    setSakiTranscriptId(conv.id);
+    setSakiMsgPage(1);
+    setSakiConvDrawerOpen(true);
+  };
+
+  useEffect(() => {
+    if (!sakiConvDrawerOpen || !sakiTranscriptId) return;
+    let cancelled = false;
+    setSakiMsgLoading(true);
+    setError("");
+    void api.auditGetSakiConversation(token, sakiTranscriptId, { page: sakiMsgPage, limit: sakiMsgLimit })
+      .then((item) => {
+        if (cancelled) return;
+        setSelectedSakiConv(item);
+        if (item.messagePage && item.messagePage !== sakiMsgPage) setSakiMsgPage(item.messagePage);
+        transcriptBodyRef.current?.scrollTo({ top: 0 });
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        if (err instanceof ApiError && err.status === 401) {
+          onLogout();
+          return;
+        }
+        setError(err instanceof Error ? err.message : "Saki 对话读取失败");
+      })
+      .finally(() => {
+        if (!cancelled) setSakiMsgLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sakiConvDrawerOpen, sakiTranscriptId, sakiMsgPage, sakiMsgLimit, token, onLogout]);
+
+  const copyConversationTranscript = async (conv: SakiAuditConversationItem, format: "markdown" | "json") => {
+    let full = conv;
+    if ((conv.messageTotalPages ?? 1) > 1 || conv.messages.length < conv.messageCount) {
+      try {
+        full = await api.auditGetSakiConversation(token, conv.id, { all: true });
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) {
+          onLogout();
+          return;
+        }
+        setError(err instanceof Error ? err.message : "Saki 对话读取失败");
+        return;
+      }
+    }
     if (format === "json") {
-      copyToClipboard(`saki-conv-${conv.id}`, JSON.stringify(conv, null, 2));
+      copyToClipboard(`saki-conv-${full.id}`, JSON.stringify(full, null, 2));
       return;
     }
     const lines: string[] = [
@@ -1212,8 +1271,8 @@ export function AuditView({
       ""
     ];
 
-    for (const msg of conv.messages) {
-      const roleLabel = msg.role === "user" ? `👤 ${conv.displayName}` : msg.role === "assistant" ? "✨ Saki" : "⚙️ System";
+    for (const msg of full.messages) {
+      const roleLabel = msg.role === "user" ? `👤 ${full.displayName}` : msg.role === "assistant" ? "✨ Saki" : "⚙️ System";
       lines.push(`### ${roleLabel}${msg.timestamp ? ` (${formatDate(msg.timestamp)})` : ""}`);
       if (msg.thinking) {
         lines.push(`> **深度思考**:\n> ${msg.thinking.replace(/\n/g, "\n> ")}\n`);
@@ -1225,7 +1284,7 @@ export function AuditView({
       lines.push("\n---");
     }
 
-    copyToClipboard(`saki-conv-md-${conv.id}`, lines.join("\n"));
+    copyToClipboard(`saki-conv-md-${full.id}`, lines.join("\n"));
   };
 
   return (
@@ -1243,7 +1302,7 @@ export function AuditView({
                 onClick={() => setActiveTab("logs")}
               >
                 <ClipboardList size={14} />
-                全局审计日志
+                {tr("全局审计日志")}
                 <span className="mode-count-badge">{summary.total}</span>
               </button>
               <button
@@ -1252,7 +1311,7 @@ export function AuditView({
                 onClick={() => setActiveTab("saki_conversations")}
               >
                 <Sparkles size={14} />
-                Saki 用户会话全景审计
+                {tr("Saki 用户会话全景审计")}
               </button>
             </div>
           </div>
@@ -1710,7 +1769,7 @@ export function AuditView({
               <div className="audit-table-card">
                 {controlledDeleteMode && canDeleteLogs && (
                   <div className="audit-controlled-bar">
-                    <span>受控删除模式：已选 <strong>{selectedLogIds.length}</strong> 条记录</span>
+                    <span>{tr(`受控删除模式：已选 ${selectedLogIds.length} 条记录`)}</span>
                     <div className="controlled-btns">
                       <button
                         type="button"
@@ -1724,7 +1783,7 @@ export function AuditView({
                         }}
                       >
                         <Trash2 size={12} />
-                        删除选中 ({selectedLogIds.length})
+                        {tr("删除选中")} ({selectedLogIds.length})
                       </button>
                       <button
                         type="button"
@@ -1897,43 +1956,52 @@ export function AuditView({
 
                 <div className="audit-footer-pagination">
                   <div className="pagination-meta">
-                    <span>每页</span>
+                    <span className="page-size-label" title={tr("每页")}>
+                      <ListFilter size={13} aria-hidden="true" />
+                    </span>
                     <select
+                      aria-label={tr("每页")}
+                      title={tr("每页")}
                       value={pageSize}
                       onChange={(e) => {
                         setPageSize(Number(e.target.value));
                         setPage(1);
                       }}
                     >
-                      <option value="15">15 条</option>
-                      <option value="25">25 条</option>
-                      <option value="50">50 条</option>
-                      <option value="100">100 条</option>
+                      <option value="15">15</option>
+                      <option value="25">25</option>
+                      <option value="50">50</option>
+                      <option value="100">100</option>
                     </select>
-                    <span className="total-span">共 {total} 条记录</span>
+                    <span className="total-span" title={tr(`共 ${total} 条记录`)}>
+                      <ClipboardList size={13} aria-hidden="true" />
+                      {total}
+                    </span>
                   </div>
 
                   <div className="pagination-controls">
                     <button
                       type="button"
                       className="page-nav-btn"
+                      aria-label={tr("上一页")}
+                      title={tr("上一页")}
                       disabled={page <= 1 || loading}
                       onClick={() => setPage((prev) => Math.max(1, prev - 1))}
                     >
-                      <ChevronLeft size={13} />
-                      上一页
+                      <ChevronLeft size={14} />
                     </button>
-                    <span className="page-indicator">
-                      第 {page} / {totalPages} 页
+                    <span className="page-indicator" title={tr(`第 ${page} / ${totalPages} 页`)}>
+                      {page}/{totalPages}
                     </span>
                     <button
                       type="button"
                       className="page-nav-btn"
+                      aria-label={tr("下一页")}
+                      title={tr("下一页")}
                       disabled={page >= totalPages || loading}
                       onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
                     >
-                      下一页
-                      <ChevronRight size={13} />
+                      <ChevronRight size={14} />
                     </button>
                   </div>
                 </div>
@@ -2152,10 +2220,7 @@ export function AuditView({
                   <div
                     key={conv.id}
                     className="saki-conversation-card"
-                    onClick={() => {
-                      setSelectedSakiConv(conv);
-                      setSakiConvDrawerOpen(true);
-                    }}
+                    onClick={() => openSakiConversation(conv)}
                   >
                     <div className="conv-card-header">
                       <div className="conv-user-info">
@@ -2175,7 +2240,7 @@ export function AuditView({
                       <div className="conv-badges">
                         <span className="conv-msg-badge">
                           <MessageSquare size={11} />
-                          {conv.messageCount} 条对话
+                          {tr(`${conv.messageCount} 条对话`)}
                         </span>
                       </div>
                     </div>
@@ -2216,36 +2281,55 @@ export function AuditView({
               </div>
             )}
 
-            {sakiConvTotalPages > 1 && (
-              <div className="audit-footer-pagination" style={{ marginTop: "16px" }}>
-                <div className="pagination-meta">
-                  <span>共 {sakiConvTotal} 个对话会话</span>
-                </div>
-                <div className="pagination-controls">
-                  <button
-                    type="button"
-                    className="page-nav-btn"
-                    disabled={sakiConvPage <= 1 || sakiConvLoading}
-                    onClick={() => setSakiConvPage((p) => Math.max(1, p - 1))}
-                  >
-                    <ChevronLeft size={13} />
-                    上一页
-                  </button>
-                  <span className="page-indicator">
-                    第 {sakiConvPage} / {sakiConvTotalPages} 页
-                  </span>
-                  <button
-                    type="button"
-                    className="page-nav-btn"
-                    disabled={sakiConvPage >= sakiConvTotalPages || sakiConvLoading}
-                    onClick={() => setSakiConvPage((p) => Math.min(sakiConvTotalPages, p + 1))}
-                  >
-                    下一页
-                    <ChevronRight size={13} />
-                  </button>
-                </div>
+            <div className="audit-footer-pagination saki-conv-pagination">
+              <div className="pagination-meta">
+                <span className="page-size-label" title={tr("每页")}>
+                  <ListFilter size={13} aria-hidden="true" />
+                </span>
+                <select
+                  aria-label={tr("每页")}
+                  title={tr("每页")}
+                  value={sakiConvLimit}
+                  onChange={(e) => {
+                    setSakiConvLimit(Number(e.target.value));
+                    setSakiConvPage(1);
+                  }}
+                >
+                  <option value="12">12</option>
+                  <option value="24">24</option>
+                  <option value="48">48</option>
+                </select>
+                <span className="total-span" title={tr(`共 ${sakiConvTotal} 个对话会话`)}>
+                  <MessagesSquare size={13} aria-hidden="true" />
+                  {sakiConvTotal}
+                </span>
               </div>
-            )}
+              <div className="pagination-controls">
+                <button
+                  type="button"
+                  className="page-nav-btn"
+                  aria-label={tr("上一页")}
+                  title={tr("上一页")}
+                  disabled={sakiConvPage <= 1 || sakiConvLoading}
+                  onClick={() => setSakiConvPage((p) => Math.max(1, p - 1))}
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                <span className="page-indicator" title={tr(`第 ${sakiConvPage} / ${sakiConvTotalPages} 页`)}>
+                  {sakiConvPage}/{sakiConvTotalPages}
+                </span>
+                <button
+                  type="button"
+                  className="page-nav-btn"
+                  aria-label={tr("下一页")}
+                  title={tr("下一页")}
+                  disabled={sakiConvPage >= sakiConvTotalPages || sakiConvLoading}
+                  onClick={() => setSakiConvPage((p) => Math.min(sakiConvTotalPages, p + 1))}
+                >
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            </div>
 
           </div>
         )}
@@ -2316,14 +2400,14 @@ export function AuditView({
                         checked={retention.allowManualDelete}
                         onChange={(e) => setRetention({ ...retention, allowManualDelete: e.target.checked })}
                       />
-                      允许超级管理员在界面手动勾选删除记录
+                      {tr("允许超级管理员在界面手动勾选删除记录")}
                     </label>
                   </div>
 
                   {retention.lastCleanupAt && (
                     <div className="cleanup-history-box">
-                      <span>上次自动/手动清理：{formatDate(retention.lastCleanupAt)}</span>
-                      <span>已清理数量：{retention.lastCleanupDeleted ?? 0} 条</span>
+                      <span>{tr("上次自动/手动清理：")}{formatDate(retention.lastCleanupAt)}</span>
+                      <span>{tr("已清理数量：")}{retention.lastCleanupDeleted ?? 0}</span>
                     </div>
                   )}
                 </div>
@@ -2362,7 +2446,7 @@ export function AuditView({
           <div className="audit-modal-overlay" onClick={() => setDeleteConfirmModal(null)}>
             <div className="audit-modal-content delete-modal" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
-                <h3>确认删除审计日志留证</h3>
+                <h3>{tr("确认删除审计日志留证")}</h3>
                 <button type="button" className="icon-button mini" onClick={() => setDeleteConfirmModal(null)}>
                   <X size={14} />
                 </button>
@@ -2372,19 +2456,19 @@ export function AuditView({
                 <div className="delete-warning-text">
                   <AlertTriangle size={16} />
                   <span>
-                    {deleteConfirmModal.type === "single" && "即将永久删除该条审计日志。此操作不可逆。"}
+                    {deleteConfirmModal.type === "single" && tr("即将永久删除该条审计日志。此操作不可逆。")}
                     {deleteConfirmModal.type === "batch" &&
-                      `即将永久删除选中的 ${deleteConfirmModal.targetIds?.length ?? 0} 条审计日志。此操作不可逆。`}
+                      tr(`即将永久删除选中的 ${deleteConfirmModal.targetIds?.length ?? 0} 条审计日志。此操作不可逆。`)}
                     {deleteConfirmModal.type === "clear" &&
-                      "即将清空全部历史审计日志（受保护的治理日志将自动保留）。"}
+                      tr("即将清空全部历史审计日志（受保护的治理日志将自动保留）。")}
                   </span>
                 </div>
 
                 <div className="form-group">
-                  <label>操作原因与批注 (必填，将作为治理留证记录)</label>
+                  <label>{tr("操作原因与批注 (必填，将作为治理留证记录)")}</label>
                   <input
                     type="text"
-                    placeholder="如：合规归档清理、测试数据移除..."
+                    placeholder={tr("如：合规归档清理、测试数据移除...")}
                     value={deleteReason}
                     onChange={(e) => setDeleteReason(e.target.value)}
                   />
@@ -2392,7 +2476,7 @@ export function AuditView({
 
                 {deleteConfirmModal.type === "clear" && (
                   <div className="form-group">
-                    <label>请输入 "CLEAR" 以确认清空全部</label>
+                    <label>{tr("请输入 \"CLEAR\" 以确认清空全部")}</label>
                     <input
                       type="text"
                       placeholder="CLEAR"
@@ -2437,7 +2521,7 @@ export function AuditView({
         )}
 
         {sakiConvDrawerOpen && selectedSakiConv && typeof document !== "undefined" && createPortal(
-          <div className="audit-saki-dialogue-modal-overlay" onClick={() => setSakiConvDrawerOpen(false)}>
+          <div className="audit-saki-dialogue-modal-overlay" onClick={() => { setSakiConvDrawerOpen(false); setSakiTranscriptId(null); }}>
             <div
               className={`audit-saki-dialogue-modal ${sakiModalFullscreen ? "is-fullscreen" : ""}`}
               onClick={(e) => e.stopPropagation()}
@@ -2454,11 +2538,11 @@ export function AuditView({
                   <div className="header-title-box">
                     <h3>{selectedSakiConv.title}</h3>
                     <div className="dialogue-meta-line">
-                      <span>用户: <strong>{selectedSakiConv.displayName}</strong> (@{selectedSakiConv.username})</span>
+                      <span>{tr("用户:")} <strong>{selectedSakiConv.displayName}</strong> (@{selectedSakiConv.username})</span>
                       <span className="meta-divider">•</span>
-                      <span>环境: {selectedSakiConv.instanceName || selectedSakiConv.contextKey || "全局"}</span>
+                      <span>{tr("环境:")} {selectedSakiConv.instanceName || selectedSakiConv.contextKey || tr("全局")}</span>
                       <span className="meta-divider">•</span>
-                      <span>最后更新: {formatDate(selectedSakiConv.updatedAt)}</span>
+                      <span>{tr("最后更新:")} {formatDate(selectedSakiConv.updatedAt)}</span>
                     </div>
                   </div>
                 </div>
@@ -2494,17 +2578,22 @@ export function AuditView({
                     type="button"
                     className="icon-button"
                     title="关闭"
-                    onClick={() => setSakiConvDrawerOpen(false)}
+                    onClick={() => {
+                      setSakiConvDrawerOpen(false);
+                      setSakiTranscriptId(null);
+                    }}
                   >
                     <X size={16} />
                   </button>
                 </div>
               </div>
 
-              <div className="dialogue-modal-body">
+              <div className="dialogue-modal-body" ref={transcriptBodyRef}>
                 <div className="saki-transcript-flow">
-                  {selectedSakiConv.messages.length === 0 ? (
-                    <div className="empty-flow">本会话暂无消息内容</div>
+                  {sakiMsgLoading && selectedSakiConv.messages.length === 0 ? (
+                    <div className="empty-flow">{tr("正在加载对话...")}</div>
+                  ) : selectedSakiConv.messages.length === 0 ? (
+                    <div className="empty-flow">{tr("本会话暂无消息内容")}</div>
                   ) : (
                     selectedSakiConv.messages.map((msg, idx) => {
                       const isUser = msg.role === "user";
@@ -2571,6 +2660,62 @@ export function AuditView({
                       );
                     })
                   )}
+                </div>
+              </div>
+
+              <div className="audit-footer-pagination dialogue-modal-pagination">
+                <div className="pagination-meta">
+                  <span className="page-size-label" title={tr("每页")}>
+                    <ListFilter size={13} aria-hidden="true" />
+                  </span>
+                  <select
+                    aria-label={tr("每页")}
+                    title={tr("每页")}
+                    value={sakiMsgLimit}
+                    disabled={sakiMsgLoading}
+                    onChange={(e) => {
+                      setSakiMsgLimit(Number(e.target.value));
+                      setSakiMsgPage(1);
+                    }}
+                  >
+                    <option value="20">20</option>
+                    <option value="40">40</option>
+                    <option value="80">80</option>
+                  </select>
+                  <span className="total-span" title={tr(`共 ${selectedSakiConv.messageCount} 条消息`)}>
+                    <MessageSquare size={13} aria-hidden="true" />
+                    {selectedSakiConv.messageCount}
+                  </span>
+                </div>
+                <div className="pagination-controls">
+                  <button
+                    type="button"
+                    className="page-nav-btn"
+                    aria-label={tr("上一页")}
+                    title={tr("上一页")}
+                    disabled={sakiMsgPage <= 1 || sakiMsgLoading}
+                    onClick={() => setSakiMsgPage((p) => Math.max(1, p - 1))}
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
+                  <span
+                    className="page-indicator"
+                    title={tr(`第 ${sakiMsgPage} / ${selectedSakiConv.messageTotalPages ?? 1} 页`)}
+                  >
+                    {sakiMsgPage}/{selectedSakiConv.messageTotalPages ?? 1}
+                  </span>
+                  <button
+                    type="button"
+                    className="page-nav-btn"
+                    aria-label={tr("下一页")}
+                    title={tr("下一页")}
+                    disabled={sakiMsgPage >= (selectedSakiConv.messageTotalPages ?? 1) || sakiMsgLoading}
+                    onClick={() =>
+                      setSakiMsgPage((p) => Math.min(selectedSakiConv.messageTotalPages ?? 1, p + 1))
+                    }
+                  >
+                    <ChevronRight size={14} />
+                  </button>
                 </div>
               </div>
             </div>

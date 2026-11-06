@@ -18,7 +18,7 @@ export const sakiToolPermissions: Record<string, PermissionCode> = {
 };
 
 // Until there is OS process isolation, text filtering cannot confine these tools.
-export const sakiHostExecutionTools = new Set(["runcommand", "runinshell", "sendinput", "sendcommand", "sendshellinput", "createshell", "closeshell", "diagnosecode", "getenvironmentinfo", "gitstatus", "gitdiff", "instanceaction", "runtask", "createscheduledtask", "updatescheduledtask", "runservercommand"]);
+export const sakiHostExecutionTools = new Set(["runcommand", "runinshell", "sendinput", "sendcommand", "sendshellinput", "createshell", "closeshell", "diagnosecode", "getenvironmentinfo", "gitstatus", "gitdiff", "instanceaction", "runtask", "createscheduledtask", "updatescheduledtask", "runservercommand", "listmcptools", "callmcptool"]);
 const readsBeforeMutation = new Set(["replaceinfile", "editlines", "applypatch", "batchedit", "uploadbase64", "archivepaths", "extractarchive"]);
 
 export function requiredSakiToolPermissions(name: string, args: Record<string, unknown> = {}): PermissionCode[] {
@@ -30,6 +30,7 @@ export function requiredSakiToolPermissions(name: string, args: Record<string, u
   if (name === "createshell") required.push("terminal.input");
   // Saving an image overwrites a file and captures its previous contents for rollback.
   if (name === "generateimage" && typeof args.path === "string" && args.path.trim()) required.push("file.write", "file.read");
+  if (name === "generatevideo" && typeof args.imagePath === "string" && args.imagePath.trim()) required.push("file.read");
   if (name === "applypatch" && typeof args.patch === "string" && parseWorkspacePatch(args.patch).some((file) => file.kind === "delete")) required.push("file.delete");
   return [...new Set(required)];
 }

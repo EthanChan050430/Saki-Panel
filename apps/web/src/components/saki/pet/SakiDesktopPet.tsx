@@ -21,7 +21,7 @@ import {
 import type { SakiPetController, SakiPetWidget } from "./sakiPetState.js";
 import { SakiPetWidgetCard } from "./SakiPetWidgets.js";
 import { getSakiAffectionQuote } from "../sakiChatHelpers.js";
-import { panelT } from "../../../i18n/translations.js";
+import { panelT, translateDomText } from "../../../i18n/index.js";
 import { sampleLuminanceAtPoint } from "../sakiLuminance.js";
 
 function detectUnderlyingBackdrop(stage: HTMLElement, root: HTMLElement | null): "light" | "dark" {
@@ -223,13 +223,16 @@ export function SakiDesktopPet({
               : "idle";
           pet.startBehavior(nextPose, nextPose === "roll" ? 2200 : 14000);
           pet.showBubble(
-            nextPose === "sit"
-              ? "🪑 Saki 乖乖坐好啦～"
-              : nextPose === "lie"
-              ? "🛌 Saki 想要躺平休息～"
-              : nextPose === "roll"
-              ? "🌀 Saki 开心地打了个滚！"
-              : "✨ Saki 站起来啦！"
+            translateDomText(
+              nextPose === "sit"
+                ? "🪑 Saki 乖乖坐好啦～"
+                : nextPose === "lie"
+                ? "🛌 Saki 想要躺平休息～"
+                : nextPose === "roll"
+                ? "🌀 Saki 开心地打了个滚！"
+                : "✨ Saki 站起来啦！",
+              language || "zh-CN"
+            )
           );
         }
       }
@@ -331,7 +334,7 @@ export function SakiDesktopPet({
             e.stopPropagation();
             onOpenChat();
           }}
-          title="点击展开完整聊天"
+          title={translateDomText("点击展开完整聊天", language || "zh-CN")}
           role="button"
           tabIndex={0}
         >

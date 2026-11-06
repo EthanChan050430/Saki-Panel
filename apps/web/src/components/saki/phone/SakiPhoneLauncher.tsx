@@ -217,7 +217,7 @@ export function SakiPhoneLauncher({
             onClick={() => onSelectGame("dessert_drop")}
           >
             <div className="saki-app-icon-squircle">
-              <img src="/assets/phone/app_dessert_drop.jpg" alt="接甜点" draggable={false} />
+              <img src="/assets/phone/app_dessert_drop.jpg" alt={t("saki.phone.app.dessertDrop")} draggable={false} />
               <span className="saki-app-badge-dot gold">经典</span>
             </div>
             <span className="saki-app-label">
@@ -232,7 +232,7 @@ export function SakiPhoneLauncher({
             onClick={() => onSelectGame("sweet_match")}
           >
             <div className="saki-app-icon-squircle">
-              <img src="/assets/phone/app_sweet_match.jpg" alt="消消乐" draggable={false} />
+              <img src="/assets/phone/app_sweet_match.jpg" alt={t("saki.phone.app.match3")} draggable={false} />
               <span className="saki-app-badge-dot red">NEW</span>
             </div>
             <span className="saki-app-label">
@@ -247,7 +247,7 @@ export function SakiPhoneLauncher({
             onClick={() => onSelectGame("plant_slayer")}
           >
             <div className="saki-app-icon-squircle">
-              <img src="/assets/phone/app_plant_slayer.webp" alt="植物特攻" draggable={false} />
+              <img src="/assets/phone/app_plant_slayer.webp" alt={t("saki.phone.app.plantSlayer")} draggable={false} />
               <span className="saki-app-badge-dot gold">HOT</span>
             </div>
             <span className="saki-app-label">
@@ -269,7 +269,7 @@ export function SakiPhoneLauncher({
               >
                 <div className="saki-app-icon-squircle">
                   <img src={icon} alt="" draggable={false} />
-                  <span className="saki-app-badge-dot gold">扩展</span>
+                  <span className="saki-app-badge-dot gold">{t("saki.phone.badge.extension")}</span>
                 </div>
                 <span className="saki-app-label">
                   {pg.manifest.game?.title || pg.manifest.displayName}
@@ -287,7 +287,7 @@ export function SakiPhoneLauncher({
             }}
           >
             <div className="saki-app-icon-squircle">
-              <img src="/assets/phone/app_music.svg" alt="音乐盒" draggable={false} />
+              <img src="/assets/phone/app_music.svg" alt={t("saki.phone.app.music")} draggable={false} />
               {isMusicPlaying ? (
                 <span className="saki-app-badge-dot blue flex items-center justify-center">
                   <Music size={8} />
@@ -306,7 +306,7 @@ export function SakiPhoneLauncher({
             onClick={() => setShowGallery(true)}
           >
             <div className="saki-app-icon-squircle">
-              <img src="/assets/phone/app_gallery.svg" alt="相册" draggable={false} />
+              <img src="/assets/phone/app_gallery.svg" alt={t("saki.phone.app.photos")} draggable={false} />
             </div>
             <span className="saki-app-label">
               {t("saki.phone.app.photos")}
@@ -462,11 +462,11 @@ export function SakiPhoneLauncher({
         <button
           className="saki-dock-app-btn"
           type="button"
-          title="接甜点"
+          title={t("saki.phone.app.dessertDrop")}
           onClick={() => onSelectGame("dessert_drop")}
         >
           <div className="saki-dock-icon">
-            <img src="/assets/phone/app_dessert_drop.jpg" alt="接甜点" draggable={false} />
+            <img src="/assets/phone/app_dessert_drop.jpg" alt={t("saki.phone.app.dessertDrop")} draggable={false} />
           </div>
         </button>
 
@@ -474,11 +474,11 @@ export function SakiPhoneLauncher({
         <button
           className="saki-dock-app-btn"
           type="button"
-          title="消消乐"
+          title={t("saki.phone.app.match3")}
           onClick={() => onSelectGame("sweet_match")}
         >
           <div className="saki-dock-icon">
-            <img src="/assets/phone/app_sweet_match.jpg" alt="消消乐" draggable={false} />
+            <img src="/assets/phone/app_sweet_match.jpg" alt={t("saki.phone.app.match3")} draggable={false} />
           </div>
         </button>
 

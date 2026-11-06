@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import { closeSshTunnels } from "./ssh-nodes.js";
+import { stopAllMcpServers } from "./mcp-host.js";
 import { clientErrorMessage } from "./client-error.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -31,6 +32,7 @@ import { registerDatabaseRoutes } from "./routes/databases.js";
 import { registerWatchRoutes } from "./watch/index.js";
 import { registerJoinScriptRoutes } from "./routes/join-scripts.js";
 import { registerUserKeyRoutes } from "./routes/user-keys.js";
+import { registerAnnouncementRoutes } from "./routes/announcements.js";
 import { registerPointsRoutes } from "./routes/points.js";
 import { registerPluginRoutes } from "./routes/plugins.js";
 import { registerOperationPackRoutes } from "./routes/operations-packs.js";
@@ -54,6 +56,7 @@ export async function createPanelServer() {
   });
 
   app.addHook("onClose", closeSshTunnels);
+  app.addHook("onClose", async () => { await stopAllMcpServers(); });
   app.addHook("onRequest", (request, reply, done) => {
     applyPanelCorsHeaders(request, reply);
     if (request.method === "OPTIONS") {
@@ -109,6 +112,7 @@ export async function createPanelServer() {
   await registerDatabaseRoutes(app);
   await registerJoinScriptRoutes(app);
   await registerUserKeyRoutes(app);
+  await registerAnnouncementRoutes(app);
   await registerPointsRoutes(app);
   await registerPluginRoutes(app);
   await registerOperationPackRoutes(app);

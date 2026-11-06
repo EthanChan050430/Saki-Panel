@@ -1,6 +1,6 @@
 {
   "name": "saki-panel",
-  "version": "5.1.0",
+  "version": "6.0.0",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -11,6 +11,7 @@
     "build": "npm run build -w @webops/shared && npm run build -w @webops/panel && npm run build -w @webops/daemon && npm run build -w @webops/web",
     "check": "npm run build -w @webops/shared && npm run typecheck -w @webops/panel && npm run typecheck -w @webops/daemon && npm run typecheck -w @webops/web",
     "test:watch": "node --import tsx --test apps/panel/src/routes/saki/watch-approval.test.ts apps/panel/src/routes/saki/watch-prompt.test.ts",
+    "test:coding": "node --import tsx --test apps/panel/src/routes/saki/coding-harness.test.ts",
     "test:history": "node --import tsx --test tests/saki-history.test.ts",
     "test:export": "node --import tsx --test tests/saki-export.test.ts",
     "db:generate": "prisma generate",

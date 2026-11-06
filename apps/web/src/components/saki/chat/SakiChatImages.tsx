@@ -2,11 +2,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ImageOff, Loader2 } from "lucide-react";
 import { isSakiImageAttachment, type SakiAgentAction, type SakiInputAttachment } from "@webops/shared";
 import { api } from "../../../api.js";
-import type { LocalSakiMessage } from "../../../types/app.js";
+import { SakiChatVideo } from "./SakiChatVideo.js";
 
 const generatedImageSrcCache = new Map<string, string>();
+type SakiMediaMessage = { attachments?: SakiInputAttachment[] | undefined; actions?: SakiAgentAction[] | undefined };
 
-export function collectSakiMessageImages(message: LocalSakiMessage): SakiInputAttachment[] {
+export function collectSakiMessageImages(message: SakiMediaMessage): SakiInputAttachment[] {
   const items: SakiInputAttachment[] = [];
   const seen = new Set<string>();
   const push = (attachment: SakiInputAttachment | undefined) => {
@@ -161,13 +162,14 @@ export function SakiChatGeneratedImages({
   compact = false,
   onPreview
 }: {
-  message: LocalSakiMessage;
+  message: SakiMediaMessage;
   token: string;
   compact?: boolean;
   onPreview?: (attachment: SakiInputAttachment) => void;
 }) {
   const images = collectSakiMessageImages(message);
-  if (!images.length || !token) return null;
+  const videos = mergeSakiMessageAttachments(message.attachments, undefined, message.actions).filter((item) => item.generatedVideoId);
+  if ((!images.length && !videos.length) || !token) return null;
   return (
     <div className={`saki-chat-generated-images ${compact ? "is-compact" : ""}`}>
       {images.map((attachment, index) => (
@@ -179,6 +181,7 @@ export function SakiChatGeneratedImages({
           {...(onPreview ? { onPreview } : {})}
         />
       ))}
+      {videos.map((attachment) => <SakiChatVideo key={attachment.generatedVideoId} attachment={attachment} token={token} compact={compact} />)}
     </div>
   );
 }

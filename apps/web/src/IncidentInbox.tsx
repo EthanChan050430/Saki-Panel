@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, Bell, BellOff, Check, CheckCheck, ChevronDown, Clock, Loader2, RotateCcw, Sparkles, X } from "lucide-react";
+import { AlertTriangle, Bell, BellOff, Check, CheckCheck, ChevronDown, Clock, Loader2, Plus, RotateCcw, Sparkles, X } from "lucide-react";
 import type { IncidentStatus, IncidentTrigger, ManagedIncident, ManagedSilenceRule } from "@webops/shared";
 import { api, ApiError } from "./api.js";
+import { AnnouncementPanel, type AnnouncementFeed } from "./AnnouncementPanel.js";
+import { translateDomText, usePanelLanguage } from "./i18n/index.js";
 
 // 与后端 incidents.ts 的 activeIncidentStatuses 保持同一口径：
 // openCount 与铃铛角标统计的都是"待处理"状态集合。
@@ -250,7 +252,7 @@ function stopIncidentFeed() {
   store.sseAbort = null;
 }
 
-export function useIncidents(token: string, onAuthError: () => void) {
+export function useIncidents(token: string, onAuthError: () => void, enabled = true) {
   const [state, setState] = useState(store.state);
 
   // onAuthError 可能每次渲染都是新引用，只同步最新值，不参与生命周期。
@@ -259,6 +261,7 @@ export function useIncidents(token: string, onAuthError: () => void) {
   }, [onAuthError]);
 
   useEffect(() => {
+    if (!enabled) return;
     if (store.token && store.token !== token) {
       // 账号切换：丢弃旧会话的连接与数据。
       stopIncidentFeed();
@@ -278,7 +281,7 @@ export function useIncidents(token: string, onAuthError: () => void) {
         stopIncidentFeed();
       }
     };
-  }, [token]);
+  }, [token, enabled]);
 
   const active = useMemo(
     () => state.incidents.filter((incident) => activeStatuses.has(incident.status)),
@@ -351,13 +354,29 @@ function useDiagnoseConfirm() {
 export function IncidentBell({
   token,
   onLogout,
-  onOpenIncident
+  onOpenIncident,
+  canUseSaki = true,
+  isAdmin = false,
+  announcements
 }: {
   token: string;
   onLogout: () => void;
   onOpenIncident: (incident: ManagedIncident) => void;
+  canUseSaki?: boolean;
+  isAdmin?: boolean;
+  announcements?: AnnouncementFeed;
 }) {
-  const { active, recent, openCount, lastError, lastUpdatedAt, refresh } = useIncidents(token, onLogout);
+  const { t, language } = usePanelLanguage();
+  const tr = (value: string) => translateDomText(value, language);
+  const incidentState = useIncidents(token, onLogout, canUseSaki);
+  const { active, recent, lastError, lastUpdatedAt, refresh } = incidentState;
+  const incidentOpenCount = canUseSaki ? incidentState.openCount : 0;
+  const unreadAnnouncements = announcements?.unreadCount ?? 0;
+  const openCount = incidentOpenCount + unreadAnnouncements;
+  const [tab, setTab] = useState<"incidents" | "announcements">(canUseSaki ? "incidents" : "announcements");
+  const [announcementManageRequested, setAnnouncementManageRequested] = useState(false);
+  const [announcementManaging, setAnnouncementManaging] = useState(false);
+  const [announcementManagementAction, setAnnouncementManagementAction] = useState<"new" | "back" | undefined>();
   const [open, setOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -463,12 +482,12 @@ export function IncidentBell({
         const result = await api.approveIncident(token, id);
         // 批量批准逐项执行：单项失败不再 500，需要把部分失败提示出来。
         if (!result.ok && result.results?.some((item) => !item.ok)) {
-          setActionError("部分变更应用失败，其余已应用。");
+          setActionError(tr("部分变更应用失败，其余已应用。"));
         }
       }
       if (action === "ignore") {
         const ignored = await api.ignoreIncident(token, id, { minutes: 60 });
-        setNotice(ignored.ignoredUntil ? `已忽略至 ${formatClock(ignored.ignoredUntil)}` : "已忽略 1 小时");
+        setNotice(tr(ignored.ignoredUntil ? `已忽略至 ${formatClock(ignored.ignoredUntil)}` : "已忽略 1 小时"));
       }
       if (action === "rollback") await api.rollbackIncident(token, id);
       await refresh();
@@ -502,9 +521,9 @@ export function IncidentBell({
     await refresh();
     setIgnoreAllBusy(false);
     if (failed > 0) {
-      setActionError(`${succeeded} 条已忽略，${failed} 条失败，请稍后重试。`);
+      setActionError(tr(`${succeeded} 条已忽略，${failed} 条失败，请稍后重试。`));
     } else {
-      setNotice(`已忽略 ${succeeded} 条事件（1 小时）`);
+      setNotice(tr(`已忽略 ${succeeded} 条事件（1 小时）`));
     }
   }
 
@@ -515,7 +534,7 @@ export function IncidentBell({
     setNotice(null);
     try {
       await api.silenceIncident(token, id, {});
-      setNotice("已永久静默该类告警（可在下方规则列表撤销）");
+      setNotice(tr("已永久静默该类告警（可在下方规则列表撤销）"));
       await refresh();
       if (silenceRules !== null) await loadSilenceRules();
     } catch (error) {
@@ -705,10 +724,10 @@ export function IncidentBell({
         >
           <ChevronDown size={12} className="incident-group-chevron" />
           <span className="incident-group-title">{triggerLabel(firstItem.trigger)}</span>
-          <span className="incident-group-count">{group.items.length} 条</span>
+          <span className="incident-group-count">{tr(`${group.items.length} 条`)}</span>
           <span className="incident-group-instances">
             {shownNames.join("、")}
-            {names.length > 3 ? ` 等 ${names.length} 个实例` : ""}
+            {names.length > 3 ? ` ${tr(`等 ${names.length} 个实例`)}` : ""}
           </span>
         </button>
         {expanded ? <ul className="incident-group-items">{group.items.map(renderItem)}</ul> : null}
@@ -724,31 +743,37 @@ export function IncidentBell({
             ref={popoverRef}
             className="incident-popover"
             role="dialog"
-            aria-label="Saki 值班事件"
+            aria-label={tab === "incidents" ? "Saki 值班事件" : "公告"}
             style={popoverPos ? { top: popoverPos.top, right: popoverPos.right } : undefined}
           >
           <div className="incident-popover-header">
             <div className="incident-popover-title-wrap">
-              <strong>Saki 值班</strong>
-              <span className={`incident-popover-pill ${openCount === 0 ? "is-clean" : ""}`}>
-                {openCount > 0 ? `${openCount} 条未完成` : "运行正常"}
-              </span>
+              <strong>{tab === "incidents" ? "Saki 值班" : "公告"}</strong>
+              {tab === "incidents" ? (
+                <span className={`incident-popover-pill ${incidentOpenCount === 0 ? "is-clean" : ""}`}>
+                  {incidentOpenCount > 0 ? tr(`${incidentOpenCount} 条未完成`) : tr("运行正常")}
+                </span>
+              ) : unreadAnnouncements > 0 ? (
+                <span className="incident-popover-pill">{tr(`${unreadAnnouncements} 条未读`)}</span>
+              ) : null}
             </div>
             <div className="incident-popover-header-actions">
+              {tab === "incidents" ? (
               <button
                 type="button"
                 className="incident-ignore-all-btn"
                 disabled={ignoreAllBusy || visibleActive.length === 0}
                 title={
                   visibleActive.length === 0
-                    ? "当前分类下没有待处理事件"
-                    : `忽略当前分类下全部 ${visibleActive.length} 条待处理事件（1 小时）`
+                    ? tr("当前分类下没有待处理事件")
+                    : tr(`忽略当前分类下全部 ${visibleActive.length} 条待处理事件（1 小时）`)
                 }
                 onClick={() => void ignoreAllVisible()}
               >
                 {ignoreAllBusy ? <Loader2 size={12} className="status-spinner" /> : <CheckCheck size={12} />}
-                全部忽略
+                {tr("全部忽略")}
               </button>
+              ) : null}
               <button
                 type="button"
                 className="incident-popover-close"
@@ -760,6 +785,78 @@ export function IncidentBell({
               </button>
             </div>
           </div>
+          {announcements ? (
+            <div className="announcement-tabs-row">
+              {canUseSaki ? (
+                <div className="announcement-tabs" role="tablist">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === "incidents"}
+                    className={tab === "incidents" ? "is-active" : ""}
+                    onClick={() => setTab("incidents")}
+                  >
+                    {t("announcement.tabDuty")}
+                    {incidentOpenCount > 0 ? <span className="announcement-tab-badge">{incidentOpenCount}</span> : null}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === "announcements"}
+                    className={tab === "announcements" ? "is-active" : ""}
+                    onClick={() => setTab("announcements")}
+                  >
+                    {t("announcement.tabAnnouncements")}
+                    {unreadAnnouncements > 0 ? <span className="announcement-tab-badge">{unreadAnnouncements}</span> : null}
+                  </button>
+                </div>
+              ) : null}
+              {isAdmin && tab === "announcements" ? (
+                announcementManaging ? (
+                  <>
+                    <button
+                      type="button"
+                      className="announcement-btn announcement-manage-btn"
+                      onClick={() => setAnnouncementManagementAction("back")}
+                    >
+                      {t("announcement.back")}
+                    </button>
+                    <button
+                      type="button"
+                      className="announcement-btn is-primary announcement-manage-btn"
+                      onClick={() => setAnnouncementManagementAction("new")}
+                    >
+                      <Plus size={12} />
+                      {t("announcement.new")}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="announcement-btn is-primary announcement-manage-btn"
+                    onClick={() => setAnnouncementManageRequested(true)}
+                  >
+                    {t("announcement.manage")}
+                  </button>
+                )
+              ) : null}
+            </div>
+          ) : null}
+          {tab === "announcements" && announcements ? (
+            <AnnouncementPanel
+              token={token}
+              isAdmin={isAdmin}
+              feed={announcements}
+              onAuthError={onLogout}
+              manageRequested={announcementManageRequested}
+              onManagingChange={setAnnouncementManaging}
+              onManageRequestHandled={() => setAnnouncementManageRequested(false)}
+              {...(announcementManagementAction ? { managementAction: announcementManagementAction } : {})}
+              onManagementActionHandled={() => setAnnouncementManagementAction(undefined)}
+            />
+          ) : null}
+          {tab === "incidents" ? (
+          <>
           {actionError ? (
             <div className="incident-popover-error" role="alert">
               <AlertTriangle size={13} />
@@ -891,6 +988,8 @@ export function IncidentBell({
                 ? `上次检查 ${formatClockWithSeconds(lastUpdatedAt)}`
                 : "正在连接…"}
           </div>
+          </>
+          ) : null}
           </div>
         </>,
         document.body
@@ -904,7 +1003,18 @@ export function IncidentBell({
         type="button"
         aria-expanded={open}
         aria-haspopup="dialog"
-        title={openCount ? `${openCount} 条值班事件` : "值班事件"}
+        title={
+          openCount
+            ? [
+                incidentOpenCount ? tr(`${incidentOpenCount} 条值班事件`) : "",
+                unreadAnnouncements ? tr(`${unreadAnnouncements} 条未读公告`) : ""
+              ]
+                .filter(Boolean)
+                .join("，")
+            : canUseSaki
+              ? "值班事件与公告"
+              : "公告"
+        }
         onClick={() => {
           setOpen((value) => !value);
           setActionError(null);
@@ -932,6 +1042,7 @@ export function IncidentBanner({
   onAskSaki?: (() => void) | undefined;
   variant?: "top" | "panel";
 }) {
+  const { language } = usePanelLanguage();
   const { active, recent, refresh } = useIncidents(token, onLogout);
   // resolved/failed 且留有 checkpoint 的事件保留回滚入口，不因完结立刻消失。
   const incident =
@@ -956,7 +1067,7 @@ export function IncidentBanner({
       if (action === "approve") {
         const result = await api.approveIncident(token, incident.id);
         if (!result.ok && result.results?.some((item) => !item.ok)) {
-          setActionError("部分变更应用失败，其余已应用。");
+          setActionError(translateDomText("部分变更应用失败，其余已应用。", language));
         }
       }
       if (action === "ignore") await api.ignoreIncident(token, incident.id, { minutes: 60 });

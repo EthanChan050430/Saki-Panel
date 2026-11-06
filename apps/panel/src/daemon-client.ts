@@ -1022,7 +1022,8 @@ export async function getDaemonFileDownloadStream(
   node: DaemonNodeCredentials,
   instanceId: string,
   workingDirectory: string,
-  relativePath: string
+  relativePath: string,
+  timeoutMs = 0
 ): Promise<http.IncomingMessage> {
   const downloadPath = pathWithQuery(`/api/instances/${instanceId}/files/download`, {
     workingDirectory,
@@ -1030,7 +1031,7 @@ export async function getDaemonFileDownloadStream(
     raw: "1"
   });
   const headers = { "x-raw-download": "1" };
-  return requestDaemonRawBinaryWithFallback(node, downloadPath, { headers }, 0);
+  return requestDaemonRawBinaryWithFallback(node, downloadPath, { headers }, timeoutMs);
 }
 
 export async function getDaemonArchiveDownloadStream(

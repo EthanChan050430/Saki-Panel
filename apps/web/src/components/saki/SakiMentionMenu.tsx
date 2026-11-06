@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Image as ImageIcon, FileText, Sparkles, FileCode, Folder } from "lucide-react";
+import { Image as ImageIcon, FileText, Sparkles, FileCode, Folder, Puzzle } from "lucide-react";
 import type { SakiInputAttachment, SakiMentionCandidate } from "@webops/shared";
 import { sakiAttachmentMentionToken, isSakiImageAttachment } from "@webops/shared";
 
@@ -131,11 +131,56 @@ export function SakiMentionMenu({
             const isSelected = index === activeIndex;
             const isSkill = "kind" in item && item.kind === "skill";
             const isWorkspaceFile = "kind" in item && item.kind === "file";
-            const key = isSkill
+            const isPlugin = "kind" in item && item.kind === "plugin";
+            const key = isPlugin
+              ? `plugin-${item.id}`
+              : isSkill
               ? `skill-${item.id}`
               : isWorkspaceFile
               ? `file-${item.id}`
               : ("id" in item && item.id ? item.id : `${item.name}-${index}`);
+
+            if (isPlugin) {
+              const pluginCandidate = item as SakiMentionCandidate;
+              const summary = pluginCandidate.plugin;
+              const capabilityText = summary
+                ? [
+                    summary.skillCount > 0 ? `${summary.skillCount} Skills` : "",
+                    summary.mcpCount > 0 ? `${summary.mcpCount} MCP` : ""
+                  ].filter(Boolean).join(" · ")
+                : "";
+              return (
+                <button
+                  key={key}
+                  ref={isSelected ? activeItemRef : undefined}
+                  className={`saki-mention-item is-plugin ${isSelected ? "active" : ""}`}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  onMouseEnter={() => onHover(index)}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    onSelect(pluginCandidate);
+                  }}
+                >
+                  <span className="saki-mention-icon is-skill">
+                    <Puzzle size={14} />
+                  </span>
+                  <span className="saki-mention-copy">
+                    <span className="saki-mention-name-row">
+                      <strong>{pluginCandidate.name}</strong>
+                      <span className="saki-mention-badge">插件</span>
+                    </span>
+                    <em>{pluginCandidate.token}</em>
+                    {pluginCandidate.description || capabilityText ? (
+                      <span className="saki-mention-desc" title={pluginCandidate.description ?? undefined}>
+                        {[capabilityText, pluginCandidate.description].filter(Boolean).join(" · ")}
+                      </span>
+                    ) : null}
+                  </span>
+                </button>
+              );
+            }
 
             if (isSkill) {
               const skillCandidate = item as SakiMentionCandidate;

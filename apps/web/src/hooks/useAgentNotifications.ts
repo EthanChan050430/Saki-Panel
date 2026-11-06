@@ -116,7 +116,7 @@ export function useAgentTaskNotifications(userId: string, tasks: readonly SakiAc
         const preferences = latestPreferences.current;
         if (!live.current || !preferences.enabled || !preferences[kind] || !claimAlert(userId, key)) return;
         const title = translateDomText(agentNotificationTitles[kind], language);
-        const message = task.message.trim().slice(0, 100) || "打开任务查看详情";
+        const message = task.message.trim().slice(0, 100) || translateDomText("打开任务查看详情", language);
         const open = () => { window.focus(); openRef.current(); };
         const id = pushNotification(kind === "completed" ? "success" : "info", message, {
           title, durationMs: kind === "completed" ? 8000 : 15000,

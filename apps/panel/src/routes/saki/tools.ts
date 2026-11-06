@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Prisma } from "@prisma/client";
 import { classifyCommandRisk, findDangerousCommandReason, isPosixCommandPlatform } from "../../security.js";
+import { narrowCodingAdvertisedNames } from "./coding-harness.js";
 import { prefersStableAgentTools, sakiModelProfile } from "./model-profile.js";
 import { requiredSakiToolPermissions, sakiHostExecutionTools } from "./resource-policy.js";
 import { parseWorkspacePatch } from "./patch.js";
@@ -50,7 +51,7 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "readServerFile", description: "Read file contents from a remote server with line numbers.", parameters: objectSchema({ nodeId: { type: "string", description: "Node or server id or name." }, path: { type: "string", description: "Remote file path." }, startLine: { type: "integer", minimum: 1 }, lineCount: { type: "integer", minimum: 1, maximum: 2000 } }, ["path"]) },
   { name: "instanceLogs", description: "Read recent instance logs.", parameters: objectSchema({ instanceId: instanceLookupSchema, lines: { type: "integer", minimum: 1, maximum: 500 } }) },
   { name: "listFiles", description: "List a directory. Use limit on large folders.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, limit: { type: "integer", minimum: 1, maximum: 1000 } }) },
-  { name: "readFile", description: "Read current file contents with line numbers. Defaults to startLine=1 and 200 lines; request up to 2000 lines. Large outputs include a continuation line. Reuse a recent observation for an unchanged file; set refresh=true when new contents are explicitly needed. Use searchFiles or readSymbol to locate code when useful.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, lineCount: { type: "integer", minimum: 1, maximum: 2000 }, refresh: { type: "boolean", description: "Bypass a recent cached read after external changes or when explicitly asked to recheck." } }, ["path"]), aliases: ["view_file", "viewFile", "read_file", "cat"] },
+  { name: "readFile", description: "Read a workspace file. PNG/JPEG/WebP/GIF files are loaded as actual images for visual inspection, without text decoding or the text editor size limit. For text, returns line numbers: defaults to startLine=1 and 200 lines; up to 2000 lines. Reuse unchanged observations; set refresh=true to recheck. Use searchFiles or readSymbol to locate code.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, lineCount: { type: "integer", minimum: 1, maximum: 2000 }, refresh: { type: "boolean", description: "Bypass a recent cached read after external changes or when explicitly asked to recheck." } }, ["path"]), aliases: ["view_file", "viewFile", "read_file", "cat", "viewImage", "readImage", "view_image", "read_image"] },
   { name: "writeFile", description: "Write complete UTF-8 contents without a line-count limit. Creates a missing file or updates an existing file after reading and checkpointing it (requires file.read + file.write). Repeating identical content succeeds without writing. Set overwrite=false to require a new file, or append=true for another chunk. Prefer applyPatch/replaceInFile for targeted edits.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, content: { type: "string" }, overwrite: { type: "boolean" }, append: { type: "boolean" } }, ["path", "content"]), aliases: ["write_file", "write_to_file", "saveFile", "createFile"] },
   { name: "replaceInFile", description: "Replace one unique exact string. Use editLines when you have line numbers; applyPatch for larger diffs.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, oldText: { type: "string" }, newText: { type: "string" } }, ["path", "oldText", "newText"]), aliases: ["str_replace", "replace_file_content", "replace_in_file", "strReplace", "edit_file"] },
   { name: "editLines", description: "Replace a 1-based line range. Use this when you already have line numbers from readFile, outlineFile, or searchFiles. Checkpointed.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, endLine: { type: "integer", minimum: 0 }, replacement: { type: "string" } }, ["path", "startLine", "endLine", "replacement"]), aliases: ["editFileLines", "replaceLines", "edit_lines", "patchLines"] },
@@ -88,13 +89,15 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "listSkills", description: "Prefer searchSkills. Lists skill ids only.", parameters: objectSchema({}) },
   { name: "searchSkills", description: "Search skills by task keywords. Call early for domain procedures.", parameters: objectSchema({ query: { type: "string" } }, ["query"]), aliases: ["findSkills", "matchSkills"] },
   { name: "readSkill", description: "Load full skill instructions by id after searchSkills.", parameters: objectSchema({ skillId: { type: "string" } }, ["skillId"]), aliases: ["loadSkill", "useSkill", "getSkill", "applySkill"] },
+  { name: "listMcpTools", description: "List tools exposed by running MCP servers from enabled plugins. Optional serverId filter.", parameters: objectSchema({ serverId: { type: "string" } }), aliases: ["mcpTools", "listMcp"] },
+  { name: "callMcpTool", description: "Call one MCP tool by serverId and toolName with an arguments object. Call listMcpTools first to get exact names and input schemas.", parameters: objectSchema({ serverId: { type: "string" }, toolName: { type: "string" }, arguments: { type: "object", additionalProperties: true } }, ["serverId", "toolName"]), aliases: ["mcpCall", "useMcpTool"] },
   { name: "readMemory", description: "Read SAKI.md project memory.", parameters: objectSchema({ instanceId: instanceLookupSchema }), aliases: ["getMemory", "loadMemory"] },
   { name: "writeMemory", description: "Overwrite SAKI.md project memory with full file content.", parameters: objectSchema({ instanceId: instanceLookupSchema, content: { type: "string" } }, ["content"]), aliases: ["updateMemory", "saveMemory"] },
   { name: "reportProgress", description: "Short user-visible status. Not hidden chain-of-thought.", parameters: objectSchema({ text: { type: "string" } }, ["text"]), aliases: ["progress", "statusUpdate"] },
   { name: "diagnoseCode", description: "Fast syntax/typecheck. Call after edits before respond. Never uses npm test.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, command: { type: "string" } }), aliases: ["diagnostics", "checkTypes", "typecheck", "lintCode", "diagnose_code", "lint"] },
   { name: "manageTodos", description: "Show or update the task checklist. For multi-step work call this before acting, after a step changes, and before finishing. Send the complete Markdown checklist using - [ ] for pending, - [-] for the current step, and - [x] for completed. Mark at most one step in progress.", parameters: objectSchema({ todos: { type: "string" } }, ["todos"]), aliases: ["setTodos", "todos", "updateTodos", "manage_todos", "todoTool", "taskList"] },
   { name: "askUser", description: "Ask the user when essential information is missing or conflicting: unclear goal or success criteria, ambiguous target instance/file, missing user-only requirements, or materially different outcomes without an authorized default. Inspect available context first; do not guess the missing decision or perform dependent changes. Ask one focused question in the user's language, with 2-4 distinct choices when useful (omit choices for free text). This opens a question card and pauses until an answer or skip. Use this tool instead of ending with a plain-text clarification question. Routine reversible implementation choices and facts you can inspect do not need a question.", parameters: objectSchema({ question: { type: "string", maxLength: 500 }, options: { type: "array", maxItems: 4, items: { type: "string", maxLength: 120 } } }, ["question"]), aliases: ["requestUserInput", "askQuestion", "ask_user", "request_user_input"] },
-  { name: "spawnTask", description: "Research-only sub-agent. Inspect, do not edit. Use only for broad multi-file exploration.", parameters: objectSchema({ instanceId: instanceLookupSchema, task: { type: "string" }, maxSteps: { type: "integer", minimum: 1, maximum: 10 } }, ["task"]), aliases: ["subAgent", "delegate", "runSubTask"] },
+  { name: "spawnTask", description: "Spawn one explore, implement, or review sub-agent. explore and review are read-only. implement may edit only files named in the parent plan. Do not use this for a single-file edit.", parameters: objectSchema({ instanceId: instanceLookupSchema, task: { type: "string" }, role: { type: "string", enum: ["explore", "implement", "review"] }, maxSteps: { type: "integer", minimum: 1, maximum: 10 } }, ["task"]), aliases: ["subAgent", "delegate", "runSubTask"] },
   { name: "batchEdit", description: "Apply several editLines/replaceInFile operations in one step. Use when changing more than one region or file. Checkpointed.", parameters: objectSchema({ instanceId: instanceLookupSchema, edits: { type: "array", items: { type: "object", properties: { path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, endLine: { type: "integer", minimum: 0 }, replacement: { type: "string" }, oldText: { type: "string" }, newText: { type: "string" } }, required: ["path"] } } }, ["edits"]), aliases: ["batch_edit", "multiFileEdit", "batch_patch"] },
   { name: "applyPatch", description: "Apply a unified diff or multi-file block patch with context-only @@ hunks. Use for targeted or multi-file edits. Re-read current contents after a conflict before retrying.", parameters: objectSchema({ instanceId: instanceLookupSchema, patch: { type: "string", description: "Unified diff (---/+++ / @@) or *** Begin Patch format." } }, ["patch"]), aliases: ["apply_patch", "applyDiff", "applyPatches", "patchFiles", "patch"] },
   { name: "statFile", description: "Metadata only: exists, size, line count, mtime. Use this instead of reading a file just to see how large it is.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema }, ["path"]), aliases: ["fileInfo", "stat_file", "file_info", "inspectPath", "stat"] },
@@ -117,13 +120,28 @@ export const sakiToolSchemas: SakiToolSchema[] = [
         aspectRatio: { type: "string", description: "Optional aspect ratio such as 1:1, 16:9, 9:16, 4:3, 3:4." },
         width: { type: "integer", minimum: 64, maximum: 2048, description: "Optional width in pixels." },
         height: { type: "integer", minimum: 64, maximum: 2048, description: "Optional height in pixels." },
-        quality: { type: "string", enum: ["draft", "standard", "hd"], description: "Clarity / resolution preset." },
+        quality: { type: "string", enum: ["draft", "standard", "hd"], description: "App quality preset. The tool maps it to the selected model's API values automatically; do not send vendor-specific quality names." },
         seed: { type: "integer", description: "Optional seed for local Stable Diffusion." },
         steps: { type: "integer", minimum: 1, maximum: 150, description: "Optional sampler steps for local Stable Diffusion." }
       },
       ["prompt"]
     ),
     aliases: ["generate_image", "drawImage", "createImage", "txt2img", "imageGen", "imagine"]
+  },
+  {
+    name: "generateVideo",
+    description: "Generate a video with the configured video API. For an existing workspace image, pass imagePath to send its pixels as a reference; describing an image in the prompt is not image-to-video. Seedance protocols support reference images, aspectRatio, resolution, and generateAudio. Leave generateAudio unset to keep the provider's default unless the user specifies audio or silence. MiniMax supports aspectRatio and resolution. Only call when the user requests video generation. Omit duration unless specified.",
+    parameters: objectSchema({
+      instanceId: instanceLookupSchema,
+      prompt: { type: "string", description: "Describe the scene, action, camera motion, and style." },
+      duration: { type: "integer", minimum: 1, maximum: 30, description: "Optional clip duration in seconds. Supported values depend on the configured model." },
+      aspectRatio: { type: "string", description: "Output ratio, e.g. 9:16 or 16:9. Send this separately from the prompt when the user specifies a ratio." },
+      resolution: { type: "string", description: "Output resolution, e.g. 480p or 720p. Supported values depend on the model." },
+      generateAudio: { type: "boolean", description: "Seedance only: true for audio, false for silence. Omit when the user has no audio preference to preserve the provider's default." },
+      imagePath: { type: "string", description: "Agent mode: workspace-relative PNG/JPEG/WebP/GIF reference image path, e.g. test/little_girl.png. Requires file.read; Seedance protocols only." },
+      imageAttachmentId: { type: "string", description: "Use an image attachment from the current user request as the reference instead of imagePath. Seedance protocols only." }
+    }, ["prompt"]),
+    aliases: ["generate_video"]
   }
 ];
 
@@ -219,7 +237,7 @@ const sakiResearchToolNames = new Set([
   "describeinstance"
 ]);
 
-type SakiToolGroupId = "instances" | "liveTerminal" | "schedule" | "web" | "webDeep" | "archive" | "memory" | "audit" | "env" | "research" | "imageGen" | "servers";
+type SakiToolGroupId = "instances" | "liveTerminal" | "schedule" | "web" | "webDeep" | "archive" | "memory" | "audit" | "env" | "research" | "imageGen" | "servers" | "mcp";
 
 const sakiToolGroups: Record<SakiToolGroupId, { names: string[]; hint: RegExp }> = {
   servers: {
@@ -269,6 +287,10 @@ const sakiToolGroups: Record<SakiToolGroupId, { names: string[]; hint: RegExp }>
   imageGen: {
     names: ["generateImage"],
     hint: /\b(generateImage|image gen|txt2img|text-to-image|draw|illustration|sprite|icon set|concept art)\b|画图|生图|配图|插画|插图|封面|海报|图标|精灵图|立绘|素材图/
+  },
+  mcp: {
+    names: ["listMcpTools", "callMcpTool"],
+    hint: /\b(mcp|plugin|listMcpTools|callMcpTool)\b|插件/i
   }
 };
 
@@ -295,16 +317,18 @@ export function toolSchemasForRuntime(runtime: SakiAgentRuntime): SakiToolSchema
     const required = requiredSakiToolPermissions(name);
     const properties = schema.parameters.properties as Record<string, unknown> | undefined;
     if (!access.isSuperAdmin && !runtime.context.instance && name !== "listinstances"
-      && (required.length || (properties?.instanceId && name !== "generateimage"))) return false;
+      && (required.length || (properties?.instanceId && name !== "generateimage" && name !== "generatevideo"))) return false;
     return required.every((permission) => access.permissions.includes(permission));
   }).map((schema) => {
     if (!runtime.context.access) return schema;
     const restrictSettings = schema.name === "updateInstanceSettings" && !runtime.context.access.isSuperAdmin;
     const restrictImage = schema.name === "generateImage" && (runtime.toolProfile === "chat" || !runtime.context.instance || !runtime.context.access.permissions.includes("file.write") || !runtime.context.access.permissions.includes("file.read"));
-    if (!restrictSettings && !restrictImage) return schema;
+    const restrictVideoImage = schema.name === "generateVideo" && (runtime.toolProfile === "chat" || !runtime.context.instance || !runtime.context.access.permissions.includes("file.read"));
+    if (!restrictSettings && !restrictImage && !restrictVideoImage) return schema;
     const properties = { ...(schema.parameters.properties as Record<string, unknown>) };
     if (restrictSettings) for (const key of ["workingDirectory", "startCommand", "stopCommand"]) delete properties[key];
     if (restrictImage) { delete properties.path; delete properties.instanceId; }
+    if (restrictVideoImage) { delete properties.imagePath; delete properties.instanceId; }
     return { ...schema, parameters: { ...schema.parameters, properties } };
   });
   return capAdvertisedToolSchemas(schemas, sakiModelProfile(runtime.config.provider, runtime.config.model));
@@ -315,6 +339,7 @@ function advertisedToolSchemasForRuntime(runtime: SakiAgentRuntime): SakiToolSch
     const names = new Set<string>(["respond", "reportProgress", "askUser"]);
     if (runtime.config.searchEnabled) { names.add("searchWeb"); names.add("browse"); }
     if (runtime.config.imageGen?.enabled) names.add("generateImage");
+    if (runtime.config.videoGen?.enabled) names.add("generateVideo");
     return schemasNamed(names);
   }
   if (runtime.toolProfile === "research") {
@@ -349,6 +374,7 @@ function advertisedToolSchemasForRuntime(runtime: SakiAgentRuntime): SakiToolSch
   if (runtime.config.imageGen?.enabled) {
     names.add("generateImage");
   }
+  if (runtime.config.videoGen?.enabled && runtime.kind !== "watch") names.add("generateVideo");
 
   for (const group of Object.values(sakiToolGroups)) {
     const usedInGroup = usedToolNames.some((used) => {
@@ -370,6 +396,16 @@ function advertisedToolSchemasForRuntime(runtime: SakiAgentRuntime): SakiToolSch
   if (!runtime.config.imageGen?.enabled) {
     names.delete("generateImage");
   }
+  if (!runtime.config.mcpEnabled) {
+    names.delete("listMcpTools");
+    names.delete("callMcpTool");
+  }
+
+  const narrowed = new Set(narrowCodingAdvertisedNames(names, hint, runtime));
+  if (names.has("generateVideo") && runtime.input.agentIntent !== "review" && runtime.input.agentIntent !== "diff"
+    && /generateVideo|\bvideo\b|视频/i.test(hint)) narrowed.add("generateVideo");
+  names.clear();
+  for (const name of narrowed) names.add(name);
 
   const permissionMode = effectiveSakiAgentPermissionMode(runtime.input);
   if (permissionMode === "plan") {
@@ -411,6 +447,8 @@ function capAdvertisedToolSchemas(schemas: SakiToolSchema[], maxTools: ReturnTyp
     "outlineFile",
     "readSymbol",
     "applyPatch",
+    "gitStatus",
+    "gitDiff",
     "editLines",
     "replaceInFile",
     "writeFile",
@@ -423,7 +461,8 @@ function capAdvertisedToolSchemas(schemas: SakiToolSchema[], maxTools: ReturnTyp
     "searchWeb",
     "browse"
   ]);
-  if (schemas.some((schema) => schema.name === "generateImage")) essential.add("generateImage");
+  essential.add("generateImage");
+  essential.add("generateVideo");
   const kept: SakiToolSchema[] = [];
   const rest: SakiToolSchema[] = [];
   for (const schema of schemas) {
@@ -433,8 +472,8 @@ function capAdvertisedToolSchemas(schemas: SakiToolSchema[], maxTools: ReturnTyp
   if (kept.length > maxTools.maxAdvertisedTools) {
     // Small models must still see the managed lifecycle route and web tools.
     const priority = new Map([
-      "askUser", "instanceAction", "describeInstance", "instanceLogs", "searchWeb", "browse", "generateImage",
-      "readFile", "searchFiles", "applyPatch", "writeFile", "runCommand", "diagnoseCode", "manageTodos", "findFiles"
+      "askUser", "instanceAction", "describeInstance", "instanceLogs", "searchWeb", "browse", "generateImage", "generateVideo",
+      "readFile", "searchFiles", "applyPatch", "writeFile", "runCommand", "diagnoseCode", "gitStatus", "gitDiff", "manageTodos", "findFiles"
     ].map((name, index) => [name, index]));
     return kept.sort((a, b) => (priority.get(a.name) ?? priority.size) - (priority.get(b.name) ?? priority.size))
       .slice(0, maxTools.maxAdvertisedTools);
@@ -443,13 +482,13 @@ function capAdvertisedToolSchemas(schemas: SakiToolSchema[], maxTools: ReturnTyp
   return [...kept, ...rest.slice(0, room)];
 }
 
-const sakiChatToolNames = new Set(["generateimage", "generate_image", "drawimage", "createimage", "txt2img", "imagegen", "imagine", "respond", "reportprogress", "searchweb", "browse", "askuser"]);
+const sakiChatToolNames = new Set(["generateimage", "generate_image", "drawimage", "createimage", "txt2img", "imagegen", "imagine", "generatevideo", "respond", "reportprogress", "searchweb", "browse", "askuser"]);
 
 export function assertToolProfileAllowsTool(runtime: SakiAgentRuntime, toolName: string): void {
   const lower = normalizedAgentToolName(toolName);
   if (runtime.toolProfile === "chat") {
     if (!sakiChatToolNames.has(lower) && !sakiChatToolNames.has(toolName.toLowerCase())) {
-      throw new RouteError("Chat mode can ask questions, search the web, read public pages, generate images and reply. It cannot edit files, run commands, or change instances.", 403);
+      throw new RouteError("Chat mode can ask questions, search the web, read public pages, generate images and videos, and reply. It cannot edit files, run commands, or change instances.", 403);
     }
     return;
   }
@@ -599,6 +638,8 @@ export function shorthandPrimaryArgumentKey(toolName: string): string | null {
   if (lower === "searchaudit" || lower === "searchweb" || lower === "researchweb" || lower === "searchskills") return "query";
   if (lower === "browse" || lower === "crawl") return "url";
   if (lower === "readskill") return "skillId";
+  if (lower === "listmcptools") return "serverId";
+  if (lower === "callmcptool") return "toolName";
   if (lower === "deletescheduledtask" || lower === "runtask" || lower === "taskruns" || lower === "updatescheduledtask") return "taskId";
   return null;
 }
@@ -1171,7 +1212,6 @@ export const sakiReadOnlyToolNames = new Set([
   "plan",
   "taskruns",
   "searchweb",
-  "spawntask",
   "browse",
   "crawl",
   "researchweb",
@@ -1183,6 +1223,7 @@ export const sakiReadOnlyToolNames = new Set([
   "loadskill",
   "useskill",
   "getskill",
+  "listmcptools",
   "applyskill",
   "readmemory",
   "statfile",
@@ -1229,6 +1270,7 @@ export const sakiAutoAcceptedFileToolNames = new Set([
 
 export const sakiPlanBlockedToolNames = new Set([
   ...sakiAutoAcceptedFileToolNames,
+  "generatevideo",
   "deletepath",
   "sendinput",
   "sendcommand",
@@ -1238,6 +1280,7 @@ export const sakiPlanBlockedToolNames = new Set([
   "killshell",
   "sendshellinput",
   "instanceaction",
+  "callmcptool",
   "updateinstancesettings",
   "createscheduledtask",
   "updatescheduledtask",
@@ -1421,7 +1464,7 @@ export function isApprovalTool(toolName: string, args: Record<string, unknown>):
   if (sakiCommandToolNames.has(lower)) {
     return classifyCommandRisk(stringArg(args, "command")).risk !== "low";
   }
-  if (["instanceaction", "sendshellinput", "sendinput", "sendcommand", "closeshell"].includes(lower)) return true;
+  if (["instanceaction", "sendshellinput", "sendinput", "sendcommand", "closeshell", "callmcptool"].includes(lower)) return true;
   return false;
 }
 
@@ -1431,7 +1474,7 @@ export function shouldRequestSakiApproval(runtime: SakiAgentRuntime, toolName: s
 
   if (lower === "requestexternalaccess") return true;
   if (lower === "diagnosecode" && !stringArg(args, "command")) return false;
-  if (runtime.externalReadPerformed && ["searchweb", "browse", "crawl", "researchweb", "generateimage"].includes(lower)) return true;
+  if (runtime.externalReadPerformed && ["searchweb", "browse", "crawl", "researchweb", "generateimage", "generatevideo"].includes(lower)) return true;
 
   // Watch must stage every patch before the incident policy can consider
   // auto-approval. Ordinary Agent edit permissions must not bypass that gate.

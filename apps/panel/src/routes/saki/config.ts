@@ -1,6 +1,6 @@
 import { panelConfig, panelPaths } from "../../config.js";
 import type { SakiConfigResponse, SakiProviderConfig, UpdateSakiConfigRequest } from "@webops/shared";
-import { sanitizeSakiImageGenConfig } from "@webops/shared";
+import { sanitizeSakiImageGenConfig, sanitizeSakiVideoGenConfig } from "@webops/shared";
 import { publishAppearanceUpdate } from "./appearance-events.js";
 import { registerCopilotConfigHost } from "./providers.js";
 import { registerAntigravityConfigHost } from "./providers/antigravity.js";
@@ -87,6 +87,7 @@ export async function readEffectiveSakiConfig(): Promise<SakiConfigResponse> {
     mcpEnabled: Boolean(settings.mcpEnabled),
     allowCrossInstanceEnforcement: settings.allowCrossInstanceEnforcement !== false,
     imageGen: sanitizeSakiImageGenConfig(settings.imageGen),
+    videoGen: sanitizeSakiVideoGenConfig(settings.videoGen),
     systemPrompt,
     appearance: sanitizePanelAppearance(settings.appearance),
     configPath: panelPaths.sakiConfigFile,
@@ -159,6 +160,7 @@ export async function saveSakiConfig(input: UpdateSakiConfigRequest): Promise<Sa
         ? Boolean(input.allowCrossInstanceEnforcement)
         : current.allowCrossInstanceEnforcement !== false,
     imageGen: sanitizeSakiImageGenConfig(input.imageGen !== undefined ? input.imageGen : current.imageGen),
+    videoGen: sanitizeSakiVideoGenConfig(input.videoGen ?? current.videoGen),
     appearance: input.appearance !== undefined ? sanitizePanelAppearance(input.appearance, current.appearance) : current.appearance
   };
   const nextSystemPrompt = input.systemPrompt !== undefined ? input.systemPrompt : current.systemPrompt;

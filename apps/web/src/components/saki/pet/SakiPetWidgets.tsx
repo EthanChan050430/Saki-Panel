@@ -23,7 +23,7 @@ import type { SakiPetController, SakiPetNote, SakiPetSticker, SakiPetWidget } fr
 import { weatherGlyph, weatherLabel } from "./sakiPetState.js";
 import { formatTrackTime, sakiMusicAccept } from "./sakiPetMusic.js";
 import { usePlugins } from "../../../plugins/PluginContext.js";
-import { panelT } from "../../../i18n/translations.js";
+import { panelT, translateDomText } from "../../../i18n/index.js";
 
 function formatClock(ms: number) {
   const d = new Date(ms);
@@ -62,14 +62,14 @@ export function SakiPetDesktopBits({
   return (
     <>
       {pet.notes.map((note) => (
-        <DesktopNote key={note.id} note={note} pet={pet} />
+        <DesktopNote key={note.id} note={note} pet={pet} language={language} />
       ))}
       {pet.stickers.map((sticker) => (
-        <DesktopSticker key={sticker.id} sticker={sticker} pet={pet} />
+        <DesktopSticker key={sticker.id} sticker={sticker} pet={pet} language={language} />
       ))}
       {pet.pomodoro.running
         ? createPortal(
-            <div className={`saki-pet-pomo-chip ${pet.pomodoro.mode}`} title="番茄钟">
+            <div className={`saki-pet-pomo-chip ${pet.pomodoro.mode}`} title={translateDomText("番茄钟", language || "zh-CN")}>
               <span>{pet.pomodoro.mode === "focus" ? panelT(language || "zh-CN", "saki.pet.focus") : panelT(language || "zh-CN", "saki.pet.break")}</span>
               <strong>{formatPomodoro(pet.pomodoro.remainingMs)}</strong>
             </div>,
@@ -83,7 +83,7 @@ export function SakiPetDesktopBits({
   );
 }
 
-function DesktopNote({ note, pet }: { note: SakiPetNote; pet: SakiPetController }) {
+function DesktopNote({ note, pet, language }: { note: SakiPetNote; pet: SakiPetController; language?: string | undefined }) {
   return (
     createPortal(
       <div
@@ -111,12 +111,12 @@ function DesktopNote({ note, pet }: { note: SakiPetNote; pet: SakiPetController 
           window.addEventListener("pointerup", up);
         }}
       >
-        <button type="button" className="saki-pet-sticky-close" onClick={() => pet.removeNote(note.id)} aria-label="关闭便签">
+        <button type="button" className="saki-pet-sticky-close" onClick={() => pet.removeNote(note.id)} aria-label={translateDomText("关闭便签", language || "zh-CN")}>
           <X size={12} />
         </button>
         <textarea
           value={note.text}
-          placeholder="写点什么…"
+          placeholder={translateDomText("写点什么…", language || "zh-CN")}
           onChange={(event) => pet.updateNote(note.id, { text: event.target.value })}
         />
       </div>,
@@ -125,7 +125,7 @@ function DesktopNote({ note, pet }: { note: SakiPetNote; pet: SakiPetController 
   );
 }
 
-function DesktopSticker({ sticker, pet }: { sticker: SakiPetSticker; pet: SakiPetController }) {
+function DesktopSticker({ sticker, pet, language }: { sticker: SakiPetSticker; pet: SakiPetController; language?: string | undefined }) {
   return createPortal(
     <div
       className="saki-pet-sticker"
@@ -153,7 +153,7 @@ function DesktopSticker({ sticker, pet }: { sticker: SakiPetSticker; pet: SakiPe
       }}
     >
       <img src={sticker.src} alt="" draggable={false} />
-      <button type="button" onClick={() => pet.removeSticker(sticker.id)} aria-label="移除贴图">
+      <button type="button" onClick={() => pet.removeSticker(sticker.id)} aria-label={translateDomText("移除贴图", language || "zh-CN")}>
         <X size={12} />
       </button>
     </div>,

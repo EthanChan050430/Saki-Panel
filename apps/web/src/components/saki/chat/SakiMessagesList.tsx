@@ -9,6 +9,7 @@ import {
   Trash2
 } from "lucide-react";
 import { MarkdownContent } from "../../common/MarkdownContent.js";
+import { translateDomText, usePanelLanguage } from "../../../i18n/index.js";
 import { isSakiImageAttachment, type InstanceGitChangesSummary, type SakiAgentAction, type SakiChatMode, type SakiInputAttachment } from "@webops/shared";
 import { SakiChatGeneratedImages } from "./SakiChatImages.js";
 import { SakiRetryCard } from "./SakiAgentWidgets.js";
@@ -117,6 +118,7 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
   onRevertAllChanges,
   onRestoreAllChanges
 }: SakiMessagesListProps) {
+  const { language } = usePanelLanguage();
   const [timelineLimits, setTimelineLimits] = React.useState<Record<string, number>>({});
   const scrollAnchor = React.useRef<{ top: number; height: number } | null>(null);
   React.useEffect(() => setTimelineLimits({}), [conversationId]);
@@ -138,8 +140,8 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
 
   return (
     <div className={`saki-messages${mode === "agent" ? " saki-messages-agent" : ""}`} ref={messagesRef} onScroll={onScroll}>
-      {historyLoading ? <p className="saki-history-loading" role="status">正在加载历史记录…</p> : null}
-      {hasEarlierMessages && !historyLoading ? <button className="small-button saki-history-load-earlier" type="button" onClick={onLoadEarlierMessages}>加载更早的消息</button> : null}
+      {historyLoading ? <p className="saki-history-loading" role="status">{translateDomText("正在加载历史记录，请稍候。", language)}</p> : null}
+      {hasEarlierMessages && !historyLoading ? <button className="small-button saki-history-load-earlier" type="button" onClick={onLoadEarlierMessages}>{translateDomText("加载更早的消息", language)}</button> : null}
       {messages.filter((message) => !message.rollbackJournal).map((message) => {
         const actionItems = visibleSakiActions(message.actions).filter((action) => action.tool.toLowerCase() !== "managetodos");
         const fileRollbackActions = actionItems.filter(isSakiFileRollbackAction);
@@ -211,7 +213,7 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
               </div>
             ) : message.role === "assistant" && timelineItems.length > 0 ? (
               <div className="saki-message-timeline">
-                {timelineItems.length > (timelineLimits[message.id] ?? 60) ? <button className="small-button" type="button" onClick={() => revealTimeline(message.id)}>加载更早的步骤（还有 {timelineItems.length - (timelineLimits[message.id] ?? 60)} 项）</button> : null}
+                {timelineItems.length > (timelineLimits[message.id] ?? 60) ? <button className="small-button" type="button" onClick={() => revealTimeline(message.id)}>{translateDomText(`加载更早的步骤（还有 ${timelineItems.length - (timelineLimits[message.id] ?? 60)} 项）`, language)}</button> : null}
                 {timelineItems.slice(-(timelineLimits[message.id] ?? 60)).map((item) => {
                   if (item.kind === "tool-group") {
                     return <LazyToolGroup key={item.id} items={item.items} actionBusyId={actionBusyId}
@@ -396,7 +398,7 @@ export const SakiMessagesList = React.memo(function SakiMessagesList({
 
             {(() => {
               const leftover = (message.attachments ?? []).filter(
-                (attachment) => message.role === "user" || !isSakiImageAttachment(attachment)
+                (attachment) => message.role === "user" || (!isSakiImageAttachment(attachment) && !attachment.generatedVideoId)
               );
               if (!leftover.length) return null;
               return (

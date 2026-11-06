@@ -20,6 +20,7 @@ export const completedSakiActions = new Map<string, SakiAgentAction>();
 export const sakiCheckpoints = new Map<string, SakiCheckpoint>();
 export const sessionAgentMemories = new Map<string, SakiSessionAgentMemory>();
 const sessionMemoryTtlMs = 24 * 60 * 60 * 1000;
+const maxSessionAgentMemories = 200;
 const sessionsDir = path.join(panelPaths.dataDir, "saki-sessions");
 const sessionWrites = new Map<string, Promise<void>>();
 
@@ -47,7 +48,7 @@ export async function loadSessionAgentMemoriesFromDisk(): Promise<void> {
     }
   }
   const newest = [...sessionAgentMemories.entries()].sort((a, b) => b[1].updatedAt - a[1].updatedAt);
-  for (const [key] of newest.slice(200)) sessionAgentMemories.delete(key);
+  for (const [key] of newest.slice(maxSessionAgentMemories)) sessionAgentMemories.delete(key);
 }
 
 export const sessionAgentMemoriesReady = loadSessionAgentMemoriesFromDisk().catch((error: unknown) => {
@@ -203,13 +204,9 @@ export interface CachedFileEntry {
   cachedAt: number;
 }
 
-export const instanceFileCache = new Map<string, CachedFileEntry>();
-const sessionWorkingFiles = new Map<string, Set<string>>();
+export const instanceFileCache = new Map<string, Map<string, CachedFileEntry>>();
+const sessionWorkingFilesMaps = new Map<string, Map<string, true>>();
 const fileCacheTtlMs = 10 * 60 * 1000; // 10 minutes cache per file
-
-function fileCacheKey(instanceId: string, filePath: string): string {
-  return `${instanceId}:${filePath.replace(/\\/g, "/")}`;
-}
 
 export function recordInstanceFileRead(
   instanceId: string,
@@ -217,8 +214,14 @@ export function recordInstanceFileRead(
   file: { content: string; size: number; modifiedAt: string; totalLines?: number }
 ): void {
   if (!instanceId || !filePath) return;
+  const normalizedPath = filePath.replace(/\\/g, "/");
   const lines = file.totalLines ?? (file.content.length === 0 ? 0 : file.content.split(/\r?\n/).length);
-  instanceFileCache.set(fileCacheKey(instanceId, filePath), {
+  let inner = instanceFileCache.get(instanceId);
+  if (!inner) {
+    inner = new Map<string, CachedFileEntry>();
+    instanceFileCache.set(instanceId, inner);
+  }
+  inner.set(normalizedPath, {
     content: file.content,
     size: file.size,
     modifiedAt: file.modifiedAt,
@@ -229,10 +232,13 @@ export function recordInstanceFileRead(
 
 export function getCachedInstanceFile(instanceId: string, filePath: string): CachedFileEntry | null {
   if (!instanceId || !filePath) return null;
-  const entry = instanceFileCache.get(fileCacheKey(instanceId, filePath));
+  const normalizedPath = filePath.replace(/\\/g, "/");
+  const inner = instanceFileCache.get(instanceId);
+  if (!inner) return null;
+  const entry = inner.get(normalizedPath);
   if (!entry) return null;
   if (Date.now() - entry.cachedAt > fileCacheTtlMs) {
-    instanceFileCache.delete(fileCacheKey(instanceId, filePath));
+    inner.delete(normalizedPath);
     return null;
   }
   return entry;
@@ -241,14 +247,10 @@ export function getCachedInstanceFile(instanceId: string, filePath: string): Cac
 export function invalidateInstanceFileCache(instanceId: string, filePath?: string): void {
   if (!instanceId) return;
   if (filePath) {
-    instanceFileCache.delete(fileCacheKey(instanceId, filePath));
+    instanceFileCache.get(instanceId)?.delete(filePath.replace(/\\/g, "/"));
   } else {
-    const prefix = `${instanceId}:`;
-    for (const key of instanceFileCache.keys()) {
-      if (key.startsWith(prefix)) {
-        instanceFileCache.delete(key);
-      }
-    }
+    // O(1) deletion of the entire instance sub-map (was O(n) full-scan).
+    instanceFileCache.delete(instanceId);
   }
 }
 
@@ -258,34 +260,50 @@ function sessionWorkingFilesKey(userId: string, instanceId: string | null): stri
 
 export function recordWorkingFileAccess(userId: string, instanceId: string | null, filePath: string): void {
   if (!filePath) return;
+  const normalized = filePath.replace(/\\/g, "/");
   const key = sessionWorkingFilesKey(userId, instanceId);
-  const existing = sessionWorkingFiles.get(key) ?? new Set<string>();
-  existing.add(filePath.replace(/\\/g, "/"));
+  // Use a plain object as an insertion-ordered map so re-touching a file
+  // moves it to the end, giving us real LRU semantics instead of Set's
+  // insertion-order semantics (which would evict the oldest *added* file
+  // even if it was accessed recently).
+  const existing = sessionWorkingFilesMaps.get(key) ?? new Map<string, true>();
+  existing.delete(normalized);
+  existing.set(normalized, true);
   // Limit to most recent 10 files
-  if (existing.size > 10) {
-    const first = existing.values().next().value;
-    if (first) existing.delete(first);
+  while (existing.size > 10) {
+    const firstKey = existing.keys().next().value;
+    if (firstKey === undefined) break;
+    existing.delete(firstKey);
   }
-  sessionWorkingFiles.set(key, existing);
+  sessionWorkingFilesMaps.set(key, existing);
 }
 
 export function getRecentWorkingFiles(userId: string, instanceId: string | null): string[] {
   const key = sessionWorkingFilesKey(userId, instanceId);
-  const set = sessionWorkingFiles.get(key);
-  return set ? [...set] : [];
+  const map = sessionWorkingFilesMaps.get(key);
+  return map ? [...map.keys()] : [];
 }
 
 export function saveSessionAgentMemory(memory: SakiSessionAgentMemory): void {
   const key = sessionWorkingFilesKey(memory.userId, memory.instanceId);
+  const now = Date.now();
   sessionAgentMemories.delete(key);
   sessionAgentMemories.set(key, {
     ...memory,
-    updatedAt: Date.now()
+    updatedAt: now
   });
   for (const [sessionKey, session] of sessionAgentMemories) {
-    if (Date.now() - session.updatedAt > sessionMemoryTtlMs) sessionAgentMemories.delete(sessionKey);
+    if (now - session.updatedAt > sessionMemoryTtlMs) sessionAgentMemories.delete(sessionKey);
   }
-  if (sessionAgentMemories.size > 200) sessionAgentMemories.delete(sessionAgentMemories.keys().next().value!);
+  if (sessionAgentMemories.size > maxSessionAgentMemories) {
+    // Evict by real recency. Insertion order is only a rough proxy for
+    // updatedAt: entries restored from disk arrive in readdir order, so
+    // deleting from the front could drop a hot session while keeping a
+    // stale one. Also drop everything over the cap, not just one entry.
+    const excess = sessionAgentMemories.size - maxSessionAgentMemories;
+    const oldest = [...sessionAgentMemories.entries()].sort((a, b) => a[1].updatedAt - b[1].updatedAt);
+    for (const [sessionKey] of oldest.slice(0, excess)) sessionAgentMemories.delete(sessionKey);
+  }
 }
 
 export function formatSessionFollowUpContext(memory: SakiSessionAgentMemory): string {
@@ -566,15 +584,17 @@ export function cancelActiveSakiTask(taskId: string): boolean {
   return true;
 }
 
-export function enqueueSakiTaskSteer(taskId: string, message: string): boolean {
+export function enqueueSakiTaskSteer(taskId: string, message: string, attachments?: import("@webops/shared").SakiInputAttachment[], id?: string): boolean {
   const task = activeSakiTasks.get(taskId);
+  if (task?.acceptedSteerIds?.has(id ?? "")) return true;
   if (!task || task.status !== "running" || task.acceptingSteers === false) return false;
   const text = message.trim();
-  if (!text) return false;
-  task.pendingSteers = [...(task.pendingSteers ?? []), text.slice(0, 8000)];
+  if (!text || text.length > 8000 || (task.pendingSteers?.length ?? 0) >= 32) return false;
+  if (id) (task.acceptedSteerIds ??= new Set()).add(id);
+  task.pendingSteers = [...(task.pendingSteers ?? []), attachments?.length ? { message: text, attachments } : text];
   task.updatedAt = new Date().toISOString();
   emitActiveSakiTaskEvent(taskId, "workflow", {
-    id: `steer:${Date.now()}`,
+    id: `steer:${id ?? randomUUID()}`,
     stage: "steer",
     detail: text.slice(0, 8000),
     message: `收到新指示：${text.slice(0, 160)}`,
@@ -588,7 +608,7 @@ export function sealSakiTaskSteers(taskId: string): void {
   if (task) task.acceptingSteers = false;
 }
 
-export function takeSakiTaskSteers(taskId: string): string[] {
+export function takeSakiTaskSteers(taskId: string): NonNullable<SakiActiveTask["pendingSteers"]> {
   const task = activeSakiTasks.get(taskId);
   if (!task?.pendingSteers?.length) return [];
   const steers = task.pendingSteers;

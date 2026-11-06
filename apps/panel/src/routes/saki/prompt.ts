@@ -148,14 +148,23 @@ export function buildDirectMessages(input: SakiChatRequest, prompt: string, syst
   ];
 }
 
-export function buildChatModeSystemPrompt(imageGenEnabled: boolean, customPrompt?: string | null, searchEnabled = true): string {
+function videoGenerationRule(enabled: boolean): string {
+  return enabled
+    ? "Use generateVideo when the user asks to generate a video. For an existing workspace image, pass imagePath so its pixels reach the video model; for a current attachment, use imageAttachmentId. Pass requested aspectRatio, resolution and duration as separate parameters, not only prose in the prompt. Preserve the video provider's audio default: omit generateAudio unless the user explicitly specifies audio or silence. Only claim success after the tool succeeds. Report provider rejections clearly. Do not resubmit automatically after a timeout or failure, or substitute slideshow/warping scripts or a different kind of video unless the user requests that fallback."
+    : "If the user asks to generate a video, tell them to enable Video Generation in Settings → AI Model.";
+}
+
+const imageGenerationFailureRule = "Image quality names are app presets; generateImage maps them to the provider automatically. If the image API reports an unsupported parameter, authentication failure, or unavailable model, report that specific error instead of repeating the same request. Never search for API credentials. Do not substitute drawing scripts or SVG for requested AI image generation unless the user requests that fallback.";
+
+export function buildChatModeSystemPrompt(imageGenEnabled: boolean, customPrompt?: string | null, searchEnabled = true, videoGenEnabled = false): string {
   const custom = trimString(customPrompt);
   const imageRule = imageGenEnabled
     ? `Image generation is available via generateImage.
 - Call generateImage when the user asks you to draw, illustrate, design, or generate an image.
 - Omit path unless they explicitly asked to save a file into the project.
 - After generateImage succeeds, briefly describe the image in the user's language. The image itself will appear in the chat box — do not invent markdown image URLs or claim a file was written unless the tool observation says so.
-- Never claim you drew something unless generateImage succeeded.`
+- Never claim you drew something unless generateImage succeeded.
+${imageGenerationFailureRule}`
     : "Image generation is not configured. If the user asks you to draw, tell them to enable it in Settings → AI Model → Image Generation.";
 
   return `${custom ? `${custom}\n\n` : ""}You are Saki in Saki Panel chat mode. Answer conversationally in the user's language.
@@ -166,13 +175,18 @@ ${sakiUserQuestionGuidance}
 
 ${imageRule}
 
+${videoGenerationRule(videoGenEnabled)}
+
 ${searchEnabled ? sakiWebToolGuidance : "Web search is disabled in settings. Do not claim to have searched or verified current facts online; clearly state uncertainty when relevant."}
 
 ${xmlToolFormatReminder()}`;
 }
 
 export const sakiFileToolGuidance =
-  "Prefer readFile/searchFiles/findFiles for reading and locating code, and applyPatch/replaceInFile/editLines for targeted edits. readFile defaults to 200 lines, supports up to 2000, and reports where to continue if truncated. Read enough context to understand a new project; use search to skip irrelevant sections. writeFile creates or updates complete files without a line-count limit; existing contents require read + write permissions and are checkpointed. Repeating identical contents succeeds without writing. Use overwrite=false only when the file must be new, and append=true only for an additional chunk. Do not retry a successful write just because the file now exists. Do not use shell redirection, heredocs, or scripts just to bypass file tools; shell remains appropriate for builds, tests, generators, and tool failure recovery.";
+  "Prefer readFile/searchFiles/findFiles for reading and locating code, and applyPatch for targeted edits. writeFile is for new files or full rewrites. editLines and replaceInFile remain executable aliases, not the default. readFile defaults to 200 lines, supports up to 2000, and reports where to continue if truncated. Read enough context to understand a new project; use search to skip irrelevant sections. writeFile creates or updates complete files without a line-count limit; existing contents require read + write permissions and are checkpointed. Repeating identical contents succeeds without writing. Use overwrite=false only when the file must be new, and append=true only for an additional chunk. Do not retry a successful write just because the file now exists. Do not use shell redirection, heredocs, or scripts just to bypass file tools; shell remains appropriate for builds, tests, generators, and tool failure recovery.";
+
+export const sakiCodingVerificationGuidance =
+  "After a successful edit, the server injects syntax or type diagnostics. A failed diagnostic blocks completion. Use runCommand only for a targeted test, not diagnoseCode for npm test. Do not commit, push, or open a pull request unless the user asked. When they ask to commit, use the existing git tools and the suggested message from the change set. Use a git worktree outside the instance directory only for a parallel task. Path checks and bypassPermissions are not an OS sandbox. spawnTask roles are explore, implement, and review; explore and review are read-only, and implement may edit only planned files.";
 
 export const sakiInstanceToolGuidance =
   'For a panel-managed instance, prefer the panel lifecycle API through instanceAction over terminal process management. Read describeInstance to confirm the target, status and configured start/stop commands; use instanceAction({ action: "start" }) for a stopped or crashed instance and instanceAction({ action: "restart" }) to restart a running instance. Omit instanceId to use the active instance. Do not default to looking up a port/PID, killing it with kill/pkill/taskkill/Stop-Process, then launching the app in runCommand/createShell/runInShell. After an action, check instanceLogs and describeInstance; a successful request alone does not prove the service is healthy. If the API fails, inspect the error, instance state and logs before considering terminal recovery. Use shell lifecycle commands only when the user explicitly requests that method or the managed API is confirmed unavailable or insufficient; never bypass an approval rejection or permission denial.';
@@ -190,17 +204,17 @@ function compactAgentSystemPrompt(): string {
 Rules:
 - Treat the selected instance working directory as the only project.
 - ${sakiFileToolGuidance}
+- ${sakiCodingVerificationGuidance}
 - ${sakiInstanceToolGuidance}
 - ${sakiWebToolGuidance}
-- Work until the whole user task is complete. After each meaningful change, run appropriate diagnostics or targeted tests, fix failures, then continue the next unfinished checklist item. One edit or successful check does not complete a multi-step task.
+- Work until the whole user task is complete. After each meaningful change, read the injected diagnostics, fix failures, and use runCommand only for a targeted test. One edit or successful check does not complete a multi-step task.
 - For multi-step tasks, call manageTodos before work and update the full checklist as steps complete.
 - ${sakiUserQuestionGuidance}
 - If the task is done, reply in the user's language with no further tool calls.
 - Keep visible updates brief. Report meaningful progress, blockers and results; do not narrate every routine read or repeat tool output.
 
 ${xmlToolFormatReminder()}
-
-Core tools: describeInstance, instanceAction, instanceLogs, searchFiles, findFiles, outlineFile, readSymbol, readFile, editLines, applyPatch, writeFile, runCommand, createShell, closeShell, diagnoseCode, manageTodos, askUser.
+Core tools: searchFiles, findFiles, outlineFile, readSymbol, readFile, applyPatch, writeFile, runCommand, gitStatus, gitDiff, manageTodos, askUser. describeInstance, instanceAction, and instanceLogs are for panel-managed services. spawnTask roles are explore, implement, and review.
 
 Terminal: ordinary commands go in independent tabs (runCommand reuses or opens a Saki tab; createShell opens extra tabs; closeShell closes one). sendInput/sendCommand write to the main instance console — use them only when the live process itself needs stdin.`;
 }
@@ -213,10 +227,11 @@ Workspace: only the selected instance working directory. Do not assume this is t
 
 How to work:
 - ${sakiFileToolGuidance}
+- ${sakiCodingVerificationGuidance}
 - ${sakiInstanceToolGuidance}
 - ${sakiWebToolGuidance}
 - Avoid rewriting whole files. Batch independent reads/searches in one turn.
-- Persist until the entire requested outcome is implemented and verified. Run appropriate diagnostics, builds, or targeted tests; fix failures and continue unfinished work. Do not stop after the first edit or successful diagnostic. For a new project, create the runnable skeleton, implement each requested feature, and verify the result.
+- Persist until the entire requested outcome is implemented and verified. Read the injected diagnostics, fix failures, and use runCommand for a targeted test. Do not stop after the first edit or successful diagnostic. For a new project, create the runnable skeleton, implement each requested feature, and verify the result.
 - Ordinary terminal commands run in independent tabs. runCommand reuses or opens a Saki tab. createShell opens another tab for parallel work. runCommand({ shellId, command }) / runInShell uses a specific tab. closeShell closes a tab. sendInput/sendCommand write to the main instance console — use them only when the live process itself needs stdin (prompts, game/server console), not for everyday shell work.
 - If the task is done, answer in the user's language and stop. Do not keep calling tools.
 - The user may insert a follow-up while you are working. Incorporate it into the current task, preserving the original goal unless the user explicitly cancels or replaces it.
@@ -275,9 +290,9 @@ export function buildDynamicAgentUserContext(runtime: SakiAgentRuntime, isContin
   const skillText = runtime.skills.length
     ? runtime.skills.map((skill) => `- ${skill.id}: ${skill.name} - ${skill.description ?? ""}`).join("\n")
     : "- No matching local skills.";
-  const mcpNote = runtime.config.mcpEnabled
-    ? "\nMCP is enabled but not yet available in this build. Do not invent MCP tool calls."
-    : "";
+  const mcpNote = runtime.toolProfile === "chat" || !runtime.config.mcpEnabled
+    ? ""
+    : "\nPlugin MCP tools: call listMcpTools to see running MCP servers and exact tool names, then callMcpTool {serverId, toolName, arguments} (needs user approval). When the user references a plugin with @plugin:<id>, prefer its MCP tools and skills. Never invent MCP tool names.";
   const imageGen = runtime.config.imageGen;
   const imageGenNote = imageGen?.enabled && (runtime.toolProfile === "chat" || !runtime.context.instance || (runtime.context.access && !runtime.context.access.permissions.includes("file.write")))
     ? "\nImage generation is enabled. Use generateImage when asked to draw; omit path so the generated image appears directly in chat. Never claim an image was generated without a successful tool result."
@@ -313,7 +328,9 @@ Skill workflow:
 - Skill summaries above are not enough to execute specialized work. Use searchSkills({ query }) early when the task may need domain procedures, plugins, deployments, or project-specific rules.
 - When a skill likely applies, call readSkill({ skillId }) and follow its instructions before editing files or running commands.
 - Auto-applied or auto-loaded skill instructions in Context are mandatory for this request.
-- If unsure whether a skill applies, search first — do not guess domain rules.${mcpNote}${imageGenNote}`;
+- If unsure whether a skill applies, search first — do not guess domain rules.${mcpNote}${imageGenNote}
+${imageGen?.enabled ? imageGenerationFailureRule : ""}
+${videoGenerationRule(Boolean(runtime.config.videoGen?.enabled))}`;
 }
 
 export function buildAgentPrompt(runtime: SakiAgentRuntime): string {

@@ -1,6 +1,7 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { sakiFetch } from "./model-fetch.js";
 import { isSensitiveWorkspacePath } from "../../workspace-path.js";
 import type { Prisma } from "@prisma/client";
 import type {
@@ -46,6 +47,7 @@ export interface PanelSakiSettings {
   mcpEnabled?: boolean;
   allowCrossInstanceEnforcement?: boolean;
   imageGen?: SakiImageGenConfig;
+  videoGen?: SakiConfigResponse["videoGen"];
   systemPrompt?: string | null;
   appearance?: Partial<PanelAppearanceSettings>;
 }
@@ -97,6 +99,8 @@ export const maxAgentContinuationContextTokens = 5000;
 export const maxAgentRecentScratchpadEntries = 10;
 export const maxAgentCompactedScratchpadTokens = 1200;
 export const maxParallelReadOnlyTools = 8;
+/** Minimum interval between checkpoints after replayable (read-only) results. */
+export const agentReadOnlyCheckpointIntervalMs = 5000;
 export const defaultAgentReadFileLineCount = 200;
 export const maxAgentReadFileLineCount = 2000;
 export const largeFileLineThreshold = 120;
@@ -644,6 +648,12 @@ export interface ParsedToolCall {
   extraContent?: Record<string, unknown>;
 }
 
+export interface SakiCodingPlan {
+  text: string;
+  files: string[];
+  updatedAt: number;
+}
+
 export interface SakiAgentRuntime {
   request?: FastifyRequest;
   input: SakiChatRequest;
@@ -664,6 +674,9 @@ export interface SakiAgentRuntime {
   turnMessages?: import("./agent-messages.js").SakiAgentTurnMessage[];
   agentSystemPrompt?: string;
   externalReadPerformed?: boolean;
+  codingPlan?: SakiCodingPlan;
+  subagentRole?: "explore" | "implement" | "review";
+  loopsRemaining?: number;
 }
 
 export interface SakiAgentResumeState {
@@ -677,6 +690,7 @@ export interface SakiAgentResumeState {
   turnMessages?: import("./agent-messages.js").SakiAgentTurnMessage[];
   readOnlyToolCache?: Array<[string, SakiAgentAction]>;
   taskId?: string;
+  codingPlan?: SakiCodingPlan;
 }
 
 export interface SakiSessionAgentMemory {
@@ -720,7 +734,8 @@ export interface SakiActiveTask {
   error?: string;
   abortController?: AbortController;
   subscribers: Set<(event: SakiActiveTaskEvent) => void>;
-  pendingSteers?: string[];
+  pendingSteers?: (string | { message: string; attachments?: SakiInputAttachment[] })[];
+  acceptedSteerIds?: Set<string>;
   acceptingSteers?: boolean;
   execution?: Promise<SakiChatResponse>;
   decisionInFlight?: boolean;
@@ -1789,7 +1804,7 @@ export async function fetchWithTimeout(url: string, options: RequestInit = {}, t
     controller.abort();
   }, timeoutMs);
   try {
-    return await fetch(url, {
+    return await sakiFetch(url, {
       ...options,
       signal: controller.signal
     });

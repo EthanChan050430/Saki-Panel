@@ -116,7 +116,6 @@ export interface SakiSubmitOverride {
   contextText?: string | null;
   mode?: SakiChatMode;
   attachments?: SakiInputAttachment[];
-  steer?: boolean;
   replaceHistory?: LocalSakiMessage[];
 }
 

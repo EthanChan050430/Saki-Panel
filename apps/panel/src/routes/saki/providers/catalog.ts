@@ -1,8 +1,8 @@
 import type { SakiChatRequest, SakiConfigResponse, SakiModelOption, SakiProviderConfig } from "@webops/shared";
+import { agentRequestImages } from "../agent-turn-context.js";
 import type { ParsedToolCall, SakiModelToolTurn } from "../types.js";
 import {
   chatTextFromContent,
-  imageAttachments,
   isLikelyChatModel,
   localProviderUrls,
   modelOptionFromItem,
@@ -61,7 +61,7 @@ export function lastUserMessageIndex(messages: readonly DirectProviderMessage[])
 }
 
 export function withOpenAiImageInputs(messages: DirectChatMessage[], input: SakiChatRequest): DirectProviderMessage[] {
-  const images = imageAttachments(input);
+  const images = agentRequestImages(input);
   if (images.length === 0) return messages;
   const result: DirectProviderMessage[] = messages.map((message) => ({ ...message }));
   const lastUserIndex = lastUserMessageIndex(result);
@@ -81,7 +81,7 @@ export function withOpenAiImageInputs(messages: DirectChatMessage[], input: Saki
 }
 
 export function withAnthropicImageInputs(messages: DirectChatMessage[], input: SakiChatRequest): DirectProviderMessage[] {
-  const images = imageAttachments(input);
+  const images = agentRequestImages(input);
   if (images.length === 0) return messages;
   const result: DirectProviderMessage[] = messages.map((message) => ({ ...message }));
   const lastUserIndex = lastUserMessageIndex(result);
@@ -105,7 +105,7 @@ export function withAnthropicImageInputs(messages: DirectChatMessage[], input: S
 }
 
 export function withOllamaImageInputs(messages: DirectChatMessage[], input: SakiChatRequest): DirectProviderMessage[] {
-  const images = imageAttachments(input);
+  const images = agentRequestImages(input);
   if (images.length === 0) return messages;
   const result: DirectProviderMessage[] = messages.map((message) => ({ ...message }));
   const lastUserIndex = lastUserMessageIndex(result);

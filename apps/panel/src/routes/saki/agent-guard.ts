@@ -26,13 +26,32 @@ export function looksLikeCompletedAnswer(text: string): boolean {
   return cleaned.length > 0 && completedAnswerPattern.test(cleaned);
 }
 
+// Position of the last match of a global-flagged clone of `pattern`, or -1.
+// `pattern` must already carry the `g` flag so matchAll advances.
+function lastMatchEnd(cleaned: string, pattern: RegExp): number {
+  let end = -1;
+  for (const match of cleaned.matchAll(pattern)) {
+    end = (match.index ?? 0) + match[0].length;
+  }
+  return end;
+}
+
+const completedAnswerPatternGlobal = new RegExp(completedAnswerPattern.source, "gi");
+const futureToolIntentPatternGlobal = new RegExp(futureToolIntentPattern.source, "gi");
+
 // True only for short "I'm about to use a tool" notes. Final answers that
 // mention a tool name or the word "fix"/"check" must not re-enter the loop.
 export function looksLikeProgressOnlyToolIntent(text: string): boolean {
   const cleaned = stripThinking(text).replace(/\s+/g, " ").trim();
   if (!cleaned || cleaned.length > 480) return false;
-  if (looksLikeCompletedAnswer(cleaned)) return false;
-  return actionVerbPattern.test(cleaned) && futureToolIntentPattern.test(cleaned);
+  if (!actionVerbPattern.test(cleaned) || !futureToolIntentPattern.test(cleaned)) return false;
+  // A completion phrase ("已完成…", "here's what…") followed by a future-intent
+  // phrase is a progress note, not a final answer. Only treat the text as
+  // final when the completion phrase comes *after* the last future intent.
+  const completionAt = lastMatchEnd(cleaned, completedAnswerPatternGlobal);
+  if (completionAt < 0) return true;
+  const intentAt = lastMatchEnd(cleaned, futureToolIntentPatternGlobal);
+  return intentAt > completionAt;
 }
 
 export function isDegenerateRepetition(text: string): boolean {
@@ -40,21 +59,29 @@ export function isDegenerateRepetition(text: string): boolean {
   const cleaned = plain.replace(/\s+/g, " ").trim();
   if (cleaned.length < 80) return false;
 
+  // Scan the entire string, not just the beginning, so repetition that starts
+  // after a normal preamble is also caught.
   for (const size of [12, 16, 24, 32, 48]) {
     if (cleaned.length < size * 8) continue;
-    const chunk = cleaned.slice(0, size);
-    let count = 0;
-    for (let index = 0; index + size <= Math.min(cleaned.length, size * 20); index += size) {
-      if (cleaned.slice(index, index + size) === chunk) count += 1;
-      else break;
+    const limit = Math.min(cleaned.length, size * 20);
+    for (let start = 0; start + size * 8 <= limit; start += size) {
+      const chunk = cleaned.slice(start, start + size);
+      let count = 0;
+      for (let index = start; index + size <= limit; index += size) {
+        if (cleaned.slice(index, index + size) === chunk) count += 1;
+        else break;
+      }
+      if (count >= 8) return true;
     }
-    if (count >= 8) return true;
   }
 
+  // Check any window of 10 consecutive lines, not just the first 10.
   const lines = plain.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   if (lines.length >= 10) {
-    const first = lines[0]!;
-    if (first.length >= 6 && lines.slice(0, 10).every((line) => line === first)) return true;
+    for (let i = 0; i <= lines.length - 10; i++) {
+      const anchor = lines[i]!;
+      if (anchor.length >= 6 && lines.slice(i, i + 10).every((line) => line === anchor)) return true;
+    }
   }
   return false;
 }

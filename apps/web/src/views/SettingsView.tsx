@@ -409,6 +409,7 @@ export function SettingsView({
       mcpEnabled: form.mcpEnabled,
       allowCrossInstanceEnforcement: form.allowCrossInstanceEnforcement ?? true,
       imageGen: form.imageGen,
+      videoGen: form.videoGen,
       systemPrompt: form.systemPrompt ?? "",
       appearance: form.appearance
     };
@@ -981,6 +982,7 @@ export function SettingsView({
                 />
 
                 <SettingsModelTab
+                  token={token}
                   onDefaultPermissionModeChange={(defaultAgentPermissionMode) => setForm(current => ({ ...current, defaultAgentPermissionMode }))}
                   isActive={activeSettingsSection === "model"}
                   form={form}
@@ -1007,6 +1009,9 @@ export function SettingsView({
                         ...patch
                       }
                     }))
+                  }
+                  onVideoGenChange={(patch) =>
+                    setForm((current) => ({ ...current, videoGen: { ...(current.videoGen ?? emptySakiConfig.videoGen), ...patch } }))
                   }
                   copilotAuthStatus={copilotAuthStatus}
                   copilotLoginState={copilotLoginState}

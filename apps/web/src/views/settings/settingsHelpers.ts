@@ -15,7 +15,8 @@ import {
   sakiImageGenProviderPresets,
   sakiNvidiaBaseUrl,
   sakiNvidiaDefaultModel,
-  sanitizeSakiImageGenConfig
+  sanitizeSakiImageGenConfig,
+  sanitizeSakiVideoGenConfig
 } from "@webops/shared";
 import { defaultPanelAppearance, defaultSakiRequestTimeoutMs } from "../../constants.js";
 
@@ -37,6 +38,7 @@ export const emptySakiConfig: SakiConfigResponse = {
   mcpEnabled: false,
   allowCrossInstanceEnforcement: true,
   imageGen: { ...defaultSakiImageGenConfig },
+  videoGen: sanitizeSakiVideoGenConfig(undefined),
   systemPrompt: "",
   appearance: defaultPanelAppearance,
   configPath: "",

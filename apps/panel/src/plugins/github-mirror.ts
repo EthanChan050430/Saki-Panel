@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import type { GitHubMirrorOption } from "@webops/shared";
 
 export const BUILTIN_GITHUB_MIRRORS: GitHubMirrorOption[] = [
@@ -41,6 +42,33 @@ export const BUILTIN_GITHUB_MIRRORS: GitHubMirrorOption[] = [
   }
 ];
 
+function assertSafeCustomMirror(raw: string): string {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("Invalid custom mirror URL.");
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("Custom mirror URL must use http or https.");
+  }
+  if (url.username || url.password) {
+    throw new Error("Custom mirror URL must not contain credentials.");
+  }
+  const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) {
+    throw new Error("Custom mirror URL must not point to a local host.");
+  }
+  const version = isIP(host);
+  if (version === 4 && /^(0|10|127)\.|^169\.254\.|^172\.(1[6-9]|2\d|3[01])\.|^192\.168\.|^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)) {
+    throw new Error("Custom mirror URL must not point to a private address.");
+  }
+  if (version === 6 && (host === "::1" || host === "::" || /^(fc|fd|fe80)/.test(host) || host.startsWith("::ffff:"))) {
+    throw new Error("Custom mirror URL must not point to a private address.");
+  }
+  return url.toString();
+}
+
 export function resolveMirrorUrl(
   originalUrl: string,
   mirrorId: string = "ghfast",
@@ -54,9 +82,8 @@ export function resolveMirrorUrl(
   }
 
   if (mirrorId === "custom" && customMirrorUrl) {
-    let base = customMirrorUrl.trim();
+    let base = assertSafeCustomMirror(customMirrorUrl.trim());
     if (!base.endsWith("/")) base += "/";
-    // If it's a prefix proxy like https://my-proxy.com/https://github.com/...
     return `${base}${trimmed}`;
   }
 
@@ -91,9 +118,13 @@ export async function testMirrorSpeed(
   mirrorId: string,
   customMirrorUrl?: string
 ): Promise<{ mirrorId: string; pingMs: number; ok: boolean; error?: string }> {
-  // Test with a lightweight known repo content or raw test
   const testTarget = "https://raw.githubusercontent.com/EthanChan050430/Saki-Panel/main/README.md";
-  const targetUrl = resolveMirrorUrl(testTarget, mirrorId, customMirrorUrl);
+  let targetUrl: string;
+  try {
+    targetUrl = resolveMirrorUrl(testTarget, mirrorId, customMirrorUrl);
+  } catch (err) {
+    return { mirrorId, pingMs: 0, ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 
   const start = Date.now();
   const controller = new AbortController();

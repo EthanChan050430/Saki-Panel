@@ -896,12 +896,24 @@
 }
 
 .modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   flex-shrink: 0;
   padding: 10px 20px;
   min-height: 44px;
   box-sizing: border-box;
   border-bottom: 1px solid rgba(203, 213, 225, 0.4);
   background: linear-gradient(135deg, rgba(255, 117, 172, 0.04) 0%, rgba(14, 165, 233, 0.03) 100%);
+}
+
+.modal-header .modal-title-wrap {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.modal-header .modal-close-btn {
+  margin-left: auto;
 }
 
 .modal-header h2 {

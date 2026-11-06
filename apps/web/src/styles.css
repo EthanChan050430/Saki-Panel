@@ -35,3 +35,5 @@
 @import "./styles/saki-dashboard.css";
 @import "./styles/saki-code-changes.css";
 @import "./styles/agent-notifications.css";
+@import "./styles/announcements.css";
+@import "./styles/saki-follow-ups.css";

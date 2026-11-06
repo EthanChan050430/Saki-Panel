@@ -21,7 +21,10 @@ export function stripTerminalText(value: string): string {
 export function parseShellMarker(captured: string, marker: string): { exitCode: number; stdout: string } | null {
   const plain = stripTerminalText(captured).replace(/\r/g, "");
   const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`(?:^|\\n)${escaped}:(-?\\d+):END\\n`).exec(plain);
+  // PTYs can append the completion record directly to output without a final
+  // newline (for example Python print followed by PowerShell Write-Host).
+  // Still require the complete END line so split chunks cannot finish early.
+  const match = new RegExp(`${escaped}:(-?\\d+):END\\n`).exec(plain);
   if (!match) return null;
   const exitCode = Number(match[1]);
   if (!Number.isSafeInteger(exitCode)) return null;

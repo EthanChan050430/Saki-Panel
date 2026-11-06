@@ -13,12 +13,15 @@ type Listener = (event: GlobalEvent) => void;
 class PanelGlobalEventBus {
   private emitter = new EventEmitter();
   private sockets = new Set<NodeWebSocket>();
+  private socketUsers = new Map<NodeWebSocket, string>();
   private readonly MAX_LISTENERS_PER_TYPE = 64;
 
-  registerSocket(socket: NodeWebSocket): () => void {
+  registerSocket(socket: NodeWebSocket, userId?: string): () => void {
     this.sockets.add(socket);
+    if (userId) this.socketUsers.set(socket, userId);
     return () => {
       this.sockets.delete(socket);
+      this.socketUsers.delete(socket);
       if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
         try { socket.close(1000, "client gone"); } catch {}
       }
@@ -46,12 +49,32 @@ class PanelGlobalEventBus {
     for (const socket of Array.from(this.sockets)) {
       if (socket.readyState !== WebSocket.OPEN) {
         this.sockets.delete(socket);
+        this.socketUsers.delete(socket);
         continue;
       }
       try {
         socket.send(payload);
       } catch {
                 this.sockets.delete(socket);
+        this.socketUsers.delete(socket);
+      }
+    }
+  }
+  sendToUsers(type: string, data: unknown, userIds: Iterable<string>): void {
+    const targets = new Set(userIds);
+    const payload = JSON.stringify({ type, timestamp: Date.now(), data } satisfies GlobalEvent);
+    for (const [socket, userId] of Array.from(this.socketUsers)) {
+      if (!targets.has(userId)) continue;
+      if (socket.readyState !== WebSocket.OPEN) {
+        this.sockets.delete(socket);
+        this.socketUsers.delete(socket);
+        continue;
+      }
+      try {
+        socket.send(payload);
+      } catch {
+        this.sockets.delete(socket);
+        this.socketUsers.delete(socket);
       }
     }
   }
@@ -61,7 +84,7 @@ export const globalEventBus = new PanelGlobalEventBus();
 
 export function registerGlobalEventSocket(app: FastifyInstance): void {
   app.get("/ws/events", { websocket: true }, (socket, request) => {
-        // 只让已登录的会话收到事件，下面是 token 校验
+        // Reject unauthenticated WebSocket connections
     const authHeader = (request.headers["authorization"] as string) ?? "";
     const queryToken = typeof request.query === "object" && request.query !== null && "token" in request.query
       ? (request.query as { token?: string }).token
@@ -76,16 +99,17 @@ export function registerGlobalEventSocket(app: FastifyInstance): void {
       socket.close(1008, "auth required");
       return;
     }
-    jwt.verify(rawToken).catch(() => {
-      socket.close(1008, "invalid token");
-    }).then((payload) => {
-      if (!payload) { socket.close(1008, "invalid token"); return; }
-      const detach = globalEventBus.registerSocket(socket);
-      socket.on("close", detach);
-      socket.on("error", detach);
-      socket.send(JSON.stringify({ type: "HELLO", timestamp: Date.now() }));
-    }).catch(() => {
-      // close already called above
-    });
+    jwt.verify(rawToken)
+      .then((payload) => {
+        if (!payload) { socket.close(1008, "invalid token"); return; }
+        const sub = (payload as { sub?: unknown }).sub;
+        const detach = globalEventBus.registerSocket(socket, typeof sub === "string" ? sub : undefined);
+        socket.on("close", detach);
+        socket.on("error", detach);
+        socket.send(JSON.stringify({ type: "HELLO", timestamp: Date.now() }));
+      })
+      .catch(() => {
+        socket.close(1008, "invalid token");
+      });
   });
 }

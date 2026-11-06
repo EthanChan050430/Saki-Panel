@@ -1,4 +1,4 @@
-import type { SakiChatRequest, SakiConfigResponse } from "@webops/shared";
+import { normalizeSakiReasoningEffort, type SakiChatRequest, type SakiConfigResponse } from "@webops/shared";
 import type { ParsedToolCall, SakiAgentRuntime, SakiModelToolTurn } from "../types.js";
 import {
   chatTextFromContent,
@@ -32,6 +32,13 @@ import {
   withOllamaImageInputs
 } from "./catalog.js";
 
+function ollamaThinkOption(config: SakiConfigResponse): Record<string, unknown> {
+  const effort = normalizeSakiReasoningEffort(config.reasoningEffort, config.model, "ollama");
+  // gpt-oss ignores boolean think and only accepts low|medium|high.
+  if (/gpt-oss/i.test(config.model)) return { think: effort === "auto" ? "medium" : effort };
+  return sakiModelWantsNativeThinking("ollama", config.model) ? { think: true } : {};
+}
+
 export async function callOllamaModel(config: SakiConfigResponse, input: SakiChatRequest, prompt: string): Promise<string> {
   const baseUrl = normalizeHttpBaseUrl(config.ollamaUrl, localProviderUrls.ollama);
   const payload = await requestJsonPayload(
@@ -44,7 +51,7 @@ export async function callOllamaModel(config: SakiConfigResponse, input: SakiCha
       body: JSON.stringify({
         model: requireChatModel(config, "ollama"),
         stream: false,
-        ...(sakiModelWantsNativeThinking("ollama", config.model) ? { think: true } : {}),
+        ...ollamaThinkOption(config),
         messages: withOllamaImageInputs(buildDirectMessages(input, prompt, buildDirectSystemPrompt(config)), input)
       })
     },
@@ -87,7 +94,7 @@ export async function callOllamaModelStream(
       body: JSON.stringify({
         model: requireChatModel(config, "ollama"),
         stream: true,
-        ...(sakiModelWantsNativeThinking("ollama", config.model) ? { think: true } : {}),
+        ...ollamaThinkOption(config),
         messages: withOllamaImageInputs(agentFallback ? buildPromptFallbackMessages(input, prompt, config) : buildDirectMessages(input, prompt, buildDirectSystemPrompt(config)), input)
       })
     },
@@ -118,7 +125,7 @@ export async function callOllamaAgentTurn(config: SakiConfigResponse, input: Sak
         body: JSON.stringify({
           model: requireChatModel(config, "ollama"),
           stream: false,
-          ...(sakiModelWantsNativeThinking("ollama", config.model) ? { think: true } : {}),
+          ...ollamaThinkOption(config),
           messages: withTools ? buildOllamaAgentMessages(input, prompt, config) : withOllamaImageInputs(buildPromptFallbackMessages(input, prompt, config), input),
           ...(withTools ? { tools: openAiToolSchemas() } : {})
         })
@@ -184,7 +191,7 @@ export async function callOllamaAgentTurnStream(
       body: JSON.stringify({
         model: requireChatModel(config, "ollama"),
         stream: true,
-        ...(sakiModelWantsNativeThinking("ollama", config.model) ? { think: true } : {}),
+        ...ollamaThinkOption(config),
         messages: withTools ? buildOllamaAgentMessages(input, prompt, config) : withOllamaImageInputs(buildPromptFallbackMessages(input, prompt, config), input),
         ...(withTools ? { tools: openAiToolSchemas() } : {})
       })

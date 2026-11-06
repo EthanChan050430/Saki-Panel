@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { sakiFetch } from "../model-fetch.js";
 import {
   compactDebugText,
   errorMessageFromJson,
@@ -28,7 +29,7 @@ import {
 } from "./common.js";
 
 function bodyHasNativeThinking(body: Record<string, unknown>): boolean {
-  return "enable_thinking" in body || "thinking" in body || "reasoning_effort" in body || "reasoning_budget" in body || "reasoning" in body;
+  return "enable_thinking" in body || "thinking" in body || "reasoning_effort" in body || "reasoning_budget" in body || "thinking_budget" in body || "output_config" in body || "reasoning" in body;
 }
 
 async function requestWithCompatibleParameters<T>(
@@ -176,7 +177,7 @@ export async function doRequestStreamingPayload<T>(
   armIdleTimeout();
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await sakiFetch(url, {
       ...options,
       signal: controller.signal
     });

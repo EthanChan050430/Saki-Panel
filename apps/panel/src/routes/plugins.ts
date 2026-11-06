@@ -1,9 +1,19 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
-import { loadCurrentUser, requireAnyPermission, requirePermission } from "../auth.js";
+import { loadCurrentUser, requireAnyPermission, requirePermission, requireSuperAdmin } from "../auth.js";
 import { pluginManager } from "../plugins/plugin-manager.js";
 import { testAllMirrors } from "../plugins/github-mirror.js";
+import {
+  applyPluginCapabilities,
+  buildPluginMentionSummaries,
+  describePluginCapabilities,
+  removePluginCapabilities,
+  restorePluginCapabilities,
+  readPluginMcpServers,
+  startPluginMcp,
+  stopPluginMcp
+} from "../plugins/plugin-capabilities.js";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -27,6 +37,20 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 export async function registerPluginRoutes(app: FastifyInstance): Promise<void> {
+  void restorePluginCapabilities(pluginManager.getState().installed).catch((error) => {
+    console.warn("[plugins] failed to restore plugin capabilities:", error);
+  });
+
+  // Enabled plugins that carry skills/MCP, used by the chat "@" menu.
+  app.get(
+    "/api/plugins/mentions",
+    { preHandler: requireAnyPermission(["plugin.view", "plugin.manage", "saki.use", "saki.chat", "saki.agent"]) },
+    async () => ({
+      ok: true,
+      plugins: buildPluginMentionSummaries(pluginManager.getState().installed)
+    })
+  );
+
   // Public: active theme metadata so the login page can restyle before auth.
   app.get("/api/plugins/active-theme", async () => {
     const state = pluginManager.getState();
@@ -114,8 +138,50 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
         mirrorId: body.mirrorId,
         customMirrorUrl: body.customMirrorUrl,
         ref: body.ref,
-        pluginName: body.pluginName
+        pluginName: body.pluginName,
+        allowMcp: user.isSuperAdmin
       });
+      for (const installed of plugins) {
+        await applyPluginCapabilities(installed);
+      }
+      return {
+        ok: true,
+        plugins,
+        message: `成功安装插件: ${plugins.map((p) => p.manifest.displayName).join("、")}`
+      };
+    } catch (err) {
+      reply.code(400).send({
+        message: err instanceof Error ? err.message : String(err)
+      });
+    }
+  });
+
+  app.post("/api/plugins/install-local", { preHandler: requirePermission("plugin.manage") }, async (request, reply) => {
+    const user = await loadCurrentUser(request.user.sub);
+    if (!user) {
+      reply.code(401).send({ message: "Unauthorized" });
+      return;
+    }
+    if (!user.isAdmin && !user.permissions.includes("plugin.manage")) {
+      reply.code(403).send({ message: "Only administrators and plugin managers can install plugins" });
+      return;
+    }
+
+    const body = (request.body ?? {}) as { localPath?: string; pluginName?: string };
+    if (!body.localPath || typeof body.localPath !== "string") {
+      reply.code(400).send({ message: "Missing localPath parameter" });
+      return;
+    }
+
+    try {
+      const plugins = await pluginManager.installFromLocal({
+        localPath: body.localPath,
+        pluginName: body.pluginName,
+        allowMcp: user.isSuperAdmin
+      });
+      for (const installed of plugins) {
+        await applyPluginCapabilities(installed);
+      }
       return {
         ok: true,
         plugins,
@@ -142,16 +208,51 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
     const { id } = request.params as { id: string };
     const body = (request.body ?? {}) as { enabled?: boolean };
 
+    const existing = pluginManager.getState().installed.find((item) => item.id === id);
+    if (existing && readPluginMcpServers(existing).length && !user.isSuperAdmin) {
+      reply.code(403).send({ message: "Only super administrators can start or stop MCP server plugins." });
+      return;
+    }
+
     const plugin = pluginManager.togglePlugin(id, body.enabled);
     if (!plugin) {
       reply.code(404).send({ message: "Plugin not found" });
       return;
     }
+    await applyPluginCapabilities(plugin);
 
     return {
       ok: true,
       plugin
     };
+  });
+
+  app.get(
+    "/api/plugins/:id/capabilities",
+    { preHandler: requireAnyPermission(["plugin.view", "plugin.manage"]) },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const plugin = pluginManager.getState().installed.find((item) => item.id === id);
+      if (!plugin) {
+        reply.code(404).send({ message: "Plugin not found" });
+        return;
+      }
+      return { ok: true, capabilities: describePluginCapabilities(plugin) };
+    }
+  );
+
+  app.post("/api/plugins/:id/mcp/restart", { preHandler: [requirePermission("plugin.manage"), requireSuperAdmin()] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const plugin = pluginManager.getState().installed.find((item) => item.id === id);
+    if (!plugin) {
+      reply.code(404).send({ message: "Plugin not found" });
+      return;
+    }
+    await stopPluginMcp(plugin);
+    if (plugin.enabled) {
+      await startPluginMcp(plugin);
+    }
+    return { ok: true, capabilities: describePluginCapabilities(plugin) };
   });
 
   app.post("/api/plugins/:id/active", { preHandler: requirePermission("plugin.manage") }, async (request, reply) => {
@@ -197,6 +298,10 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
     }
 
     const { id } = request.params as { id: string };
+    const existing = pluginManager.getState().installed.find((item) => item.id === id);
+    if (existing) {
+      await removePluginCapabilities(existing);
+    }
     const ok = pluginManager.uninstallPlugin(id);
     if (!ok) {
       reply.code(404).send({ message: "Plugin not found or deletion failed" });
@@ -278,10 +383,16 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
     const body = (request.body ?? {}) as { mirrorId?: string; customMirrorUrl?: string };
 
     try {
+      const previous = pluginManager.getState().installed.find((item) => item.id === id);
+      if (previous) {
+        await stopPluginMcp(previous);
+      }
       const plugin = await pluginManager.updatePlugin(id, {
+        allowMcp: user.isSuperAdmin,
         ...(body.mirrorId ? { mirrorId: body.mirrorId } : {}),
         ...(body.customMirrorUrl ? { customMirrorUrl: body.customMirrorUrl } : {})
       });
+      await applyPluginCapabilities(plugin);
       return {
         ok: true,
         plugin,
@@ -289,6 +400,8 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      const current = pluginManager.getState().installed.find((item) => item.id === id);
+      if (current?.enabled) await startPluginMcp(current);
       reply.code(400).send({ message: msg });
     }
   });
@@ -304,6 +417,12 @@ export async function registerPluginRoutes(app: FastifyInstance): Promise<void> 
     }
 
     const ext = path.extname(filePath).toLowerCase();
+    const basename = path.basename(filePath);
+    if (basename === ".mcp.json" || basename === "saki-plugin.json") {
+      reply.code(403).send({ message: "Plugin configuration files are not publicly accessible." });
+      return;
+    }
+
     const mime = MIME_TYPES[ext] || "application/octet-stream";
 
     reply.header("Cache-Control", "public, max-age=3600");

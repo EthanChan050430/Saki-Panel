@@ -1,4 +1,5 @@
 import {
+  parseSakiImageGenAspectRatio,
   parseSakiImageGenQuality,
   resolveSakiImageSize,
   sanitizeSakiImageGenConfig,
@@ -8,6 +9,7 @@ import {
   type SakiImageGenQuality
 } from "@webops/shared";
 import { errorMessageFromJson, fetchWithTimeout, objectValue, RouteError, trimString } from "./types.js";
+import { assertPublicHttpUrl } from "./web.js";
 
 const maxImagePromptChars = 4000;
 const maxImageBytes = 20 * 1024 * 1024;
@@ -39,6 +41,14 @@ export interface SakiGeneratedImage {
   model: string;
   provider: SakiImageGenProviderId;
   protocol: SakiImageGenProtocol;
+}
+
+interface GeneratedImageData {
+  base64: string;
+  mimeType: string;
+  revisedPrompt?: string;
+  width?: number;
+  height?: number;
 }
 
 function assertHttpUrl(raw: string, field: string): URL {
@@ -83,20 +93,28 @@ export function imageGenerationEndpoint(config: SakiImageGenConfig): string {
   if (config.protocol === "gemini") {
     const model = trimString(config.model) || "imagen-4.0-generate-001";
     const root = base.replace(/\/models(?:\/.*)?$/i, "");
-    if (/:predict$/i.test(base) || /:generateImages$/i.test(base)) return base;
-    return `${root}/models/${encodeURIComponent(model)}:predict`;
+    const method = /gemini/i.test(model) ? "generateContent" : /:generateImages$/i.test(base) ? "generateImages" : "predict";
+    return `${root}/models/${encodeURIComponent(model)}:${method}`;
   }
 
   if (config.protocol === "dashscope") {
     if (/image-synthesis$/i.test(base) || /generation$/i.test(base)) return base;
     const root = base.replace(/\/services(?:\/.*)?$/i, "");
+    if (/qwen-image|wan2\.[67]-(?:t2i|image)/i.test(config.model)) {
+      return `${root}/services/aigc/multimodal-generation/generation`;
+    }
     return `${root}/services/aigc/text2image/image-synthesis`;
   }
 
-  if (/\/images\/generations$/i.test(base)) return base;
-  // 补齐 /v1 路径
-  const withVersion = /\/v\d+(?:beta)?(?:\/openai)?$/i.test(base) ? base : `${base}/v1`;
-  return `${withVersion}/images/generations`;
+  const url = assertHttpUrl(config.baseUrl, "Image API Base URL");
+  let pathname = stripTrailingSlash(url.pathname);
+  if (!/\/images\/generations$/i.test(pathname)) {
+    pathname = pathname.replace(/\/(?:chat\/completions|completions|responses|models)$/i, "");
+    if (!/\/v\d+(?:beta\d*)?(?:\/openai)?$/i.test(pathname)) pathname += "/v1";
+    pathname += "/images/generations";
+  }
+  url.pathname = pathname;
+  return url.toString();
 }
 
 function mimeToExtension(mimeType: string): string {
@@ -134,15 +152,15 @@ function openaiCompatibleSize(model: string, width: number, height: number): str
     return landscape ? "1792x1024" : "1024x1792";
   }
   if (square) return "1024x1024";
-  if (landscape) return width >= 1400 || height >= 1400 ? "1792x1024" : "1536x1024";
-  return width >= 1400 || height >= 1400 ? "1024x1792" : "1024x1536";
+  // These sizes also work with GPT Image relays that only expose standard sizes.
+  return landscape ? "1536x1024" : "1024x1536";
 }
 
 function xaiResolution(quality: SakiImageGenQuality): "1k" | "2k" {
   return quality === "hd" ? "2k" : "1k";
 }
 
-function xaiQuality(quality: SakiImageGenQuality): "low" | "medium" | "high" {
+function imageQualityLevel(quality: SakiImageGenQuality): "low" | "medium" | "high" {
   if (quality === "draft") return "low";
   if (quality === "hd") return "high";
   return "medium";
@@ -176,6 +194,11 @@ function authHeaders(config: SakiImageGenConfig, extra?: Record<string, string>)
 
 async function readResponsePayload(response: Response): Promise<{ text: string; bytes: Uint8Array; contentType: string }> {
   const contentType = response.headers.get("content-type") || "";
+  const contentLength = Number(response.headers.get("content-length"));
+  if (!Number.isNaN(contentLength) && contentLength > maxImageBytes) {
+    await response.body?.cancel();
+    throw new RouteError(`Image API returned a payload larger than ${Math.round(maxImageBytes / (1024 * 1024))}MB.`, 502);
+  }
   const buffer = new Uint8Array(await response.arrayBuffer());
   if (buffer.byteLength > maxImageBytes) {
     throw new RouteError(`Image API returned a payload larger than ${Math.round(maxImageBytes / (1024 * 1024))}MB.`, 502);
@@ -293,6 +316,21 @@ export function parseGeneratedImagePayload(input: {
   }
 
   const output = objectValue(item.output) ?? item;
+  const choices = Array.isArray(item.candidates) ? item.candidates : Array.isArray(output.choices) ? output.choices : [];
+  for (const candidate of choices) {
+    const row = objectValue(candidate);
+    const content = objectValue(row?.content) ?? objectValue(row?.message);
+    const parts = content?.parts ?? content?.content;
+    if (!Array.isArray(parts)) continue;
+    for (const part of parts) {
+      const value = objectValue(part);
+      const inline = objectValue(value?.inlineData ?? value?.inline_data);
+      const base64 = extractBase64Field(inline?.data);
+      if (base64) return { base64, mimeType: firstString(inline?.mimeType, inline?.mime_type) || sniffMimeFromBase64(base64) };
+      const url = firstString(value?.image);
+      if (/^https?:\/\//i.test(url)) return { base64: "", mimeType: "image/png", url };
+    }
+  }
   const results = Array.isArray(output.results) ? output.results : Array.isArray(item.results) ? item.results : [];
   if (results.length > 0) {
     const row = objectValue(results[0]) ?? {};
@@ -320,7 +358,7 @@ export function parseGeneratedImagePayload(input: {
 }
 
 async function fetchImageUrlAsBase64(url: string): Promise<{ base64: string; mimeType: string }> {
-  assertHttpUrl(url, "Image result URL");
+  await assertPublicHttpUrl(url);
   const response = await fetchWithTimeout(url, { method: "GET", headers: { accept: "image/*,application/json" } }, imageUrlFetchTimeoutMs);
   const payload = await readResponsePayload(response);
   if (!response.ok) {
@@ -390,7 +428,7 @@ export function buildOpenAiImagesBody(
     body.n = 1;
     body.aspect_ratio = size.aspectRatio;
     body.resolution = xaiResolution(size.quality);
-    body.quality = xaiQuality(size.quality);
+    body.quality = imageQualityLevel(size.quality);
     return body;
   }
 
@@ -405,8 +443,10 @@ export function buildOpenAiImagesBody(
   if (officialOpenAi || /dall-e|gpt-image/i.test(model)) {
     body.n = 1;
     body.size = openaiCompatibleSize(model, size.width, size.height);
-    if (/dall-e-3|gpt-image/i.test(model)) {
+    if (/dall-e-3/i.test(model)) {
       body.quality = size.quality === "hd" ? "hd" : "standard";
+    } else if (!/dall-e/i.test(model)) {
+      body.quality = imageQualityLevel(size.quality);
     }
     if (/dall-e/i.test(model) && !/gpt-image/i.test(model)) {
       body.response_format = "b64_json";
@@ -429,9 +469,10 @@ async function generateViaOpenAiImages(
   config: SakiImageGenConfig,
   prompt: string,
   size: ReturnType<typeof resolveSakiImageSize>
-): Promise<{ base64: string; mimeType: string; revisedPrompt?: string }> {
+): Promise<GeneratedImageData> {
   const url = imageGenerationEndpoint(config);
-  const posted = await postJson(url, buildOpenAiImagesBody(config, prompt, size), authHeaders(config));
+  const body = buildOpenAiImagesBody(config, prompt, size);
+  const posted = await postJson(url, body, authHeaders(config));
   if (!posted.status || posted.status >= 400) {
     throwImageApiError(url, posted.status, jsonPayload(posted.text), posted.text);
   }
@@ -441,12 +482,14 @@ async function generateViaOpenAiImages(
     text: posted.text,
     bytes: posted.bytes
   });
+  const dimensions = typeof body.size === "string" ? body.size.match(/^(\d+)x(\d+)$/) : null;
+  const actualSize = dimensions ? { width: Number(dimensions[1]), height: Number(dimensions[2]) } : {};
   if (parsed.base64) {
-    return { base64: parsed.base64, mimeType: parsed.mimeType, ...(parsed.revisedPrompt ? { revisedPrompt: parsed.revisedPrompt } : {}) };
+    return { base64: parsed.base64, mimeType: parsed.mimeType, ...actualSize, ...(parsed.revisedPrompt ? { revisedPrompt: parsed.revisedPrompt } : {}) };
   }
   if (parsed.url) {
     const fetched = await fetchImageUrlAsBase64(parsed.url);
-    return { ...fetched, ...(parsed.revisedPrompt ? { revisedPrompt: parsed.revisedPrompt } : {}) };
+    return { ...fetched, ...actualSize, ...(parsed.revisedPrompt ? { revisedPrompt: parsed.revisedPrompt } : {}) };
   }
   throw new RouteError("OpenAI-compatible image API did not return image data.", 502);
 }
@@ -539,13 +582,12 @@ async function generateViaGemini(
   if (apiKey && !url.searchParams.has("key")) {
     url.searchParams.set("key", apiKey);
   }
-  const body = {
-    instances: [{ prompt }],
-    parameters: {
-      sampleCount: 1,
-      aspectRatio: size.aspectRatio
-    }
-  };
+  const body = /:generateContent$/i.test(url.pathname)
+    ? {
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: { responseModalities: ["TEXT", "IMAGE"], imageConfig: { aspectRatio: size.aspectRatio } }
+      }
+    : { instances: [{ prompt }], parameters: { sampleCount: 1, aspectRatio: size.aspectRatio } };
   const headers: Record<string, string> = { accept: "application/json" };
   if (apiKey) headers["x-goog-api-key"] = apiKey;
   const posted = await postJson(url.toString(), body, headers);
@@ -572,18 +614,20 @@ async function generateViaDashscope(
 ): Promise<{ base64: string; mimeType: string }> {
   const url = imageGenerationEndpoint(config);
   const model = trimString(config.model) || "wanx2.1-t2i-turbo";
+  const multimodal = /\/multimodal-generation\/generation$/i.test(url);
   const body = {
     model,
-    input: {
+    input: multimodal ? { messages: [{ role: "user", content: [{ text: prompt }] }] } : {
       prompt,
       ...(negativePrompt ? { negative_prompt: negativePrompt } : {})
     },
     parameters: {
       size: `${size.width}*${size.height}`,
-      n: 1
+      n: 1,
+      ...(multimodal && negativePrompt ? { negative_prompt: negativePrompt } : {})
     }
   };
-  const posted = await postJson(url, body, authHeaders(config, { "x-dashscope-async": "enable" }));
+  const posted = await postJson(url, body, authHeaders(config, multimodal ? {} : { "x-dashscope-async": "enable" }));
   if (posted.status >= 400) {
     throwImageApiError(url, posted.status, jsonPayload(posted.text), posted.text);
   }
@@ -662,7 +706,7 @@ export async function generateSakiImage(config: SakiImageGenConfig, input: SakiG
     defaults: sanitized
   });
 
-  let result: { base64: string; mimeType: string; revisedPrompt?: string };
+  let result: GeneratedImageData;
   if (sanitized.protocol === "sd-webui") {
     result = await generateViaSdWebui(sanitized, prompt, negativePrompt, size, input);
   } else if (sanitized.protocol === "stability") {
@@ -680,14 +724,16 @@ export async function generateSakiImage(config: SakiImageGenConfig, input: SakiG
   }
 
   const mimeType = result.mimeType || sniffMimeFromBase64(result.base64);
+  const width = result.width ?? size.width;
+  const height = result.height ?? size.height;
   return {
     mimeType,
     extension: mimeToExtension(mimeType),
     base64: result.base64,
-    width: size.width,
-    height: size.height,
+    width,
+    height,
     quality: parseSakiImageGenQuality(size.quality),
-    aspectRatio: size.aspectRatio,
+    aspectRatio: parseSakiImageGenAspectRatio(`${width}:${height}`, size.aspectRatio),
     ...(result.revisedPrompt ? { revisedPrompt: result.revisedPrompt } : {}),
     model: trimString(sanitized.model) || sanitized.provider,
     provider: sanitized.provider,

@@ -53,6 +53,7 @@ import {
   TextQuote,
   Trash2,
   Upload,
+  Video,
   UserCheck,
   UserCog,
   Wifi,
@@ -1295,6 +1296,7 @@ export function workflowStatusText(step: LocalSakiWorkflowStep): string | null {
   if (tool === "searchweb") return "搜索网页...";
   if (tool === "browse" || tool === "crawl") return "浏览网页...";
   if (tool === "researchweb") return "研究搜索...";
+  if (tool === "generatevideo" || tool === "generate_video") return "正在生成视频...";
   if (tool === "readmemory") return "读取项目记忆...";
   if (tool === "writememory") return "保存项目记忆...";
   if (tool === "generateimage" || tool === "generate_image" || tool === "drawimage" || tool === "createimage" || tool === "txt2img" || tool === "imagegen" || tool === "imagine") {
@@ -1808,6 +1810,7 @@ export function sakiActionTarget(action: SakiAgentAction): string {
   if (tool === "searchfiles") return sakiActionStringArg(action, ["pattern"]);
   if (tool === "findfiles") return sakiActionStringArg(action, ["pattern"]);
   if (tool === "readmemory" || tool === "writememory") return "SAKI.md";
+  if (tool === "generatevideo" || tool === "generate_video") return sakiActionStringArg(action, ["prompt"]);
   if (tool === "generateimage" || tool === "generate_image" || tool === "drawimage" || tool === "createimage" || tool === "txt2img" || tool === "imagegen" || tool === "imagine") {
     return sakiActionStringArg(action, ["path"]) || sakiActionStringArg(action, ["prompt"]);
   }
@@ -2106,6 +2109,9 @@ export function sakiActionTitle(action: SakiAgentAction): string {
       return "重命名";
     case "uploadbase64":
       return "上传文件";
+    case "generatevideo":
+    case "generate_video":
+      return "生成视频";
     case "generateimage":
     case "generate_image":
     case "drawimage":
@@ -2359,6 +2365,9 @@ export function SakiToolIcon({ action, size = 16 }: { action: Pick<SakiAgentActi
     case "writefile":
     case "uploadbase64":
       return <FilePlus size={size} />;
+    case "generatevideo":
+    case "generate_video":
+      return <Video size={size} />;
     case "generateimage":
     case "generate_image":
     case "drawimage":

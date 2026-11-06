@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="300" viewBox="0 0 640 300" role="img" aria-labelledby="title desc">
+  <title id="title">Saki AI</title>
+  <desc id="desc">From your servers to your desktop. A local AI companion for everyday tasks.</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#28223e"/><stop offset="1" stop-color="#14192d"/></linearGradient>
+    <radialGradient id="glow"><stop stop-color="#bca2ff" stop-opacity=".2"/><stop offset="1" stop-color="#bca2ff" stop-opacity="0"/></radialGradient>
+    <pattern id="stars" width="40" height="40" patternUnits="userSpaceOnUse"><circle cx="20" cy="20" r="1" fill="#dacbff" fill-opacity=".14"/></pattern>
+  </defs>
+  <rect x="1" y="1" width="638" height="298" rx="24" fill="url(#bg)" stroke="#4e4369"/>
+  <rect x="1" y="1" width="638" height="298" rx="24" fill="url(#stars)"/>
+  <ellipse cx="535" cy="116" rx="175" ry="160" fill="url(#glow)"/>
+  <g transform="translate(522 103)" fill="none" stroke="#cfbaff">
+    <ellipse rx="62" ry="33" transform="rotate(-30)" stroke-opacity=".4"/>
+    <ellipse rx="62" ry="33" transform="rotate(35)" stroke-opacity=".25"/>
+    <path d="M0-36C4-10 10-4 36 0 10 4 4 10 0 36-4 10-10 4-36 0-10-4-4-10 0-36Z" fill="#cfbaff" fill-opacity=".18" stroke-width="1.5"/>
+    <circle cx="53" cy="-29" r="5" fill="#e0d2ff" stroke="none"/>
+    <path d="M-52 31v14m-7-7h14" stroke-width="1.5" stroke-linecap="round"/>
+  </g>
+  <g font-family="Segoe UI, Microsoft YaHei, Arial, sans-serif">
+    <text x="36" y="43" fill="#cfbaff" font-size="16" font-weight="600" letter-spacing="3">02 / DESKTOP AI</text>
+    <text x="36" y="120" fill="#faf5ff" font-size="48" font-weight="700" letter-spacing="-1">Saki AI</text>
+    <text x="36" y="162" fill="#d0c4e8" font-size="25">A companion for your everyday.</text>
+    <text x="36" y="200" fill="#aca0c8" font-size="20">LOCAL AI · DOCUMENTS · RESEARCH</text>
+    <path d="M36 226H604" stroke="#cfbaff" stroke-opacity=".2"/>
+    <text x="36" y="267" fill="#cfbaff" font-size="22" font-weight="600">Bring Saki to your desktop</text>
+    <path d="M572 260l20-20m-17 0h17v17" fill="none" stroke="#cfbaff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

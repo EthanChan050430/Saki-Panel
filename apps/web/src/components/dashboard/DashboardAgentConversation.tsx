@@ -8,6 +8,8 @@ import type { DashboardMessageOperation } from "./message-operations.js";
 import { parseThinkingContent, SakiAttachmentChip, SakiThinkingActionCard, SakiToolActionCard, SakiToolIcon,
   sakiActionTarget, sakiActionTitle, visibleSakiActions, renderableSakiTimeline } from "../saki/SakiComponents.js";
 import { SakiCodeChangesDetails } from "../saki/chat/SakiCodeChanges.js";
+import { SakiChatGeneratedImages } from "../saki/chat/SakiChatImages.js";
+import { SakiChatVideo } from "../saki/chat/SakiChatVideo.js";
 import type { LocalSakiTimelineItem } from "../../types/app.js";
 const DashboardWebTerminal = React.lazy(() => import("../terminal/WebTerminal.js").then((module) => ({ default: module.WebTerminal })));
 
@@ -51,6 +53,19 @@ function ActionControls({ action, messageId, busyId, onDecide, expanded = false 
   return <SakiToolActionCard key={action.id} action={action} actionBusyId={busyId} defaultExpanded={expanded}
     onDecision={(target, decision) => { void onDecide(messageId, target, decision); }}
     onAnswer={(target, answer) => onDecide(messageId, target, answer)} />;
+}
+
+function ActionOutput({ action, token }: { action: SakiAgentAction; token: string }) {
+  const videos = [...new Map((action.attachments ?? []).filter(attachment => attachment.generatedVideoId)
+    .map(attachment => [attachment.generatedVideoId, attachment])).values()];
+  const hasVideo = videos.length > 0;
+  const [open, setOpen] = useState(hasVideo);
+  useEffect(() => { if (hasVideo) setOpen(true); }, [hasVideo]);
+  return <details className="dashboard-tool-raw" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary>完整输出</summary>
+    {open && videos.map(attachment => <SakiChatVideo key={attachment.generatedVideoId} attachment={attachment} token={token} compact={false} autoLoad />)}
+    <pre>{action.observation || "（无输出）"}</pre>
+  </details>;
 }
 
 const routineTools = new Set([
@@ -236,7 +251,8 @@ function DashboardToolGroup({
   );
 }
 
-export const DashboardAgentMessage = memo(function DashboardAgentMessage({ message, selectedActionId, busyId, onSelectAction, onDecide, onMessageOperation, copiedMessageId, canRollbackCode = false, onPreviewAttachment }: {
+export const DashboardAgentMessage = memo(function DashboardAgentMessage({ token, message, selectedActionId, busyId, onSelectAction, onDecide, onMessageOperation, copiedMessageId, canRollbackCode = false, onPreviewAttachment }: {
+  token: string;
   message: DashboardChatMessage; selectedActionId?: string | undefined; busyId: string | null;
   onSelectAction: (messageId: string, actionId: string) => void; onDecide: DecideAction;
   onMessageOperation?: (messageId: string, operation: DashboardMessageOperation) => Promise<void>;
@@ -274,7 +290,7 @@ export const DashboardAgentMessage = memo(function DashboardAgentMessage({ messa
     <div className="dashboard-message-content">
       {message.attachments && message.attachments.length > 0 ? (
         <div className="saki-message-attachments" style={{ marginBottom: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {message.attachments.map((attachment, index) => (
+          {message.attachments.filter((item) => message.role === "user" || !item.generatedVideoId && !item.generatedImageId).map((attachment, index) => (
             <SakiAttachmentChip
               attachment={attachment}
               key={attachment.id ?? `${attachment.name}-${index}`}
@@ -283,6 +299,7 @@ export const DashboardAgentMessage = memo(function DashboardAgentMessage({ messa
           ))}
         </div>
       ) : null}
+      {message.role === "assistant" && <SakiChatGeneratedImages message={message} token={token} {...(onPreviewAttachment ? { onPreview: onPreviewAttachment } : {})} />}
       {parsed.thinking && !timeline.some((item) => item.kind === "text" && (item.thinking || parseThinkingContent(item.content).thinking)) ? <SakiThinkingActionCard thinking={parsed.thinking} durationSec={message.thinkingDurationSec}
         streaming={Boolean(message.isStreaming && message.isThinking)} completedLabel="Think for" /> : null}
       {message.role === "assistant" && timeline.length > 0 && !editing ? <div className="dashboard-message-timeline">
@@ -518,7 +535,7 @@ export function DashboardToolDetails({ messageId, action, busyId, onDecide, onCl
     </div> : <div className="dashboard-tool-details-body">
       {action && messageId ? <><ActionControls action={action} messageId={messageId} busyId={busyId} onDecide={onDecide} expanded />
         <details className="dashboard-tool-raw"><summary>调用参数</summary><pre>{JSON.stringify(action.args, null, 2)}</pre></details>
-        <details className="dashboard-tool-raw"><summary>完整输出</summary><pre>{action.observation || "（无输出）"}</pre></details></>
+        <ActionOutput key={action.id} action={action} token={token} /></>
         : <p>选择工具调用查看详情，或新建终端。</p>}
     </div>}
   </aside>;

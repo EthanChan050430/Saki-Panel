@@ -10,7 +10,11 @@ import type {
   SakiWorkspaceContext,
   UpdateSakiConfigRequest
 } from "@webops/shared";
-import { sakiListedModelSupportsVision, normalizeSakiWorkspaceIds, resolveSakiMentionedSkills, parseSakiWorkspaceFileMentions } from "@webops/shared";
+import { sakiListedModelSupportsVision, normalizeSakiWorkspaceIds, resolveSakiMentionedSkills, resolveSakiMentionedPlugins, parseSakiWorkspaceFileMentions } from "@webops/shared";
+import { readSakiModelPreference, saveSakiModelPreference } from "./model-preferences.js";
+import { pluginManager } from "../../plugins/plugin-manager.js";
+import { buildPluginMentionSummaries } from "../../plugins/plugin-capabilities.js";
+import { buildMentionedPluginContext } from "./plugin-mentions.js";
 import { writeAuditLog } from "../../audit.js";
 import { readDaemonInstanceFile, readDaemonInstanceLogs } from "../../daemon-client.js";
 import { assertSakiSessionAccess, assertSakiSelectedWorkspaces, sakiProjectPermissions, sakiWorkspacePermissions } from "./session-access.js";
@@ -29,7 +33,7 @@ import {
 import { buildAuditSearchContext } from "./audit.js";
 import { loadSakiSkills, readSakiSkillsByIds, buildAutoAppliedSakiSkillContext } from "./skills.js";
 import { readEffectiveSakiConfig } from "./config.js";
-import { getCachedInstanceFile, recordInstanceFileRead } from "./state.js";
+import { getCachedInstanceFile, recordInstanceFileRead, sessionAgentMemories, sessionAgentMemoriesReady } from "./state.js";
 import {
   combinedSakiContextText,
   effectiveSakiAgentPermissionMode,
@@ -50,6 +54,7 @@ import {
   type ResolvedSakiContext
 } from "./types.js";
 import { hydrateSakiAttachmentsForModel } from "./ocr.js";
+import { applySakiSlashCommand, formatEditorContext, needsInstanceOpsTools, normalizeAgentIntent, sanitizeEditorContext } from "./coding-harness.js";
 
 export function toWorkspaceContext(instance: InstanceWithNode | null): SakiWorkspaceContext | null {
   if (!instance) return null;
@@ -356,6 +361,10 @@ export async function prepareSakiChatInvocation(
   if (!message) {
     throw new Error("message is required");
   }
+  const slash = applySakiSlashCommand(message);
+  const editorContext = sanitizeEditorContext(body.editorContext);
+  const requestedIntent = slash.intent !== "default" ? slash.intent : normalizeAgentIntent(body.agentIntent);
+  const editorContextText = formatEditorContext(editorContext);
 
   // Reject stale credentials, revoked assignments and foreign projects before
   // touching project context or sending attachments to an OCR/model provider.
@@ -379,10 +388,14 @@ export async function prepareSakiChatInvocation(
   };
 
   const requestedModel = sanitizeRequestedSakiModel(body.model);
-  const config = withRequestedSakiModel(await readEffectiveSakiConfig(), {
-    model: requestedModel || null,
+  const baseConfig = await readEffectiveSakiConfig();
+  if (!requestedModel && !body.provider) await sessionAgentMemoriesReady;
+  const previous = !requestedModel && !body.provider ? await readSakiModelPreference(request.user.sub, sessionAgentMemories.values()) : undefined;
+  const preferred = previous && baseConfig.providerConfigs[previous.provider]?.enabled === true ? previous : undefined;
+  const config = withRequestedSakiModel(baseConfig, {
+    model: requestedModel || preferred?.model || null,
     reasoningEffort: body.reasoningEffort ?? "auto",
-    provider: body.provider || null
+    provider: body.provider || preferred?.provider || null
   });
   const attachments = await hydrateSakiAttachmentsForModel(
     sanitizeSakiInputAttachments(body.attachments),
@@ -391,7 +404,7 @@ export async function prepareSakiChatInvocation(
   );
 
   const input: SakiChatRequest = {
-    message,
+    message: slash.message,
     ...Object.fromEntries(["clientRequestId", "conversationId", "userMessageId", "assistantMessageId"].flatMap((key) => {
       const value = trimString(body[key as keyof SakiChatRequest]);
       return value && /^[a-zA-Z0-9_-]{1,200}$/.test(value) ? [[key, value]] : [];
@@ -402,7 +415,7 @@ export async function prepareSakiChatInvocation(
     ...(selectedInstances ? { workspaceInstanceIds: normalizeSakiWorkspaceIds(instanceId, selectedInstances.map(item => item.id)) } : {}),
     panelError: trimString(body.panelError) || null,
     contextTitle: trimString(body.contextTitle) || null,
-    contextText: trimContextText(body.contextText) || null,
+    contextText: [trimContextText(body.contextText), editorContextText].filter(Boolean).join("\n\n") || null,
     auditSearch: trimString(body.auditSearch) || null,
     mode,
     agentPermissionMode: normalizeSakiAgentPermissionMode(body.agentPermissionMode ?? config.defaultAgentPermissionMode),
@@ -410,7 +423,9 @@ export async function prepareSakiChatInvocation(
     terminalSandbox: body.terminalSandbox !== false,
     selectedSkillIds: Array.isArray(body.selectedSkillIds) ? body.selectedSkillIds.map(trimString).filter(Boolean) : [],
     attachments,
-    ...(requestedModel || trimString(body.provider) ? { model: config.model, provider: config.provider } : {})
+    model: config.model, provider: config.provider,
+    ...(requestedIntent !== "default" ? { agentIntent: requestedIntent } : {}),
+    ...(editorContext ? { editorContext } : {})
   };
   requireSakiModePermission(request.user.permissions, input.mode ?? "chat");
   const auditSearchContext = input.auditSearch
@@ -425,7 +440,7 @@ export async function prepareSakiChatInvocation(
         contextText: [input.contextText, auditSearchContext].filter(Boolean).join("\n\n")
       }
     : input;
-  const includeInstanceLogs = Boolean(instanceId && permissions.includes("instance.logs"));
+  const includeInstanceLogs = Boolean(instanceId && permissions.includes("instance.logs") && (trimString(body.panelError) || needsInstanceOpsTools(`${message}\n${slash.message}`)));
   const includeInstanceFiles = Boolean(instanceId && permissions.includes("file.read"));
   if (includeInstanceLogs && context.instance) {
     try {
@@ -436,14 +451,21 @@ export async function prepareSakiChatInvocation(
   }
   const projectMemory = includeInstanceFiles ? await loadInstanceProjectMemory(context.instance) : null;
   const memoryContext = projectMemory ?? "";
-
   const skillQuery =
-    `${message} ${modelInput.panelError ?? ""} ${modelInput.contextTitle ?? ""} ${combinedSakiContextText(modelInput).slice(0, 1200)}`.trim() ||
+    `${message} ${slash.message} ${modelInput.panelError ?? ""} ${modelInput.contextTitle ?? ""} ${combinedSakiContextText(modelInput).slice(0, 1200)}`.trim() ||
     "coding";
   const skillState = await loadSakiSkills(skillQuery, false, input.mode === "agent" ? 20 : 12);
   const mentionedSkills = resolveSakiMentionedSkills(message, skillState.skills);
+  const mentionedPlugins = resolveSakiMentionedPlugins(
+    message,
+    buildPluginMentionSummaries(pluginManager.getState().installed)
+  );
   const effectiveSkillIds = [
-    ...new Set([...(input.selectedSkillIds ?? []), ...mentionedSkills.map((s) => s.id)])
+    ...new Set([
+      ...(input.selectedSkillIds ?? []),
+      ...mentionedSkills.map((s) => s.id),
+      ...mentionedPlugins.flatMap((plugin) => plugin.skillIds)
+    ])
   ];
   const skills = effectiveSkillIds.length
     ? await readSakiSkillsByIds(effectiveSkillIds)
@@ -470,9 +492,12 @@ export async function prepareSakiChatInvocation(
     }
   }
 
+  const mentionedPluginContext = buildMentionedPluginContext(mentionedPlugins);
+
   const combinedContextParts = [
     modelInput.contextText,
     memoryContext,
+    mentionedPluginContext,
     autoAppliedSkillContext,
     mentionedFilesContext
   ].filter(Boolean);
@@ -484,6 +509,8 @@ export async function prepareSakiChatInvocation(
       }
     : modelInput;
 
+  await saveSakiModelPreference(request.user.sub, { provider: config.provider, model: config.model })
+    .catch(() => console.warn("[Saki] Could not persist the user's last model selection."));
   return { input, modelInput: enhancedModelInput, context, skills };
 }
 

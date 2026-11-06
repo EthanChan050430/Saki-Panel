@@ -188,6 +188,16 @@ export function UsersView({
   const [userSearch, setUserSearch] = useState("");
   const [showMobileCreate, setShowMobileCreate] = useState(false);
 
+  useEffect(() => {
+    const narrow = window.matchMedia("(max-width: 768px)");
+    const closeOnDesktop = () => {
+      if (!narrow.matches) setShowMobileCreate(false);
+    };
+    closeOnDesktop();
+    narrow.addEventListener("change", closeOnDesktop);
+    return () => narrow.removeEventListener("change", closeOnDesktop);
+  }, []);
+
   const filteredUsers = useMemo(() => {
     const query = userSearch.trim().toLowerCase();
     if (!query) return users;

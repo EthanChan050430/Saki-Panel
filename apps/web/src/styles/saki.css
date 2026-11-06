@@ -2763,6 +2763,26 @@
     linear-gradient(-45deg, rgba(148, 163, 184, 0.16) 25%, transparent 25%) 0 8px / 16px 16px;
 }
 
+.saki-chat-generated-video {
+  padding: 12px;
+}
+
+.saki-chat-generated-video video {
+  display: block;
+  width: 100%;
+  max-height: 480px;
+  border-radius: 8px;
+}
+
+.saki-chat-generated-video a {
+  display: inline-block;
+  margin-top: 8px;
+}
+
+.settings-video-gen .provider-switch-label {
+  white-space: nowrap;
+}
+
 .saki-chat-generated-image figcaption {
   padding: 6px 10px 8px;
   font-size: 12px;
@@ -3935,7 +3955,16 @@ tbody tr:hover {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
   flex-shrink: 0;
+}
+
+.saki-attachment-lightbox-actions > button {
+  box-sizing: border-box;
+  justify-content: center;
+  min-width: 112px;
+  height: 36px;
+  white-space: nowrap;
 }
 
 .saki-lightbox-danger-btn {
@@ -4304,6 +4333,92 @@ tbody tr:hover {
   background: var(--primary, #ff75ac);
   color: #ffffff;
   border-color: var(--primary, #ff75ac);
+}
+
+@media (max-width: 600px) {
+  .saki-attachment-lightbox-overlay {
+    padding: 12px;
+  }
+
+  .saki-attachment-lightbox-card {
+    width: 100%;
+    height: calc(100dvh - 24px);
+    max-height: none;
+    min-height: 0;
+    border-radius: 22px;
+  }
+
+  .saki-attachment-lightbox-header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+
+  .saki-attachment-lightbox-meta {
+    gap: 10px;
+  }
+
+  .saki-attachment-lightbox-title span {
+    max-width: none;
+  }
+
+  .saki-attachment-lightbox-header-right {
+    width: 100%;
+    gap: 8px;
+  }
+
+  .saki-lightbox-zoom-bar {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .saki-lightbox-zoom-slider {
+    width: auto;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .saki-attachment-lightbox-canvas {
+    padding: 10px;
+  }
+
+  .saki-attachment-lightbox-footer {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px 14px 14px;
+  }
+
+  .saki-attachment-lightbox-tools {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .saki-lightbox-tool-btn {
+    justify-content: center;
+    min-width: 0;
+    padding: 0 8px;
+  }
+
+  .saki-lightbox-tool-divider {
+    display: none;
+  }
+
+  .saki-attachment-lightbox-actions {
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .saki-lightbox-mode-toolbar {
+    gap: 7px;
+  }
+
+  .saki-mode-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
 }
 
 /* ==========================================================================

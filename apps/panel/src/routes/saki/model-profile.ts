@@ -77,12 +77,17 @@ export function sakiModelWantsNativeThinking(provider: unknown, model?: string |
   if (!modelId) return false;
   if (isGlm53Flash(model)) return true;
   const family = sakiModelProfile(provider, model).family;
-  if (family === "claude") return /claude-(3-7|sonnet-4|opus-4|haiku-4|4-)/i.test(modelId);
+  if (family === "claude") return anthropicSupportsThinking(modelId) || anthropicUsesAdaptiveThinking(modelId);
   return nativeThinkingModelPattern.test(modelId);
 }
 
+export function anthropicUsesAdaptiveThinking(model?: string | null): boolean {
+  return /claude-(?:opus|sonnet|haiku|fable|mythos)-(?:4-[6-9]|[5-9])/i.test(model ?? "");
+}
+
+/** Legacy budget_tokens thinking models only; 4.6+/5.x use adaptive thinking. */
 export function anthropicSupportsThinking(model?: string | null): boolean {
-  return /claude-(3-7|sonnet-4|opus-4|haiku-4|4-)/i.test(model ?? "");
+  return !anthropicUsesAdaptiveThinking(model) && /claude-(3-7|sonnet-4|opus-4|haiku-4|4-)/i.test(model ?? "");
 }
 
 export function nativeThinkingChatExtras(provider: unknown, model?: string | null): Record<string, unknown> {

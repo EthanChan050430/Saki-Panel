@@ -1,5 +1,6 @@
 import { SakiModelPicker } from "../components/saki/SakiModelReasoningPanel.js";
 import { useSakiReasoningEffort } from "../components/saki/useSakiReasoningEffort.js";
+import { cachedSakiModelPreference, persistSakiModelPreference, useSakiModelPreference, waitForSakiModelPreference } from "../components/saki/useSakiModelPreference.js";
 import { sakiReasoningEffortLabel } from "@webops/shared";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readCachedConversation } from "../components/saki/conversation-storage.js";
@@ -16,6 +17,8 @@ import {
   ChevronUp,
   ClipboardList,
   Cpu,
+  Download,
+  History,
   FileCode,
   Folder,
   GitBranch,
@@ -114,7 +117,7 @@ import { DashboardPopover } from "../components/dashboard/DashboardPopover.js";
 import { DashboardToolDetails, dashboardActionTerminal, type DashboardChatMessage, type DashboardTerminalSession } from "../components/dashboard/DashboardAgentConversation.js";
 import { SakiChangedFilesPill, useCodeChanges, filterGitChangesForSession } from "../components/saki/chat/SakiCodeChanges.js";
 import { dashboardDeleteTurn, dashboardHasUntrackedTerminalChanges, dashboardHistoryMatches, dashboardIsCodeChange, dashboardRecordAction, dashboardRollbackActions, dashboardRollbackCodeMessageIds, dashboardStoredActions, dashboardTurnRange, type DashboardMessageOperation } from "../components/dashboard/message-operations.js";
-import { dashboardTaskIsPending, dashboardTaskMessages, dashboardTaskNeedsSync, dashboardTaskSessionId, type DashboardSession, type DashboardStreamRun } from "../components/dashboard/task-runtime.js";
+import { dashboardStoppedStreams, dashboardTaskIsPending, dashboardTaskMessages, dashboardTaskNeedsSync, dashboardTaskSessionId, type DashboardSession, type DashboardStreamRun } from "../components/dashboard/task-runtime.js";
 import { dashboardMergeTimeline, dashboardStreamTimeline } from "../components/dashboard/timeline.js";
 import { DashboardChatStream } from "../components/dashboard/DashboardChatStream.js";
 import { DashboardMessageList } from "../components/dashboard/DashboardMessageList.js";
@@ -325,9 +328,54 @@ function getGreetingSentence(language?: PanelLanguage): string {
   return variations[Math.floor(Math.random() * variations.length)] ?? "今天有什么想探索或排查的？";
 }
 
+
+function exportLocalMessagesToMarkdown(messages: ChatMessage[], instanceId: string | null): string {
+  const lines: string[] = [
+    "# Saki 助理对话记录",
+    `导出时间: ${new Date().toLocaleString()}`,
+    instanceId ? `关联工作区: ${instanceId}` : "关联工作区: 本地 (Local)",
+    "\n---\n"
+  ];
+  for (const msg of messages) {
+    const roleName = msg.role === "user" ? "👤 用户" : "🤖 Saki";
+    const timeStr = msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString() : "";
+    lines.push(`### ${roleName} ${timeStr ? `(${timeStr})` : ""}\n`);
+    if (msg.content) {
+      lines.push(`${msg.content}\n`);
+    }
+    if (msg.actions && msg.actions.length > 0) {
+      lines.push(`\n<details><summary>🛠️ 工具调用记录 (${msg.actions.length})</summary>\n`);
+      for (const action of msg.actions) {
+        const actionName = action.tool || "tool";
+        lines.push(`- **工具**: \`${actionName}\` (${action.status || (action.ok ? "成功" : "执行中")})`);
+        if (action.args && Object.keys(action.args).length > 0) {
+          lines.push(`  - 参数: \`${JSON.stringify(action.args)}\``);
+        }
+      }
+      lines.push("\n</details>\n");
+    }
+    lines.push("\n---\n");
+  }
+  return lines.join("\n");
+}
+
+function downloadMarkdownBlob(content: string, filename: string) {
+  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export function DashboardView({
   token,
   userId,
+  viewMode: controlledViewMode,
+  onViewModeChange,
   isSuperAdmin = false,
   canUseTerminal = false,
   canUseAgent,
@@ -344,6 +392,8 @@ export function DashboardView({
 }: {
   token: string;
   userId: string;
+  viewMode?: "workspace" | "metrics";
+  onViewModeChange?: (mode: "workspace" | "metrics") => void;
   isSuperAdmin?: boolean;
   canUseTerminal?: boolean;
   canUseAgent: boolean;
@@ -369,7 +419,15 @@ export function DashboardView({
   const [metricDetail, setMetricDetail] = useState<MetricDetailKind | null>(null);
 
   // Dashboard Layout & Chat States
-  const [viewMode, setViewMode] = useState<"workspace" | "metrics">("workspace");
+  const [internalViewMode, setInternalViewMode] = useState<"workspace" | "metrics">("workspace");
+  const viewMode = controlledViewMode ?? internalViewMode;
+  const setViewMode = useCallback((mode: "workspace" | "metrics") => {
+    setInternalViewMode(mode);
+    onViewModeChange?.(mode);
+  }, [onViewModeChange]);
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches);
+  const [mobileMoreMenuOpen, setMobileMoreMenuOpen] = useState(false);
+  const mobileMoreBtnRef = useRef<HTMLButtonElement>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
@@ -440,6 +498,10 @@ export function DashboardView({
   sessionsRef.current = sessions;
   const [conversationsLoaded, setConversationsLoaded] = useState(false);
   const [tasks, setTasks] = useState<SakiActiveTaskSummary[]>([]);
+  const [taskConnectionLost, setTaskConnectionLost] = useState(false);
+  const [unconfirmedTaskSessions, setUnconfirmedTaskSessions] = useState(new Set<string>());
+  const taskRefreshFailuresRef = useRef(0);
+  const taskRefreshInFlightRef = useRef(false);
   const streamRunsRef = useRef(new Map<string, DashboardStreamRun>());
   const reconnectAfterRef = useRef(new Map<string, number>());
   const runtimeGenerationRef = useRef(0);
@@ -452,7 +514,8 @@ export function DashboardView({
     }
     return latest;
   }, [tasks]);
-  const isSessionRunning = (id: string) => streamingSessions.has(id) || latestTasks.get(id)?.status === "running";
+  const isTaskReconnecting = Boolean(activeSessionId && taskConnectionLost && (latestTasks.get(activeSessionId)?.status === "running" || unconfirmedTaskSessions.has(activeSessionId)));
+  const isSessionRunning = (id: string) => !taskConnectionLost && (streamingSessions.has(id) || latestTasks.get(id)?.status === "running");
   const isStreaming = Boolean(activeSessionId && isSessionRunning(activeSessionId));
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const dockedTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -731,24 +794,36 @@ export function DashboardView({
     return () => window.removeEventListener("saki:attach_instance_file", handleAttachInstanceFile);
   }, [activeInstanceId, token]);
   const taskRefreshSeq = useRef(0);
+  const tasksPolledAtRef = useRef(0);
   const selectedTaskDetailRef = useRef<{ key: string; task: SakiActiveTaskSummary } | null>(null);
   const refreshTasks = useCallback(async () => {
+    if (taskRefreshInFlightRef.current) return;
+    taskRefreshInFlightRef.current = true;
     const seq = ++taskRefreshSeq.current;
+    const polledAt = Date.now();
     try {
-      const result = await api.sakiGetActiveTasks(token, { excludeResponse: true });
+      const result = await api.sakiGetActiveTasks(token, { excludeResponse: true, signal: AbortSignal.timeout(10_000) });
+      if (seq !== taskRefreshSeq.current) return;
+      taskRefreshFailuresRef.current = 0;
+      setTaskConnectionLost(false);
+      tasksPolledAtRef.current = polledAt;
+      // Do not let an expired detail request keep the entire list stuck at running.
+      setTasks(result.tasks);
       const selected = result.tasks.find(task => dashboardTaskSessionId(task) === activeSessionId && task.status !== "running");
       if (selected) {
         const key = `${token}:${selected.id}:${selected.updatedAt}:${selected.runVersion ?? 1}`;
         let detail = selectedTaskDetailRef.current?.key === key ? selectedTaskDetailRef.current.task : undefined;
         if (!detail) {
-          detail = await api.sakiGetTask(token, selected.id);
+          detail = await api.sakiGetTask(token, selected.id, AbortSignal.timeout(10_000)).catch(() => undefined);
           if (seq !== taskRefreshSeq.current) return;
-          selectedTaskDetailRef.current = { key, task: detail };
+          if (detail) selectedTaskDetailRef.current = { key, task: detail };
         }
-        result.tasks = result.tasks.map(task => task.id === selected.id ? detail! : task);
+        if (detail) result.tasks = result.tasks.map(task => task.id === selected.id ? detail! : task);
       }
       if (seq === taskRefreshSeq.current && Array.isArray(result.tasks)) setTasks(result.tasks);
-    } catch { /* Keep the last known state during temporary disconnects. */ }
+    } catch {
+      if (seq === taskRefreshSeq.current && ++taskRefreshFailuresRef.current >= 2) setTaskConnectionLost(true);
+    } finally { taskRefreshInFlightRef.current = false; }
   }, [token, activeSessionId]);
   useEffect(() => {
     if (!canUseAgent) return;
@@ -779,10 +854,22 @@ export function DashboardView({
     setSessions((current) => current.map((session) => session.id === sessionId ? { ...session, messages: update(session.messages ?? []) } : session));
     if (activeSessionIdRef.current === sessionId) setMessages(update);
   }, []);
+  useEffect(() => {
+    if (!taskConnectionLost) return;
+    setUnconfirmedTaskSessions(new Set(streamRunsRef.current.keys()));
+    for (const [sessionId, run] of streamRunsRef.current) {
+      run.detached = true;
+      if (run.taskId || run.mode === "chat") run.controller.abort();
+      streamRunsRef.current.delete(sessionId);
+      publishSessionMessages(sessionId, current => current.map(message => message.isStreaming
+        ? { ...message, isStreaming: false, isThinking: false, workflowMessage: undefined } : message));
+    }
+    setStreamingSessions(new Set());
+  }, [taskConnectionLost, publishSessionMessages]);
   const startStream = useCallback((sessionId: string, mode: "agent" | "chat", taskId?: string) => {
     const previous = streamRunsRef.current.get(sessionId);
     if (previous) { previous.detached = true; previous.controller.abort(); }
-    const run: DashboardStreamRun = { controller: new AbortController(), mode, ...(taskId ? { taskId } : {}) };
+    const run: DashboardStreamRun = { controller: new AbortController(), mode, ...(taskId ? { taskId, taskKnownAt: Date.now() } : {}) };
     streamRunsRef.current.set(sessionId, run);
     setStreamingSessions((current) => new Set(current).add(sessionId));
     return run;
@@ -838,7 +925,7 @@ export function DashboardView({
   const [worktreeShelfOpen, setWorktreeShelfOpen] = useState(false);
   const [activeEnvironment, setActiveEnvironment] = useState<"local" | "worktree">("local");
   const [availableModels, setAvailableModels] = useState<SakiModelOption[]>([]);
-  const [activeModelKey, setActiveModelKey] = useState<string>("");
+  const [activeModelKey, setActiveModelKey] = useSakiModelPreference(userId);
   const [reasoningEffort] = useSakiReasoningEffort(activeModelKey);
   const [interactionMode, setInteractionMode] = useState<"agent" | "chat">(canUseAgent ? "agent" : "chat");
   const authorizedProjects = useMemo(() => {
@@ -857,7 +944,7 @@ export function DashboardView({
   const selectedProject = agentProjects.find((instance) => instance.id === activeInstanceId);
   const workspaceLabel = selectedWorkspaceIds.length > 1 ? `${selectedWorkspaceIds.length} 个工作区` : selectedProject?.name ?? (activeInstanceId ? "工作区不可用" : "添加工作区");
   const workspaceNames = selectedWorkspaceIds.map(id => authorizedProjects.find(instance => instance.id === id)?.name ?? "工作区不可用").join("、");
-  const workspaceSelectionLocked = sessionLoading || Boolean(sessionLoadError) || workspaceSelectionBusy || isStreaming || Boolean(actionBusyId) || messages.some(message => message.actions?.some(action => action.status === "pending_approval" || action.status === "pending_input"));
+  const workspaceSelectionLocked = sessionLoading || Boolean(sessionLoadError) || workspaceSelectionBusy || isStreaming || isTaskReconnecting || Boolean(actionBusyId) || messages.some(message => message.actions?.some(action => action.status === "pending_approval" || action.status === "pending_input"));
   const canCreateTerminal = Boolean(isSuperAdmin && canUseTerminal && canUseAgent && selectedProject);
   const isEn = language === "en-US";
   const isTw = language === "zh-TW";
@@ -973,7 +1060,10 @@ export function DashboardView({
 
   useEffect(() => {
     const narrow = window.matchMedia("(max-width: 768px)");
-    const update = () => setSidebarCollapsed(narrow.matches);
+    const update = () => {
+      setSidebarCollapsed(narrow.matches);
+      setIsMobile(narrow.matches);
+    };
     narrow.addEventListener("change", update);
     return () => narrow.removeEventListener("change", update);
   }, []);
@@ -1226,55 +1316,26 @@ export function DashboardView({
     </DashboardPopover>
   );
 
-  // Dynamic Saki Model Refresh from Backend
+  // Restore this account's last selection without changing the global default.
+  const modelRefreshSeq = useRef(0);
   const refreshModels = useCallback(async () => {
     if (!canUseAgent && !canUseChat) return;
+    const seq = ++modelRefreshSeq.current;
+    const previous = cachedSakiModelPreference(userId);
     try {
-      if (!canConfigureSaki) {
-        const status = await api.sakiStatus(token);
-        defaultAgentPermissionRef.current = status.defaultAgentPermissionMode ?? "acceptEdits";
-        if (!permissionSelectedRef.current) setAgentPermission(defaultAgentPermissionRef.current);
-        if (status.model) {
-          const model = { id: status.model, name: status.model, label: status.model, provider: status.provider ?? "" };
-          setAvailableModels([model]);
-          setActiveModelKey(sakiModelSelectionKey(model));
-        }
-        return;
-      }
-      const config = await api.sakiConfig(token);
-      defaultAgentPermissionRef.current = config.defaultAgentPermissionMode ?? "acceptEdits";
+      await waitForSakiModelPreference(userId);
+      const result = await api.sakiUserModels(token);
+      if (seq !== modelRefreshSeq.current) return;
+      defaultAgentPermissionRef.current = result.defaultAgentPermissionMode;
       if (!permissionSelectedRef.current) setAgentPermission(defaultAgentPermissionRef.current);
-      const configuredKey = config.model
-        ? sakiModelSelectionKey({ id: config.model, provider: config.provider })
-        : "";
-      const res = await api.sakiModels(token, {
-        provider: config.provider,
-        model: config.model,
-        ollamaUrl: config.ollamaUrl,
-        baseUrl: config.baseUrl,
-        apiKey: config.apiKey,
-        providerConfigs: config.providerConfigs
-      });
-
-      const models = Array.isArray(res.models) ? res.models : [];
-      if (models.length > 0) {
-        setAvailableModels(models);
-        setActiveModelKey((current) => {
-          if (current && models.some((m) => sakiModelMatchesSelection(m, current))) {
-            return current;
-          }
-          if (configuredKey && models.some((m) => sakiModelMatchesSelection(m, configuredKey))) {
-            return configuredKey;
-          }
-          return sakiModelSelectionKey(models[0]!);
-        });
-      } else if (config.model) {
-        setActiveModelKey(configuredKey);
-      }
+      setAvailableModels(result.models);
+      if (cachedSakiModelPreference(userId) === previous) setActiveModelKey(result.selection);
     } catch (err) {
       console.warn("Failed to load Saki models from backend:", err);
     }
-  }, [token, canConfigureSaki, canUseAgent, canUseChat]);
+  }, [token, userId, canUseAgent, canUseChat, setActiveModelKey]);
+
+  useEffect(() => () => { modelRefreshSeq.current += 1; }, [token, userId]);
 
   useEffect(() => {
     void refreshModels();
@@ -1317,7 +1378,10 @@ export function DashboardView({
 
       {modelDropdownOpen && (
         <DashboardPopover anchorRef={modelDropdownRef} onClose={() => setModelDropdownOpen(false)} className="dashboard-model-popover" width={320}>
-          <SakiModelPicker models={availableModels} currentModelId={activeModelKey} currentModelName={currentModelDisplayName} onSelectModel={setActiveModelKey} />
+          <SakiModelPicker models={availableModels} currentModelId={activeModelKey} currentModelName={currentModelDisplayName} onSelectModel={(key) => {
+            setActiveModelKey(key);
+            void persistSakiModelPreference(token, userId, key).catch(error => setError(`个人模型选择保存失败：${error instanceof Error ? error.message : "请重试"}`));
+          }} />
         </DashboardPopover>
       )}
     </div>
@@ -1774,7 +1838,31 @@ export function DashboardView({
   // Discover work that continued while this page was unmounted. Task snapshots
   // are scoped by conversation, including multiple conversations in one project.
   useEffect(() => {
-    if (!conversationsLoaded) return;
+    if (!conversationsLoaded || taskConnectionLost) return;
+    if (unconfirmedTaskSessions.size) {
+      const knownTasks = new Set(tasks.map(task => task.id));
+      for (const sessionId of unconfirmedTaskSessions) publishSessionMessages(sessionId, current => {
+        const latest = [...current].reverse().find(message => message.taskId);
+        if (!latest?.taskId || knownTasks.has(latest.taskId)) return current;
+        return current.map(message => message.id === latest.id ? { ...message, isStreaming: false, isThinking: false, workflowMessage: undefined,
+          content: [message.content, "后台已找不到此任务，当前对话已保留。请确认结果后再重新发送。"].filter(Boolean).join("\n\n") } : message);
+      });
+      setUnconfirmedTaskSessions(new Set());
+    }
+    const stopped = dashboardStoppedStreams(streamRunsRef.current, tasks, tasksPolledAtRef.current);
+    for (const { sessionId, run, task } of stopped) {
+      run.detached = true;
+      run.controller.abort();
+      streamRunsRef.current.delete(sessionId);
+      if (!task) publishSessionMessages(sessionId, current => current.map(message => message.taskId === run.taskId && message.isStreaming
+        ? { ...message, isStreaming: false, isThinking: false, workflowMessage: undefined,
+          content: [message.content, "任务已不在后台可用的任务列表中，对话已保留，请查看结果后再重试。"].filter(Boolean).join("\n\n") } : message));
+    }
+    if (stopped.length) setStreamingSessions(current => {
+      const next = new Set(current);
+      for (const { sessionId } of stopped) next.delete(sessionId);
+      return next;
+    });
     setSessions((current) => {
       let next = current;
       for (const [id, task] of latestTasks) {
@@ -1791,7 +1879,7 @@ export function DashboardView({
     if (task && !streamRunsRef.current.has(activeSessionId!)) {
       setMessages((current) => dashboardTaskMessages(current, task));
     }
-  }, [conversationsLoaded, latestTasks, activeSessionId]);
+  }, [conversationsLoaded, latestTasks, activeSessionId, tasks, taskConnectionLost, unconfirmedTaskSessions, publishSessionMessages]);
 
   useEffect(() => {
     if (!activeSessionId) return;
@@ -1848,10 +1936,10 @@ export function DashboardView({
   }, [token, startStream, finishStream, publishSessionMessages]);
 
   useEffect(() => {
-    if (!conversationsLoaded || !activeSessionId) return;
+    if (!conversationsLoaded || !activeSessionId || taskConnectionLost) return;
     const task = latestTasks.get(activeSessionId);
     if (task?.status === "running" && !streamRunsRef.current.has(activeSessionId) && Date.now() >= (reconnectAfterRef.current.get(task.id) ?? 0)) void reconnectTask(task);
-  }, [conversationsLoaded, activeSessionId, latestTasks, reconnectTask]);
+  }, [conversationsLoaded, activeSessionId, latestTasks, reconnectTask, taskConnectionLost]);
 
   const refresh = useCallback(async () => {
     const generation = ++refreshGenerationRef.current;
@@ -2016,6 +2104,7 @@ export function DashboardView({
   const handleSendMessage = useCallback(
     async (textToSend?: string, historyOverride?: ChatMessage[], attachmentOverride?: SakiInputAttachment[]) => {
       const trimmedPrompt = (textToSend ?? promptText).trim();
+      if (isTaskReconnecting) { void refreshTasks(); return; }
       const currentAttachments = [...(attachmentOverride ?? attachments)];
       if ((!trimmedPrompt && currentAttachments.length === 0) || sessionLoadingRef.current || sessionLoading || Boolean(sessionLoadError) || workspaceSelectionBusy || isStreaming || (activeSessionId && streamRunsRef.current.has(activeSessionId)) || (actionBusyId && !historyOverride) || !(interactionMode === "agent" ? canUseAgent : canUseChat)) return;
       if (!canUseProjectMode(interactionMode)) {
@@ -2140,6 +2229,7 @@ export function DashboardView({
           (event: SakiChatStreamEvent) => {
             if (event.type === "meta" && event.taskId) {
               run.taskId = event.taskId;
+              run.taskKnownAt = Date.now();
               finalTaskId = event.taskId;
               persistLocal([...sourceMessages, userMsg, { ...assistantMsg, taskId: event.taskId }]);
               if (run.cancelRequested) { void cancelConversationTask(convId, event.taskId, run); return; }
@@ -2356,6 +2446,8 @@ export function DashboardView({
       currentModelDisplayName,
       interactionMode,
       isStreaming,
+      isTaskReconnecting,
+      refreshTasks,
       sessionLoading,
       sessionLoadError,
       messages,
@@ -2452,7 +2544,7 @@ export function DashboardView({
   const handleDeleteSession = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const task = latestTasks.get(id);
-    if (isSessionRunning(id) || task && dashboardTaskIsPending(task)) return;
+    if (isSessionRunning(id) || taskConnectionLost && unconfirmedTaskSessions.has(id) || task && dashboardTaskIsPending(task)) return;
     try {
       await api.sakiDeleteConversation(token, id);
     } catch (err) {
@@ -2512,7 +2604,7 @@ export function DashboardView({
     };
     writeSakiConversations([conversation, ...cached.filter((item) => item.id !== activeSessionId)], userId);
     setSessions((current) => current.map((session) => session.id === activeSessionId ? { ...session, title, messages: next, updatedAt, time: "刚刚" } : session));
-    setMessages(next);
+    if (activeSessionIdRef.current === activeSessionId) setMessages(next);
     return conversation;
   }
 
@@ -2544,7 +2636,7 @@ export function DashboardView({
       } catch { setError("复制失败，请手动选择复制。"); }
       return;
     }
-    if (messageMutationRef.current || isStreaming || actionBusyId) return;
+    if (messageMutationRef.current || isStreaming || isTaskReconnecting || actionBusyId) return;
     messageMutationRef.current = true;
     setError("");
     setActionBusyId(`message:${messageId}`);
@@ -2617,7 +2709,7 @@ export function DashboardView({
       messageMutationRef.current = false;
       setActionBusyId(null);
     }
-    if (resend) await handleSendMessage(resend.content, resend.history, resend.attachments);
+    if (resend && activeSessionIdRef.current === activeSessionId) await handleSendMessage(resend.content, resend.history, resend.attachments);
   }
 
   async function decideAction(messageId: string, action: SakiAgentAction, decision: "approve" | "reject" | "rollback" | { selection?: string; customText?: string; skipped?: boolean }) {
@@ -2719,17 +2811,16 @@ export function DashboardView({
   return (
     <>
       <PageErrorToast error={error} onDismiss={() => setError("")} />
+      {isTaskReconnecting ? <div role="status" className="dashboard-message-notice">连接已中断，暂时无法确认任务状态。请点击重新连接后查看结果。</div> : null}
       {messageNotice ? <div role="status" className="dashboard-message-notice">{messageNotice}</div> : null}
 
       <div className="dashboard-root">
-        {/* Mobile backdrop for sidebar drawer */}
-        {!sidebarCollapsed && (
-          <div
-            className="dashboard-sidebar-mobile-backdrop"
-            aria-hidden="true"
-            onClick={() => setSidebarCollapsed(true)}
-          />
-        )}
+        {/* Mobile backdrop for sidebar drawer with graceful fade exit */}
+        <div
+          className={`dashboard-sidebar-mobile-backdrop ${!sidebarCollapsed ? "is-visible" : ""}`}
+          aria-hidden="true"
+          onClick={() => setSidebarCollapsed(true)}
+        />
 
         {/* Left Sidebar: Conversation History & Projects */}
         <aside className={`dashboard-sidebar ${sidebarCollapsed ? "is-collapsed" : ""}`}>
@@ -2780,6 +2871,9 @@ export function DashboardView({
                 onClick={() => {
                   selectWorkspace(null);
                   setViewMode("workspace");
+                  if (typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches) {
+                    setSidebarCollapsed(true);
+                  }
                 }}
               >
                 <div className="dashboard-sidebar-item-content">
@@ -2798,6 +2892,9 @@ export function DashboardView({
                     onClick={() => {
                       selectWorkspace(inst.id);
                       setViewMode("workspace");
+                      if (typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches) {
+                        setSidebarCollapsed(true);
+                      }
                     }}
                     title={isServer ? `远程 SSH 服务器: ${inst.name}` : `托管实例: ${inst.name}`}
                   >
@@ -2865,57 +2962,170 @@ export function DashboardView({
 
         {/* Right Main Workspace */}
         <main className="dashboard-workspace">
-          {/* Top Unified Navigation Bar - Borderless Cupertino / Saki */}
-          <div className="dashboard-workspace-topbar">
-            <div className="dashboard-topbar-left">
-              <div className={`dashboard-topbar-navigation ${!sidebarCollapsed ? "is-hidden" : ""}`}>
-              {/* Sleek Ghost Sidebar Toggle Button */}
-              <button
-                className="dashboard-nav-toggle-btn"
-                type="button"
-                title={sidebarCollapsed ? "展开侧栏" : "收起侧栏"}
-                aria-label={sidebarCollapsed ? "展开侧栏" : "收起侧栏"}
-                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              >
-                {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-              </button>
+          {/* Top Navigation Bar: Adaptive Mobile vs Desktop */}
+          {isMobile ? (
+            <header className="dashboard-mobile-header">
+              <div className="dashboard-mobile-nav-row">
+                <div className="dashboard-mobile-nav-left">
+                  <button
+                    className="dashboard-mobile-icon-btn"
+                    type="button"
+                    title={sidebarCollapsed ? "展开历史与项目" : "收起侧栏"}
+                    aria-label={sidebarCollapsed ? "展开历史与项目" : "收起侧栏"}
+                    onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                  >
+                    <History size={16} />
+                  </button>
+                  <button
+                    className="dashboard-mobile-icon-btn"
+                    type="button"
+                    title="新建对话"
+                    aria-label="新建对话"
+                    onClick={handleNewChat}
+                  >
+                    <SquarePen size={16} />
+                  </button>
+                </div>
 
-              {/* New Chat Button right beside the sidebar expand button */}
-              <button
-                className="dashboard-nav-toggle-btn dashboard-nav-new-chat-btn"
-                type="button"
-                title="新建对话"
-                aria-label="新建对话"
-                onClick={handleNewChat}
-              >
-                <SquarePen size={15} />
-              </button>
+                <div className="dashboard-mobile-pill-switcher" role="tablist">
+                  <button
+                    className={`dashboard-mobile-pill-btn ${viewMode === "workspace" ? "is-active" : ""}`}
+                    type="button"
+                    onClick={() => setViewMode("workspace")}
+                  >
+                    <MessageSquare size={12} />
+                    <span>工作区</span>
+                  </button>
+                  <button
+                    className={`dashboard-mobile-pill-btn ${viewMode === "metrics" ? "is-active" : ""}`}
+                    type="button"
+                    onClick={() => setViewMode("metrics")}
+                  >
+                    <Activity size={12} />
+                    <span>完整大盘</span>
+                  </button>
+                </div>
+
+                <div className="dashboard-mobile-nav-right">
+                  {canUseTerminal && (
+                    <button
+                      className={`dashboard-mobile-icon-btn ${terminalPanelOpen ? "is-active" : ""}`}
+                      type="button"
+                      title="系统终端"
+                      aria-label="系统终端"
+                      onClick={() => setTerminalPanelOpen((open) => !open)}
+                    >
+                      <Terminal size={16} />
+                      {terminals.length > 0 && <span className="dashboard-mobile-badge" />}
+                    </button>
+                  )}
+                  <button
+                    ref={mobileMoreBtnRef}
+                    className={`dashboard-mobile-icon-btn ${mobileMoreMenuOpen ? "is-active" : ""}`}
+                    type="button"
+                    title="更多操作"
+                    aria-label="更多操作"
+                    onClick={() => setMobileMoreMenuOpen((v) => !v)}
+                  >
+                    <SlidersHorizontal size={16} />
+                  </button>
+
+                  {mobileMoreMenuOpen && (
+                    <DashboardPopover anchorRef={mobileMoreBtnRef} onClose={() => setMobileMoreMenuOpen(false)} className="dashboard-mobile-more-popover" width={240}>
+                      <div className="dashboard-dropdown-section-title">快捷操作</div>
+                      <button
+                        className="dashboard-dropdown-item"
+                        type="button"
+                        onClick={() => {
+                          void refresh();
+                          setMobileMoreMenuOpen(false);
+                        }}
+                      >
+                        <RefreshCw size={14} className="dashboard-dropdown-icon-blue" />
+                        <div className="dashboard-dropdown-item-text">
+                          <span className="dashboard-dropdown-item-title">刷新数据</span>
+                          <span className="dashboard-dropdown-item-desc">重新同步集群与任务状态</span>
+                        </div>
+                      </button>
+                      <button
+                        className="dashboard-dropdown-item"
+                        type="button"
+                        onClick={() => {
+                          setMetricDetail("nodes");
+                          setMobileMoreMenuOpen(false);
+                        }}
+                      >
+                        <Activity size={14} className="dashboard-dropdown-icon-purple" />
+                        <div className="dashboard-dropdown-item-text">
+                          <span className="dashboard-dropdown-item-title">系统体征详情</span>
+                          <span className="dashboard-dropdown-item-desc">查看各节点 CPU / 内存曲线</span>
+                        </div>
+                      </button>
+                      {activeSessionId ? (
+                        <div className="dashboard-mobile-more-export-wrap">
+                          <SakiConversationExportButton
+                            token={token}
+                            conversationId={activeSessionId}
+                            className="dashboard-dropdown-item dashboard-mobile-export-item"
+                            iconClassName="dashboard-dropdown-icon-green"
+                            onError={setError}
+                            onExported={() => {
+                              setMessageNotice("完整对话已导出为 Markdown。");
+                              setMobileMoreMenuOpen(false);
+                            }}
+                          >
+                            <div className="dashboard-dropdown-item-text">
+                              <span className="dashboard-dropdown-item-title">导出完整对话</span>
+                              <span className="dashboard-dropdown-item-desc">保存为 Markdown 格式记录</span>
+                            </div>
+                          </SakiConversationExportButton>
+                        </div>
+                      ) : messages.length > 0 ? (
+                        <button
+                          className="dashboard-dropdown-item"
+                          type="button"
+                          onClick={() => {
+                            const md = exportLocalMessagesToMarkdown(messages, activeInstanceId);
+                            downloadMarkdownBlob(md, `saki-chat-${new Date().toISOString().slice(0, 10)}.md`);
+                            setMessageNotice("当前对话已导出为 Markdown。");
+                            setMobileMoreMenuOpen(false);
+                          }}
+                        >
+                          <Download size={14} className="dashboard-dropdown-icon-green" />
+                          <div className="dashboard-dropdown-item-text">
+                            <span className="dashboard-dropdown-item-title">导出当前对话</span>
+                            <span className="dashboard-dropdown-item-desc">保存为 Markdown 格式记录</span>
+                          </div>
+                        </button>
+                      ) : null}
+                    </DashboardPopover>
+                  )}
+                </div>
               </div>
 
-              {/* During active chat sessions, keep the instance/page breadcrumb selector in topbar */}
-              {messages.some((message) => !message.rollbackJournal) && (
-                <div className="dashboard-topbar-breadcrumb">
+              {/* Context Sub-row: Instance / Branch */}
+              <div className="dashboard-mobile-context-bar">
+                <div className="dashboard-mobile-context-chips">
                   <div className="dashboard-project-selector-wrapper" ref={topbarDropdownRef}>
                     <button
-                      className="dashboard-project-selector-btn"
+                      className="dashboard-mobile-context-btn"
                       type="button"
                       onClick={() => setTopbarDropdownOpen(!topbarDropdownOpen)}
                     >
                       {activeInstanceId ? (
                         activeInstanceId.startsWith("node:") ? (
-                          <Server size={14} className="dashboard-project-icon" style={{ color: "#38bdf8" }} />
+                          <Server size={13} className="dashboard-context-icon-teal" />
                         ) : (
-                          <Server size={14} className="dashboard-project-icon is-instance" />
+                          <Server size={13} className="dashboard-context-icon-green" />
                         )
                       ) : (
-                        <Folder size={14} className="dashboard-project-icon" />
+                        <Folder size={13} className="dashboard-context-icon-blue" />
                       )}
-                      <span className="dashboard-project-name" title={workspaceNames}>
+                      <span className="dashboard-mobile-context-name" title={workspaceNames}>
                         {workspaceLabel}
                       </span>
-                      <ChevronDown size={12} className={`dashboard-project-arrow ${topbarDropdownOpen ? "is-open" : ""}`} />
+                      <ChevronDown size={11} className={`dashboard-project-arrow ${topbarDropdownOpen ? "is-open" : ""}`} />
                     </button>
-
                     {topbarDropdownOpen && renderInstanceAndPagePopover(() => setTopbarDropdownOpen(false), topbarDropdownRef)}
                   </div>
 
@@ -2923,69 +3133,190 @@ export function DashboardView({
 
                   <div className="dashboard-project-selector-wrapper" ref={worktreeShelfRef}>
                     <button
-                      className="dashboard-project-selector-btn"
+                      className="dashboard-mobile-context-btn"
                       type="button"
                       onClick={() => setWorktreeShelfOpen(!worktreeShelfOpen)}
                     >
                       {activeEnvironment === "local" ? (
-                        <Monitor size={13} className="dashboard-context-icon-teal" />
+                        <Monitor size={12} className="dashboard-context-icon-teal" />
                       ) : (
-                        <GitBranch size={13} className="dashboard-context-icon-purple" />
+                        <GitBranch size={12} className="dashboard-context-icon-purple" />
                       )}
-                      <span className="dashboard-project-name" title={workspaceNames}>
+                      <span className="dashboard-mobile-context-name" title={workspaceNames}>
                         {activeEnvironment === "local" ? "Local" : "New Worktree"}
                       </span>
-                      <ChevronDown size={11} className={`dashboard-project-arrow ${worktreeShelfOpen ? "is-open" : ""}`} />
+                      <ChevronDown size={10} className={`dashboard-project-arrow ${worktreeShelfOpen ? "is-open" : ""}`} />
                     </button>
-
                     {worktreeShelfOpen && renderEnvironmentPopover(() => setWorktreeShelfOpen(false))}
                   </div>
                 </div>
-              )}
-            </div>
 
-            <div className="dashboard-topbar-right">
-              {activeSessionId ? <SakiConversationExportButton token={token} conversationId={activeSessionId}
-                className="dashboard-icon-btn" onError={setError}
-                onExported={() => setMessageNotice("完整对话已导出为 Markdown。")} /> : null}
-              <button className="dashboard-icon-btn" type="button" title="打开终端详情" aria-label="打开终端详情"
-                onClick={() => setTerminalPanelOpen((open) => !open)}><Terminal size={16} /></button>
-              <div className="dashboard-pill-switcher" role="tablist">
+                <div className="dashboard-mobile-status-indicator">
+                  {isStreaming || isTaskReconnecting ? (
+                    <span className="dashboard-mobile-live-tag is-streaming">
+                      <Loader2 size={11} className="dashboard-spinner" style={{ animation: "spin 1s linear infinite" }} />
+                      <span>处理中</span>
+                    </span>
+                  ) : activeSessionId ? (
+                    <span className="dashboard-mobile-live-tag is-idle">
+                      <span className="dashboard-status-dot online" />
+                      <span>就绪</span>
+                    </span>
+                  ) : (
+                    <span className="dashboard-mobile-live-tag is-idle">
+                      <span className="dashboard-status-dot online" />
+                      <span>集群正常</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+            </header>
+          ) : (
+            <div className="dashboard-workspace-topbar">
+              <div className="dashboard-topbar-left">
+                <div className={`dashboard-topbar-navigation ${!sidebarCollapsed ? "is-hidden" : ""}`}>
+                {/* Sleek Ghost Sidebar Toggle Button */}
                 <button
-                  className={`dashboard-pill-btn ${viewMode === "workspace" ? "is-active" : ""}`}
+                  className="dashboard-nav-toggle-btn"
                   type="button"
-                  onClick={() => setViewMode("workspace")}
+                  title={sidebarCollapsed ? "展开侧栏" : "收起侧栏"}
+                  aria-label={sidebarCollapsed ? "展开侧栏" : "收起侧栏"}
+                  onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
                 >
-                  工作区
+                  {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+                </button>
+
+                {/* New Chat Button right beside the sidebar expand button */}
+                <button
+                  className="dashboard-nav-toggle-btn dashboard-nav-new-chat-btn"
+                  type="button"
+                  title="新建对话"
+                  aria-label="新建对话"
+                  onClick={handleNewChat}
+                >
+                  <SquarePen size={15} />
+                </button>
+                </div>
+
+                {/* During active chat sessions, keep the instance/page breadcrumb selector in topbar */}
+                {messages.some((message) => !message.rollbackJournal) && (
+                  <div className="dashboard-topbar-breadcrumb">
+                    <div className="dashboard-project-selector-wrapper" ref={topbarDropdownRef}>
+                      <button
+                        className="dashboard-project-selector-btn"
+                        type="button"
+                        onClick={() => setTopbarDropdownOpen(!topbarDropdownOpen)}
+                      >
+                        {activeInstanceId ? (
+                          activeInstanceId.startsWith("node:") ? (
+                            <Server size={14} className="dashboard-project-icon" style={{ color: "#38bdf8" }} />
+                          ) : (
+                            <Server size={14} className="dashboard-project-icon is-instance" />
+                          )
+                        ) : (
+                          <Folder size={14} className="dashboard-project-icon" />
+                        )}
+                        <span className="dashboard-project-name" title={workspaceNames}>
+                          {workspaceLabel}
+                        </span>
+                        <ChevronDown size={12} className={`dashboard-project-arrow ${topbarDropdownOpen ? "is-open" : ""}`} />
+                      </button>
+
+                      {topbarDropdownOpen && renderInstanceAndPagePopover(() => setTopbarDropdownOpen(false), topbarDropdownRef)}
+                    </div>
+
+                    <span className="dashboard-context-slash" aria-hidden="true">/</span>
+
+                    <div className="dashboard-project-selector-wrapper" ref={worktreeShelfRef}>
+                      <button
+                        className="dashboard-project-selector-btn"
+                        type="button"
+                        onClick={() => setWorktreeShelfOpen(!worktreeShelfOpen)}
+                      >
+                        {activeEnvironment === "local" ? (
+                          <Monitor size={13} className="dashboard-context-icon-teal" />
+                        ) : (
+                          <GitBranch size={13} className="dashboard-context-icon-purple" />
+                        )}
+                        <span className="dashboard-project-name" title={workspaceNames}>
+                          {activeEnvironment === "local" ? "Local" : "New Worktree"}
+                        </span>
+                        <ChevronDown size={11} className={`dashboard-project-arrow ${worktreeShelfOpen ? "is-open" : ""}`} />
+                      </button>
+
+                      {worktreeShelfOpen && renderEnvironmentPopover(() => setWorktreeShelfOpen(false))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="dashboard-topbar-right">
+                {activeSessionId ? (
+                  <SakiConversationExportButton token={token} conversationId={activeSessionId}
+                    className="dashboard-icon-btn" onError={setError}
+                    onExported={() => setMessageNotice("完整对话已导出为 Markdown。")} />
+                ) : messages.length > 0 ? (
+                  <button
+                    className="dashboard-icon-btn"
+                    type="button"
+                    title="导出当前对话为 Markdown"
+                    onClick={() => {
+                      const md = exportLocalMessagesToMarkdown(messages, activeInstanceId);
+                      downloadMarkdownBlob(md, `saki-chat-${new Date().toISOString().slice(0, 10)}.md`);
+                      setMessageNotice("当前对话已导出为 Markdown。");
+                    }}
+                  >
+                    <Download size={15} className="dashboard-icon-green" />
+                  </button>
+                ) : (
+                  <button
+                    className="dashboard-icon-btn is-disabled"
+                    type="button"
+                    disabled
+                    title="当前暂无可导出的对话记录"
+                  >
+                    <Download size={15} style={{ opacity: 0.35 }} />
+                  </button>
+                )}
+                <button className="dashboard-icon-btn" type="button" title="打开终端详情" aria-label="打开终端详情"
+                  onClick={() => setTerminalPanelOpen((open) => !open)}><Terminal size={16} /></button>
+                <div className="dashboard-pill-switcher" role="tablist">
+                  <button
+                    className={`dashboard-pill-btn ${viewMode === "workspace" ? "is-active" : ""}`}
+                    type="button"
+                    onClick={() => setViewMode("workspace")}
+                  >
+                    工作区
+                  </button>
+                  <button
+                    className={`dashboard-pill-btn ${viewMode === "metrics" ? "is-active" : ""}`}
+                    type="button"
+                    onClick={() => setViewMode("metrics")}
+                  >
+                    完整大盘
+                  </button>
+                </div>
+                <button
+                  className="dashboard-icon-btn"
+                  type="button"
+                  title="刷新数据"
+                  aria-label="刷新数据"
+                  onClick={() => void refresh()}
+                >
+                  <RefreshCw size={15} />
                 </button>
                 <button
-                  className={`dashboard-pill-btn ${viewMode === "metrics" ? "is-active" : ""}`}
+                  className="dashboard-icon-btn"
                   type="button"
-                  onClick={() => setViewMode("metrics")}
+                  title="系统体征详情"
+                  aria-label="系统体征详情"
+                  onClick={() => setMetricDetail("nodes")}
                 >
-                  完整大盘
+                  <Activity size={16} />
                 </button>
               </div>
-              <button
-                className="dashboard-icon-btn"
-                type="button"
-                title="刷新数据"
-                aria-label="刷新数据"
-                onClick={() => void refresh()}
-              >
-                <RefreshCw size={15} />
-              </button>
-              <button
-                className="dashboard-icon-btn"
-                type="button"
-                title="系统体征详情"
-                aria-label="系统体征详情"
-                onClick={() => setMetricDetail("nodes")}
-              >
-                <Activity size={16} />
-              </button>
             </div>
-          </div>
+          )}
 
           {/* View Body */}
           {viewMode === "metrics" ? (
@@ -3324,9 +3655,11 @@ export function DashboardView({
                             <Plus size={15} />
                           </button>
 
-                          {renderModelSelector()}
-                          {renderModeSelector()}
-                          {renderPermissionSelector()}
+                          <div className="dashboard-params-scroll-container">
+                            {renderModelSelector()}
+                            {renderModeSelector()}
+                            {renderPermissionSelector()}
+                          </div>
                         </div>
 
                         <div className="dashboard-toolbar-right">
@@ -3337,10 +3670,10 @@ export function DashboardView({
                             className={`dashboard-send-circle-btn ${(promptText.trim() || attachments.length > 0) ? "has-input" : ""} ${isStreaming ? "is-streaming" : ""}`}
                             type="button"
                             disabled={sessionLoading || Boolean(sessionLoadError)}
-                            title={isStreaming ? "停止生成" : sessionLoading ? "会话加载中..." : "发送指令"}
-                            onClick={isStreaming ? handleStopGeneration : () => void handleSendMessage()}
+                            title={isTaskReconnecting ? "重新连接任务" : isStreaming ? "停止生成" : sessionLoading ? "会话加载中..." : "发送指令"}
+                            onClick={isTaskReconnecting ? () => void refreshTasks() : isStreaming ? handleStopGeneration : () => void handleSendMessage()}
                           >
-                            {isStreaming ? <Square size={12} fill="currentColor" /> : sessionLoading ? <Loader2 size={14} className="dashboard-spinner" style={{ animation: "spin 1s linear infinite" }} /> : <ArrowUp size={15} />}
+                            {isTaskReconnecting ? <RefreshCw size={14} /> : isStreaming ? <Square size={12} fill="currentColor" /> : sessionLoading ? <Loader2 size={14} className="dashboard-spinner" style={{ animation: "spin 1s linear infinite" }} /> : <ArrowUp size={15} />}
                           </button>
                         </div>
                       </div>
@@ -3531,6 +3864,7 @@ export function DashboardView({
                         </div>
                       ) : null}
                       <DashboardMessageList key={activeSessionId ?? "new"} messages={messages}
+                        token={token}
                         hasEarlierMessages={Boolean(activeSessionId && historyCursorsRef.current.get(activeSessionId))}
                         earlierLoading={earlierHistoryLoading}
                         onLoadEarlierMessages={loadEarlierSessionMessages}
@@ -3651,19 +3985,21 @@ export function DashboardView({
                             >
                               <Plus size={14} />
                             </button>
-                            {renderModelSelector()}
-                            {renderModeSelector()}
-                            {renderPermissionSelector()}
+                            <div className="dashboard-params-scroll-container">
+                              {renderModelSelector()}
+                              {renderModeSelector()}
+                              {renderPermissionSelector()}
+                            </div>
                           </div>
                           <div className="dashboard-toolbar-right">
                             <button
                               className={`dashboard-send-circle-btn ${(promptText.trim() || attachments.length > 0) ? "has-input" : ""} ${isStreaming ? "is-streaming" : ""}`}
                               type="button"
                               disabled={sessionLoading || Boolean(sessionLoadError)}
-                              title={isStreaming ? "停止生成" : sessionLoading ? "会话加载中..." : "发送指令"}
-                              onClick={isStreaming ? handleStopGeneration : () => void handleSendMessage()}
+                              title={isTaskReconnecting ? "重新连接任务" : isStreaming ? "停止生成" : sessionLoading ? "会话加载中..." : "发送指令"}
+                              onClick={isTaskReconnecting ? () => void refreshTasks() : isStreaming ? handleStopGeneration : () => void handleSendMessage()}
                             >
-                              {isStreaming ? <Square size={12} fill="currentColor" /> : sessionLoading ? <Loader2 size={14} className="dashboard-spinner" style={{ animation: "spin 1s linear infinite" }} /> : <ArrowUp size={14} />}
+                              {isTaskReconnecting ? <RefreshCw size={14} /> : isStreaming ? <Square size={12} fill="currentColor" /> : sessionLoading ? <Loader2 size={14} className="dashboard-spinner" style={{ animation: "spin 1s linear infinite" }} /> : <ArrowUp size={14} />}
                             </button>
                           </div>
                         </div>

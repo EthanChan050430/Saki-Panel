@@ -20,6 +20,25 @@ https://github.com/user-attachments/assets/99a8d410-c079-4368-86c9-f847413d4580
 
 </div>
 
+## 从面板出发，继续探索
+
+为工作区添一点个性，也让 Saki 走进日常。沿着这两个入口，发现 Saki 的更多可能。
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="https://github.com/EthanChan050430/saki-plugins"><img src=".github/assets/explore-extensions-zh.svg" width="640" alt="拓展市场 — 探索 saki-plugins 插件仓库" /></a>
+      <p>主题、Saki 形象、游戏、组件与语言包。挑选现成插件，从示例学习开发，把工作区变成你喜欢的样子。</p>
+      <p><a href="https://github.com/EthanChan050430/saki-plugins"><strong>逛逛拓展市场 · 查看仓库 ↗</strong></a></p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="https://github.com/EthanChan050430/Saki-AI"><img src=".github/assets/explore-saki-ai-zh.svg" width="640" alt="Saki AI — 探索本地桌面 AI 助手" /></a>
+      <p>从服务器工作区走向个人桌面。用本地 AI 助手聊天、阅读文档、检索资料、处理日常任务，认识 Saki 家族的另一位伙伴。</p>
+      <p><a href="https://github.com/EthanChan050430/Saki-AI"><strong>认识 Saki AI · 查看仓库 ↗</strong></a></p>
+    </td>
+  </tr>
+</table>
+
 ## 界面预览
 
 5.0 的概览页把 Saki 助手、实时系统指标和多个工作区放在一起。上方海报保留了运行中界面的原始截图，点击即可查看原图；示例中运行的是本地演示服务。
