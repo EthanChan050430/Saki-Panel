@@ -1563,10 +1563,17 @@ export function mergeSakiFinalTimeline(timeline: LocalSakiTimelineItem[] | undef
         !entry.content.includes("等待审批"))
   );
   if (!text) return current;
+  const last = current.at(-1);
+  if (last?.kind === "text" && (last.source === "delta" || last.source === "final")) {
+    const streamed = last.content.trim();
+    // Older Agent runs could append the entire final answer to its own stream.
+    if (streamed.startsWith(text) && streamed.slice(text.length).trim() === text) {
+      return [...current.slice(0, -1), { ...last, content: text, source: "final" }];
+    }
+  }
   const textItems = current.filter((entry): entry is Extract<LocalSakiTimelineItem, { kind: "text" }> => entry.kind === "text");
   if ([textItems.map(item => item.content).join(""), textItems.map(item => item.content.trim()).filter(Boolean).join("\n\n")].some(content => content.trim() === text)) return current;
   if (textItems.some((entry) => entry.content.trim() === text || entry.content.includes(text))) return current;
-  const last = current.at(-1);
   if (last?.kind === "text" && (last.source === "delta" || last.source === "final")) {
     const lastTrimmed = last.content.trim();
     if (text.includes(lastTrimmed)) {

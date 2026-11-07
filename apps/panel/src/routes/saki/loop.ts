@@ -278,9 +278,12 @@ export async function emitAgentFinalText(events: SakiAgentRunEvents | undefined,
   if (!events?.delta || !text) return;
   let emitText = text;
   if (alreadyForwarded) {
-    const af = alreadyForwarded.trim();
-    if (af && emitText.trimStart().startsWith(af)) {
-      emitText = emitText.trimStart().slice(af.length).trimStart();
+    const forwarded = alreadyForwarded.trimStart();
+    const final = emitText.trimStart();
+    const af = forwarded.trimEnd();
+    if (af && final.trimEnd() === af) return;
+    if (forwarded && final.startsWith(forwarded)) {
+      emitText = final.slice(forwarded.length);
     } else if (af && emitText.includes(af)) {
       const idx = emitText.indexOf(af);
       if (idx !== -1 && idx < emitText.length * 0.5) {
@@ -912,6 +915,7 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
   // Race every model call against the abort signal so that cancelling a task
   // stops the loop immediately instead of waiting out a long provider request.
   const callAgentTurnWithAbort = async (prompt: string, thinkStepId: string): Promise<SakiModelToolTurn> => {
+    lastForwardedDeltaContent = undefined;
     const startedAt = Date.now();
     let receivedOutput = false;
     let retryAttempt = 0;
@@ -931,6 +935,7 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
     }, 15_000);
     const turnPromise = callConfiguredAgentTurn(runtime, prompt, events?.delta ? text => {
       receivedOutput = true;
+      lastForwardedDeltaContent = (lastForwardedDeltaContent ?? "") + text;
       events?.delta?.(text);
     } : undefined, text => {
       receivedOutput = true;
@@ -1500,7 +1505,6 @@ IMPORTANT: ${sakiFileToolGuidance}\nPrevious output:\n${turn.content.slice(0, 12
 
     invalidReplies = 0;
     progressOnlyReplies = 0;
-    if (turn.forwardedDeltaContent) lastForwardedDeltaContent = turn.forwardedDeltaContent;
     const visibleAssistantText = stripThinking(turn.content).trim();
     const narration = extractNarrationBeforeToolCall(visibleAssistantText);
     if (narration && !turn.forwardedDeltaText) {
