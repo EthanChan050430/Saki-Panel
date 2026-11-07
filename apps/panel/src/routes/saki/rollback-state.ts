@@ -1,5 +1,5 @@
 import type { SakiAgentAction } from "@webops/shared";
-import { prisma } from "../../db.js";
+import { findConversationReferences } from "./conversation-store.js";
 import { RouteError } from "./types.js";
 
 function hasActionReference(messages: unknown, id: string): boolean {
@@ -18,14 +18,10 @@ function hasActionReference(messages: unknown, id: string): boolean {
 /** A consumed checkpoint is a no-op only after the server recorded a successful rollback. */
 export async function alreadyRolledBackSakiAction(userId: string, action: SakiAgentAction, instanceId?: string | null): Promise<SakiAgentAction | null> {
   if (action.status !== "rolled_back") return null;
-  const conversations = await prisma.sakiConversation.findMany({
-    where: { userId, ...(instanceId !== undefined ? { instanceId } : {}), messages: { contains: action.id } },
-    select: { messages: true }
-  });
-  const owned = conversations.some(conversation => {
-    try { return hasActionReference(JSON.parse(conversation.messages), action.id); }
-    catch { return false; }
-  });
+  let owned = false;
+  for await (const message of findConversationReferences(userId, action.id, instanceId)) {
+    if (hasActionReference([message], action.id)) { owned = true; break; }
+  }
   if (!owned) throw new RouteError("Rollback action not found in this conversation workspace.", 404);
   // A history reference authorizes only an idempotent receipt, not disclosure
   // of an old command, its output, or media attached to the completed action.

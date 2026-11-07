@@ -1,3 +1,21 @@
+export async function fetchSakiStreamResponse(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs = 20_000
+): Promise<Response> {
+  const controller = new AbortController();
+  const abort = () => controller.abort(init.signal?.reason);
+  if (init.signal?.aborted) abort();
+  else init.signal?.addEventListener("abort", abort, { once: true });
+  const timer = setTimeout(() => controller.abort(new Error("Saki 连接超时，正在重新确认任务状态。")), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+    init.signal?.removeEventListener("abort", abort);
+  }
+}
+
 /** Stop at a terminal event even if a proxy leaves HTTP open; heartbeats reset the idle timer. */
 export async function readSakiEventFrames(
   body: ReadableStream<Uint8Array>,

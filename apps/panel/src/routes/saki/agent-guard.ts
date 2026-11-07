@@ -91,7 +91,7 @@ export function stuckOutputMessage(): string {
 }
 
 export function stuckNoProgressMessage(): string {
-  return "Saki 连续几轮没有取得新进展（重复调用或无效输出），已停止以免空转。前面完成的操作仍然保留。你可以补充要求或发「继续」。";
+  return `Saki 连续 ${maxNoProgressTurns} 轮未获得新的执行结果，已停止以免空转。重复已有结果、同步任务计划和进度说明不计为实际进展。已完成的操作仍然保留，你可以补充要求或发「继续」。`;
 }
 
 export function stuckFailuresMessage(): string {

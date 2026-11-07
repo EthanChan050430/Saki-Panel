@@ -14,11 +14,12 @@ import { objectValue, RouteError, sanitizeSakiInputAttachments, sakiUsePermissio
 import { hydrateSakiAttachmentsForModel } from "./ocr.js";
 import { readEffectiveSakiConfig } from "./config.js";
 import { withRequestedSakiModel } from "./types.js";
+import { conversationTaskMessage, recentConversationText } from "./conversation-store.js";
 
 export async function registerSakiFollowUpRoutes(app: FastifyInstance,
   start: (request: FastifyRequest, prepared: Awaited<ReturnType<typeof prepareSakiChatInvocation>>, admission?: () => Promise<boolean>) => Promise<SakiActiveTask>) {
   const ownedConversation = async (userId: string, id: string) => {
-    const conversation = await prisma.sakiConversation.findUnique({ where: { id } });
+    const conversation = await prisma.sakiConversation.findUnique({ where: { id }, select: { userId: true, contextKey: true } });
     if (conversation && conversation.userId !== userId) throw new RouteError("Conversation not found.", 404);
     return conversation;
   };
@@ -37,10 +38,9 @@ export async function registerSakiFollowUpRoutes(app: FastifyInstance,
       if (anchor.status !== "completed" || anchor.execution) return { state: "wait" };
     } else if (item.afterTaskId || item.afterRequestId) {
       const conversation = await ownedConversation(userId, item.conversationId);
-      const messages: any[] = JSON.parse(conversation?.messages ?? "[]");
-      const previous = item.afterTaskId ? messages.find(message => message.taskId === item.afterTaskId && message.role === "assistant") : null;
+      const previous = conversation && item.afterTaskId ? await conversationTaskMessage(item.conversationId, item.afterTaskId) : null;
       if (!previous && !item.afterTaskId && Date.now() - Date.parse(item.createdAt) < 60_000) return { state: "wait" };
-      if (!previous || previous.streaming || previous.isStreaming || previous.retry || previous.actions?.some((action: any) => ["pending_input", "pending_approval"].includes(action.status))) {
+      if (!previous || previous.streaming || previous.isStreaming || previous.retry || (Array.isArray(previous.actions) && previous.actions.some(action => ["pending_input", "pending_approval"].includes(action?.status)))) {
         return { state: "pause", reason: "上一条任务的状态未确认，排队消息已保留。请检查对话后继续发送。" };
       }
     }
@@ -67,9 +67,7 @@ export async function registerSakiFollowUpRoutes(app: FastifyInstance,
       }
       await assertUserHasSpendablePoints(userId);
       const request = { user: { sub: user.id, permissions: user.permissions }, ip: "127.0.0.1", headers: { "user-agent": "Saki queued follow-up" }, log: app.log } as unknown as FastifyRequest;
-      const messages: any[] = JSON.parse(conversation?.messages ?? "[]");
-      const history = messages.filter(message => !message.rollbackJournal && ["user", "assistant"].includes(message.role)).slice(-12)
-        .map(message => ({ role: message.role, content: String(message.content ?? ""), ...(message.thinking ? { thinking: message.thinking } : {}) }));
+      const history = conversation ? await recentConversationText(item.conversationId, 12) : [];
       const prepared = await prepareSakiChatInvocation(request, { ...item.input, history });
       return (await start(request, prepared, () => queue.isClaimed(userId, item.id))).id;
     }

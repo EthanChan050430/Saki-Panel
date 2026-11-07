@@ -71,6 +71,10 @@ test("export filenames retain Unicode and exclude path/header injection characte
 test("export endpoint streams all history, supplies an attachment filename, and enforces user access", async () => {
   const app = Fastify();
   const findConversation = prisma.sakiConversation.findFirst;
+  const findMessages = prisma.sakiConversationMessage.findMany;
+  const findMessage = prisma.sakiConversationMessage.findUnique;
+  const queryRaw = prisma.$queryRaw;
+  const transaction = prisma.$transaction;
   const findUser = prisma.user.findUnique;
   const authDisabled = panelConfig.disableAuth;
   const queries: unknown[] = [];
@@ -84,6 +88,15 @@ test("export endpoint streams all history, supplies an attachment filename, and 
       messages: args.where.id === "corrupt" ? "broken JSON" : JSON.stringify(conversation.messages),
       createdAt: new Date(createdAt), updatedAt: new Date(createdAt) } as any;
   };
+  prisma.sakiConversationMessage.findMany = (async (args: any) => conversation.messages.map((message: any, position) =>
+    args.select.messageId ? { messageId: message.id } : { position })) as typeof findMessages;
+  prisma.sakiConversationMessage.findUnique = (async (args: any) => ({
+    data: JSON.stringify(conversation.messages[args.where.conversationId_position.position])
+  })) as typeof findMessage;
+  prisma.$queryRaw = (async (_sql: TemplateStringsArray, id: string) => id === "corrupt" ? [{ pending: 1 }] : []) as typeof queryRaw;
+  prisma.$transaction = (async (run: (tx: unknown) => Promise<unknown>) => run({
+    $queryRaw: async () => [{ kind: "invalid" }]
+  })) as typeof transaction;
   try {
     await app.register(jwt, { secret: "qa-conversation-export-test-secret" });
     await registerSakiRoutes(app);
@@ -103,6 +116,10 @@ test("export endpoint streams all history, supplies an attachment filename, and 
   } finally {
     await app.close();
     prisma.sakiConversation.findFirst = findConversation;
+    prisma.sakiConversationMessage.findMany = findMessages;
+    prisma.sakiConversationMessage.findUnique = findMessage;
+    prisma.$queryRaw = queryRaw;
+    prisma.$transaction = transaction;
     prisma.user.findUnique = findUser;
     panelConfig.disableAuth = authDisabled;
     await prisma.$disconnect();

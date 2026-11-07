@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { Readable } from "node:stream";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Prisma } from "@prisma/client";
 import type {
@@ -15,13 +16,13 @@ import type {
   DeleteAuditLogsResponse,
   SakiAuditConversationItem,
   SakiAuditConversationListResponse,
-  SakiAuditMessage,
   UpdateAuditRetentionPolicyRequest
 } from "@webops/shared";
 import { prisma } from "../db.js";
 import { requirePermission, requireSuperAdmin } from "../auth.js";
 import { panelPaths } from "../config.js";
 import { writeAuditLog } from "../audit.js";
+import { conversationMessageCount, conversationMetadata, iterateConversationMessages, lastConversationText, streamConversationJson } from "./saki/conversation-store.js";
 
 const defaultRetentionPolicy: AuditRetentionPolicy = {
   retentionDays: 90,
@@ -40,15 +41,6 @@ function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
 function positiveInt(value: unknown, fallback: number, max: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 1 ? Math.min(Math.floor(parsed), max) : fallback;
-}
-
-function parseSakiAuditMessages(raw: string): SakiAuditMessage[] {
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as SakiAuditMessage[]) : [];
-  } catch {
-    return [];
-  }
 }
 
 async function readAuditRetentionPolicy(): Promise<AuditRetentionPolicy> {
@@ -881,6 +873,7 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
           { label: { contains: kw } },
           { detail: { contains: kw } },
           { messages: { contains: kw } },
+          { history: { some: { data: { contains: kw } } } },
           { user: { username: { contains: kw } } },
           { user: { displayName: { contains: kw } } }
         ]
@@ -911,7 +904,8 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
         orderBy: { updatedAt: "desc" },
         take: limit,
         skip,
-        include: {
+        select: {
+          ...conversationMetadata,
           user: {
             select: {
               id: true,
@@ -937,12 +931,11 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
       : [];
     const instanceMap = new Map(instances.map((i) => [i.id, i.name]));
 
-    const data: SakiAuditConversationItem[] = rows.map((r) => {
-      const parsedMessages = parseSakiAuditMessages(r.messages);
-      const last = parsedMessages[parsedMessages.length - 1];
-      const lastMessagePreview = typeof last?.content === "string" ? last.content.slice(0, 150) : "";
-
-      return {
+    const data: SakiAuditConversationItem[] = [];
+    for (const r of rows) {
+      const messageCount = await conversationMessageCount(r.id);
+      const lastMessagePreview = await lastConversationText(r.id);
+      data.push({
         id: r.id,
         userId: r.userId,
         username: r.user.username,
@@ -954,13 +947,13 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
         instanceId: r.instanceId,
         instanceName: r.instanceId ? (instanceMap.get(r.instanceId) ?? null) : null,
         title: r.title,
-        messageCount: parsedMessages.length,
+        messageCount,
         lastMessagePreview,
         messages: [],
         createdAt: r.createdAt.toISOString(),
         updatedAt: r.updatedAt.toISOString()
-      };
-    });
+      });
+    }
 
     return {
       data,
@@ -982,7 +975,8 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
     const messageLimit = positiveInt(query.limit, 20, 100);
     const row = await prisma.sakiConversation.findUnique({
       where: { id },
-      include: {
+      select: {
+        ...conversationMetadata,
         user: {
           select: {
             id: true,
@@ -1005,16 +999,10 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
       instanceName = inst?.name ?? null;
     }
 
-    const parsedMessages = parseSakiAuditMessages(row.messages);
-    const messageTotal = parsedMessages.length;
+    const messageTotal = await conversationMessageCount(row.id);
     const messageTotalPages = Math.ceil(messageTotal / messageLimit) || 1;
     const safePage = Math.min(messagePage, messageTotalPages);
-    const pageMessages = includeAll
-      ? parsedMessages
-      : parsedMessages.slice((safePage - 1) * messageLimit, safePage * messageLimit);
-    const last = parsedMessages[parsedMessages.length - 1];
-
-    const item: SakiAuditConversationItem = {
+    const item: Omit<SakiAuditConversationItem, "messages"> = {
       id: row.id,
       userId: row.userId,
       username: row.user.username,
@@ -1027,8 +1015,7 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
       instanceName,
       title: row.title,
       messageCount: messageTotal,
-      lastMessagePreview: typeof last?.content === "string" ? last.content.slice(0, 150) : "",
-      messages: pageMessages,
+      lastMessagePreview: await lastConversationText(row.id),
       messagePage: includeAll ? 1 : safePage,
       messageLimit: includeAll ? messageTotal : messageLimit,
       messageTotalPages: includeAll ? 1 : messageTotalPages,
@@ -1036,6 +1023,8 @@ export async function registerAuditRoutes(app: FastifyInstance): Promise<void> {
       updatedAt: row.updatedAt.toISOString()
     };
 
-    return item;
+    const messages = includeAll ? iterateConversationMessages(row.id)
+      : iterateConversationMessages(row.id, (safePage - 1) * messageLimit, safePage * messageLimit);
+    return reply.type("application/json").send(Readable.from(streamConversationJson(item, messages), { objectMode: false }));
   });
 }

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { classifyCommandRisk, isPosixCommandPlatform } from "../../command-policy.js";
 import { bindSakiWorkspace } from "./workspace-binding.js";
 import { retainAgentToolCacheAfterAction } from "./tool-cache-policy.js";
 import { normalizeUserQuestionTurn } from "./user-question-policy.js";
@@ -69,6 +70,7 @@ import {
   stuckOutputMessage
 } from "./agent-guard.js";
 import { bootstrapAgentSkills } from "./skills.js";
+import { AgentToolLoopGuard, agentChecklistSignature, agentToolExecutionSignature } from "./agent-tool-guard.js";
 import { agentBudgetStopMessage, agentContinuationCheckpointLoops, agentRunBudgets } from "./agent-run-policy.js";
 import {
   completedSakiActions,
@@ -470,6 +472,7 @@ function cloneCachedAgentAction(call: ParsedToolCall, cached: SakiAgentAction): 
     args,
     observation: cached.observation,
     ok: cached.ok,
+    ...(cached.todos ? { todos: cached.todos.map(todo => ({ ...todo })) } : {}),
     status: cached.status ?? (cached.ok ? "completed" : "failed"),
     createdAt: new Date().toISOString()
   };
@@ -709,7 +712,8 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
   let consecutiveFailedTools = 0;
   let lastTurnFingerprint = "";
   let turnMadeProgress = false;
-  const toolExecutionCounts = new Map<string, number>();
+  const toolLoopGuard = new AgentToolLoopGuard(maxIdenticalToolExecutions);
+  let latestChecklistAction = [...actions].reverse().find(action => action.ok && action.status === "completed" && normalizedAgentToolName(action.tool) === "managetodos");
   const agentPermissionMode = effectiveSakiAgentPermissionMode(runtime.input);
   const runStartedAt = Date.now();
   let loopsUsed = 0;
@@ -820,6 +824,13 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
         .map(attachment => [attachment.id ?? attachment.name, attachment])).values()];
       emitAgentNarration(events, `收到新指示：${text.slice(0, 200)}`);
     }
+    // New user guidance starts a new attempt; bookkeeping and automatic
+    // continuation checkpoints never reset these guards.
+    toolLoopGuard.reset();
+    consecutiveFailedTools = 0;
+    noProgressStreak = 0;
+    identicalOutputStreak = 0;
+    lastTurnFingerprint = "";
     steeringRevision += 1;
     rebuildCurrentPrompt();
     return true;
@@ -1025,7 +1036,7 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
     };
   };
 
-  type ToolResult = { call: ParsedToolCall; toolStepId: string; action: SakiAgentAction; durationMs: number; cacheHit?: boolean };
+  type ToolResult = { call: ParsedToolCall; toolStepId: string; action: SakiAgentAction; durationMs: number; cacheHit?: boolean; madeProgress?: boolean; planUnchanged?: boolean; duplicateBlocked?: boolean };
   const runToolWithWorkflow = async (
     call: ParsedToolCall,
     toolStepId: string,
@@ -1039,6 +1050,15 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
         readOnlyToolCache.clear();
         return { call, toolStepId, action: { id: actionId(), tool: call.name, args: toolCallArgsForDisplay(call), ok: false, status: "failed",
           observation: `Authorization denied: ${error instanceof Error ? error.message : String(error)}`, createdAt: new Date().toISOString() }, durationMs: Date.now() - toolStartedAt };
+      }
+    }
+    const toolName = normalizedAgentToolName(call.name);
+    if (toolName === "managetodos" && !Array.isArray(call.args)) {
+      const checklist = agentChecklistSignature(call.args);
+      if (checklist && latestChecklistAction && checklist === agentChecklistSignature(latestChecklistAction.args)) {
+        const action = cloneCachedAgentAction(call, latestChecklistAction);
+        action.observation = `${action.observation}\n\n任务计划未变化，已保留当前计划。请推进实际工作，仅在步骤状态变化时更新计划。`;
+        return { call, toolStepId, action, durationMs: Date.now() - toolStartedAt, cacheHit: true, planUnchanged: true };
       }
     }
     const cacheKey = agentReadOnlyToolCacheKey(runtime, call);
@@ -1066,9 +1086,14 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
 
     runtime.usedToolNames ??= [];
     runtime.usedToolNames.push(normalizedAgentToolName(call.name));
-    const signature = agentReadOnlyToolCacheKey(runtime, call) ?? `${normalizedAgentToolName(call.name)}::${JSON.stringify(toolCallArgsForDisplay(call))}`;
-    const previousCount = toolExecutionCounts.get(signature) ?? 0;
-    if (previousCount >= maxIdenticalToolExecutions) {
+    const bookkeeping = toolName === "managetodos" || toolName === "plan" || toolName === "reportprogress";
+    const args = toolArgs(call);
+    const inspectionCommand = ["runcommand", "runinshell", "diagnosecode"].includes(toolName) && !args.input && !args.stdin
+      && classifyCommandRisk(stringArg(args, "command"), runtime.context.instance?.workingDirectory, isPosixCommandPlatform(runtime.context.instance?.node.os)).readOnly;
+    const readOnly = isSakiReadOnlyAgentTool(toolName) || inspectionCommand;
+    const signature = cacheKey ?? agentToolExecutionSignature(toolName, call.args, runtime.context.instance?.id ?? null);
+    const previousCount = bookkeeping ? 0 : toolLoopGuard.blockedAttempts(signature, readOnly);
+    if (previousCount) {
       return {
         call,
         toolStepId,
@@ -1076,16 +1101,15 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
           id: actionId(),
           tool: call.name,
           args: toolCallArgsForDisplay(call),
-          observation: `Duplicate limit reached for '${call.name}' after ${previousCount} attempts with the same arguments. This call was NOT executed and is NOT evidence of success. Use the previous observations to inspect the cause, change the approach, or explain the blocker.`,
+          observation: `工具「${call.name}」已连续 ${previousCount} 次以相同参数执行并返回相同结果，本次未重复执行。请依据已有结果检查原因、改变处理方式，或说明具体阻碍。此拦截不代表本次操作成功。`,
           ok: false,
           status: "failed",
           createdAt: new Date().toISOString()
         },
         durationMs: Date.now() - toolStartedAt,
-        cacheHit: true
+        duplicateBlocked: true
       };
     }
-    toolExecutionCounts.set(signature, previousCount + 1);
     if (!isSakiReadOnlyAgentTool(call.name)) {
       try {
         await persistProgress("Tool execution started; pending calls are unconfirmed. Inspect their targets before retrying mutations.");
@@ -1112,13 +1136,13 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
     if (retainedCache.length !== readOnlyToolCache.size || action.approval?.checkpointId) {
       readOnlyToolCache.clear();
       for (const entry of retainedCache) readOnlyToolCache.set(...entry);
-      toolExecutionCounts.clear();
       toolCacheInvalidations += 1;
     }
-    return { call, toolStepId, action, durationMs: Date.now() - toolStartedAt };
+    if (toolName === "managetodos" && action.ok && action.status === "completed") latestChecklistAction = action;
+    const madeProgress = toolLoopGuard.record(signature, action, { readOnly, bookkeeping });
+    return { call, toolStepId, action, durationMs: Date.now() - toolStartedAt, madeProgress };
   };
 
-  const recentToolSignatures: Array<{ name: string; argsStr: string; ok: boolean }> = [];
   const failedAttemptsByTarget = new Map<string, number>();
   const fileEditTools = new Set(["writefile", "replaceinfile", "editlines", "batchedit", "applypatch"]);
 
@@ -1139,14 +1163,8 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
     return "";
   };
 
-  const handleToolResult = async (result: {
-    call: ParsedToolCall;
-    toolStepId: string;
-    action: SakiAgentAction;
-    durationMs: number;
-    cacheHit?: boolean;
-  }): Promise<SakiChatResponse | null> => {
-    const { call, toolStepId, action, cacheHit } = result;
+  const handleToolResult = async (result: ToolResult): Promise<SakiChatResponse | null> => {
+    const { call, toolStepId, action, cacheHit, madeProgress, planUnchanged, duplicateBlocked } = result;
     toolExecutions += 1;
     if (call.name.toLowerCase() === "respond") {
       if (abortSignal?.aborted) return finishAgentResponse("aborted", abortedMessage());
@@ -1194,7 +1212,7 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
     emitSakiWorkflow(events, {
       id: toolStepId,
       stage: "tool",
-      message: cacheHit ? "Reused a cached tool result from this Agent run." : action.ok && action.status !== "pending_approval" ? toolIntentMessage(call) : toolOutcomeMessage(call, action),
+      message: planUnchanged ? "任务计划未变化，已保留当前计划。" : cacheHit ? "Reused a cached tool result from this Agent run." : action.ok && action.status !== "pending_approval" ? toolIntentMessage(call) : toolOutcomeMessage(call, action),
       status: actionStatusLabel(action),
       tool: call.name,
       call: toolDisplayArgs(call),
@@ -1224,23 +1242,14 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
       return finishAgentResponse("video_generation_failed", `视频生成未完成：${action.observation}\n\n已保留任务记录。本次不会自动重复提交，也不会用本地动画替代生成结果。`);
     }
     const args = toolArgs(call);
-    const argsStr = JSON.stringify(args);
     const targetFile = String(args.path || args.filePath || "");
-
-    // Check for duplicate consecutive tool calls
-    const isDuplicate = recentToolSignatures.length > 0 &&
-      recentToolSignatures[recentToolSignatures.length - 1]?.name === toolName &&
-      recentToolSignatures[recentToolSignatures.length - 1]?.argsStr === argsStr;
-
-    recentToolSignatures.push({ name: toolName, argsStr, ok: action.ok });
-    if (recentToolSignatures.length > 10) recentToolSignatures.shift();
-
-    if (isDuplicate && isSakiReadOnlyAgentTool(toolName)) {
-      appendAgentScratchpad(`\n[Self-Correction & Loop Breaker]: You called '${call.name}' with identical parameters twice in a row. The observation is already above in your memory. DO NOT re-read or re-search the same query. Proceed to editing with editLines/replaceInFile, or formulate your final response.\n`);
+    const bookkeeping = toolName === "managetodos" || toolName === "plan" || toolName === "reportprogress";
+    if (!bookkeeping && action.ok && !madeProgress && isSakiReadOnlyAgentTool(toolName)) {
+      appendAgentScratchpad(`\n[Repeated observation]: '${call.name}' returned evidence already available in this run. Reuse that evidence and advance the task. Use refresh=true only when external state may have changed; a changed result counts as progress.\n`);
     }
 
     if (!action.ok) {
-      if (targetFile) {
+      if (targetFile && fileEditTools.has(toolName) && !duplicateBlocked && !cacheHit) {
         const currentFailures = (failedAttemptsByTarget.get(targetFile) ?? 0) + 1;
         failedAttemptsByTarget.set(targetFile, currentFailures);
         if (currentFailures >= 2) {
@@ -1260,15 +1269,15 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
       if (targetFile) failedAttemptsByTarget.delete(targetFile);
     }
 
-    if (!action.ok) {
+    if (!action.ok && !duplicateBlocked && !cacheHit) {
       consecutiveFailedTools += 1;
       if (consecutiveFailedTools >= maxConsecutiveFailedTools) {
         return finishAgentResponse("stuck_failures", stuckFailuresMessage());
       }
-    } else if (action.ok) {
+    } else if (action.ok && !bookkeeping && !cacheHit) {
       consecutiveFailedTools = 0;
-      if (!cacheHit) turnMadeProgress = true;
     }
+    if (madeProgress) turnMadeProgress = true;
     const editedPaths = action.ok ? editedPathsFromTool(toolName, args) : [];
     // Persist the edit before running diagnostics, which may wait on the daemon.
     if (editedPaths.length) {
@@ -1420,7 +1429,9 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
       }
       return finishAgentResponse("stuck_degenerate", stuckOutputMessage());
     }
-    const turnFingerprint = fingerprintAgentText(cleanedTurn);
+    // Tool outcomes decide progress; repeating a short narration before a new
+    // tool batch is not itself evidence that execution is stuck.
+    const turnFingerprint = turn.toolCalls.length ? "" : fingerprintAgentText(cleanedTurn);
     if (turnFingerprint.length > 40 && turnFingerprint === lastTurnFingerprint) {
       identicalOutputStreak += 1;
       if (identicalOutputStreak >= maxIdenticalOutputTurns) {

@@ -91,22 +91,23 @@ export function formatSakiActionArgs(args: Record<string, unknown>): string {
 
 export function sakiHistoryContent(message: LocalSakiMessage): string {
   if (message.rollbackJournal) return "";
-  const sections = [message.content];
+  const sections = [message.content.slice(0, 24_000)];
   const attachmentSummary = sakiAttachmentHistoryText(message.attachments);
   if (attachmentSummary) {
     sections.push(`[User attachments]\n${attachmentSummary}`);
   }
   if (message.actions?.length) {
     const actionSummary = message.actions
+      .slice(-16)
       .map((action, index) => {
         const args = formatSakiActionArgs(action.args);
         const status = action.ok ? "ok" : "failed";
-        return `${index + 1}. ${action.tool}${args}: ${status}. ${compactContextText(action.observation.replace(/\s+/g, " "), 240)}`;
+        return `${index + 1}. ${action.tool}${args}: ${status}. ${compactContextText(action.observation.slice(0, 512).replace(/\s+/g, " "), 240)}`;
       })
       .join("\n");
     sections.push(`[Agent actions from this reply]\n${actionSummary}`);
   }
-  return sections.join("\n\n");
+  return sections.join("\n\n").slice(0, 32_000);
 }
 
 export function toSakiHistoryMessage(message: LocalSakiMessage): SakiChatMessage {

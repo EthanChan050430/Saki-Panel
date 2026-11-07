@@ -1,5 +1,5 @@
 import { sakiChatErrorMessage } from "./components/saki/chat-error.js";
-import { readSakiEventFrames } from "./components/saki/saki-event-stream.js";
+import { fetchSakiStreamResponse, readSakiEventFrames } from "./components/saki/saki-event-stream.js";
 import { invalidateResourceSnapshots, loadResourceSnapshot } from "./utils/resourceSnapshot.js";
 import type {
   InstanceGitStatus,
@@ -499,7 +499,7 @@ async function requestSakiChatStream(
   if (signal) {
     requestInit.signal = signal;
   }
-  const response = await fetch(new URL("/api/saki/chat/stream", API_BASE), requestInit);
+  const response = await fetchSakiStreamResponse(new URL("/api/saki/chat/stream", API_BASE), requestInit);
 
   if (!response.ok) {
     throw new ApiError(sakiChatErrorMessage(await responseErrorMessage(response), response.status), response.status);
@@ -572,7 +572,7 @@ async function requestSakiTaskReconnectStream(
   if (signal) {
     requestInit.signal = signal;
   }
-  const response = await fetch(new URL(`/api/saki/tasks/${encodeURIComponent(taskId)}/stream?snapshot=1`, API_BASE), requestInit);
+  const response = await fetchSakiStreamResponse(new URL(`/api/saki/tasks/${encodeURIComponent(taskId)}/stream?snapshot=1`, API_BASE), requestInit);
   if (!response.ok) {
     throw new ApiError(await responseErrorMessage(response), response.status);
   }
@@ -2092,6 +2092,10 @@ export const api = {
     }
     return loadResourceSnapshot(token, `conversation:${id}`, () => requestJson<SakiSavedConversation>(`/api/saki/conversations/${encodeURIComponent(id)}`, {}, token));
   },
+  sakiGetConversationForEdit(token: string, id: string, fromId?: string | null) {
+    const query = new URLSearchParams({ editHistory: "1", ...(fromId ? { fromId } : {}) });
+    return requestJson<SakiSavedConversation>(`/api/saki/conversations/${encodeURIComponent(id)}?${query}`, {}, token);
+  },
   sakiSaveConversation(
     token: string,
     conversation: {
@@ -2104,6 +2108,7 @@ export const api = {
       instanceId?: string | null | undefined;
       messages: any[];
       messagesLoaded?: boolean | undefined;
+      append?: boolean | undefined;
       historyBeforeId?: string | null | undefined;
       baseUpdatedAt?: string | undefined;
     }

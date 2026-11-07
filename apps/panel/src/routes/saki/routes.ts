@@ -76,8 +76,8 @@ import { createSakiTerminal } from "./terminals.js";
 import { assertSakiWorkspaceBinding, bindSakiWorkspace } from "./workspace-binding.js";
 import { runTrackedSakiTask, trackedSakiTaskEvents } from "./task-runner.js";
 import { saveClientSakiConversation, withSakiConversationLock } from "./conversations.js";
-import { pageConversationMessages } from "./conversation-history.js";
-import { conversationMarkdownFileName, conversationMarkdownParts, snapshotConversationForExport } from "./conversation-export.js";
+import { conversationEditHistory, conversationMetadata, importConversationHistory, iterateConversationMessages, readMessageAt, selectConversationPage, streamConversationJson } from "./conversation-store.js";
+import { conversationMarkdownFileName, conversationMarkdownHeader, conversationMarkdownMessage, snapshotConversationForExport } from "./conversation-export.js";
 import {
   cancelActiveSakiTask,
   activeSakiTasks,
@@ -543,7 +543,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     return rollbackSakiAction(request, id);
   });
 
-  app.post("/api/saki/chat/stream", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request, reply) => {
+  app.post("/api/saki/chat/stream", { preHandler: requireAnyPermission(sakiUsePermissions), bodyLimit: 32 * 1024 * 1024 }, async (request, reply) => {
     const prepared = await prepareSakiChatInvocation(request, request.body as Partial<SakiChatRequest>);
     const { modelInput, context, skills } = prepared;
     await assertUserHasSpendablePoints(request.user.sub);
@@ -806,7 +806,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     });
   }
 
-  app.post("/api/saki/chat", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+  app.post("/api/saki/chat", { preHandler: requireAnyPermission(sakiUsePermissions), bodyLimit: 32 * 1024 * 1024 }, async (request) => {
     const prepared = await prepareSakiChatInvocation(request, request.body as Partial<SakiChatRequest>);
     const { modelInput, context, skills } = prepared;
     await assertUserHasSpendablePoints(request.user.sub);
@@ -892,131 +892,111 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
       .send(stream);
   });
 
-  app.get("/api/saki/conversations", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+  app.get("/api/saki/conversations", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request, reply) => {
     const query = request.query as { excludeMessages?: string; summary?: string; brief?: string } | undefined;
     const excludeMessages = query?.excludeMessages === "true" || query?.excludeMessages === "1" || query?.summary === "true" || query?.brief === "true";
-
-    if (excludeMessages) {
-      const rows = await prisma.sakiConversation.findMany({
-        where: { userId: request.user.sub },
-        orderBy: { updatedAt: "desc" },
-        take: 80,
-        select: {
-          id: true,
-          contextKey: true,
-          label: true,
-          detail: true,
-          instanceId: true,
-          title: true,
-          createdAt: true,
-          updatedAt: true
-        }
-      });
-      return rows.map((r) => ({
-        id: r.id,
-        contextKey: r.contextKey,
-        workspaceInstanceIds: sakiWorkspaceIdsFromContextKey(r.contextKey, r.instanceId),
-        label: r.label,
-        detail: r.detail,
-        instanceId: r.instanceId,
-        title: r.title,
-        messages: [],
-        messagesLoaded: false,
-        createdAt: r.createdAt.toISOString(),
-        updatedAt: r.updatedAt.toISOString()
-      }));
-    }
 
     const rows = await prisma.sakiConversation.findMany({
       where: { userId: request.user.sub },
       orderBy: { updatedAt: "desc" },
-      take: 80
+      take: 80,
+      select: conversationMetadata
     });
-    return rows.map((r) => {
-      let parsedMessages: any[] = [];
-      try {
-        parsedMessages = JSON.parse(r.messages);
-      } catch {}
-      return {
-        id: r.id,
-        contextKey: r.contextKey,
-        workspaceInstanceIds: sakiWorkspaceIdsFromContextKey(r.contextKey, r.instanceId),
-        label: r.label,
-        detail: r.detail,
-        instanceId: r.instanceId,
-        title: r.title,
-        messages: parsedMessages,
-        createdAt: r.createdAt.toISOString(),
-        updatedAt: r.updatedAt.toISOString()
-      };
-    });
+    const metadata = rows.map(({ userId: _owner, ...r }) => ({ ...r, workspaceInstanceIds: sakiWorkspaceIdsFromContextKey(r.contextKey, r.instanceId) }));
+    if (excludeMessages) return metadata.map(row => ({ ...row, messages: [], messagesLoaded: false }));
+    async function* fullList() {
+      yield "[";
+      for (const [index, row] of metadata.entries()) {
+        if (index) yield ",";
+        yield* streamConversationJson(row, iterateConversationMessages(row.id));
+      }
+      yield "]";
+    }
+    return reply.type("application/json").send(Readable.from(fullList(), { objectMode: false }));
   });
 
   app.get("/api/saki/conversations/:id/export", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    const row = await prisma.sakiConversation.findFirst({ where: { id, userId: request.user.sub } });
+    const row = await prisma.sakiConversation.findFirst({ where: { id, userId: request.user.sub }, select: conversationMetadata });
     const tasks = [...activeSakiTasks.values()].filter(task => task.userId === request.user.sub
       && (task.input.conversationId ?? `task-${task.id}`) === id && (task.status === "running" || task.pendingHistorySync));
     if (!row && !tasks.length) throw new RouteError("Conversation not found", 404);
     for (const task of tasks) await assertSakiTaskAccess(request.user.sub, task);
-    let messages: unknown[] = [];
-    try {
-      const parsed: unknown = JSON.parse(row?.messages ?? "[]");
-      if (!Array.isArray(parsed)) throw new Error("Invalid history");
-      messages = parsed;
-    } catch { throw new RouteError("会话存档无法解析，导出已停止，原始记录仍保留。", 500); }
-    const conversation = snapshotConversationForExport({ id, title: row?.title ?? tasks[0]!.input.message.slice(0, 80),
+    if (row) await importConversationHistory(id);
+    const conversation = { id, title: row?.title ?? tasks[0]!.input.message.slice(0, 80),
       contextKey: row?.contextKey ?? "global", label: row?.label ?? "Agent", detail: row?.detail ?? "",
       instanceId: row?.instanceId ?? tasks[0]?.instanceId ?? null,
       workspaceInstanceIds: row ? sakiWorkspaceIdsFromContextKey(row.contextKey, row.instanceId) : tasks[0]?.input.workspaceInstanceIds ?? [],
       createdAt: row?.createdAt.toISOString() ?? tasks[0]?.startedAt,
-      updatedAt: row?.updatedAt.toISOString() ?? tasks[0]?.updatedAt, messages }, tasks);
+      updatedAt: row?.updatedAt.toISOString() ?? tasks[0]?.updatedAt,
+      activeTasks: tasks.map(task => ({ id: task.id, status: task.status, updatedAt: task.updatedAt })) };
+    const pending = new Map<string, typeof tasks[number]>();
+    for (const task of tasks) {
+      pending.set(task.input.userMessageId ?? `${task.id}-user`, task);
+      pending.set(task.input.assistantMessageId ?? `${task.id}-assistant`, task);
+    }
+    const existing = row ? await prisma.sakiConversationMessage.findMany({ where: { conversationId: id }, select: { messageId: true } }) : [];
+    const savedIds = new Set(existing.map(message => message.messageId));
+    async function* markdown() {
+      yield* conversationMarkdownHeader(conversation, existing.length + [...pending.keys()].filter(key => !savedIds.has(key)).length);
+      let index = 0;
+      if (row) for await (const message of iterateConversationMessages(id)) {
+        const messageId = (message as { id?: string } | null)?.id;
+        const task = messageId ? pending.get(messageId) : undefined;
+        const value = task ? snapshotConversationForExport({ ...conversation, messages: [message] }, [task]).messages[0] : message;
+        yield* conversationMarkdownMessage(value, index++);
+      }
+      for (const [messageId, task] of pending) {
+        if (savedIds.has(messageId)) continue;
+        const messages = snapshotConversationForExport({ ...conversation, messages: [] }, [task]).messages;
+        yield* conversationMarkdownMessage(messages.find(message => (message as { id: string }).id === messageId), index++);
+      }
+    }
     const fileName = conversationMarkdownFileName(conversation.title, id);
     const encodedName = encodeURIComponent(fileName).replace(/['()*]/g, character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
     reply.header("content-type", "text/markdown; charset=utf-8");
     reply.header("cache-control", "no-store");
     reply.header("content-disposition", `attachment; filename="conversation.md"; filename*=UTF-8''${encodedName}`);
-    return reply.send(Readable.from(conversationMarkdownParts(conversation), { objectMode: false }));
+    return reply.send(Readable.from(markdown(), { objectMode: false }));
   });
 
-  app.get("/api/saki/conversations/:id", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+  app.get("/api/saki/conversations/:id", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    const query = request.query as { limit?: string; beforeId?: string };
+    const query = request.query as { limit?: string; beforeId?: string; summary?: string; editHistory?: string; fromId?: string };
     const r = await prisma.sakiConversation.findFirst({
-      where: { id, userId: request.user.sub }
+      where: { id, userId: request.user.sub }, select: conversationMetadata
     });
     if (!r) {
       throw new RouteError("Conversation not found", 404);
     }
-    let parsedMessages: any[] = [];
-    try {
-      parsedMessages = JSON.parse(r.messages);
-    } catch {}
-    parsedMessages = parsedMessages.map(message => message?.streaming && message.taskId && activeSakiTasks.get(message.taskId)?.status !== "running"
-      ? { ...message, streaming: false, isStreaming: false } : message);
-    let page;
+    const { userId: _owner, ...metadata } = r;
+    const details = { ...metadata, workspaceInstanceIds: sakiWorkspaceIdsFromContextKey(r.contextKey, r.instanceId) };
+    if (query.summary === "1") return { ...details, messages: [], messagesLoaded: false };
+    if (query.editHistory === "1") return { ...details, messages: await conversationEditHistory(id, query.fromId) };
+    let page: Awaited<ReturnType<typeof selectConversationPage>> | undefined;
     if (query.limit !== undefined) {
       const limit = Number(query.limit);
       if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new RouteError("Invalid page size.", 400);
-      try { page = pageConversationMessages(parsedMessages, limit, query.beforeId); }
-      catch { throw new RouteError("History changed. Reload the conversation.", 409); }
+      page = await selectConversationPage(id, limit, query.beforeId);
+    } else {
+      await importConversationHistory(id);
     }
-    return {
-      id: r.id,
-      contextKey: r.contextKey,
-      workspaceInstanceIds: sakiWorkspaceIdsFromContextKey(r.contextKey, r.instanceId),
-      label: r.label,
-      detail: r.detail,
-      instanceId: r.instanceId,
-      title: r.title,
-      messages: parsedMessages,
-      ...page,
-      createdAt: r.createdAt.toISOString(),
-      updatedAt: r.updatedAt.toISOString()
-    };
+    async function* messages() {
+      async function* selected(positions: number[]) {
+        for (const position of positions) yield await readMessageAt(id, position);
+      }
+      for await (const value of page ? selected(page.positions) : iterateConversationMessages(id)) {
+        const message = value as { streaming?: boolean; taskId?: string } | null;
+        yield message?.streaming && message.taskId && activeSakiTasks.get(message.taskId)?.status !== "running"
+          ? { ...message, streaming: false, isStreaming: false } : value;
+      }
+    }
+    return reply.type("application/json").send(Readable.from(streamConversationJson({
+      ...details, ...(page ? { historyBeforeId: page.historyBeforeId, messagesLoaded: true } : {})
+    }, messages()), { objectMode: false }));
   });
 
-  app.put("/api/saki/conversations/:id", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
+  app.put("/api/saki/conversations/:id", { preHandler: requireAnyPermission(sakiUsePermissions), bodyLimit: 48 * 1024 * 1024 }, async (request) => {
     const { id } = request.params as { id: string };
     const body = request.body as any;
     if (!body || typeof body !== "object") {

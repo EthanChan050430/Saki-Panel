@@ -258,6 +258,7 @@ async function runAgentIndependentCommand(
 ) {
   const command = stringArg(args, "command");
   if (!command) throw new RouteError("runCommand requires a command.", 400);
+  const cwd = normalizeCommandRelativeCwd(commandCwdArg(args), instance.workingDirectory);
   const requestedShellId = stringArg(args, "shellId") || stringArg(args, "sessionId");
   if (options.requireShellId && !requestedShellId) {
     throw new RouteError("runInShell requires shellId. Call listShells or createShell first.", 400);
@@ -296,7 +297,7 @@ async function runAgentIndependentCommand(
     {
       command,
       workingDirectory: instance.workingDirectory,
-      cwd: normalizeCommandRelativeCwd(commandCwdArg(args)),
+      cwd,
       timeoutMs,
       ...(input ? { input } : {})
     },
@@ -956,7 +957,7 @@ async function buildApproval(runtime: SakiAgentRuntime, call: ParsedToolCall): P
     const commandRisk = classifyCommandRisk(stringArg(args, "command"), instance.workingDirectory, isPosixCommandPlatform(instance.node.os));
     if (commandRisk.risk === "critical") throw new RouteError(commandRisk.reason, 400);
     const cwd = commandCwdArg(args);
-    normalizeCommandRelativeCwd(cwd);
+    normalizeCommandRelativeCwd(cwd, instance.workingDirectory);
     if (toolName === "runinshell" && !(stringArg(args, "shellId") || stringArg(args, "sessionId"))) {
       throw new RouteError("runInShell requires shellId. Call listShells or createShell first.", 400);
     }
@@ -1856,12 +1857,12 @@ export async function executeSakiAgentTool(
       } else if (toolName === "createshell") {
         requireUserPermission(runtime.permissions, "terminal.view");
         const instance = await resolveAgentInstance(runtime, args);
+        const cwd = normalizeCommandRelativeCwd(commandCwdArg(args), instance.workingDirectory);
         const listed = await listDaemonInstanceShells(instance.node, instance.id);
         const shells = listed.shells ?? [];
         const label = stringArg(args, "label") || nextAgentShellLabel(shells);
-        const cwd = commandCwdArg(args);
         const workingDirectory = cwd
-          ? joinRemoteWorkingDirectory(instance.workingDirectory, normalizeCommandRelativeCwd(cwd))
+          ? joinRemoteWorkingDirectory(instance.workingDirectory, cwd)
           : instance.workingDirectory;
         const created = await createDaemonInstanceShell(instance.node, instance.id, workingDirectory, label);
         actionTerminal = { instanceId: instance.id, shellId: created.sessionId, label: created.label ?? label };

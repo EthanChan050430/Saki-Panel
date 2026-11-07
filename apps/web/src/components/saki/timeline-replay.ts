@@ -10,6 +10,7 @@ export function replaySakiTimeline(events: SakiTimelineEvent[] | undefined): Loc
   if (cached) return cached;
   const result: LocalSakiTimelineItem[] = [];
   const positions = new Map<string, number>();
+  const settledWorkflows = new Set<string>();
   const pendingByTool = new Map<string, { positions: number[]; cursor: number }>();
   const seal = () => {
     const last = result.at(-1);
@@ -22,7 +23,8 @@ export function replaySakiTimeline(events: SakiTimelineEvent[] | undefined): Loc
   };
   for (const event of events) {
     const payload = event.payload;
-    const createdAt = new Date(event.ts).toISOString();
+    const timestamp = Number.isFinite(event.ts) && Math.abs(event.ts) <= 8.64e15 ? event.ts : 0;
+    const createdAt = new Date(timestamp).toISOString();
     if ((event.type === "delta" || event.type === "thinking") && typeof payload.text === "string" && payload.text) {
       let last = result.at(-1);
       if (last?.kind !== "text" || last.source !== "delta" || event.type === "thinking" && last.content.trim()) {
@@ -34,6 +36,7 @@ export function replaySakiTimeline(events: SakiTimelineEvent[] | undefined): Loc
     } else if (event.type === "action" && payload.action) {
       seal();
       const action = payload.action as SakiAgentAction;
+      if (action.workflowId) settledWorkflows.add(action.workflowId);
       const id = `action:${action.id}`;
       let index = positions.get(id);
       if (index === undefined) {
@@ -57,7 +60,7 @@ export function replaySakiTimeline(events: SakiTimelineEvent[] | undefined): Loc
       if (payload.stage === "narration" && message) {
         seal();
         put({ kind: "text", id: `workflow:${payload.id}`, content: message, source: "workflow", createdAt });
-      } else if (payload.stage === "tool" && payload.status === "running" && typeof payload.tool === "string") {
+      } else if (payload.stage === "tool" && payload.status === "running" && typeof payload.tool === "string" && !settledWorkflows.has(String(payload.id))) {
         seal();
         const id = `pending:${payload.id}`;
         if (!positions.has(id)) {

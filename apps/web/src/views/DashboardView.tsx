@@ -2180,7 +2180,7 @@ export function DashboardView({
 
       const historyPayload: SakiChatMessage[] = sourceMessages.filter((message) => !message.rollbackJournal).slice(-12).map((m) => ({
         role: m.role,
-        content: m.content
+        content: m.content.slice(0, 32_000)
       }));
 
       const { model: requestedModel, provider: requestedProvider } = parseSakiModelSelection(activeModelKey);
@@ -2396,16 +2396,17 @@ export function DashboardView({
 
         try {
           if (interactionMode === "chat" && !abortController.signal.aborted) {
+            const baseUpdatedAt = historyVersionsRef.current.get(convId) ?? sessions.find((session) => session.id === convId)?.updatedAt;
             const saved = await api.sakiSaveConversation(token, {
               id: convId,
-              historyBeforeId: historyCursorsRef.current.get(convId) ?? null,
+              append: Boolean(baseUpdatedAt),
               title: sessionTitle,
               label: "Chat",
               detail: currentModelDisplayName || requestedModel || undefined,
               instanceId: activeInstanceId, workspaceInstanceIds: selectedWorkspaceIds,
               contextKey: sakiWorkspaceContextKey(activeInstanceId, selectedWorkspaceIds),
-              baseUpdatedAt: historyVersionsRef.current.get(convId) ?? sessions.find((session) => session.id === convId)?.updatedAt,
-              messages: completedMessages.map((m) => ({
+              baseUpdatedAt,
+              messages: (baseUpdatedAt ? completedMessages.slice(-2) : completedMessages).map((m) => ({
                 id: m.id,
                 role: m.role,
                 content: m.content,
@@ -2536,7 +2537,14 @@ export function DashboardView({
     sessionLoadingRef.current = true;
     setSessionLoading(true);
     setSessionLoadError(null);
-    setMessages([]);
+    const cachedForSession = readResourceSnapshot<SakiSavedConversation>(token, `conversation:${sessionId}`)
+      ?? readSakiConversations(userId).find((item) => item.id === sessionId);
+    setMessages(cachedForSession?.messages?.length
+      ? cachedForSession.messages.map((m: any, idx: number) =>
+          formatStoredChatMessage(m, idx, cachedForSession.updatedAt, language)
+        )
+      : []
+    );
     if (activeSessionId === sessionId) void loadSessionDetail(sessionId);
 
   };
@@ -2570,9 +2578,10 @@ export function DashboardView({
   async function prepareMessageHistoryWrite() {
     if (localHistoryOnlyRef.current) return { localOnly: true, baseUpdatedAt: undefined as string | undefined };
     if (!activeSessionId) return { localOnly: false, baseUpdatedAt: undefined };
+    const cursor = historyCursorsRef.current.get(activeSessionId);
     let remote: SakiSavedConversation | null = null;
     try {
-      remote = await api.sakiGetConversation(token, activeSessionId);
+      remote = await api.sakiGetConversationForEdit(token, activeSessionId, cursor);
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
         remote = null;
@@ -2580,9 +2589,7 @@ export function DashboardView({
         throw err;
       }
     }
-    const cursor = historyCursorsRef.current.get(activeSessionId);
-    const cursorIndex = cursor ? remote?.messages.findIndex(message => message.id === cursor) ?? -1 : 0;
-    if (cursorIndex < 0 || remote && !dashboardHistoryMatches(remote.messages.slice(cursorIndex), messages)) throw new Error("对话已在其他设备更新，请重新打开后再操作。");
+    if (cursor && !remote || remote && !dashboardHistoryMatches(remote.messages, messages)) throw new Error("对话已在其他设备更新，请重新打开后再操作。");
     if (!remote && sessions.find((session) => session.id === activeSessionId)?.updatedAt) throw new Error("对话已被删除，请重新打开历史记录。");
     return { localOnly: false, baseUpdatedAt: remote?.updatedAt };
   }

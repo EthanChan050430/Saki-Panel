@@ -518,8 +518,25 @@ model SakiConversation {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  history    SakiConversationMessage[]
 
   @@index([userId, updatedAt])
   @@index([userId, contextKey])
   @@map("saki_conversations")
+}
+
+model SakiConversationMessage {
+  conversationId String
+  position       Int
+  messageId      String?
+  role           String?
+  taskId         String?
+  bytes          Int
+  data           String
+  conversation   SakiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, position])
+  @@index([conversationId, messageId])
+  @@index([conversationId, taskId])
+  @@map("saki_conversation_messages")
 }

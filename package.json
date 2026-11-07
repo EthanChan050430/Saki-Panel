@@ -13,6 +13,7 @@
     "test:watch": "node --import tsx --test apps/panel/src/routes/saki/watch-approval.test.ts apps/panel/src/routes/saki/watch-prompt.test.ts",
     "test:history": "node --import tsx --test tests/saki-history.test.ts",
     "test:export": "node --import tsx --test tests/saki-export.test.ts",
+    "test:agent": "node --import tsx --test tests/saki-agent-tool-guard.test.ts tests/saki-agent-loop-guard.test.ts tests/saki-command-cwd.test.ts",
     "db:generate": "prisma generate",
     "db:push": "node scripts/prepare-db.mjs && prisma db push",
     "dev": "npm run build -w @webops/shared && concurrently -n panel,daemon,web -c cyan,green,magenta \"npm run dev -w @webops/panel\" \"npm run dev -w @webops/daemon\" \"npm run dev -w @webops/web\"",

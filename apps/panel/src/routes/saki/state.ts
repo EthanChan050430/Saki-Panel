@@ -13,6 +13,7 @@ import type {
 } from "./types.js";
 import { RouteError, trimString } from "./types.js";
 import { copyText } from "./text-memory.js";
+import { isAgentChecklistTool } from "./agent-tool-guard.js";
 import { syncSakiTaskResult } from "./conversations.js";
 
 export const pendingSakiActions = new Map<string, PendingSakiAction>();
@@ -357,7 +358,7 @@ export function extractTodosFromScratchpad(entries: string[]): string[] {
 }
 
 export function extractConfirmedTodos(actions: SakiAgentAction[], scratchpad: string[]): string[] {
-  const latest = [...actions].reverse().find((action) => action.ok && /^(?:managetodos|settodos|todos|updatetodos)$/i.test(action.tool));
+  const latest = [...actions].reverse().find((action) => action.ok && isAgentChecklistTool(action.tool));
   if (latest?.todos) return latest.todos.map((todo) => `- [${todo.completed ? "x" : todo.inProgress ? "-" : " "}] ${todo.text}`);
   if (latest && typeof latest.args.todos === "string") return latest.args.todos.split(/\r?\n/).filter((line) => /^- \[[ xX-]\]/.test(line));
   return extractTodosFromScratchpad(scratchpad);

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isAgentChecklistTool } from "./agent-tool-guard.js";
 import type { SakiChatRequest, SakiConfigResponse, SakiInputAttachment } from "@webops/shared";
 import { currentAgentTurnConversation, currentAgentToolImages } from "./agent-turn-context.js";
 export { withAgentTurnConversation, currentAgentTurnConversation } from "./agent-turn-context.js";
@@ -422,7 +423,7 @@ export function compactAgentTurnMessages(messages: SakiAgentTurnMessage[], maxCh
   let latestTodos: string | undefined;
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]!;
-    if (message.role === "tool" && message.name?.toLowerCase() === "managetodos") latestTodos = message.content;
+    if (message.role === "tool" && message.name && isAgentChecklistTool(message.name)) latestTodos = message.content;
     if (message.content.startsWith("[Compacted execution history")) {
       latestTodos = message.content.match(/Current checklist:\n([\s\S]*?)(?=\n(?:Assistant:|Result |User note:)|$)/)?.[1];
     }

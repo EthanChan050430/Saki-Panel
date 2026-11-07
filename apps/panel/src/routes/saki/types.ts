@@ -2,7 +2,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { sakiFetch } from "./model-fetch.js";
-import { isSensitiveWorkspacePath } from "../../workspace-path.js";
+import { isAbsolutePathInsideWorkspace, isSensitiveWorkspacePath } from "../../workspace-path.js";
 import type { Prisma } from "@prisma/client";
 import type {
   InstanceLogLine,
@@ -1436,15 +1436,27 @@ export function isProbablyAbsoluteRemotePath(value: string): boolean {
   return value.startsWith("/") || value.startsWith("\\") || /^[A-Za-z]:[\\/]/.test(value);
 }
 
-export function normalizeCommandRelativeCwd(value: string): string {
+export function normalizeCommandRelativeCwd(value: string, workingDirectory?: string): string {
+  if (/[\x00-\x1f\x7f]/.test(value)) {
+    throw new RouteError("命令工作目录不能包含控制字符。", 400);
+  }
   const normalized = value.replace(/\\/g, "/").trim();
   if (!normalized || normalized === ".") return "";
-  if (isProbablyAbsoluteRemotePath(normalized)) {
-    throw new RouteError("runCommand cwd must be relative to the selected instance working directory.", 400);
-  }
   const parts = normalized.split("/").filter((part) => part && part !== ".");
   if (parts.some((part) => part === "..")) {
     throw new RouteError("runCommand cwd cannot contain '..'.", 400);
+  }
+  if (isProbablyAbsoluteRemotePath(normalized) || /^[A-Za-z]:/.test(normalized)) {
+    const root = workingDirectory?.trim().replace(/\\/g, "/");
+    const windows = Boolean(root && (/^[A-Za-z]:\//.test(root) || root.startsWith("//")));
+    const paths = windows ? path.win32 : path.posix;
+    const comparableRoot = windows ? root?.replace(/\//g, "\\") : root;
+    // Resolve using the remote workspace's path rules, never the panel host OS.
+    const fullyQualified = windows ? /^(?:[A-Za-z]:\/|\/\/[^/]+\/[^/]+)/.test(normalized) : normalized.startsWith("/");
+    if (!fullyQualified || !isAbsolutePathInsideWorkspace(normalized, comparableRoot)) {
+      throw new RouteError(`命令工作目录必须位于当前实例工作目录内（${workingDirectory ?? "未指定"}）。在实例根目录运行可省略 cwd 或填写「.」。`, 400);
+    }
+    return paths.relative(comparableRoot!, normalized).replace(/\\/g, "/");
   }
   return parts.join("/");
 }

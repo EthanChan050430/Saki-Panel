@@ -410,7 +410,11 @@ export async function prepareSakiChatInvocation(
       return value && /^[a-zA-Z0-9_-]{1,200}$/.test(value) ? [[key, value]] : [];
     })),
     ...(trimString(body.resumeTaskId) ? { resumeTaskId: trimString(body.resumeTaskId).slice(0, 200) } : {}),
-    history: Array.isArray(body.history) ? body.history : [],
+    history: Array.isArray(body.history) ? body.history.slice(-24).flatMap(entry => {
+      if (!entry || (entry.role !== "user" && entry.role !== "assistant") || typeof entry.content !== "string") return [];
+      return [{ role: entry.role, content: entry.content.slice(0, 32_000),
+        ...(typeof entry.createdAt === "string" ? { createdAt: entry.createdAt.slice(0, 80) } : {}) }];
+    }) : [],
     instanceId,
     ...(selectedInstances ? { workspaceInstanceIds: normalizeSakiWorkspaceIds(instanceId, selectedInstances.map(item => item.id)) } : {}),
     panelError: trimString(body.panelError) || null,

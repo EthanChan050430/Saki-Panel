@@ -7,8 +7,7 @@ import type { SakiAgentAction, SakiTimelineEvent } from "../packages/shared/src/
 import { mergeConversationMessages, pageConversationMessages } from "../apps/panel/src/routes/saki/conversation-history.js";
 import { sakiTaskHistorySnapshot } from "../apps/panel/src/routes/saki/task-history.js";
 import { replaySakiTimeline } from "../apps/web/src/components/saki/timeline-replay.js";
-import { saveClientSakiConversation } from "../apps/panel/src/routes/saki/conversations.js";
-import { prisma } from "../apps/panel/src/db.js";
+import { decodeConversationMessage, encodeConversationMessage, historyPageBounds } from "../apps/panel/src/routes/saki/conversation-store.js";
 import { panelPaths } from "../apps/panel/src/config.js";
 import { toSakiActiveTaskSummary } from "../apps/panel/src/routes/saki/state.js";
 import type { SakiActiveTask } from "../apps/panel/src/routes/saki/types.js";
@@ -78,6 +77,17 @@ test("replay preserves text, narration, thinking duration, tool order, and updat
   assert.strictEqual(replaySakiTimeline(events), timeline);
 });
 
+test("late tool-running events cannot resurrect completed tools and invalid timestamps do not crash replay", () => {
+  const timeline = replaySakiTimeline([
+    event("act", "action", { action: action("a") }),
+    event("late", "workflow", { id: "w-a", stage: "tool", status: "running", tool: "readFile", message: "reading" }),
+    event("invalid", "delta", { text: "still visible" }, Number.NaN)
+  ]);
+  assert.deepEqual(timeline.map(item => item.kind), ["action", "text"]);
+  assert.equal(timeline[1]?.createdAt, "1970-01-01T00:00:00.000Z");
+  assert.equal(timeline[1]?.kind === "text" && timeline[1].content, "still visible");
+});
+
 test("replay handles a long task without quadratic array rebuilding", () => {
   const events: SakiTimelineEvent[] = [];
   for (let index = 0; index < 20000; index++) {
@@ -92,28 +102,20 @@ test("replay handles a long task without quadratic array rebuilding", () => {
   assert.equal(events.length, 40000);
 });
 
-test("conversation persistence protects the unloaded prefix, ownership, and conflicting versions", async () => {
-  const originalFind = prisma.sakiConversation.findUnique;
-  const originalUpdate = prisma.sakiConversation.updateMany;
-  const updatedAt = new Date("2026-11-03T00:00:00.000Z");
-  let saved: Record<string, unknown> | undefined;
-  prisma.sakiConversation.findUnique = async () => ({ id: "history-qa", userId: "owner", messages: JSON.stringify(history), updatedAt }) as any;
-  prisma.sakiConversation.updateMany = async (args: any) => { saved = args.data; return { count: 1 }; };
-  try {
-    await saveClientSakiConversation("owner", "history-qa", { historyBeforeId: "m-970", baseUpdatedAt: updatedAt.toISOString(), messages: history.slice(972) });
-    const persisted = JSON.parse(saved!.messages as string);
-    assert.equal(persisted.length, 998);
-    assert.deepEqual(persisted.slice(0, 970), history.slice(0, 970));
-    saved = undefined;
-    await assert.rejects(saveClientSakiConversation("owner", "history-qa", { historyBeforeId: "m-970", baseUpdatedAt: "stale", messages: history.slice(970) }), /changed on another device/);
-    await assert.rejects(saveClientSakiConversation("other", "history-qa", { messages: [] }), /Forbidden/);
-    await assert.rejects(saveClientSakiConversation("owner", "history-qa", { messages: [], messagesLoaded: false }), /Load conversation/);
-    assert.equal(saved, undefined);
-  } finally {
-    prisma.sakiConversation.findUnique = originalFind;
-    prisma.sakiConversation.updateMany = originalUpdate;
-    await prisma.$disconnect();
-  }
+test("large turns page by bytes and matching observations round-trip", () => {
+  const rows = history.slice(0, 6).map((message, position) => ({
+    position, role: message.role, messageId: message.id, bytes: 700 * 1024
+  }));
+  assert.deepEqual(historyPageBounds(rows, 30), { start: 4, end: 6, historyBeforeId: "m-4" });
+  assert.deepEqual(historyPageBounds(rows, 30, "m-4"), { start: 2, end: 4, historyBeforeId: "m-2" });
+  const tool = { ...action("action"), observation: "large output ".repeat(3000) };
+  const message = { id: "m", actions: [tool], timelineEvents: [
+    event("old", "action", { action: { ...tool, observation: "previous output" } }),
+    event("new", "action", { action: { ...tool, status: "completed" } })
+  ] };
+  const encoded = encodeConversationMessage(message);
+  assert.ok(encoded.length < JSON.stringify(message).length * 0.6);
+  assert.deepEqual(decodeConversationMessage(encoded), message);
 });
 
 test("default permission policy is persisted and survives unrelated model settings updates", async () => {

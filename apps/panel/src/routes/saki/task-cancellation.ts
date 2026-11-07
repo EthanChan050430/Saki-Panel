@@ -1,4 +1,4 @@
-import { prisma } from "../../db.js";
+import { findConversationReferences } from "./conversation-store.js";
 import { withPendingSakiActionDecision } from "./decision-lock.js";
 import {
   completedSakiActions, pendingSakiActions, removePendingSakiAction,
@@ -13,17 +13,10 @@ export async function cancelRestoredSakiTask(userId: string, taskId: string): Pr
   if (!pending.length) {
     // Already cancelled/expired tasks are a successful no-op only when the
     // requester has an exact task reference in their own saved conversation.
-    const conversations = await prisma.sakiConversation.findMany({
-      where: { userId, messages: { contains: taskId } }, select: { messages: true }
-    });
-    const owned = conversations.some(conversation => {
-      try {
-        const messages: unknown = JSON.parse(conversation.messages);
-        return Array.isArray(messages) && messages.some(message => message && typeof message === "object" && message.taskId === taskId);
-      } catch { return false; }
-    });
-    if (!owned) throw new RouteError("Task not found.", 404);
-    return { ok: true };
+    for await (const message of findConversationReferences(userId, taskId)) {
+      if ((message as { taskId?: string } | null)?.taskId === taskId) return { ok: true };
+    }
+    throw new RouteError("Task not found.", 404);
   }
 
   // Use the same locks as approve/answer so cancellation cannot race a command
