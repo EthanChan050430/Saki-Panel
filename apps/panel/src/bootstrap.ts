@@ -12,6 +12,12 @@ import fs from "node:fs/promises";
 export async function ensureBootstrapData(): Promise<void> {
   await fs.mkdir(panelPaths.dataDir, { recursive: true });
 
+  // Readers of large conversation pages must not block heartbeat writes.
+  const journal = await prisma.$queryRawUnsafe<Array<{ journal_mode: string }>>("PRAGMA journal_mode = WAL;");
+  if (journal[0]?.journal_mode.toLowerCase() !== "wal" && journal[0]?.journal_mode.toLowerCase() !== "memory") {
+    throw new Error("Unable to enable SQLite WAL journal mode.");
+  }
+
   // Add legacy columns only when missing; probing first keeps startup logs clean
   // (a failed ALTER would still be reported by Prisma even when caught).
   try {

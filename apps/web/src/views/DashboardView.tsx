@@ -117,7 +117,7 @@ import { DashboardPopover } from "../components/dashboard/DashboardPopover.js";
 import { DashboardToolDetails, dashboardActionTerminal, type DashboardChatMessage, type DashboardTerminalSession } from "../components/dashboard/DashboardAgentConversation.js";
 import { SakiChangedFilesPill, useCodeChanges, filterGitChangesForSession } from "../components/saki/chat/SakiCodeChanges.js";
 import { dashboardDeleteTurn, dashboardHasUntrackedTerminalChanges, dashboardHistoryMatches, dashboardIsCodeChange, dashboardRecordAction, dashboardRollbackActions, dashboardRollbackCodeMessageIds, dashboardStoredActions, dashboardTurnRange, type DashboardMessageOperation } from "../components/dashboard/message-operations.js";
-import { dashboardStoppedStreams, dashboardTaskIsPending, dashboardTaskMessages, dashboardTaskNeedsSync, dashboardTaskSessionId, type DashboardSession, type DashboardStreamRun } from "../components/dashboard/task-runtime.js";
+import { dashboardHistoryWithLiveTurn, dashboardStoppedStreams, dashboardTaskIsPending, dashboardTaskMessages, dashboardTaskNeedsSync, dashboardTaskSessionId, type DashboardSession, type DashboardStreamRun } from "../components/dashboard/task-runtime.js";
 import { dashboardMergeTimeline, dashboardStreamTimeline } from "../components/dashboard/timeline.js";
 import { DashboardChatStream } from "../components/dashboard/DashboardChatStream.js";
 import { DashboardMessageList } from "../components/dashboard/DashboardMessageList.js";
@@ -514,9 +514,20 @@ export function DashboardView({
     }
     return latest;
   }, [tasks]);
+  const latestTasksRef = useRef(latestTasks);
+  latestTasksRef.current = latestTasks;
   const isTaskReconnecting = Boolean(activeSessionId && taskConnectionLost && (latestTasks.get(activeSessionId)?.status === "running" || unconfirmedTaskSessions.has(activeSessionId)));
   const isSessionRunning = (id: string) => !taskConnectionLost && (streamingSessions.has(id) || latestTasks.get(id)?.status === "running");
   const isStreaming = Boolean(activeSessionId && isSessionRunning(activeSessionId));
+  const activeRun = activeSessionId ? streamRunsRef.current.get(activeSessionId) : undefined;
+  const activeTask = activeSessionId ? latestTasks.get(activeSessionId) : undefined;
+  const steerTaskId = isStreaming && canUseAgent
+    ? activeRun
+      ? activeRun.mode === "agent" && !activeRun.cancelRequested ? activeRun.taskId : undefined
+      : activeTask?.mode === "agent" && activeTask.status === "running" ? activeTask.id : undefined
+    : undefined;
+  const steerRequestsRef = useRef(new Set<string>());
+  const [steeringTasks, setSteeringTasks] = useState(new Set<string>());
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const dockedTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const activeTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1684,15 +1695,8 @@ export function DashboardView({
     const generation = ++sessionRequestGenerationRef.current;
     const isCurrent = () => sessionRequestGenerationRef.current === generation && activeSessionIdRef.current === sessionId;
     const existingSession = sessionsRef.current.find((item) => item.id === sessionId);
-    if (streamRunsRef.current.has(sessionId)) {
-      // Live events own the message list; fetch history again once this stream settles.
-      if (existingSession?.messages !== undefined) setMessages(existingSession.messages);
-      setSessionLoading(false);
-      setSessionLoadError(null);
-      return;
-    }
     if (hydratedSessionIdsRef.current.has(sessionId) && existingSession?.messages !== undefined) {
-      setMessages(existingSession.messages);
+      if (!streamRunsRef.current.has(sessionId)) setMessages(existingSession.messages);
       setActiveInstanceId(existingSession.instanceId);
       setWorkspaceInstanceIds(normalizeSakiWorkspaceIds(existingSession.instanceId, existingSession.workspaceInstanceIds));
       sessionLoadingRef.current = false;
@@ -1704,35 +1708,43 @@ export function DashboardView({
     sessionLoadingRef.current = true;
     setSessionLoading(true);
     setSessionLoadError(null);
-    const cached = readResourceSnapshot<SakiSavedConversation>(token, `conversation:${sessionId}`)
-      ?? readSakiConversations(userId).find((item) => item.id === sessionId);
-    setMessages((cached?.messages ?? []).map((m: any, idx: number) =>
-      formatStoredChatMessage(m, idx, cached!.updatedAt, language)
-    ));
     try {
+      const cached = readResourceSnapshot<SakiSavedConversation>(token, `conversation:${sessionId}`)
+        ?? readSakiConversations(userId).find((item) => item.id === sessionId);
+      if (!streamRunsRef.current.has(sessionId) && latestTasksRef.current.get(sessionId)?.status !== "running") {
+        setMessages((cached?.messages ?? []).map((m: any, idx: number) =>
+          formatStoredChatMessage(m, idx, cached!.updatedAt, language)
+        ));
+      }
       // A local cache is display-only until the authoritative history is loaded.
       const remote = localHistoryOnlyRef.current
         ? (await readCachedConversation(userId, sessionId).catch(() => undefined)) ?? cached
         : await api.sakiGetConversation(token, sessionId, { limit: 30 });
       if (!remote || remote.messagesLoaded === false) throw new Error("会话内容尚未加载，请恢复连接后重试。");
-      if (!isCurrent() || streamRunsRef.current.has(sessionId)) return;
+      if (!isCurrent()) return;
       const formatted = (remote.messages || []).map((m: any, idx: number) =>
         formatStoredChatMessage(m, idx, remote.updatedAt, language)
       );
       historyVersionsRef.current.set(remote.id, remote.updatedAt);
       historyCursorsRef.current.set(remote.id, remote.historyBeforeId ?? null);
       hydratedSessionIdsRef.current.add(sessionId);
-      setMessages(formatted);
+      const run = streamRunsRef.current.get(sessionId);
+      const task = latestTasksRef.current.get(sessionId);
+      const merge = (current: ChatMessage[]) => run ? dashboardHistoryWithLiveTurn(formatted, current, run.taskId, task)
+        : task?.status === "running" ? dashboardTaskMessages(formatted, task) : formatted;
+      setMessages(merge);
       setActiveInstanceId(remote.instanceId ?? null);
       setWorkspaceInstanceIds(normalizeSakiWorkspaceIds(remote.instanceId, remote.workspaceInstanceIds ?? sakiWorkspaceIdsFromContextKey(remote.contextKey, remote.instanceId)));
-      setSessions((current) => current.map((item) => item.id === sessionId ? { ...item, messages: formatted, updatedAt: remote.updatedAt } : item));
-      sessionLoadingRef.current = false;
-      setSessionLoading(false);
+      setSessions((current) => current.map((item) => item.id === sessionId ? { ...item, messages: merge(item.messages ?? []), updatedAt: remote.updatedAt } : item));
     } catch (error) {
       if (!isCurrent()) return;
-      // Keep sending locked: an empty or stale history must never replace the saved conversation.
-      setSessionLoading(false);
-      setSessionLoadError(error instanceof Error ? error.message : "会话加载失败，请重试。");
+      setSessionLoadError(error instanceof Error && error.name === "TimeoutError" ? "读取会话记录超时，请重试。"
+        : error instanceof Error ? error.message : "会话加载失败，请重试。");
+    } finally {
+      if (isCurrent()) {
+        sessionLoadingRef.current = false;
+        setSessionLoading(false);
+      }
     }
   }, [language, token, userId]);
 
@@ -2461,6 +2473,72 @@ export function DashboardView({
     ]
   );
 
+  const handleSteerCurrentTask = async () => {
+    const taskId = steerTaskId;
+    const sessionId = activeSessionId;
+    const draft = promptText;
+    const message = draft.trim();
+    if (!taskId || !sessionId || !message || steerRequestsRef.current.has(taskId)) return;
+    if (activeSessionIdRef.current !== sessionId || streamRunsRef.current.get(sessionId)?.cancelRequested) return;
+    if (attachments.length) {
+      setError("当前任务的即时引导只接收文字，请移除附件后发送。");
+      return;
+    }
+    if (message.length > 8000) {
+      setError("引导消息最多 8000 字符，请缩短后再发送。");
+      return;
+    }
+    steerRequestsRef.current.add(taskId);
+    setSteeringTasks(new Set(steerRequestsRef.current));
+    setError("");
+    try {
+      await api.sakiSteerTask(token, taskId, message);
+      if (activeSessionIdRef.current === sessionId) {
+        setPromptText(current => current === draft ? "" : current);
+      }
+    } catch (err) {
+      if (activeSessionIdRef.current !== sessionId) return;
+      if (err instanceof ApiError && (err.status === 409 || err.status === 404)) {
+        setError("当前任务暂时无法接受引导，输入已保留。");
+        void refreshTasks();
+      } else {
+        setError(err instanceof Error ? err.message : "发送引导失败，输入已保留。");
+      }
+    } finally {
+      steerRequestsRef.current.delete(taskId);
+      setSteeringTasks(new Set(steerRequestsRef.current));
+    }
+  };
+
+  const submitComposer = () => {
+    if (isTaskReconnecting) void refreshTasks();
+    else if (isStreaming) void handleSteerCurrentTask();
+    else void handleSendMessage();
+  };
+
+  const renderComposerButtons = () => {
+    const sending = Boolean(steerTaskId && steeringTasks.has(steerTaskId));
+    const disabled = !isStreaming && !isTaskReconnecting && (sessionLoading || Boolean(sessionLoadError));
+    const title = isTaskReconnecting ? "重新连接任务" : isStreaming ? "停止生成" : sessionLoading ? "会话加载中..." : "发送指令";
+    return (
+      <>
+        {steerTaskId && promptText.trim() && (
+          <button className="dashboard-send-circle-btn has-input" type="button" disabled={disabled || sending}
+            title="引导当前任务" aria-label="引导当前任务" onClick={() => void handleSteerCurrentTask()}>
+            {sending ? <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> : <ArrowUp size={15} />}
+          </button>
+        )}
+        <button
+          className={`dashboard-send-circle-btn ${(promptText.trim() || attachments.length > 0) ? "has-input" : ""} ${isStreaming ? "is-streaming" : ""}`}
+          type="button" disabled={disabled} title={title} aria-label={title}
+          onClick={isStreaming ? handleStopGeneration : submitComposer}
+        >
+          {isTaskReconnecting ? <RefreshCw size={14} /> : isStreaming ? <Square size={12} fill="currentColor" /> : sessionLoading ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <ArrowUp size={15} />}
+        </button>
+      </>
+    );
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (mentionMenuOpen && mentionCandidates.length > 0) {
       if (e.key === "ArrowDown") {
@@ -2493,9 +2571,9 @@ export function DashboardView({
       }
     }
 
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      void handleSendMessage();
+      submitComposer();
     }
   };
 
@@ -2539,11 +2617,11 @@ export function DashboardView({
     setSessionLoadError(null);
     const cachedForSession = readResourceSnapshot<SakiSavedConversation>(token, `conversation:${sessionId}`)
       ?? readSakiConversations(userId).find((item) => item.id === sessionId);
-    setMessages(cachedForSession?.messages?.length
+    setMessages(found?.messages ?? (cachedForSession?.messages?.length
       ? cachedForSession.messages.map((m: any, idx: number) =>
           formatStoredChatMessage(m, idx, cachedForSession.updatedAt, language)
         )
-      : []
+      : [])
     );
     if (activeSessionId === sessionId) void loadSessionDetail(sessionId);
 
@@ -3625,7 +3703,9 @@ export function DashboardView({
                           className="dashboard-input-textarea"
                           rows={1}
                           placeholder={
-                            attachments.length > 0 || skills.length > 0
+                            steerTaskId
+                              ? "输入文字，引导当前任务…"
+                              : attachments.length > 0 || skills.length > 0
                               ? "输入 @ 引用文件或 Skill，或直接下达运维指令..."
                               : interactionMode === "agent"
                               ? `输入 Agent 自动化运维指令 (${activePermission.label})...`
@@ -3673,15 +3753,7 @@ export function DashboardView({
                           <button className="dashboard-glass-action-btn" type="button" title="语音指令">
                             <Mic size={14} />
                           </button>
-                          <button
-                            className={`dashboard-send-circle-btn ${(promptText.trim() || attachments.length > 0) ? "has-input" : ""} ${isStreaming ? "is-streaming" : ""}`}
-                            type="button"
-                            disabled={sessionLoading || Boolean(sessionLoadError)}
-                            title={isTaskReconnecting ? "重新连接任务" : isStreaming ? "停止生成" : sessionLoading ? "会话加载中..." : "发送指令"}
-                            onClick={isTaskReconnecting ? () => void refreshTasks() : isStreaming ? handleStopGeneration : () => void handleSendMessage()}
-                          >
-                            {isTaskReconnecting ? <RefreshCw size={14} /> : isStreaming ? <Square size={12} fill="currentColor" /> : sessionLoading ? <Loader2 size={14} className="dashboard-spinner" style={{ animation: "spin 1s linear infinite" }} /> : <ArrowUp size={15} />}
-                          </button>
+                          {renderComposerButtons()}
                         </div>
                       </div>
                     </LiquidGlassContainer>
@@ -3953,10 +4025,11 @@ export function DashboardView({
                             ref={dockedTextareaRef}
                             className="dashboard-input-textarea"
                             rows={1}
-                            disabled={sessionLoading || Boolean(sessionLoadError)}
                             placeholder={
-                              sessionLoading
-                                ? "正在加载会话记录..."
+                              steerTaskId
+                                ? "输入文字，引导当前任务…"
+                                : sessionLoading
+                                ? "正在加载会话记录，可以先输入草稿…"
                                 : attachments.length > 0 || skills.length > 0
                                 ? "输入 @ 引用文件或 Skill，或继续发送指令..."
                                 : interactionMode === "agent"
@@ -3999,15 +4072,7 @@ export function DashboardView({
                             </div>
                           </div>
                           <div className="dashboard-toolbar-right">
-                            <button
-                              className={`dashboard-send-circle-btn ${(promptText.trim() || attachments.length > 0) ? "has-input" : ""} ${isStreaming ? "is-streaming" : ""}`}
-                              type="button"
-                              disabled={sessionLoading || Boolean(sessionLoadError)}
-                              title={isTaskReconnecting ? "重新连接任务" : isStreaming ? "停止生成" : sessionLoading ? "会话加载中..." : "发送指令"}
-                              onClick={isTaskReconnecting ? () => void refreshTasks() : isStreaming ? handleStopGeneration : () => void handleSendMessage()}
-                            >
-                              {isTaskReconnecting ? <RefreshCw size={14} /> : isStreaming ? <Square size={12} fill="currentColor" /> : sessionLoading ? <Loader2 size={14} className="dashboard-spinner" style={{ animation: "spin 1s linear infinite" }} /> : <ArrowUp size={14} />}
-                            </button>
+                            {renderComposerButtons()}
                           </div>
                         </div>
                       </LiquidGlassContainer>

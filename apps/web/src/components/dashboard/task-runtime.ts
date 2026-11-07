@@ -42,6 +42,35 @@ export function dashboardTaskIsPending(task: SakiActiveTaskSummary): boolean {
   return task.status === "running" || task.status === "pending_approval" || task.status === "pending_input";
 }
 
+/** Merge a history page without replacing the turn currently owned by the stream. */
+export function dashboardHistoryWithLiveTurn(
+  history: DashboardChatMessage[],
+  current: DashboardChatMessage[],
+  taskId?: string,
+  task?: SakiActiveTaskSummary
+): DashboardChatMessage[] {
+  const summary = task?.id === taskId ? task : undefined;
+  const index = current.findIndex(message => message.role === "assistant"
+    && (taskId ? message.taskId === taskId || message.id === summary?.assistantMessageId : message.isStreaming));
+  if (index < 0) return history;
+  const assistant = current[index]!;
+  const preceding = current[index - 1];
+  const user = summary?.userMessageId ? current.find(message => message.id === summary.userMessageId)
+    : preceding?.role === "user" ? preceding : undefined;
+  const assistantIndex = history.findIndex(message => message.id === assistant.id);
+  const result = [...history];
+  if (assistantIndex >= 0) {
+    const saved = history[assistantIndex]!;
+    result[assistantIndex] = { ...saved, ...assistant, timeline: assistant.timeline ?? saved.timeline,
+      timelineEvents: assistant.timelineEvents ?? saved.timelineEvents, actions: assistant.actions ?? saved.actions };
+    if (user && !history.some(message => message.id === user.id)) result.splice(assistantIndex, 0, user);
+  } else {
+    if (user && !history.some(message => message.id === user.id)) result.push(user);
+    result.push(assistant);
+  }
+  return result;
+}
+
 export function dashboardTaskNeedsSync(current: DashboardChatMessage[], task: SakiActiveTaskSummary): boolean {
   if (dashboardTaskIsPending(task)) return true;
   const id = task.assistantMessageId ?? `${task.id}-assistant`;

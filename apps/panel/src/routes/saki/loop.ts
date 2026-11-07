@@ -274,25 +274,8 @@ function toolOutcomeMessage(call: ParsedToolCall, action: SakiAgentAction): stri
   return "\u8FD9\u4E00\u6B65\u5B8C\u6210\u4E86\u3002";
 }
 
-export async function emitAgentFinalText(events: SakiAgentRunEvents | undefined, text: string, alreadyForwarded?: string): Promise<void> {
-  if (!events?.delta || !text) return;
-  let emitText = text;
-  if (alreadyForwarded) {
-    const forwarded = alreadyForwarded.trimStart();
-    const final = emitText.trimStart();
-    const af = forwarded.trimEnd();
-    if (af && final.trimEnd() === af) return;
-    if (forwarded && final.startsWith(forwarded)) {
-      emitText = final.slice(forwarded.length);
-    } else if (af && emitText.includes(af)) {
-      const idx = emitText.indexOf(af);
-      if (idx !== -1 && idx < emitText.length * 0.5) {
-        emitText = emitText.slice(idx + af.length).trimStart();
-      }
-    }
-    if (!emitText) return;
-  }
-  events.delta(emitText);
+export async function emitAgentFinalText(events: SakiAgentRunEvents | undefined, text: string): Promise<void> {
+  if (text) events?.delta?.(text);
 }
 
 const sakiToolNameAlternation = sakiToolSchemas
@@ -352,8 +335,8 @@ function emitAgentNarration(events: SakiAgentRunEvents | undefined, text: string
   const cleaned = stripThinking(text).trim();
   if (!cleaned || looksLikeToolCallPayload(cleaned)) return;
   const snippet = cleaned.slice(0, 500);
-  if (events?.delta) {
-    events.delta(snippet.endsWith("\n") ? snippet : `${snippet}\n\n`);
+  if (!events?.workflow) {
+    events?.delta?.(snippet.endsWith("\n") ? snippet : `${snippet}\n\n`);
     return;
   }
   emitSakiWorkflow(events, {
@@ -891,7 +874,6 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
     skillCount: runtime.skills.length
   });
 
-  let lastForwardedDeltaContent: string | undefined;
   let accumulatedThinking = "";
   const emitThinking = (text: string) => {
     if (!text) return;
@@ -915,7 +897,6 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
   // Race every model call against the abort signal so that cancelling a task
   // stops the loop immediately instead of waiting out a long provider request.
   const callAgentTurnWithAbort = async (prompt: string, thinkStepId: string): Promise<SakiModelToolTurn> => {
-    lastForwardedDeltaContent = undefined;
     const startedAt = Date.now();
     let receivedOutput = false;
     let retryAttempt = 0;
@@ -933,10 +914,10 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
         ...(retryReason ? { detail: retryReason } : {})
       });
     }, 15_000);
-    const turnPromise = callConfiguredAgentTurn(runtime, prompt, events?.delta ? text => {
+    // The provider still streams reasoning and usage. Prose is a draft until
+    // the turn is accepted as a progress note, tool preamble, or final answer.
+    const turnPromise = callConfiguredAgentTurn(runtime, prompt, events?.delta || events?.workflow ? () => {
       receivedOutput = true;
-      lastForwardedDeltaContent = (lastForwardedDeltaContent ?? "") + text;
-      events?.delta?.(text);
     } : undefined, text => {
       receivedOutput = true;
       emitThinking(text);
@@ -1015,7 +996,7 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
       }
     } catch {}
 
-    await emitAgentFinalText(events, message, lastForwardedDeltaContent);
+    await emitAgentFinalText(events, message);
     const attachments: SakiInputAttachment[] = [];
     const seenAttachments = new Set<string>();
     for (const action of actions) {
@@ -1459,7 +1440,6 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
       const progressOnlyToolIntent = looksLikeProgressOnlyToolIntent(cleaned);
       if (progressOnlyToolIntent && progressOnlyReplies < maxAgentProgressOnlyRetries) {
         progressOnlyReplies += 1;
-        emitAgentNarration(events, cleaned);
         emitSakiWorkflow(events, {
           id: randomUUID(),
           stage: "retry",
@@ -1495,7 +1475,7 @@ IMPORTANT: ${sakiFileToolGuidance}\nPrevious output:\n${turn.content.slice(0, 12
       const correction = completionBlockReason(finalMessage);
       if (correction && completionRetries < 2) {
         completionRetries += 1;
-        emitAgentNarration(events, cleaned);
+        emitSakiWorkflow(events, { id: randomUUID(), stage: "retry", message: "正在补充核实与验证…", status: "running" });
         appendAgentScratchpad(`\n[Completion check]: ${correction}\n`);
         continue;
       }
@@ -1507,7 +1487,7 @@ IMPORTANT: ${sakiFileToolGuidance}\nPrevious output:\n${turn.content.slice(0, 12
     progressOnlyReplies = 0;
     const visibleAssistantText = stripThinking(turn.content).trim();
     const narration = extractNarrationBeforeToolCall(visibleAssistantText);
-    if (narration && !turn.forwardedDeltaText) {
+    if (narration) {
       emitAgentNarration(events, narration);
     }
     for (const call of toolCalls) ensureToolCallId(call);

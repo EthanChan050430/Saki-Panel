@@ -2082,13 +2082,13 @@ export const api = {
   },
   sakiListConversations(token: string, options?: { excludeMessages?: boolean }) {
     const query = options?.excludeMessages ? "?excludeMessages=true" : "";
-    if (options?.excludeMessages) return loadResourceSnapshot(token, "conversations", () => requestJson<SakiSavedConversation[]>(`/api/saki/conversations${query}`, {}, token));
+    if (options?.excludeMessages) return loadResourceSnapshot(token, "conversations", () => requestJson<SakiSavedConversation[]>(`/api/saki/conversations${query}`, { signal: AbortSignal.timeout(15_000) }, token));
     return requestJson<SakiSavedConversation[]>(`/api/saki/conversations${query}`, {}, token);
   },
   sakiGetConversation(token: string, id: string, page?: { limit: number; beforeId?: string }) {
     if (page) {
       const query = new URLSearchParams({ limit: String(page.limit), ...(page.beforeId ? { beforeId: page.beforeId } : {}) });
-      return requestJson<SakiSavedConversation>(`/api/saki/conversations/${encodeURIComponent(id)}?${query}`, {}, token);
+      return requestJson<SakiSavedConversation>(`/api/saki/conversations/${encodeURIComponent(id)}?${query}`, { signal: AbortSignal.timeout(20_000) }, token);
     }
     return loadResourceSnapshot(token, `conversation:${id}`, () => requestJson<SakiSavedConversation>(`/api/saki/conversations/${encodeURIComponent(id)}`, {}, token));
   },

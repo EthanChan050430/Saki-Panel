@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { Prisma } from "@prisma/client";
 import { classifyCommandRisk, findDangerousCommandReason, isPosixCommandPlatform } from "../../security.js";
 import { narrowCodingAdvertisedNames } from "./coding-harness.js";
+import { classifyWorkspaceCommand } from "./guarded-workspace-read.js";
 import { prefersStableAgentTools, sakiModelProfile } from "./model-profile.js";
 import { requiredSakiToolPermissions, sakiHostExecutionTools } from "./resource-policy.js";
 import { parseWorkspacePatch } from "./patch.js";
@@ -1432,6 +1433,14 @@ function commandUsesPosixShell(runtime: SakiAgentRuntime, args: Record<string, u
   return isPosixCommandPlatform(instance?.node.os);
 }
 
+function sakiCommandRisk(runtime: SakiAgentRuntime, tool: string, args: Record<string, unknown>) {
+  const command = stringArg(args, "command");
+  const directory = commandWorkingDirectory(runtime, args);
+  const posix = commandUsesPosixShell(runtime, args);
+  return tool === "runservercommand" ? classifyCommandRisk(command, directory, posix)
+    : classifyWorkspaceCommand(command, directory, posix, stringArg(args, "cwd") || stringArg(args, "workingDirectory"));
+}
+
 export function assertSakiPermissionModeAllowsTool(
   runtime: SakiAgentRuntime,
   toolName: string,
@@ -1440,7 +1449,7 @@ export function assertSakiPermissionModeAllowsTool(
   const lower = normalizedAgentToolName(toolName);
   const permissionMode = effectiveSakiAgentPermissionMode(runtime.input);
   if (sakiCommandToolNames.has(lower) && (lower !== "diagnosecode" || stringArg(args, "command"))) {
-    const risk = classifyCommandRisk(stringArg(args, "command"), commandWorkingDirectory(runtime, args), commandUsesPosixShell(runtime, args));
+    const risk = sakiCommandRisk(runtime, lower, args);
     if (risk.risk === "critical") throw new RouteError(risk.reason, 403);
   }
   if (permissionMode !== "plan") return;
@@ -1450,7 +1459,7 @@ export function assertSakiPermissionModeAllowsTool(
   }
 
   if (sakiCommandToolNames.has(lower)) {
-    const commandRisk = classifyCommandRisk(stringArg(args, "command"), commandWorkingDirectory(runtime, args), commandUsesPosixShell(runtime, args));
+    const commandRisk = sakiCommandRisk(runtime, lower, args);
     if (commandRisk.risk !== "low" || !commandRisk.readOnly || rawStringArg(args, "input") || rawStringArg(args, "stdin")) {
       throw new RouteError("Plan mode only permits low-risk inspection commands. Switch permission mode before running commands that can modify state.", 403);
     }
@@ -1488,7 +1497,7 @@ export function shouldRequestSakiApproval(runtime: SakiAgentRuntime, toolName: s
   if (sakiCommandToolNames.has(lower)) {
     // stdin can carry a program or answers that change the command's behavior.
     if (rawStringArg(args, "input") || rawStringArg(args, "stdin")) return true;
-    const commandRisk = classifyCommandRisk(stringArg(args, "command"), commandWorkingDirectory(runtime, args), commandUsesPosixShell(runtime, args));
+    const commandRisk = sakiCommandRisk(runtime, lower, args);
     return permissionMode === "ask" ? commandRisk.risk !== "low" : !commandRisk.autoApprove;
   }
   // Normal workspace edits are allowed in both modes. File tools retain their

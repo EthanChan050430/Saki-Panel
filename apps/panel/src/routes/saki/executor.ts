@@ -13,6 +13,7 @@ import { selectedWorkspaceTarget } from "./selected-workspaces.js";
 import { writeAuditLog } from "../../audit.js";
 import { classifyCommandRisk, findDangerousCommandReason, isPosixCommandPlatform } from "../../security.js";
 import { commandCheckpointWorkspaces, commandWorkspaceEscape, commandWorkspaceScope, referencedCommandWorkspaces } from "./command-workspaces.js";
+import { classifyWorkspaceCommand, guardedWorkspaceRead } from "./guarded-workspace-read.js";
 import { instanceAccessInclude, listVisibleInstances, loadInstanceAccessProfile, loadVisibleInstance } from "../../instance-access.js";
 import type { DaemonInstanceSpec } from "../../daemon-client.js";
 import {
@@ -954,7 +955,7 @@ async function buildApproval(runtime: SakiAgentRuntime, call: ParsedToolCall): P
   } else if (toolName === "runcommand" || toolName === "runinshell") {
     requireUserPermission(runtime.permissions, "terminal.input");
     const instance = await resolveAgentInstance(runtime, args);
-    const commandRisk = classifyCommandRisk(stringArg(args, "command"), instance.workingDirectory, isPosixCommandPlatform(instance.node.os));
+    const commandRisk = classifyWorkspaceCommand(stringArg(args, "command"), instance.workingDirectory, isPosixCommandPlatform(instance.node.os), commandCwdArg(args));
     if (commandRisk.risk === "critical") throw new RouteError(commandRisk.reason, 400);
     const cwd = commandCwdArg(args);
     normalizeCommandRelativeCwd(cwd, instance.workingDirectory);
@@ -1270,7 +1271,9 @@ export async function executeSakiAgentTool(
       if (sakiCommandToolNames.has(toolName) && toolName !== "runservercommand" && isAgentSandboxEnabled(runtime)) {
         const target = await resolveAgentInstance(runtime, args);
         const escape = commandWorkspaceEscape(runtime.context, target, stringArg(args, "command"));
-        if (escape) throw new RouteError(`终端命令包含已选同节点工作区以外的路径（${escape}）。执行工作区：${target.name}（${target.workingDirectory}）。请先添加该目录所属工作区；外部文件仅可申请单次读取审批。`, 403);
+        if (escape && !guardedWorkspaceRead(stringArg(args, "command"), target.workingDirectory, isPosixCommandPlatform(target.node.os), commandCwdArg(args))) {
+          throw new RouteError(`终端命令包含已选同节点工作区以外的路径（${escape}）。执行工作区：${target.name}（${target.workingDirectory}）。请先添加该目录所属工作区；外部文件仅可申请单次读取审批。`, 403);
+        }
       }
       assertToolProfileAllowsTool(runtime, toolName);
       if ((toolName === "listmcptools" || toolName === "callmcptool") && !runtime.config.mcpEnabled) {
@@ -1772,9 +1775,11 @@ export async function executeSakiAgentTool(
         const instance = await resolveAgentInstance(runtime, args);
         const command = stringArg(args, "command");
         if (!command) throw new RouteError("runCommand requires a command.", 400);
-        const commandRisk = classifyCommandRisk(command, instance.workingDirectory, isPosixCommandPlatform(instance.node.os));
+        const posix = isPosixCommandPlatform(instance.node.os);
+        const guarded = guardedWorkspaceRead(command, instance.workingDirectory, posix, commandCwdArg(args));
+        const commandRisk = guarded?.risk ?? classifyCommandRisk(command, instance.workingDirectory, posix);
         if (commandRisk.risk === "critical") throw new RouteError(commandRisk.reason, 400);
-        if (isAgentSandboxEnabled(runtime)) {
+        if (!guarded && isAgentSandboxEnabled(runtime)) {
           const escapeToken = commandWorkspaceEscape(runtime.context, instance, command);
           if (escapeToken) {
             throw new RouteError(`沙箱安全拦截：终端命令包含越界目录或路径（${escapeToken}），当前实例工作目录为 ${instance.workingDirectory}，已阻止访问工作区外部文件。`, 403);
@@ -1797,10 +1802,10 @@ export async function executeSakiAgentTool(
             relatedCheckpointIds = snapshots.slice(1).map(item => item.checkpoint.id);
           }
         }
-        let execArgs = args;
+        let execArgs = guarded ? { ...args, command: guarded.command } : args;
         if (toolName === "runcommand" || toolName === "runinshell") {
-          const wrapped = wrapCommandForSandbox(command, instance.workingDirectory, instance.node.os);
-          if (wrapped.wrapped) execArgs = { ...args, command: wrapped.command };
+          const wrapped = wrapCommandForSandbox(guarded?.command ?? command, instance.workingDirectory, instance.node.os);
+          if (wrapped.wrapped) execArgs = { ...execArgs, command: wrapped.command };
         }
         try {
           const { runResult, inputProvided, shellId, label } = await runAgentIndependentCommand(instance, execArgs, {
@@ -2028,7 +2033,7 @@ export async function executeSakiAgentTool(
         const instance = await resolveAgentInstance(runtime, args);
         const pattern = stringArg(args, "pattern");
         if (!pattern) throw new RouteError("searchFiles requires a pattern.", 400);
-        const searchPath = safeRelativePath(args.path);
+        const searchPath = safeRelativePath(args.path, instance.workingDirectory);
         const include = stringArg(args, "include") || undefined;
         const maxResults = numericArg(args.maxResults, 40, 1, 80);
         const result = await grepDaemonInstanceFiles(instance.node, instance.id, instance.workingDirectory, {
@@ -2617,7 +2622,16 @@ export async function executeSakiAgentTool(
       createdAt: startedAt
     };
     await saveCompletedSakiAction(action);
-    await auditAgentTool(runtime, action);
+    try {
+      await auditAgentTool(runtime, action);
+    } catch (error) {
+      const workspaceRead = ["readfile", "listfiles", "findfiles", "searchfiles"].includes(toolName);
+      if (!workspaceRead || !ok || !(error instanceof Error) || !/socket timeout/i.test(error.message)) throw error;
+      const message = "Saki workspace read completed, but the database timed out writing its audit entry";
+      const fields = { actionId: action.id, userId: runtime.userId, tool: action.tool, instanceId: runtime.context.workspace?.instanceId };
+      if (runtime.request) runtime.request.log.warn(fields, message);
+      else console.warn(message, fields);
+    }
     return action;
   }
 }

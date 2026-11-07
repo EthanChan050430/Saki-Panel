@@ -25,6 +25,7 @@ export interface NodeProbeResult {
 
 const watchIngestInFlight = new Set<string>();
 const nodeProbes = new Map<string, Promise<NodeProbeResult>>();
+let allNodesHealthSync: Promise<void> | undefined;
 
 function probeCredentials(
   node: DaemonNodeCredentials,
@@ -312,29 +313,35 @@ export function probeAndSyncNode(node: Parameters<typeof probeAndSyncNodeOnce>[0
  * Probes all nodes currently registered in the database.
  */
 export async function syncAllNodesHealth(logger?: FastifyBaseLogger): Promise<void> {
-  try {
-    const nodes = await prisma.node.findMany({
-      select: {
-        id: true,
-        name: true,
-        host: true,
-        port: true,
-        protocol: true,
-        tokenHash: true,
-        status: true,
-        lastSeenAt: true,
-        os: true,
-        arch: true,
-        version: true
-      }
-    });
+  if (allNodesHealthSync) return allNodesHealthSync;
+  allNodesHealthSync = (async () => {
+    try {
+      const nodes = await prisma.node.findMany({
+        select: {
+          id: true,
+          name: true,
+          host: true,
+          port: true,
+          protocol: true,
+          tokenHash: true,
+          status: true,
+          lastSeenAt: true,
+          os: true,
+          arch: true,
+          version: true
+        }
+      });
 
-    if (nodes.length === 0) return;
+      if (nodes.length === 0) return;
 
-    await Promise.allSettled(nodes.map((node) => probeAndSyncNode(node, 2500)));
-  } catch (error) {
-    logger?.warn({ err: error }, "Failed to run syncAllNodesHealth loop");
-  }
+      await Promise.allSettled(nodes.map((node) => probeAndSyncNode(node, 2500)));
+    } catch (error) {
+      logger?.warn({ err: error }, "Failed to run syncAllNodesHealth loop");
+    } finally {
+      allNodesHealthSync = undefined;
+    }
+  })();
+  return allNodesHealthSync;
 }
 
 /**

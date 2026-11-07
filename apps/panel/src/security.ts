@@ -46,10 +46,10 @@ export function findCrossInstanceCommandEscape(command: string, workingDirectory
     if (!token) continue;
     token = token.replace(/^--?[a-zA-Z0-9_-]+[:=]|^--?/, "");
     if ([workingDirectory, ...additionalWorkingDirectories].some(root => isAbsoluteCommandPathInsideWorkspace(token, root))) continue;
-    if (/^[A-Za-z]:[\\/]/.test(token)) return rawToken;
-    if (token.startsWith("\\\\")) return rawToken;
+    if (!posixShell && /^[A-Za-z]:[\\/]/.test(token)) return rawToken;
+    if (!posixShell && token.startsWith("\\\\")) return rawToken;
     if (token.startsWith("/") && (token.length > 3 || token.slice(1).includes("/") || token.includes("\\"))) return rawToken;
-    if (token.startsWith("\\") && (token.length > 3 || token.slice(1).includes("\\") || token.includes("/"))) return rawToken;
+    if (!posixShell && token.startsWith("\\") && (token.length > 3 || token.slice(1).includes("\\") || token.includes("/"))) return rawToken;
     if (token === ".." || /(?:^|[\\/:])\.\.(?:[\\/]|$)/.test(token)) return rawToken;
   }
   return null;

@@ -1,17 +1,29 @@
 import type { SakiAgentAction, SakiTimelineEvent } from "@webops/shared";
 import type { LocalSakiTimelineItem } from "../../types/app.js";
 
-const cache = new WeakMap<SakiTimelineEvent[], LocalSakiTimelineItem[]>();
+type NarrationRepair = { offset: number; text: string };
+type NarrationRepairs = { skippedLength: number; entries: NarrationRepair[] };
+const cache = new WeakMap<SakiTimelineEvent[], { items: LocalSakiTimelineItem[]; repairs: Map<string, NarrationRepairs> }>();
+
+function couldBeLegacyNarration(events: SakiTimelineEvent[], index: number): boolean {
+  const event = events[index]!;
+  const previous = events[index - 1];
+  const text = event.payload.text;
+  return event.type === "delta" && typeof text === "string" && text.length <= 502 && text.endsWith("\n\n")
+    && previous?.type === "workflow" && previous.payload.stage === "thinking"
+    && previous.payload.status === "completed" && events[index - 2]?.type === "delta";
+}
 
 /** Replay in one pass; never scan/copy the complete timeline for every event. */
 export function replaySakiTimeline(events: SakiTimelineEvent[] | undefined): LocalSakiTimelineItem[] {
   if (!events) return [];
   const cached = cache.get(events);
-  if (cached) return cached;
+  if (cached) return cached.items;
   const result: LocalSakiTimelineItem[] = [];
   const positions = new Map<string, number>();
   const settledWorkflows = new Set<string>();
   const pendingByTool = new Map<string, { positions: number[]; cursor: number }>();
+  const repairs = new Map<string, NarrationRepairs>();
   const seal = () => {
     const last = result.at(-1);
     if (last?.kind === "text" && last.source === "delta") last.source = "final";
@@ -21,11 +33,30 @@ export function replaySakiTimeline(events: SakiTimelineEvent[] | undefined): Loc
     if (index === undefined) { positions.set(item.id, result.length); result.push(item); }
     else result[index] = item;
   };
-  for (const event of events) {
+  for (const [index, event] of events.entries()) {
     const payload = event.payload;
     const timestamp = Number.isFinite(event.ts) && Math.abs(event.ts) <= 8.64e15 ? event.ts : 0;
     const createdAt = new Date(timestamp).toISOString();
     if ((event.type === "delta" || event.type === "thinking") && typeof payload.text === "string" && payload.text) {
+      const lastText = result.at(-1);
+      // Legacy Agent runs streamed a draft, then immediately republished
+      // its first 500 characters as narration after the model turn ended.
+      if (lastText?.kind === "text" && couldBeLegacyNarration(events, index)) {
+        const chunks: string[] = [];
+        for (let cursor = index - 2; cursor >= 0; cursor--) {
+          const item = events[cursor]!;
+          if (item.type !== "delta" || typeof item.payload.text !== "string") break;
+          chunks.push(item.payload.text);
+        }
+        const draft = chunks.reverse().join("").trim();
+        if (draft && payload.text === `${draft.slice(0, 500)}\n\n`) {
+          const repair = repairs.get(lastText.id) ?? { skippedLength: 0, entries: [] };
+          repair.entries.push({ offset: lastText.content.length + repair.skippedLength, text: payload.text });
+          repair.skippedLength += payload.text.length;
+          repairs.set(lastText.id, repair);
+          continue;
+        }
+      }
       let last = result.at(-1);
       if (last?.kind !== "text" || last.source !== "delta" || event.type === "thinking" && last.content.trim()) {
         last = { kind: "text", id: `recorded:${event.id}`, content: "", source: "delta", createdAt };
@@ -82,6 +113,30 @@ export function replaySakiTimeline(events: SakiTimelineEvent[] | undefined): Loc
       item.thinkingDurationSec = Math.max(1, Math.round((end - item.thinkingStartedAt) / 1000));
     }
   }
-  cache.set(events, result);
+  cache.set(events, { items: result, repairs });
   return result;
+}
+
+/** Older clients also saved a rendered copy alongside the source events. */
+export function repairCachedSakiNarration(timeline: LocalSakiTimelineItem[], events: SakiTimelineEvent[] | undefined): LocalSakiTimelineItem[] {
+  if (!events?.length) return timeline;
+  if (!cache.has(events) && !events.some((_, index) => couldBeLegacyNarration(events, index))) return timeline;
+  const recorded = replaySakiTimeline(events);
+  const repairs = cache.get(events)?.repairs;
+  if (!repairs?.size) return timeline;
+  const corrected = new Map(recorded.flatMap(item => item.kind === "text" && repairs.has(item.id) ? [[item.id, item.content] as const] : []));
+  return timeline.map(item => {
+    const changes = repairs.get(item.id);
+    if (item.kind !== "text" || !changes) return item;
+    const chunks: string[] = [];
+    let start = 0;
+    for (const { offset, text } of changes.entries) {
+      if (!item.content.startsWith(text, offset)) return item;
+      chunks.push(item.content.slice(start, offset));
+      start = offset + text.length;
+    }
+    chunks.push(item.content.slice(start));
+    const content = chunks.join("");
+    return content === corrected.get(item.id) ? { ...item, content } : item;
+  });
 }

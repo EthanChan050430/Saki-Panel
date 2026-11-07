@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { cacheConversations } from "./conversation-storage.js";
-import { replaySakiTimeline } from "./timeline-replay.js";
+import { repairCachedSakiNarration, replaySakiTimeline } from "./timeline-replay.js";
 import {
   Activity,
   AlertTriangle,
@@ -1643,7 +1643,9 @@ function buildRenderableSakiTimeline(message: LocalSakiMessage): LocalSakiTimeli
   const visibleActions = visibleSakiActions(message.actions);
   const latestActions = new Map(visibleActions.map((action) => [action.id, action]));
   const seenActions = new Set<string>();
-  let timeline = (message.timeline ?? recordedSakiTimeline(message.timelineEvents)).filter((entry) => {
+  const sourceTimeline = message.timeline ? repairCachedSakiNarration(message.timeline, message.timelineEvents)
+    : recordedSakiTimeline(message.timelineEvents);
+  let timeline = sourceTimeline.filter((entry) => {
     if (entry.kind === "action") {
       if (seenActions.has(entry.action.id)) return false;
       seenActions.add(entry.action.id);

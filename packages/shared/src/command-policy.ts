@@ -78,24 +78,32 @@ export function commandWithoutNullOutputRedirects(command: string): string {
   return result;
 }
 
-interface CommandTokens extends Array<string> { unquotedGlobs?: Set<number> }
+interface CommandTokens extends Array<string> {
+  unquotedGlobs?: Set<number>;
+  separator?: "&&" | ";" | "|";
+  discardStderr?: boolean;
+}
 
-function splitCommands(command: string, posixShell = false): CommandTokens[] | null {
+function splitCommands(command: string, posixShell = false, literal = false): CommandTokens[] | null {
   const segments: CommandTokens[] = [];
   let tokens: CommandTokens = [];
   let token = "";
   let tokenStarted = false;
   let unquotedGlob = false;
+  let quotedGlob = false;
   let quote = "";
   const flushToken = () => {
     if (tokenStarted && unquotedGlob) (tokens.unquotedGlobs ??= new Set()).add(tokens.length);
+    if (literal && unquotedGlob && quotedGlob) return false;
     if (tokenStarted) tokens.push(token);
     token = "";
     tokenStarted = false;
     unquotedGlob = false;
+    quotedGlob = false;
+    return true;
   };
   const flushSegment = () => {
-    flushToken();
+    if (!flushToken()) return false;
     if (!tokens.length) return false;
     segments.push(tokens);
     tokens = [];
@@ -111,11 +119,25 @@ function splitCommands(command: string, posixShell = false): CommandTokens[] | n
       // conservative even inside quotes rather than assume the remote shell.
       if (!posixShell && /[;&|<>\r\n]/.test(char)) return null;
       if (char === "\\" && command[i + 1] === quote) return null;
+      if (literal && quote === '"' && char === "\\" && command[i + 1] === "\\") {
+        token += char;
+        i += 1;
+        continue;
+      }
       if (char === quote) quote = "";
-      else token += char;
+      else {
+        if (char === "*") quotedGlob = true;
+        token += char;
+      }
       continue;
     }
-    if (char === "'" || char === '"') {
+    const discardStderr = literal && !tokenStarted && char === "2"
+      ? /^2>[ \t]*\/dev\/null(?=$|[ \t;&|])/.exec(command.slice(i)) : null;
+    if (discardStderr) {
+      if (tokens.discardStderr) return null;
+      tokens.discardStderr = true;
+      i += discardStderr[0].length - 1;
+    } else if (char === "'" || char === '"') {
       quote = char;
       tokenStarted = true;
     } else if (char === "\\" && /[\s'";&|<>]/.test(command[i + 1] ?? "")) {
@@ -124,6 +146,11 @@ function splitCommands(command: string, posixShell = false): CommandTokens[] | n
       return null;
     } else if (/[;&|\r\n]/.test(char)) {
       if (!flushSegment()) return null;
+      if (literal) {
+        if (char === "&" && command[i + 1] === "&") segments.at(-1)!.separator = "&&";
+        else if (char === ";" || char === "|" && command[i + 1] !== "|") segments.at(-1)!.separator = char;
+        else return null;
+      }
       if (char === "&") {
         if (command[i + 1] !== "&") return null;
         i += 1;
@@ -133,8 +160,9 @@ function splitCommands(command: string, posixShell = false): CommandTokens[] | n
         i += 1;
       }
     } else if (/\s/.test(char)) {
-      flushToken();
+      if (!flushToken()) return null;
     } else {
+      if (literal && /[\\#!~?\[\]]/.test(char)) return null;
       if (/[*?\[\]]/.test(char)) unquotedGlob = true;
       token += char;
       tokenStarted = true;
@@ -144,8 +172,17 @@ function splitCommands(command: string, posixShell = false): CommandTokens[] | n
   return segments;
 }
 
+/** Parse only literal POSIX words with predictable separators for guarded reads. */
+export function literalPosixReadSegments(command: string) {
+  if (/[\u0000-\u0008\u000a-\u001f\u007f]|[^\S \t]/.test(command)) return null;
+  return splitCommands(command.trim(), true, true)?.map(words => ({
+    words, paths: commandPathArguments(words), separator: words.separator,
+    globs: words.unquotedGlobs, discardStderr: words.discardStderr
+  })) ?? null;
+}
+
 const readCommands = new Set([
-  "pwd", "ls", "dir", "cat", "type", "head", "tail", "rg", "grep", "find", "findstr", "stat", "wc", "which", "where", "whoami",
+  "pwd", "ls", "dir", "cat", "type", "head", "tail", "cut", "rg", "grep", "find", "findstr", "stat", "wc", "which", "where", "whoami",
   "get-location", "get-childitem", "gci", "get-content", "gc", "get-item", "get-filehash", "select-string", "select-object",
   "measure-object", "format-list", "format-table", "out-string", "hostname", "uname", "cut",
   "ps", "df", "du", "free", "uptime", "lscpu", "lsblk", "vmstat", "id", "who", "ss", "netstat",
