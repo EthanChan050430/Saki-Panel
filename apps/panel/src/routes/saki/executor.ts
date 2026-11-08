@@ -2,7 +2,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { createPatch } from "diff";
 import { applyPatchToContent, parseWorkspacePatch, patchHunkStartLine } from "./patch.js";
-import { renderAgentFileWindow } from "./file-window.js";
+import { agentScopedFileGlob, agentSymbolDefinitionPattern, locateAgentSymbols, renderAgentFileWindow } from "./file-window.js";
 import { optionalTerminalCheckpoint } from "./terminal-checkpoint.js";
 import { serverToolWorkspace } from "./server-tool-policy.js";
 import { wrapSakiCommandWithCwd, quoteAgentShellArgument } from "@webops/shared";
@@ -2036,7 +2036,7 @@ export async function executeSakiAgentTool(
         const searchPath = safeRelativePath(args.path, instance.workingDirectory);
         const include = stringArg(args, "include") || undefined;
         const maxResults = numericArg(args.maxResults, 40, 1, 80);
-        const result = await grepDaemonInstanceFiles(instance.node, instance.id, instance.workingDirectory, {
+        let result = await grepDaemonInstanceFiles(instance.node, instance.id, instance.workingDirectory, {
           workingDirectory: instance.workingDirectory,
           pattern,
           ...(searchPath ? { path: searchPath } : {}),
@@ -2044,6 +2044,22 @@ export async function executeSakiAgentTool(
           maxResults,
           contextLines: 2
         });
+        if (searchPath && result.filesSearched === 0) {
+          const stat = await statDaemonInstancePath(instance.node, instance.id, instance.workingDirectory, searchPath).catch(() => null);
+          if (stat && !stat.isDirectory && stat.size <= 1024 * 1024) {
+            // Older Daemons only walk directories. Keep regex evaluation there
+            // and restrict the returned evidence to the requested file.
+            const directory = path.posix.dirname(searchPath);
+            const scoped = await grepDaemonInstanceFiles(instance.node, instance.id, instance.workingDirectory, {
+              workingDirectory: instance.workingDirectory, pattern,
+              ...(directory !== "." ? { path: directory } : {}),
+              include: path.posix.basename(searchPath), maxResults: 500, contextLines: 2
+            });
+            const matches = scoped.matches.filter(match => match.file === searchPath);
+            result = { ...scoped, filesSearched: 1, totalMatches: matches.length,
+              matches: matches.slice(0, maxResults), truncated: scoped.truncated || matches.length > maxResults };
+          }
+        }
         let formattedMatches = "No matches found.";
         if (result.matches.length > 0) {
           const groups = new Map<string, typeof result.matches>();
@@ -2075,11 +2091,11 @@ export async function executeSakiAgentTool(
         const instance = await resolveAgentInstance(runtime, args);
         const pattern = stringArg(args, "pattern");
         if (!pattern) throw new RouteError("findFiles requires a pattern.", 400);
-        const searchPath = safeRelativePath(args.path);
+        const searchPath = safeRelativePath(args.path, instance.workingDirectory);
         const maxResults = numericArg(args.maxResults, 200, 1, 1000);
         const result = await globDaemonInstanceFiles(instance.node, instance.id, instance.workingDirectory, {
           workingDirectory: instance.workingDirectory,
-          pattern,
+          pattern: agentScopedFileGlob(pattern, searchPath),
           ...(searchPath ? { path: searchPath } : {}),
           maxResults
         });
@@ -2108,20 +2124,14 @@ export async function executeSakiAgentTool(
         const instance = await resolveAgentInstance(runtime, args);
         const rawQuery = stringArg(args, "query");
         if (!rawQuery) throw new RouteError("findSymbols requires a query (symbol name).", 400);
-        const searchPath = safeRelativePath(args.path);
-        const escaped = rawQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const pattern = `\\b(function|class|interface|type|enum|def|struct|trait)\\s+${escaped}\\b|\\b${escaped}\\s*=\\s*(?:async\\s+)?(?:\\([^)]*\\)|function)`;
-        const result = await grepDaemonInstanceFiles(instance.node, instance.id, instance.workingDirectory, {
-          workingDirectory: instance.workingDirectory,
-          pattern,
-          ...(searchPath ? { path: searchPath } : {}),
-          maxResults: 50
-        });
+        const searchPath = safeRelativePath(args.path, instance.workingDirectory);
+        const pattern = agentSymbolDefinitionPattern(rawQuery, "function|class|interface|type|enum|def|struct|trait");
+        const matches = await locateAgentSymbols(instance, searchPath, pattern, 50);
 
-        if (result.matches.length > 0) {
+        if (matches.length > 0) {
           observation = [
-            `Symbol definitions found for "${rawQuery}" (${result.matches.length} matches):`,
-            ...result.matches.map((m) => `${m.file}:${m.line}: ${m.text.trim()}`),
+            `Symbol definitions found for "${rawQuery}" (${matches.length} matches):`,
+            ...matches.map((m) => `${m.file}:${m.line}: ${m.text.trim()}`),
             "",
             "Tip: You can use editLines on these line numbers directly or inspect with readFile(startLine)."
           ].join("\n");
@@ -2478,20 +2488,13 @@ export async function executeSakiAgentTool(
       } else if (toolName === "readsymbol" || toolName === "viewsymbol" || toolName === "getsymbol" || toolName === "inspectsymbol" || toolName === "viewfunction" || toolName === "read_symbol" || toolName === "extractsymbol") {
         requireUserPermission(runtime.permissions, "file.read");
         const instance = await resolveAgentInstance(runtime, args);
-        const relativePath = safeRelativePath(args.path);
+        const relativePath = safeRelativePath(args.path, instance.workingDirectory);
         const targetSymbol = stringArg(args, "symbol");
         if (!relativePath || !targetSymbol) throw new RouteError("readSymbol requires path and symbol.", 400);
         recordWorkingFileAccess(runtime.userId, instance.id, relativePath);
 
-        const escaped = targetSymbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const located = await grepDaemonInstanceFiles(instance.node, instance.id, instance.workingDirectory, {
-          workingDirectory: instance.workingDirectory,
-          path: relativePath,
-          pattern: `(function|class|interface|type|enum|def|fn|func|const|let|var)\\s+${escaped}\\b|${escaped}\\s*=\\s*(?:async\\s+)?(?:function|\\()`,
-          maxResults: 8,
-          contextLines: 0
-        });
-        const hit = located.matches[0];
+        const pattern = agentSymbolDefinitionPattern(targetSymbol, "function|class|interface|type|enum|def|fn|func|const|let|var");
+        const [hit] = await locateAgentSymbols(instance, relativePath, pattern, 8);
         if (!hit) {
           throw new RouteError(`Symbol '${targetSymbol}' not found in ${relativePath}. Try searchFiles({ pattern: "${targetSymbol}", path: "${relativePath}" }).`, 404);
         }
@@ -2502,13 +2505,15 @@ export async function executeSakiAgentTool(
           lineCount: 80
         });
         const lines = file.content.length === 0 ? [] : file.content.split(/\r?\n/);
+        if (!lines.length) throw new RouteError(`Symbol '${targetSymbol}' could not be read in ${relativePath}. The file may have changed; locate it again.`, 409);
         const startLineIdx = 0;
+        const pythonDeclaration = /\.pyi?$/i.test(relativePath) && /^\s*(?:async\s+)?(?:def|class)\s+/.test(lines[0]!);
 
         let endLineIdx = startLineIdx;
         let braceCount = 0;
         let foundOpenBrace = false;
 
-        for (let i = startLineIdx; i < lines.length; i++) {
+        for (let i = startLineIdx; !pythonDeclaration && i < lines.length; i++) {
           const line = lines[i]!;
           for (const char of line) {
             if (char === "{") {
@@ -2530,8 +2535,15 @@ export async function executeSakiAgentTool(
 
         if (!foundOpenBrace) {
           const initialIndent = lines[startLineIdx]!.match(/^\s*/)?.[0].length ?? 0;
+          endLineIdx = lines.length - 1;
+          const endsPythonHeader = (line: string) => /:\s*(?:#.*)?$/.test(line);
+          let pythonHeaderContinues = pythonDeclaration && !endsPythonHeader(lines[startLineIdx]!);
           for (let i = startLineIdx + 1; i < lines.length; i++) {
             const line = lines[i]!;
+            if (pythonHeaderContinues) {
+              pythonHeaderContinues = !endsPythonHeader(line);
+              continue;
+            }
             if (line.trim().length === 0) continue;
             const currentIndent = line.match(/^\s*/)?.[0].length ?? 0;
             if (currentIndent <= initialIndent && !line.trim().startsWith("#") && !line.trim().startsWith("//")) {

@@ -129,6 +129,7 @@ import { mergeInstanceStatuses } from "../utils/instanceDirectory.js";
 import { useGlobalEvent } from "../GlobalEventContext.js";
 import { LiquidGlassContainer } from "../components/common/LiquidGlass.js";
 import {
+  loadSakiConversations,
   readSakiConversations,
   parseThinkingContent,
   SakiAttachmentChip,
@@ -1781,12 +1782,27 @@ export function DashboardView({
   // Sync stored conversations on mount (lightweight metadata list first)
   useEffect(() => {
     let isCancelled = false;
+    const local = loadSakiConversations(userId);
     async function loadConversations() {
       try {
         const remote = await api.sakiListConversations(token, { excludeMessages: true });
         if (isCancelled) return;
         if (Array.isArray(remote)) {
           localHistoryOnlyRef.current = false;
+          void local.then(() => {
+            if (isCancelled) return;
+            const stored = readSakiConversations(userId);
+            const storedById = new Map(stored.map(conversation => [conversation.id, conversation]));
+            const remoteIds = new Set(remote.map(conversation => conversation.id));
+            writeSakiConversations([
+              ...remote.map(conversation => {
+                const cached = storedById.get(conversation.id);
+                return cached && cached.updatedAt >= conversation.updatedAt ? cached
+                  : { ...conversation, instanceId: conversation.instanceId ?? null, messages: [], messagesLoaded: false };
+              }),
+              ...stored.filter(conversation => !remoteIds.has(conversation.id))
+            ], userId);
+          });
           for (const conversation of remote) {
             const previousVersion = historyVersionsRef.current.get(conversation.id);
             if (previousVersion && previousVersion !== conversation.updatedAt) hydratedSessionIdsRef.current.delete(conversation.id);
@@ -1816,12 +1832,13 @@ export function DashboardView({
           return;
         }
       } catch {
-        // Fallback to local storage if remote list is unavailable
+        // Use the browser backup if the server list is unavailable.
       }
 
+      const stored = await local;
+      if (isCancelled) return;
       localHistoryOnlyRef.current = true;
-      const stored = readSakiConversations(userId);
-      if (!isCancelled && stored.length > 0) {
+      if (stored.length > 0) {
         setSessions((current) => {
           const loaded = stored.map((c) => ({
             id: c.id,
@@ -1839,7 +1856,7 @@ export function DashboardView({
             ...current.filter((session) => !loaded.some((item) => item.id === session.id))];
         });
       }
-      if (!isCancelled) setConversationsLoaded(true);
+      setConversationsLoaded(true);
     }
     void loadConversations();
     return () => {
@@ -2702,10 +2719,14 @@ export function DashboardView({
         historyBeforeId: historyCursorsRef.current.get(activeSessionId) ?? null,
         title: next.find((message) => message.role === "user")?.content.slice(0, 24) || "新对话",
         baseUpdatedAt: write.baseUpdatedAt,
+        rewriteHistory: true,
         messages: next.map((message) => ({ ...message, createdAt: message.createdAt ?? updatedAt, streaming: false }))
       });
       updatedAt = saved.updatedAt;
       historyVersionsRef.current.set(activeSessionId, updatedAt);
+      const retainedTaskIds = new Set(next.map(message => message.taskId));
+      const removedTaskIds = new Set(messages.flatMap(message => message.taskId && !retainedTaskIds.has(message.taskId) ? [message.taskId] : []));
+      if (removedTaskIds.size) setTasks(current => current.filter(task => !removedTaskIds.has(task.id)));
     }
     storeMessageHistory(next, updatedAt);
   }
@@ -2732,12 +2753,32 @@ export function DashboardView({
       const write = await prepareMessageHistoryWrite();
       const turn = dashboardTurnRange(messages, messageId)!;
       const editUser = typeof operation === "object" && target.role === "user";
-      const undoIndex = turn.start;
-      const affected = operation === "undo" || operation === "rollback_files" || editUser ? messages.slice(undoIndex)
-        : operation === "delete" ? messages.slice(turn.start, turn.end) : [target];
-      if ((operation === "undo" || operation === "rollback_files" || editUser) && dashboardHasUntrackedTerminalChanges(affected)) {
-        throw new Error("这段对话包含没有文件检查点的终端调用，无法自动恢复其代码改动。请先手动恢复文件；新版本的终端调用会记录工作区文件检查点。");
+      const undoConversation = operation === "undo_conversation";
+      const undoAvailable = operation === "undo_available_files";
+      const savedFiles = operation === "rollback_saved_files";
+      const keepFiles = undoConversation || typeof operation === "object" && editUser && operation.keepFiles === true;
+      if (editUser && (!(interactionMode === "agent" ? canUseAgent : canUseChat) || !canUseProjectMode(interactionMode))) {
+        throw new Error("已选工作区不可用或未授权，请重新选择工作区。");
       }
+      const undoIndex = turn.start;
+      const rollback = operation === "undo" || operation === "rollback_files" || undoAvailable || savedFiles || editUser && !keepFiles;
+      const affected = savedFiles ? [target] : rollback || keepFiles ? messages.slice(undoIndex)
+        : operation === "delete" ? messages.slice(turn.start, turn.end) : [target];
+      if (savedFiles) {
+        if (!target.rollbackJournal) throw new Error("找不到该次撤回的文件记录。");
+        const later = messages.slice(messages.indexOf(target) + 1);
+        if (dashboardHasUntrackedTerminalChanges(later) || dashboardRollbackActions(later).some(dashboardIsCodeChange)) {
+          throw new Error("这次撤回之后还有文件改动。请先处理较新的改动，再还原这里的文件。");
+        }
+      } else if (rollback && !undoAvailable && dashboardHasUntrackedTerminalChanges(affected)) {
+        throw new Error("部分终端操作缺少检查点，无法完整回滚文件。可选择「撤回并还原可恢复文件」或「仅撤回对话」。");
+      }
+      const restorePrompt = (notice: string) => {
+        setPromptText(messages[undoIndex]?.role === "user" ? messages[undoIndex]!.content : "");
+        setAttachments(messages[undoIndex]?.attachments ?? []);
+        setMessageNotice(notice);
+        (dockedTextareaRef.current ?? textareaRef.current)?.focus();
+      };
       // Discard pending approvals without resuming their Agent run.
       const pendingMessages = affected.filter((message) => visibleSakiActions(message.actions).some((action) => action.status === "pending_approval" || action.status === "pending_input"));
       for (const pendingMessage of pendingMessages) {
@@ -2753,8 +2794,15 @@ export function DashboardView({
         }
         changedActions = true;
       }
-      if (operation === "undo" || operation === "rollback_files" || editUser) {
-        const rollbackActions = dashboardRollbackActions(working.slice(undoIndex)).filter((action) => operation !== "rollback_files" || dashboardIsCodeChange(action));
+      if (keepFiles) {
+        const next = dashboardDeleteTurn(working, { start: undoIndex, end: working.length });
+        await saveMessageHistory(next, write);
+        if (typeof operation === "object") resend = { content: operation.edit, history: next, attachments: target.attachments ?? [] };
+        else restorePrompt("已撤回对话，提问已放回输入框，文件改动已保留。");
+      } else if (rollback) {
+        const fileOnly = operation === "rollback_files" || undoAvailable || savedFiles;
+        const rollbackActions = dashboardRollbackActions(savedFiles ? [target] : working.slice(undoIndex))
+          .filter((action) => !fileOnly || dashboardIsCodeChange(action));
         let restored = 0;
         for (const action of rollbackActions) {
           const result = await api.sakiAction(token, action.id, "rollback", { instanceId: activeInstanceId });
@@ -2762,20 +2810,17 @@ export function DashboardView({
           changedActions = true;
           restored++;
         }
-        const next = operation === "rollback_files" ? working : working.slice(0, undoIndex);
+        const next = operation === "rollback_files" || savedFiles ? working
+          : undoAvailable ? dashboardDeleteTurn(working, { start: undoIndex, end: working.length }) : working.slice(0, undoIndex);
         await saveMessageHistory(next, write);
         if (editUser && typeof operation === "object") resend = { content: operation.edit, history: next, attachments: target.attachments ?? [] };
-        else if (operation === "rollback_files") setMessageNotice(restored ? `已撤回 ${restored} 次代码更改，对话记录已保留。` : "此处没有可撤回的代码更改。");
-        else {
-          setPromptText(messages[turn.start]?.role === "user" ? messages[turn.start]!.content : "");
-          setAttachments(messages[turn.start]?.attachments ?? []);
-          setMessageNotice(restored ? `已撤回到此处，并还原 ${restored} 次修改。` : "已撤回对话到此处；此处没有可回滚的文件检查点。");
-          textareaRef.current?.focus();
-        }
+        else if (operation === "rollback_files" || savedFiles) setMessageNotice(restored ? `已撤回 ${restored} 次代码更改，对话记录已保留。` : "此处没有可撤回的代码更改。");
+        else if (undoAvailable) restorePrompt(`已撤回对话并还原 ${restored} 次文件修改。缺少检查点的改动已保留。`);
+        else restorePrompt(restored ? `已撤回到此处，并还原 ${restored} 次修改。` : "已撤回对话到此处；此处没有可回滚的文件检查点。");
       } else if (operation === "delete") {
         await saveMessageHistory(dashboardDeleteTurn(working, turn), write);
         setMessageNotice("已删除这轮对话记录，文件改动已保留。");
-      } else {
+      } else if (typeof operation === "object") {
         await saveMessageHistory(working.map((message) => message.id === messageId ? { ...message, content: operation.edit, timeline: undefined, timelineEvents: undefined } : message), write);
         setMessageNotice("对话已修改。");
       }

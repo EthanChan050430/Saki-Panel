@@ -75,7 +75,7 @@ import { withSakiWorkspaceMutation } from "./workspace-mutation.js";
 import { createSakiTerminal } from "./terminals.js";
 import { assertSakiWorkspaceBinding, bindSakiWorkspace } from "./workspace-binding.js";
 import { runTrackedSakiTask, trackedSakiTaskEvents } from "./task-runner.js";
-import { saveClientSakiConversation, withSakiConversationLock } from "./conversations.js";
+import { saveClientSakiConversation, sakiMemoryConversationId, sakiMemoryTurnExists, withSakiConversationLock } from "./conversations.js";
 import { conversationEditHistory, conversationMetadata, importConversationHistory, iterateConversationMessages, readMessageAt, selectConversationPage, streamConversationJson } from "./conversation-store.js";
 import { conversationMarkdownFileName, conversationMarkdownHeader, conversationMarkdownMessage, snapshotConversationForExport } from "./conversation-export.js";
 import {
@@ -133,7 +133,13 @@ async function sakiGitTarget(request: FastifyRequest, instanceId: string, mutati
   return instance;
 }
 
-export async function startSakiTaskInvocation(request: FastifyRequest, prepared: Awaited<ReturnType<typeof prepareSakiChatInvocation>>, admission?: () => Promise<boolean>) {
+export function startSakiTaskInvocation(request: FastifyRequest, prepared: Awaited<ReturnType<typeof prepareSakiChatInvocation>>, admission?: () => Promise<boolean>) {
+  const id = prepared.modelInput.conversationId;
+  return id ? withSakiConversationLock(id, () => startSakiTaskUnlocked(request, prepared, admission))
+    : startSakiTaskUnlocked(request, prepared, admission);
+}
+
+async function startSakiTaskUnlocked(request: FastifyRequest, prepared: Awaited<ReturnType<typeof prepareSakiChatInvocation>>, admission?: () => Promise<boolean>) {
   const { modelInput, context, skills } = prepared;
   const scopeKey = sakiWorkspaceContextKey(modelInput.instanceId, modelInput.workspaceInstanceIds);
   const matchesScope = (input: SakiChatRequest) => scopeKey === sakiWorkspaceContextKey(input.instanceId, input.workspaceInstanceIds);
@@ -147,6 +153,9 @@ export async function startSakiTaskInvocation(request: FastifyRequest, prepared:
   const instanceId = context.workspace?.instanceId ?? null;
   let memory = getSessionAgentMemory(request.user.sub, instanceId);
   const continuation = Boolean(modelInput.resumeTaskId) || isSakiContinuationMessage(modelInput.message) || modelInput.agentIntent === "compact";
+  const targetConversationId = modelInput.conversationId ?? (modelInput.resumeTaskId ? `task-${modelInput.resumeTaskId}` : undefined);
+  if (memory && (!targetConversationId || sakiMemoryConversationId(memory) !== targetConversationId
+    || !await sakiMemoryTurnExists(memory))) memory = null;
   if (memory && !matchesScope(memory.resumeState.input)) {
     if (continuation) throw new RouteError("工作区选择已改变，请描述一个新任务。", 409);
     memory = null;
@@ -168,8 +177,12 @@ export async function startSakiTaskInvocation(request: FastifyRequest, prepared:
   if (modelInput.resumeTaskId && memory?.resumeState.taskId !== modelInput.resumeTaskId) throw new RouteError("该任务的恢复记录已失效，无法安全重试。请重新描述任务。", 409);
   const config = withRequestedSakiModel(await readEffectiveSakiConfig(), modelInput);
   const resume = continuation ? memory?.resumeState : undefined;
-  const input = resume ? { ...resume.input, ...modelInput, message: resume.input.message, attachments: resume.input.attachments ?? [] }
-    : memory ? { ...modelInput, contextText: [modelInput.contextText, formatSessionFollowUpContext(memory)].filter(Boolean).join("\n\n") } : modelInput;
+  const effectiveModelInput = resume && !modelInput.conversationId && targetConversationId ? { ...modelInput, conversationId: targetConversationId } : modelInput;
+  const input = resume ? (() => {
+    const { userMessageId: _u, assistantMessageId: _a, clientRequestId: _c, resumeTaskId: _r, ...resumeInput } = resume.input;
+    return { ...resumeInput, ...effectiveModelInput, message: resume.input.message, attachments: resume.input.attachments ?? [] };
+  })()
+    : memory ? { ...effectiveModelInput, contextText: [effectiveModelInput.contextText, formatSessionFollowUpContext(memory)].filter(Boolean).join("\n\n") } : effectiveModelInput;
   // No await between this second deduplication check and claiming the context.
   const concurrent = findSakiTaskByRequest(request.user.sub, modelInput.clientRequestId);
   if (concurrent) {
@@ -179,7 +192,7 @@ export async function startSakiTaskInvocation(request: FastifyRequest, prepared:
   if (admission && !await admission()) throw new RouteError("队列已暂停，消息已保留。", 409);
   assertSakiTaskContextAvailable(request.user.sub, instanceId);
   const abortController = new AbortController();
-  const task = createActiveSakiTask(randomUUID(), request.user.sub, instanceId, modelInput, abortController);
+  const task = createActiveSakiTask(randomUUID(), request.user.sub, instanceId, effectiveModelInput, abortController);
   if (context.instance) task.workspaceBinding = bindSakiWorkspace(context.instance);
   if (context.instances) task.workspaceBindings = context.instances.map(bindSakiWorkspace);
   void runTrackedSakiTask(task, async () => {

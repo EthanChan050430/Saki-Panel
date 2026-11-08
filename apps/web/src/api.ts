@@ -2109,6 +2109,7 @@ export const api = {
       messages: any[];
       messagesLoaded?: boolean | undefined;
       append?: boolean | undefined;
+      rewriteHistory?: boolean | undefined;
       historyBeforeId?: string | null | undefined;
       baseUpdatedAt?: string | undefined;
     }

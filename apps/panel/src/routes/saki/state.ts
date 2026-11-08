@@ -312,7 +312,6 @@ export function formatSessionFollowUpContext(memory: SakiSessionAgentMemory): st
     "[Prior Agent session — reuse paths and line numbers, do not re-scan unless needed]",
     `Last goal: ${memory.lastGoal}`,
     memory.lastSummary ? `Last summary: ${memory.lastSummary.slice(0, 1200)}` : null,
-    memory.todos?.length ? `Todos:\n${memory.todos.join("\n")}` : null,
     memory.workingFiles.length ? `Working files:\n${memory.workingFiles.map((file) => `- ${file}`).join("\n")}` : null
   ].filter(Boolean);
   return lines.join("\n");
@@ -332,6 +331,7 @@ export function getSessionAgentMemory(userId: string, instanceId: string | null)
 export function clearSessionAgentMemory(userId: string, instanceId: string | null): void {
   const key = sessionWorkingFilesKey(userId, instanceId);
   sessionAgentMemories.delete(key);
+  sessionWorkingFilesMaps.delete(key);
   const operation = (sessionWrites.get(key) ?? Promise.resolve()).catch(() => {}).then(() => fs.rm(sessionMemoryPath(key), { force: true }));
   sessionWrites.set(key, operation);
   void operation.catch(() => {}).finally(() => {
@@ -339,29 +339,11 @@ export function clearSessionAgentMemory(userId: string, instanceId: string | nul
   });
 }
 
-export function extractTodosFromScratchpad(entries: string[]): string[] {
-  const todos: string[] = [];
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i] ?? "";
-    const todoMatch = entry.match(/<todos>([\s\S]*?)<\/todos>/i) || entry.match(/"todos"\s*:\s*"([^"]+)"/i);
-    if (todoMatch?.[1]) {
-      const lines = todoMatch[1]
-        .split(/\r?\n|\\n/)
-        .map((l) => l.trim())
-        .filter((l) => /^- \[[ xX-]\]/.test(l));
-      if (lines.length > 0) {
-        return lines;
-      }
-    }
-  }
-  return todos;
-}
-
-export function extractConfirmedTodos(actions: SakiAgentAction[], scratchpad: string[]): string[] {
-  const latest = [...actions].reverse().find((action) => action.ok && isAgentChecklistTool(action.tool));
+export function extractConfirmedTodos(actions: SakiAgentAction[]): string[] {
+  const latest = [...actions].reverse().find((action) => action.ok && (action.status ?? "completed") === "completed" && isAgentChecklistTool(action.tool));
   if (latest?.todos) return latest.todos.map((todo) => `- [${todo.completed ? "x" : todo.inProgress ? "-" : " "}] ${todo.text}`);
   if (latest && typeof latest.args.todos === "string") return latest.args.todos.split(/\r?\n/).filter((line) => /^- \[[ xX-]\]/.test(line));
-  return extractTodosFromScratchpad(scratchpad);
+  return [];
 }
 
 export const activeSakiTasks = new Map<string, SakiActiveTask>();
@@ -372,7 +354,7 @@ export function isSakiTaskUnfinished(task: SakiActiveTask): boolean {
   return task.status === "running" || task.status === "pending_approval" || task.status === "pending_input";
 }
 
-function removeActiveSakiTask(taskId: string): void {
+export function removeActiveSakiTask(taskId: string): void {
   activeSakiTasks.delete(taskId);
   for (const [key, id] of activeSakiTasksByContext) {
     if (id === taskId) activeSakiTasksByContext.delete(key);

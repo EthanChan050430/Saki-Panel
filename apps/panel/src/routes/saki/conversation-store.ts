@@ -107,12 +107,15 @@ export function decodeConversationMessage(raw: string): unknown {
   return value;
 }
 
-export function storedMessage(conversationId: string, position: number, value: unknown) {
+export function storedMessage(conversationId: string, position: number, value: unknown, previousTaskIds?: ReadonlyMap<string, string>) {
   const message = isRecord(value) ? value : {};
-  const { data, sharedBytes } = encodeMessage(value);
+  const messageId = textField(message.id);
+  const retry = isRecord(message.retry) ? message.retry : null;
+  const taskId = textField(message.taskId) ?? textField(retry?.taskId) ?? (messageId ? previousTaskIds?.get(messageId) ?? null : null);
+  const { data, sharedBytes } = encodeMessage(taskId && !textField(message.taskId) && isRecord(value) ? { ...value, taskId } : value);
   // Bound page size by the expanded JSON, including observations shared with events.
   const bytes = Buffer.byteLength(data) + sharedBytes;
-  return { conversationId, position, data, bytes, messageId: textField(message.id), role: textField(message.role), taskId: textField(message.taskId) };
+  return { conversationId, position, data, bytes, messageId, role: textField(message.role), taskId };
 }
 
 export function historyPageBounds(rows: MessageMetadata[], limit: number, beforeId?: string) {

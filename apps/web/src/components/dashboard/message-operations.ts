@@ -1,7 +1,7 @@
 import type { SakiAgentAction } from "@webops/shared";
 import type { DashboardChatMessage } from "./DashboardAgentConversation.js";
 
-export type DashboardMessageOperation = "copy" | "delete" | "undo" | "rollback_files" | { edit: string };
+export type DashboardMessageOperation = "copy" | "delete" | "undo" | "undo_conversation" | "undo_available_files" | "rollback_files" | "rollback_saved_files" | { edit: string; keepFiles?: boolean };
 
 export function dashboardIsCodeChange(action: SakiAgentAction): boolean {
   const tool = action.tool.toLowerCase().replace(/[_-]/g, "");
@@ -18,11 +18,27 @@ export function dashboardStoredActions(message: { actions?: SakiAgentAction[] | 
     ...(message.actions ?? [])].map((action) => [action.id, action])).values()];
 }
 
-export function dashboardHasUntrackedTerminalChanges(messages: DashboardChatMessage[]): boolean {
-  return [...new Map(messages.flatMap(dashboardStoredActions).map((action) => [action.id, action])).values()].some((action) =>
-    /^(runcommand|runinshell|sendshellinput|sendinput|sendcommand)$/.test(action.tool.toLowerCase().replace(/[_-]/g, ""))
+function dashboardIsUntrackedTerminalAction(action: SakiAgentAction): boolean {
+  return /^(runcommand|runinshell|sendshellinput|sendinput|sendcommand)$/.test(action.tool.toLowerCase().replace(/[_-]/g, ""))
     && (action.ok || action.status === "failed" || Boolean(action.terminal)) && action.status !== "rolled_back" && action.status !== "rejected"
-    && !action.approval?.rollbackAvailable && action.approval?.reason !== "Terminal command made no workspace file changes.");
+    && !action.approval?.rollbackAvailable && action.approval?.reason !== "Terminal command made no workspace file changes.";
+}
+
+export function dashboardHasUntrackedTerminalChanges(messages: DashboardChatMessage[]): boolean {
+  return dashboardLatestUntrackedTerminalIndex(messages) >= 0;
+}
+
+/** A turn starting at or before this message cannot roll back the whole suffix. */
+export function dashboardLatestUntrackedTerminalIndex(messages: DashboardChatMessage[]): number {
+  const seen = new Set<string>();
+  for (let index = messages.length - 1; index >= 0; index--) {
+    for (const action of dashboardStoredActions(messages[index]!)) {
+      if (seen.has(action.id)) continue;
+      seen.add(action.id);
+      if (dashboardIsUntrackedTerminalAction(action)) return index;
+    }
+  }
+  return -1;
 }
 
 /** Deleting either message in a turn removes its question and replies. */
@@ -87,9 +103,8 @@ export function dashboardRecordAction(messages: DashboardChatMessage[], action: 
 /** Keep only rollback references at their original chronological position. */
 export function dashboardDeleteTurn(messages: DashboardChatMessage[], range: { start: number; end: number }): DashboardChatMessage[] {
   const removed = messages.slice(range.start, range.end);
-  const references = [...dashboardRollbackActions(removed).reverse(), ...removed.flatMap(dashboardStoredActions)
-    .filter((action) => dashboardHasUntrackedTerminalChanges([{ id: "probe", role: "assistant", content: "", time: "", actions: [action] }]))];
-  const actions = [...new Map(references.map((action) => [action.id, rollbackReference(action)])).values()];
+  const latest = new Map(removed.flatMap(dashboardStoredActions).map(action => [action.id, action]));
+  const actions = [...latest.values()].filter(action => dashboardActionCanRollback(action) || dashboardIsUntrackedTerminalAction(action)).map(rollbackReference);
   const journal: DashboardChatMessage[] = actions.length ? [{
     id: `undo-${removed[0]!.id}`, role: "assistant", content: "", time: "", rollbackJournal: true, actions,
     createdAt: removed[0]?.createdAt

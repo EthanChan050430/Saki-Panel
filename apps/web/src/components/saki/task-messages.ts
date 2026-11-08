@@ -15,6 +15,7 @@ export function prepareSakiTaskReplay(current: LocalSakiMessage[], task: ReplayT
   const assistant: LocalSakiMessage = {
     ...existing,
     id: assistantId,
+    taskId: task.id,
     role: "assistant",
     content: "",
     createdAt: existing?.createdAt ?? task.startedAt,

@@ -251,13 +251,14 @@ function DashboardToolGroup({
   );
 }
 
-export const DashboardAgentMessage = memo(function DashboardAgentMessage({ token, message, selectedActionId, busyId, onSelectAction, onDecide, onMessageOperation, copiedMessageId, canRollbackCode = false, onPreviewAttachment }: {
+export const DashboardAgentMessage = memo(function DashboardAgentMessage({ token, message, selectedActionId, busyId, onSelectAction, onDecide, onMessageOperation, copiedMessageId, canRollbackCode = false, rollbackBlocked = false, onPreviewAttachment }: {
   token: string;
   message: DashboardChatMessage; selectedActionId?: string | undefined; busyId: string | null;
   onSelectAction: (messageId: string, actionId: string) => void; onDecide: DecideAction;
   onMessageOperation?: (messageId: string, operation: DashboardMessageOperation) => Promise<void>;
   copiedMessageId?: string | null;
   canRollbackCode?: boolean;
+  rollbackBlocked?: boolean;
   onPreviewAttachment?: (attachment: SakiInputAttachment) => void;
 }) {
   const parsed = useMemo(() => message.role === "assistant" ? parseThinkingContent(message.content, message.thinking) : { answer: message.content, thinking: "" }, [message.role, message.content, message.thinking]);
@@ -267,6 +268,7 @@ export const DashboardAgentMessage = memo(function DashboardAgentMessage({ token
   const [editText, setEditText] = useState("");
   const [timelineLimit, setTimelineLimit] = useState(60);
   const disabled = Boolean(busyId || message.isStreaming);
+  const editKeepsFiles = message.role === "user" && rollbackBlocked;
   const operate = (operation: DashboardMessageOperation) => { setMenuOpen(false); void onMessageOperation?.(message.id, operation).catch(() => {}); };
   const hasPendingAction = Boolean(
     message.actions?.some((action) => action.status === "pending_approval" || action.status === "pending_input")
@@ -326,12 +328,13 @@ export const DashboardAgentMessage = memo(function DashboardAgentMessage({ token
       {editing ? <form className="dashboard-message-editor" onSubmit={(event) => {
         event.preventDefault();
         if (!editText.trim() || disabled) return;
-        void onMessageOperation?.(message.id, { edit: editText.trim() }).then(() => setEditing(false)).catch(() => {});
+        void onMessageOperation?.(message.id, { edit: editText.trim(), ...(editKeepsFiles ? { keepFiles: true } : {}) }).then(() => setEditing(false)).catch(() => {});
       }}>
         <textarea aria-label={message.role === "user" ? "编辑提问内容" : "编辑回复内容"} value={editText} onChange={(event) => setEditText(event.target.value)} rows={5} autoFocus disabled={disabled}
           onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setEditing(false); } }} />
+        {editKeepsFiles ? <p className="muted">部分终端操作缺少回滚记录。重发会替换从这条消息开始的对话，并保留现有文件改动。</p> : null}
         <div><button type="button" disabled={disabled} onClick={() => setEditing(false)}>取消</button>
-          <button type="submit" disabled={disabled || !editText.trim()}>{message.role === "user" ? "保存并重新发送" : "保存修改"}</button></div>
+          <button type="submit" disabled={disabled || !editText.trim()}>{editKeepsFiles ? "保留文件并重发" : message.role === "user" ? "保存并重新发送" : "保存修改"}</button></div>
       </form> : parsed.answer && !timeline.length ? <div className="dashboard-markdown-body">
         {isStreamingAnswer ? (
           <div className="saki-stream-raw-wrap">
@@ -357,10 +360,16 @@ export const DashboardAgentMessage = memo(function DashboardAgentMessage({ token
       <div ref={menuRef}><button type="button" aria-label={message.role === "user" ? "提问的更多操作" : "回复的更多操作"} aria-expanded={menuOpen} disabled={disabled}
         onClick={() => setMenuOpen((current) => !current)}><MoreHorizontal size={15} /></button>
         {menuOpen ? <DashboardPopover anchorRef={menuRef} onClose={() => setMenuOpen(false)} width={250} className="dashboard-message-menu">
-          <button type="button" className="dashboard-dropdown-item" disabled={disabled || !canRollbackCode} title="撤回这轮及之后的代码更改，保留对话记录" onClick={() => operate("rollback_files")}>
+          <button type="button" className="dashboard-dropdown-item" disabled={disabled || !canRollbackCode || rollbackBlocked}
+            title={rollbackBlocked ? "部分终端操作缺少检查点，无法完整回滚文件" : "撤回这轮及之后的代码更改，保留对话记录"} onClick={() => operate("rollback_files")}>
             <CornerUpLeft size={14} /><span>撤回代码更改</span><small>保留对话</small></button>
-          <button type="button" className="dashboard-dropdown-item" disabled={disabled} title="撤回这轮及之后的修改，并将提问放回输入框" onClick={() => operate("undo")}>
-            <CornerUpLeft size={14} /><span>撤回到此处</span><small>Undo to this point</small></button>
+          <button type="button" className="dashboard-dropdown-item" disabled={disabled || rollbackBlocked}
+            title={rollbackBlocked ? "部分终端操作缺少检查点，无法完整回滚文件" : "撤回这轮及之后的修改，并将提问放回输入框"} onClick={() => operate("undo")}>
+            <CornerUpLeft size={14} /><span>撤回到此处</span><small>同时还原文件</small></button>
+          {rollbackBlocked && canRollbackCode ? <button type="button" className="dashboard-dropdown-item" disabled={disabled} onClick={() => operate("undo_available_files")}>
+            <CornerUpLeft size={14} /><span>撤回并还原可恢复文件</span><small>缺检查点的改动保留</small></button> : null}
+          <button type="button" className="dashboard-dropdown-item" disabled={disabled} title="撤回这轮及之后的对话，并将提问放回输入框" onClick={() => operate("undo_conversation")}>
+            <CornerUpLeft size={14} /><span>仅撤回对话</span><small>保留文件</small></button>
           <button type="button" className="dashboard-dropdown-item is-danger" disabled={disabled} title="删除这轮对话记录，保留文件改动" onClick={() => operate("delete")}>
             <Trash2 size={14} /><span>删除这轮对话</span></button>
         </DashboardPopover> : null}

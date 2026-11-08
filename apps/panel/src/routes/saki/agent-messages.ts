@@ -420,20 +420,10 @@ export function compactAgentTurnMessages(messages: SakiAgentTurnMessage[], maxCh
     group.size += sizeOf(message);
   }
   const summaries: string[] = [];
-  let latestTodos: string | undefined;
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index]!;
-    if (message.role === "tool" && message.name && isAgentChecklistTool(message.name)) latestTodos = message.content;
-    if (message.content.startsWith("[Compacted execution history")) {
-      latestTodos = message.content.match(/Current checklist:\n([\s\S]*?)(?=\n(?:Assistant:|Result |User note:)|$)/)?.[1];
-    }
-    if (latestTodos) break;
-  }
   const firstSize = sizeOf(first);
   const progressPreface = progressPrefaceFromMessages(messages, messages.find((message) => message.role === "user")?.content ?? "");
   const memoryBudget = Math.max(400, Math.min(8000, Math.floor(maxChars / 3), maxChars - firstSize - progressPreface.length - 300));
-  const todoBudget = latestTodos ? Math.min(5000, Math.floor(memoryBudget / 2)) : 0;
-  const summary = (): SakiAgentTurnMessage => ({ role: "user", content: `[Compacted execution history — retain completed work; continue the unfinished step]\n${progressPreface}\n${latestTodos ? `Current checklist:\n${latestTodos.slice(0, todoBudget)}\n` : ""}${summaries.slice(-20).join("\n").slice(-(memoryBudget - todoBudget))}` });
+  const summary = (): SakiAgentTurnMessage => ({ role: "user", content: `[Compacted execution history — continue from verified results]\n${progressPreface}\n${summaries.slice(-20).join("\n").slice(-memoryBudget)}` });
   const remember = (text: string) => {
     summaries.push(text);
     if (summaries.length > 20) summaries.shift();
@@ -466,12 +456,13 @@ export function compactAgentTurnMessages(messages: SakiAgentTurnMessage[], maxCh
     for (const message of group.messages) {
       if (message.role === "assistant") {
         for (const call of message.toolCalls ?? []) {
+          if (isAgentChecklistTool(call.name)) continue;
           const args = Array.isArray(call.args) ? {} : call.args;
           const target = Object.fromEntries(Object.entries(args).filter(([key]) => /path|query|command|symbol|instanceId/i.test(key)));
           remember(`${call.name} ${JSON.stringify(target).slice(0, 500)}`);
         }
         if (message.content.trim()) remember(`Assistant: ${excerpt(message.content, 400)}`);
-      } else {
+      } else if (!(message.role === "tool" && message.name && isAgentChecklistTool(message.name))) {
         remember(`${message.role === "tool" ? `Result ${message.name ?? "tool"}` : "User note"}: ${excerpt(message.content, 800)}`);
       }
     }

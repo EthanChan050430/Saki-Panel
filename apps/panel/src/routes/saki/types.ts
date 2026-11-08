@@ -689,8 +689,10 @@ export interface SakiAgentResumeState {
   toolExecutions: number;
   turnMessages?: import("./agent-messages.js").SakiAgentTurnMessage[];
   readOnlyToolCache?: Array<[string, SakiAgentAction]>;
+  editRequested?: boolean;
   taskId?: string;
   codingPlan?: SakiCodingPlan;
+
 }
 
 export interface SakiSessionAgentMemory {

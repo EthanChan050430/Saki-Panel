@@ -26,6 +26,12 @@ export function looksLikeCompletedAnswer(text: string): boolean {
   return cleaned.length > 0 && completedAnswerPattern.test(cleaned);
 }
 
+/** Only catch claims of an edit, leaving read-only findings and real blockers alone. */
+export function looksLikeCompletedWorkspaceEdit(text: string): boolean {
+  const cleaned = stripThinking(text).replace(/\s+/g, " ").trim();
+  return /(?:^|[。！\n.!]\s*|^[-*]\s+)(?:我\s*)?(?:(?:已(?:经)?(?:修复|改好|修改|实现|新增|重构|更新))|(?:i (?:have )?|i've )?(?:fixed|implemented|patched|updated|refactored)\b)/i.test(cleaned);
+}
+
 // Position of the last match of a global-flagged clone of `pattern`, or -1.
 // `pattern` must already carry the `g` flag so matchAll advances.
 function lastMatchEnd(cleaned: string, pattern: RegExp): number {
@@ -90,7 +96,8 @@ export function stuckOutputMessage(): string {
   return "模型开始循环重复同一段输出，Saki 已停止以免卡死。前面完成的操作仍然保留。你可以发「继续」让我换一种方式接着做。";
 }
 
-export function stuckNoProgressMessage(): string {
+export function stuckNoProgressMessage(fileReadRecoveryAttempted = false): string {
+  if (fileReadRecoveryAttempted) return "文件读取成功。Saki 已尝试复用读取结果继续任务，但仍连续多轮没有新进展，因此暂停了任务。已完成的操作已保留，可以补充具体修改目标或发「继续」。";
   return `Saki 连续 ${maxNoProgressTurns} 轮未获得新的执行结果，已停止以免空转。重复已有结果、同步任务计划和进度说明不计为实际进展。已完成的操作仍然保留，你可以补充要求或发「继续」。`;
 }
 

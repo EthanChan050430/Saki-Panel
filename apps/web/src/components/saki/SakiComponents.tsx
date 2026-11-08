@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { cacheConversations } from "./conversation-storage.js";
+import { cacheConversations, loadConversationIndex } from "./conversation-storage.js";
 import { repairCachedSakiNarration, replaySakiTimeline } from "./timeline-replay.js";
 import {
   Activity,
@@ -362,10 +362,12 @@ export function sortSakiConversationsByTime(conversations: StoredSakiConversatio
     .map((item) => item.conversation);
 }
 
-let sakiConversationReadCache: { userId: string; raw: string | null; conversations: StoredSakiConversation[] } | null = null;
+let sakiConversationReadCache: { userId: string; raw: string | null; conversations: StoredSakiConversation[]; inMemory?: boolean; indexLoaded?: boolean } | null = null;
+let sakiConversationLoadTask: { userId: string; promise: Promise<StoredSakiConversation[]> } | null = null;
 
 export function readSakiConversations(userId?: string): StoredSakiConversation[] {
   if (!userId) return [];
+  if (sakiConversationReadCache?.userId === userId && sakiConversationReadCache.inMemory) return sakiConversationReadCache.conversations;
   try {
     const raw = globalThis.localStorage?.getItem(`${sakiConversationStorageKey}:user:${encodeURIComponent(userId)}`);
     if (sakiConversationReadCache?.userId === userId && sakiConversationReadCache.raw === raw) return sakiConversationReadCache.conversations;
@@ -402,12 +404,49 @@ export function readSakiConversations(userId?: string): StoredSakiConversation[]
   }
 }
 
+export async function loadSakiConversations(userId?: string): Promise<StoredSakiConversation[]> {
+  if (!userId) return [];
+  const legacy = readSakiConversations(userId);
+  const previous = sakiConversationReadCache?.userId === userId ? sakiConversationReadCache : null;
+  if (previous?.indexLoaded) return legacy;
+  if (sakiConversationLoadTask?.userId === userId) return sakiConversationLoadTask.promise;
+  const key = `${sakiConversationStorageKey}:user:${encodeURIComponent(userId)}`;
+  const raw = previous?.raw ?? null;
+  const promise = (async () => {
+    try {
+      const loaded = await loadConversationIndex(userId, legacy, key, raw);
+      const current = sakiConversationReadCache?.userId === userId && sakiConversationReadCache.inMemory
+        ? sakiConversationReadCache.conversations
+        : [];
+      const seen = new Set(current.map((item) => item.id));
+      const conversations = sortSakiConversationsByTime([
+        ...current,
+        ...loaded.filter((item) => !seen.has(item.id))
+      ]).slice(0, 80);
+      if (!sakiConversationReadCache || sakiConversationReadCache.userId === userId) {
+        sakiConversationReadCache = { userId, raw: null, conversations, inMemory: true, indexLoaded: true };
+      }
+      return sakiConversationReadCache?.userId === userId ? sakiConversationReadCache.conversations : conversations;
+    } catch {
+      return sakiConversationReadCache?.userId === userId ? sakiConversationReadCache.conversations : legacy;
+    }
+  })();
+  sakiConversationLoadTask = { userId, promise };
+  return promise.finally(() => {
+    if (sakiConversationLoadTask?.promise === promise) sakiConversationLoadTask = null;
+  });
+}
+
 export function writeSakiConversations(conversations: StoredSakiConversation[], userId?: string) {
   if (!userId) return;
   const sorted = sortSakiConversationsByTime(conversations).slice(0, 80);
-  const key = `${sakiConversationStorageKey}:user:${encodeURIComponent(userId)}`;
-  try { sakiConversationReadCache = { userId, raw: localStorage.getItem(key), conversations: sorted }; } catch {}
-  cacheConversations(sorted, userId, key);
+  const indexLoaded = sakiConversationReadCache?.userId === userId && Boolean(sakiConversationReadCache.indexLoaded);
+  if (!indexLoaded) void loadSakiConversations(userId);
+  const previous = indexLoaded || sakiConversationReadCache?.userId !== userId ? [] : sakiConversationReadCache.conversations;
+  const seen = new Set(sorted.map((item) => item.id));
+  const next = indexLoaded ? sorted : sortSakiConversationsByTime([...sorted, ...previous.filter((item) => !seen.has(item.id))]).slice(0, 80);
+  sakiConversationReadCache = { userId, raw: null, conversations: next, inMemory: true, indexLoaded };
+  cacheConversations(next, userId, indexLoaded);
 }
 
 export function sakiConversationTitle(messages: LocalSakiMessage[]): string {

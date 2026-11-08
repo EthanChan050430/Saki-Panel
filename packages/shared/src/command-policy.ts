@@ -118,12 +118,12 @@ function splitCommands(command: string, posixShell = false, literal = false): Co
       // cmd.exe does not treat single quotes as quoting. Keep metacharacters
       // conservative even inside quotes rather than assume the remote shell.
       if (!posixShell && /[;&|<>\r\n]/.test(char)) return null;
-      if (char === "\\" && command[i + 1] === quote) return null;
-      if (literal && quote === '"' && char === "\\" && command[i + 1] === "\\") {
-        token += char;
+      if (literal && quote === '"' && char === "\\" && /["\\]/.test(command[i + 1] ?? "")) {
+        token += command[i + 1];
         i += 1;
         continue;
       }
+      if (char === "\\" && command[i + 1] === quote) return null;
       if (char === quote) quote = "";
       else {
         if (char === "*") quotedGlob = true;

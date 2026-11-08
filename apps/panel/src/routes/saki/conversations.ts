@@ -3,8 +3,45 @@ import { RouteError, type SakiActiveTask } from "./types.js";
 import type { SakiChatResponse, SakiTimelineEvent } from "@webops/shared";
 import { sakiWorkspaceContextKey } from "@webops/shared";
 import { conversationMetadata, importConversationHistory, readMessageAt, storedMessage } from "./conversation-store.js";
+import { activeSakiTasks, clearSessionAgentMemory, getSessionAgentMemory, isSakiTaskUnfinished, pendingSakiActions, removeActiveSakiTask, sakiActionsReady, sessionAgentMemoriesReady } from "./state.js";
+import type { SakiSessionAgentMemory } from "./types.js";
 
 const writes = new Map<string, Promise<unknown>>();
+
+export function sakiMemoryConversationId(memory: SakiSessionAgentMemory): string | undefined {
+  const { input, taskId } = memory.resumeState;
+  return input.conversationId ?? (taskId ? `task-${taskId}` : undefined);
+}
+
+export async function sakiMemoryTurnExists(memory: SakiSessionAgentMemory): Promise<boolean> {
+  const conversationId = sakiMemoryConversationId(memory);
+  const taskId = memory.resumeState.taskId;
+  if (!conversationId || !taskId) return false;
+  const { userMessageId, assistantMessageId } = memory.resumeState.input;
+  const row = await prisma.sakiConversationMessage.findFirst({
+    where: { conversationId, role: "assistant", taskId, conversation: { userId: memory.userId },
+      ...(assistantMessageId ? { messageId: assistantMessageId } : {}) },
+    select: { position: true }
+  });
+  if (!row) return false;
+  const user = await prisma.sakiConversationMessage.findFirst({
+    where: { conversationId, role: "user", messageId: userMessageId ?? `${taskId}-user`, position: { lt: row.position } },
+    select: { position: true }
+  });
+  return Boolean(user);
+}
+
+function hasUnsettledSakiConversation(userId: string, id: string): boolean {
+  for (const task of activeSakiTasks.values()) {
+    if (task.userId === userId && (task.input.conversationId ?? `task-${task.id}`) === id
+      && (isSakiTaskUnfinished(task) || task.execution || task.decisionInFlight || task.pendingHistorySync)) return true;
+  }
+  for (const pending of pendingSakiActions.values()) {
+    if (pending.userId === userId && pending.resume
+      && (pending.resume.input.conversationId ?? `task-${pending.resume.taskId}`) === id) return true;
+  }
+  return false;
+}
 export async function withSakiConversationLock<T>(id: string, work: () => Promise<T>): Promise<T> {
   const operation = (writes.get(id) ?? Promise.resolve()).catch(() => {}).then(work);
   writes.set(id, operation);
@@ -22,6 +59,10 @@ export async function saveClientSakiConversation(userId: string, id: string, bod
     if (existing && existing.userId !== userId) throw new RouteError("Forbidden", 403);
     if (existing && body.baseUpdatedAt !== existing.updatedAt.toISOString()) throw new RouteError("Conversation changed on another device. Refresh before saving.", 409);
     if (!existing && body.baseUpdatedAt) throw new RouteError("Conversation was deleted. Refresh before saving.", 409);
+    if (body.rewriteHistory === true) {
+      await sakiActionsReady;
+      if (hasUnsettledSakiConversation(userId, id)) throw new RouteError("请等待该对话的任务停止并完成保存，再撤回或编辑消息。", 409);
+    }
     const data = {
       contextKey: typeof body.contextKey === "string" ? body.contextKey : existing?.contextKey ?? "global",
       title: typeof body.title === "string" ? body.title : existing?.title ?? "新对话",
@@ -50,17 +91,28 @@ export async function saveClientSakiConversation(userId: string, id: string, bod
         if (!anchor) throw new RouteError("History changed. Reload the conversation before saving.", 409);
         start = anchor.position;
       }
+      const previousTaskIds = new Map<string, string>();
+      for (const task of activeSakiTasks.values()) {
+        if (task.userId === userId && (task.input.conversationId ?? `task-${task.id}`) === id) {
+          previousTaskIds.set(task.input.assistantMessageId ?? `${task.id}-assistant`, task.id);
+        }
+      }
       if (body.append === true) {
         const last = await tx.sakiConversationMessage.findFirst({
           where: { conversationId: id }, orderBy: { position: "desc" }, select: { position: true }
         });
         start = (last?.position ?? -1) + 1;
       } else {
+        const existingTasks = await tx.sakiConversationMessage.findMany({
+          where: { conversationId: id, position: { gte: start }, messageId: { not: null }, taskId: { not: null } },
+          select: { messageId: true, taskId: true }
+        });
+        for (const row of existingTasks) if (row.messageId && row.taskId) previousTaskIds.set(row.messageId, row.taskId);
         await tx.sakiConversationMessage.deleteMany({ where: { conversationId: id, position: { gte: start } } });
       }
       // A loaded page can include a message that was also present in the prefix.
       for (const [index, message] of messages.entries()) {
-        const row = storedMessage(id, start + index, message);
+        const row = storedMessage(id, start + index, message, previousTaskIds);
         if (start > 0 && row.messageId) await tx.sakiConversationMessage.deleteMany({
           where: { conversationId: id, messageId: row.messageId, position: { lt: start } }
         });
@@ -70,6 +122,36 @@ export async function saveClientSakiConversation(userId: string, id: string, bod
       if ((error as { code?: string }).code === "P2002") throw new RouteError("Conversation changed on another device. Refresh before saving.", 409);
       throw error;
     });
+    if (existing && body.append !== true) {
+      const finished = [...activeSakiTasks.values()].filter(task => task.userId === userId
+        && (task.input.conversationId ?? `task-${task.id}`) === id
+        && !isSakiTaskUnfinished(task) && !task.execution && !task.decisionInFlight && !task.pendingHistorySync);
+      if (finished.length) {
+        try {
+          const retained = await prisma.sakiConversationMessage.findMany({
+            where: { conversationId: id, role: "assistant", taskId: { in: finished.map(task => task.id) } },
+            select: { taskId: true }
+          });
+          const retainedIds = new Set(retained.map(row => row.taskId));
+          for (const task of finished) {
+            if (!retainedIds.has(task.id) && activeSakiTasks.get(task.id) === task) removeActiveSakiTask(task.id);
+          }
+        } catch (error) {
+          console.warn("[Saki] Could not discard withdrawn task results:", error instanceof Error ? error.message : String(error));
+        }
+      }
+      await sessionAgentMemoriesReady;
+      const memory = getSessionAgentMemory(userId, existing.instanceId);
+      if (memory && sakiMemoryConversationId(memory) === id) {
+        try {
+          if (!await sakiMemoryTurnExists(memory) && getSessionAgentMemory(userId, existing.instanceId) === memory) {
+            clearSessionAgentMemory(userId, existing.instanceId);
+          }
+        } catch (error) {
+          console.warn("[Saki] Could not discard a stale conversation resume record:", error instanceof Error ? error.message : String(error));
+        }
+      }
+    }
     return { ok: true, id, updatedAt: updatedAt.toISOString() };
   });
 }

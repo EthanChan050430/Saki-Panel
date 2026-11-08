@@ -38,6 +38,14 @@ export function isCodingTask(text: string): boolean {
   return codingPattern.test(text);
 }
 
+/** Only apply the edit handoff to concrete workspace change requests. */
+export function workspaceEditRequest(text: string): boolean | undefined {
+  if (/不要(?:修改|改动|写入|动代码)|不(?:修改|改动)文件|只(?:查看|检查|分析|审查)|仅(?:查看|检查|分析|审查)|\b(?:read.only|do not (?:edit|modify)|review only|analysis only)\b/i.test(text)) return false;
+  if (/修复|重构|改代码|修改(?:代码|文件|配置|插件|脚本)|新增(?:代码|文件|插件|脚本|功能)|\b(?:fix|implement|refactor|patch|edit)\b/i.test(text)) return true;
+  if (/(?:插件|脚本|代码|模块)[\s\S]{0,260}(?:应该|需要|要求|改成)[\s\S]{0,80}(?:监测|检测|支持|实现|新增|接入)/.test(text)) return true;
+  return undefined;
+}
+
 export function needsInstanceOpsTools(text: string): boolean {
   return opsPattern.test(text);
 }

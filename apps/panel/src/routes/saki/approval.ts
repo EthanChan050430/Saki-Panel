@@ -179,7 +179,7 @@ async function persistDecisionResult(pending: PendingSakiAction, action: SakiAge
     userId: runtime.userId, instanceId, resumeState,
     workingFiles: getRecentWorkingFiles(runtime.userId, instanceId),
     lastGoal: resumeState.input.message, lastSummary: action.observation,
-    todos: extractConfirmedTodos(resumeState.actions, resumeState.scratchpadEntries), updatedAt: Date.now()
+    todos: extractConfirmedTodos(resumeState.actions), updatedAt: Date.now()
   });
 }
 

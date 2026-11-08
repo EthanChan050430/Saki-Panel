@@ -12,6 +12,7 @@ function openDatabase(): Promise<IDBDatabase> {
 }
 
 export async function readCachedConversation(userId: string, id: string): Promise<StoredSakiConversation | undefined> {
+  await tail;
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const request = db.transaction("conversations").objectStore("conversations").get([userId, id]);
@@ -21,19 +22,88 @@ export async function readCachedConversation(userId: string, id: string): Promis
 }
 
 let tail = Promise.resolve();
-let previous = new Map<string, StoredSakiConversation>();
-export function cacheConversations(conversations: StoredSakiConversation[], userId: string, storageKey: string): void {
-  // Only changed message bodies are written. Metadata stays small and can be
-  // read synchronously without parsing every conversation on page startup.
-  const snapshot = conversations.slice(0, 80);
-  tail = tail.catch(() => {}).then(async () => {
+const written = new WeakMap<StoredSakiConversation, string>();
+
+function enqueue<T>(work: () => Promise<T>): Promise<T> {
+  const result = tail.then(work);
+  tail = result.then(() => {}, () => {});
+  return result;
+}
+
+function metadata(conversation: StoredSakiConversation): StoredSakiConversation {
+  return {
+    id: conversation.id, contextKey: conversation.contextKey, workspaceInstanceIds: conversation.workspaceInstanceIds,
+    instanceId: conversation.instanceId ?? null, title: conversation.title, label: conversation.label, detail: conversation.detail,
+    createdAt: conversation.createdAt, updatedAt: conversation.updatedAt, historyBeforeId: conversation.historyBeforeId,
+    messages: [], messagesLoaded: false
+  };
+}
+
+function committed(transaction: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onabort = () => reject(transaction.error ?? new Error("Local history transaction aborted."));
+  });
+}
+
+/** The one-element key is the account's index. Two-element keys store conversation bodies. */
+export function loadConversationIndex(userId: string, legacy: StoredSakiConversation[], storageKey: string, legacyRaw: string | null) {
+  return enqueue(async () => {
     const db = await openDatabase();
-    await new Promise<void>((resolve, reject) => {
-      const transaction = db.transaction("conversations", "readwrite");
-      const store = transaction.objectStore("conversations");
+    const transaction = db.transaction("conversations", "readwrite");
+    const done = committed(transaction);
+    const store = transaction.objectStore("conversations");
+    const request = store.get([userId]);
+    let index: StoredSakiConversation[] = [];
+    let migrated = false;
+    request.onsuccess = () => {
+      if (Array.isArray(request.result)) {
+        index = request.result;
+        return;
+      }
+      migrated = true;
+      index = legacy.map(metadata);
+      const migrateAt = (position: number) => {
+        const conversation = legacy[position];
+        if (!conversation) {
+          store.put(index, [userId]);
+          return;
+        }
+        const key = [userId, conversation.id];
+        const body = store.get(key);
+        body.onsuccess = () => {
+          const cached = body.result as StoredSakiConversation | undefined;
+          if (cached && cached.updatedAt >= conversation.updatedAt) {
+            index[position] = metadata(cached);
+          } else if (conversation.messagesLoaded !== false) {
+            store.put(conversation, key);
+          }
+          migrateAt(position + 1);
+        };
+      };
+      migrateAt(0);
+    };
+    await done;
+    // Preserve anything an older tab wrote while IndexedDB was committing.
+    if (migrated && legacyRaw !== null) {
+      try {
+        if (localStorage.getItem(storageKey) === legacyRaw) localStorage.removeItem(storageKey);
+      } catch {}
+    }
+    return index;
+  });
+}
+
+export function cacheConversations(conversations: StoredSakiConversation[], userId: string, replaceIndex = true): void {
+  const snapshot = conversations.slice(0, 80);
+  void enqueue(async () => {
+    const db = await openDatabase();
+    const transaction = db.transaction("conversations", "readwrite");
+    const done = committed(transaction);
+    const store = transaction.objectStore("conversations");
+    try {
       for (const conversation of snapshot) {
-        const key = `${userId}:${conversation.id}`;
-        if (conversation.messagesLoaded !== false && previous.get(key) !== conversation) {
+        if (conversation.messagesLoaded !== false && written.get(conversation) !== userId) {
           if (conversation.historyBeforeId) {
             const request = store.get([userId, conversation.id]);
             request.onsuccess = () => {
@@ -48,15 +118,27 @@ export function cacheConversations(conversations: StoredSakiConversation[], user
           } else store.put(conversation, [userId, conversation.id]);
         }
       }
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error);
-      transaction.onabort = () => reject(transaction.error);
-    });
-    // Do not replace the legacy local backup until its message bodies are safe.
-    localStorage.setItem(storageKey, JSON.stringify(snapshot.map(conversation => ({ ...conversation, messages: [], messagesLoaded: false }))));
-    previous = new Map(snapshot.filter(item => item.messagesLoaded !== false).map(item => [`${userId}:${item.id}`, item]));
+      const nextIndex = snapshot.map(metadata);
+      if (replaceIndex) {
+        store.put(nextIndex, [userId]);
+      } else {
+        const indexRequest = store.get([userId]);
+        indexRequest.onsuccess = () => {
+          const existing = Array.isArray(indexRequest.result) ? (indexRequest.result as StoredSakiConversation[]) : [];
+          const seen = new Set(nextIndex.map(item => item.id));
+          store.put([...nextIndex, ...existing.filter(item => item && typeof item.id === "string" && !seen.has(item.id))].slice(0, 80), [userId]);
+        };
+      }
+    } catch (error) {
+      transaction.abort();
+      await done.catch(() => {});
+      throw error;
+    }
+    await done;
+    for (const conversation of snapshot) {
+      if (conversation.messagesLoaded !== false) written.set(conversation, userId);
+    }
   }).catch(error => {
-    // Preserve the existing backup on quota/transaction failures.
     console.warn("[Saki] Local history backup failed:", error);
   });
 }
