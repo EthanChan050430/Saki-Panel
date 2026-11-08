@@ -1,4 +1,4 @@
-export const PANEL_VERSION = "6.0";
+export const PANEL_VERSION = "6.1";
 
 export { wrapSakiCommandWithCwd, quoteAgentShellArgument, type AgentShellKind } from "./terminal.js";
 
