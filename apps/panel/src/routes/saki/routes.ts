@@ -190,7 +190,7 @@ async function startSakiTaskUnlocked(request: FastifyRequest, prepared: Awaited<
     return concurrent;
   }
   if (admission && !await admission()) throw new RouteError("队列已暂停，消息已保留。", 409);
-  assertSakiTaskContextAvailable(request.user.sub, instanceId);
+  assertSakiTaskContextAvailable(request.user.sub, instanceId, undefined, context.instances?.map(instance => instance.id));
   const abortController = new AbortController();
   const task = createActiveSakiTask(randomUUID(), request.user.sub, instanceId, effectiveModelInput, abortController);
   if (context.instance) task.workspaceBinding = bindSakiWorkspace(context.instance);

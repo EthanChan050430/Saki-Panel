@@ -7,6 +7,13 @@ export const maxNoProgressTurns = 4;
 export const maxIdenticalOutputTurns = 2;
 export const maxDegenerateRetries = 1;
 
+export function agentInvestigationPressure(previous: number, fresh: number, repeated: number): number {
+  if (fresh > 0 && repeated === 0) return Math.max(0, previous - 1);
+  if (fresh > 0 && repeated <= fresh) return previous;
+  const repeatedBatch = fresh === 0 && repeated > 1;
+  return Math.min(maxNoProgressTurns, previous + (repeatedBatch ? 2 : 1));
+}
+
 export function fingerprintAgentText(text: string): string {
   const cleaned = stripThinking(text).replace(/\s+/g, " ").trim();
   return cleaned ? createHash("sha256").update(cleaned).digest("hex") : "";
@@ -98,7 +105,7 @@ export function stuckOutputMessage(): string {
 
 export function stuckNoProgressMessage(fileReadRecoveryAttempted = false): string {
   if (fileReadRecoveryAttempted) return "文件读取成功。Saki 已尝试复用读取结果继续任务，但仍连续多轮没有新进展，因此暂停了任务。已完成的操作已保留，可以补充具体修改目标或发「继续」。";
-  return `Saki 连续 ${maxNoProgressTurns} 轮未获得新的执行结果，已停止以免空转。重复已有结果、同步任务计划和进度说明不计为实际进展。已完成的操作仍然保留，你可以补充要求或发「继续」。`;
+  return "Saki 多轮返回已有结果，本轮仍没有新证据，因此暂停了任务。已完成的操作仍然保留，你可以补充要求或发「继续」。";
 }
 
 export function stuckFailuresMessage(): string {

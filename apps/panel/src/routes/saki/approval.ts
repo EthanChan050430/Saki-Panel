@@ -94,7 +94,7 @@ async function withTrackedActionDecision(pending: PendingSakiAction, userId: str
   if (!taskId) return work();
   let task = getActiveSakiTaskById(taskId);
   if (task && (task.userId !== userId || task.status === "cancelled" || task.status === "running")) throw new RouteError("Task was cancelled or is already running.", 409);
-  assertSakiTaskContextAvailable(userId, pending.contextInstanceId, taskId);
+  assertSakiTaskContextAvailable(userId, pending.contextInstanceId, taskId, pending.resume?.workspaceBindings?.map(binding => binding.instanceId));
   const controller = new AbortController();
   if (task) restartActiveSakiTask(taskId, controller);
   else task = createActiveSakiTask(taskId, userId, pending.contextInstanceId, pending.resume!.input, controller);

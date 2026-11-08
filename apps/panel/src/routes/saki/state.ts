@@ -418,6 +418,7 @@ export function createActiveSakiTask(
     subscribers: new Set()
   };
   activeSakiTasks.set(taskId, task);
+  // Keep the index as a latest-task pointer for reconnects; it is not an admission lock.
   activeSakiTasksByContext.set(sessionWorkingFilesKey(userId, instanceId), taskId);
   return task;
 }
@@ -449,10 +450,13 @@ export function findSakiTaskByRequest(userId: string, clientRequestId?: string):
   return [...activeSakiTasks.values()].find((task) => task.userId === userId && task.input.clientRequestId === clientRequestId) ?? null;
 }
 
-export function assertSakiTaskContextAvailable(userId: string, instanceId: string | null, exceptTaskId?: string): void {
-  // An idle approval retains its action and resume record, but does not hold
-  // the workspace. Approving it later still checks for an executing task.
-  const conflict = [...activeSakiTasks.values()].find((task) => task.userId === userId && task.instanceId === instanceId && task.id !== exceptTaskId && (task.status === "running" || task.status === "pending_input" || task.execution || task.decisionInFlight));
+export function assertSakiTaskContextAvailable(userId: string, instanceId: string | null, exceptTaskId?: string, workspaceIds: readonly string[] = []): void {
+  const selected = new Set([...(instanceId ? [instanceId] : []), ...workspaceIds]);
+  const conflict = [...activeSakiTasks.values()].find((task) => {
+    if (task.id === exceptTaskId || !(task.status === "running" || task.status === "pending_input" || task.execution || task.decisionInFlight)) return false;
+    const taskWorkspaces = [task.instanceId, ...(task.input.workspaceInstanceIds ?? [])].filter((id): id is string => Boolean(id));
+    return selected.size ? taskWorkspaces.some(id => selected.has(id)) : !taskWorkspaces.length && task.userId === userId;
+  });
   if (conflict) throw new RouteError("此工作区已有正在执行或等待回答的任务，请先连接、处理或停止该任务。", 409);
 }
 
@@ -464,7 +468,7 @@ export function getLatestSakiTask(userId: string, instanceId: string | null): Sa
 export function restartActiveSakiTask(taskId: string, abortController: AbortController): boolean {
   const task = activeSakiTasks.get(taskId);
   if (!task || task.status === "cancelled" || task.status === "running") return false;
-  assertSakiTaskContextAvailable(task.userId, task.instanceId, task.id);
+  assertSakiTaskContextAvailable(task.userId, task.instanceId, task.id, task.input.workspaceInstanceIds);
   task.status = "running";
   task.runVersion = (task.runVersion ?? 1) + 1;
   task.acceptingSteers = true;

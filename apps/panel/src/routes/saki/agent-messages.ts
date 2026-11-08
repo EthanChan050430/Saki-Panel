@@ -372,15 +372,25 @@ export function appendAgentToolObservation(messages: SakiAgentTurnMessage[], mes
   messages.push(message);
 }
 
+const internalScratchpadNotePattern = /^(?:\[(?:Compacted execution history|No new evidence this turn|No progress|Repeated investigation|Repeated observation|Recover from repeated (?:file reads|investigation)|Self-Healing (?:Alert|Guidance)|Diagnostics|Completion check|Long task continuation|Output truncated|Loop breaker|Context overflow recovery)\b|Assistant visible note:|System correction:|If the error is caused by missing permission, blocked safety policy, or missing active instance)/;
+
+function isInternalAgentScratchpadNote(content: string): boolean {
+  return internalScratchpadNotePattern.test(content.trim());
+}
+
 export function compactAgentTurnMessages(messages: SakiAgentTurnMessage[], maxChars = 60000): SakiAgentTurnMessage[] {
   const sizeOf = (message: SakiAgentTurnMessage) => message.content.length
     + (message.images?.length ?? 0) * 2000
     + (message.toolCalls ? JSON.stringify(message.toolCalls).length : 0)
     + (message.assistantState ? JSON.stringify(message.assistantState).length : 0);
-  if (messages.reduce((sum, message) => sum + sizeOf(message), 0) <= maxChars) return messages;
+  const initialFirstSize = messages.length ? sizeOf(messages[0]!) : 0;
+  const budgetChars = maxChars >= 60000 && initialFirstSize > 2000
+    ? maxChars + Math.min(initialFirstSize, 40000)
+    : maxChars;
+  if (messages.reduce((sum, message) => sum + sizeOf(message), 0) <= budgetChars) return messages;
   // Leave headroom so a small new observation does not rewrite the cached
   // history again on every turn. Protected messages can exceed this target.
-  const targetChars = Math.floor(maxChars * 0.75);
+  const targetChars = Math.floor(budgetChars * 0.75);
   const observations = new Map(messages.filter((message) => message.role === "tool" && !message.toolResultReference)
     .map((message) => [message.toolCallId, message.content]));
   messages = messages.map((message) => {
@@ -396,10 +406,16 @@ export function compactAgentTurnMessages(messages: SakiAgentTurnMessage[], maxCh
     const head = Math.ceil(available * 0.65);
     return content.slice(0, head) + marker + content.slice(-(available - head));
   };
+  const assistantTurnsAfter = new Array<number>(messages.length).fill(0);
+  let seenAssistants = 0;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    assistantTurnsAfter[index] = seenAssistants;
+    if (messages[index]?.role === "assistant") seenAssistants += 1;
+  }
   const compacted = messages.map((message, index) => {
     if (message.role !== "tool" || message.content.length < 800 || message.name?.toLowerCase() === "askuser") return message;
-    const fromEnd = messages.length - index;
-    const limit = fromEnd <= 2 ? 28000 : fromEnd <= 6 ? 2500 : 500;
+    const turnsAfter = assistantTurnsAfter[index] ?? 0;
+    const limit = turnsAfter === 0 ? 28000 : turnsAfter <= 2 ? (budgetChars >= 30000 ? 16000 : 2500) : turnsAfter <= 4 ? 2500 : 600;
     if (message.content.length <= limit) return message;
     return {
       ...message,
@@ -422,7 +438,7 @@ export function compactAgentTurnMessages(messages: SakiAgentTurnMessage[], maxCh
   const summaries: string[] = [];
   const firstSize = sizeOf(first);
   const progressPreface = progressPrefaceFromMessages(messages, messages.find((message) => message.role === "user")?.content ?? "");
-  const memoryBudget = Math.max(400, Math.min(8000, Math.floor(maxChars / 3), maxChars - firstSize - progressPreface.length - 300));
+  const memoryBudget = Math.max(400, Math.min(8000, Math.floor(budgetChars / 3), budgetChars - firstSize - progressPreface.length - 300));
   const summary = (): SakiAgentTurnMessage => ({ role: "user", content: `[Compacted execution history — continue from verified results]\n${progressPreface}\n${summaries.slice(-20).join("\n").slice(-memoryBudget)}` });
   const remember = (text: string) => {
     summaries.push(text);
@@ -440,17 +456,35 @@ export function compactAgentTurnMessages(messages: SakiAgentTurnMessage[], maxCh
       remainingSize -= group.size;
     }
   }
-  for (let cursor = 0; cursor <= groups.length; cursor++) {
-    const limit = cursor === groups.length ? maxChars : targetChars;
-    if (remainingSize + (summaries.length ? summary().content.length : 0) <= limit) break;
-    const index = cursor === groups.length ? lastAssistant : cursor;
-    if (index < 0 || (index === lastAssistant && cursor !== groups.length)) continue;
-    const group = groups[index]!;
+  for (let cursor = 0; cursor < groups.length; cursor++) {
+    if (remainingSize + (summaries.length ? summary().content.length : 0) <= targetChars) break;
+    if (cursor === lastAssistant) continue;
+    const group = groups[cursor]!;
     if (!group.keep) continue;
-    if (group.messages[0]?.role !== "assistant" || group.messages.some((message) => message.name?.toLowerCase() === "askuser")) continue;
-    const calls = group.messages[0]?.toolCalls ?? [];
+    const lead = group.messages[0];
+    if (group.messages.length === 1 && lead?.role === "user" && cursor < lastAssistant && isInternalAgentScratchpadNote(lead.content)) {
+      group.keep = false;
+      remainingSize -= group.size;
+      continue;
+    }
+    if (lead?.role !== "assistant" || group.messages.some((message) => message.name?.toLowerCase() === "askuser")) continue;
+    const calls = lead.toolCalls ?? [];
     const confirmed = new Set(group.messages.filter((message) => message.role === "tool").map((message) => message.toolCallId));
     if (calls.some((call) => !call.id || !confirmed.has(call.id))) continue;
+    if (budgetChars >= 30000 && lastAssistant > cursor && lastAssistant - cursor <= 2) {
+      let saved = 0;
+      group.messages = group.messages.map((message) => {
+        if (message.role !== "tool" || message.content.length <= 4500 || message.name?.toLowerCase() === "askuser") return message;
+        const shortened = excerpt(message.content, 4500);
+        saved += message.content.length - shortened.length;
+        return { ...message, content: shortened };
+      });
+      if (saved > 0) {
+        group.size -= saved;
+        remainingSize -= saved;
+        if (remainingSize + (summaries.length ? summary().content.length : 0) <= targetChars) break;
+      }
+    }
     group.keep = false;
     remainingSize -= group.size;
     for (const message of group.messages) {
@@ -467,5 +501,22 @@ export function compactAgentTurnMessages(messages: SakiAgentTurnMessage[], maxCh
       }
     }
   }
-  return [first, ...(summaries.length ? [summary()] : []), ...groups.filter((group) => group.keep).flatMap((group) => group.messages)];
+  const result = [first, ...(summaries.length ? [summary()] : []), ...groups.filter((group) => group.keep).flatMap((group) => group.messages)];
+  if (result.reduce((sum, message) => sum + sizeOf(message), 0) <= budgetChars) return result;
+
+  // Keep the current tool-call group valid and share the remaining budget
+  // across its results. Omitted ranges remain available for targeted re-read.
+  let lastAssistantIndex = -1;
+  for (let index = 0; index < result.length; index++) {
+    if (result[index]?.role === "assistant") lastAssistantIndex = index;
+  }
+  const candidates = result.slice(lastAssistantIndex + 1).filter(message => message.role === "tool"
+    && message.name?.toLowerCase() !== "askuser" && message.content.length > 400);
+  if (!candidates.length) return result;
+  const candidateChars = candidates.reduce((sum, message) => sum + message.content.length, 0);
+  const fixedChars = result.reduce((sum, message) => sum + sizeOf(message), 0) - candidateChars;
+  const perResult = Math.max(400, Math.floor((budgetChars - fixedChars) / candidates.length));
+  const candidateSet = new Set(candidates);
+  return result.map(message => candidateSet.has(message) && message.content.length > perResult
+    ? { ...message, content: excerpt(message.content, perResult) } : message);
 }
