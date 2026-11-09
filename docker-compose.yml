@@ -55,9 +55,9 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
       args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://chengyuxuan.top:5478}
     ports:
-      - "5478:80"
+      - "5478:443"
     volumes:
       - /etc/apache2/ssl/chengyuxuan:/etc/nginx/ssl:ro
     depends_on:
