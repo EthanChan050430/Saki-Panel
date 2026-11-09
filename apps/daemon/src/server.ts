@@ -79,6 +79,7 @@ export async function createDaemonServer() {
   // other errors are treated as 500s. Production mode hides raw messages.
   const isProd = process.env.NODE_ENV?.toLowerCase() === "production";
   app.setErrorHandler((error: unknown, _request, reply) => {
+    if (reply.sent) return;
     error = normalizeDaemonFileError(error);
     if (isDaemonError(error)) {
       const status = error.httpStatus;
@@ -90,26 +91,27 @@ export async function createDaemonServer() {
         body.message = error.message;
       } else {
         // Production clients still need *some* clue; hint is safe.
-        if (error.hint) body.message = error.hint;
+        body.message = error.hint || error.message;
       }
       reply.code(status).send(body);
       return;
     }
 
-    // Unknown / unexpected errors → always log, always return generic.
-    // Extract statusCode from Fastify's default wrapped errors (e.g. validation).
-    const statusCode =
+    // Unknown / unexpected errors → log the details and return a useful diagnostic.
+    // The daemon is only reachable by an authenticated panel request, so hiding
+    // the underlying message makes command and filesystem failures impossible
+    // to diagnose from the UI.
+    const rawStatusCode =
       typeof error === "object" && error !== null && "statusCode" in error && typeof error.statusCode === "number"
         ? error.statusCode
         : 500;
-    if (isProd) {
-      reply.code(statusCode).send({ code: "INTERNAL_ERROR", message: statusCode >= 500 ? "Internal Server Error" : "Bad Request" });
-    } else {
-      reply.code(statusCode).send({
-        code: "INTERNAL_ERROR",
-        message: error instanceof Error ? error.message : "Unknown error"
-      });
-    }
+    const statusCode = rawStatusCode >= 400 && rawStatusCode < 600 ? rawStatusCode : 500;
+    const message = error instanceof Error ? error.message : "Unknown error";
+    app.log.error({ err: error }, "Unhandled daemon request error");
+    reply.code(statusCode).send({
+      code: statusCode >= 500 ? "INTERNAL_ERROR" : "BAD_REQUEST",
+      message
+    });
   });
 
   return app;

@@ -395,7 +395,22 @@ function createInteractiveShellPty(instanceId: string, cwd: string, label?: stri
       shellArgs = [];
     }
   } else {
-    shellCmd = process.env.SHELL && path.isAbsolute(process.env.SHELL) ? process.env.SHELL : "/bin/bash";
+    const posixShellCandidates = [
+      process.env.SHELL,
+      "/bin/bash",
+      "/usr/bin/bash",
+      "/bin/sh",
+      "/usr/bin/sh"
+    ].filter((candidate): candidate is string => Boolean(candidate && (path.isAbsolute(candidate) || path.posix.isAbsolute(candidate))));
+    shellCmd = posixShellCandidates.find((candidate) => {
+      try {
+        return fsSync.existsSync(candidate);
+      } catch {
+        return false;
+      }
+    }) || "/bin/sh";
+    // Alpine-based images normally provide /bin/sh but not bash. Keep the
+    // login/interactive flags compatible with both shells.
     shellArgs = ["-i", "-l"];
   }
 
