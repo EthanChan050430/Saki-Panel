@@ -1,4 +1,7 @@
 export function sakiChatErrorMessage(message: string, status: number): string {
+  if (status === 402) {
+    return "积分不足，无法使用 Saki。请联系管理员充值后再试。";
+  }
   // Older production panels replace deliberate conflict reasons with this
   // generic message. Keep useful server messages when they are available.
   if (status === 409 && /^(bad request|conflict|request failed with 409)$/i.test(message.trim())) {
