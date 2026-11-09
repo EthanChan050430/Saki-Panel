@@ -10,10 +10,8 @@ RUN npm run build -w @webops/shared && npm run build -w @webops/daemon
 FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production
-RUN apk add --no-cache git
-RUN git config --system --add safe.directory /var/www/mainpage \
-    && git config --system --add safe.directory /var/www/saki-web \
-    && git config --system --add safe.directory /workspace
+RUN apk add --no-cache git \
+    && git config --system --add safe.directory "*"
 COPY package.json package-lock.json ./
 COPY packages ./packages
 COPY apps/daemon/package.json ./apps/daemon/package.json

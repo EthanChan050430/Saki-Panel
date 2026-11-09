@@ -62,6 +62,8 @@ async function git(
       "git",
       [
         "--no-pager",
+        "-c",
+        "safe.directory=*",
         ...(args[0] === "stash" ? [] : ["--literal-pathspecs"]),
         "-c",
         "core.hooksPath=/dev/null",
