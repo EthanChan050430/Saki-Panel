@@ -1831,7 +1831,7 @@ export function sakiModelSupportsVision(modelId: string, provider?: string): boo
   if (/(^|[^a-z0-9])(vl|vqa|vision|multimodal)([^a-z0-9]|$)/i.test(haystack)) return true;
   if (/(pixtral|llava|moondream|minicpm-v|internvl|cogvlm|visualglm|qvq)/i.test(haystack)) return true;
   if (
-    /(gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-4-vision|gpt-4\.5|gpt-5|chatgpt-|claude-3|claude-4|claude-sonnet|claude-opus|claude-haiku|gemini|gemma-3|grok-4|grok-2-vision|llama-?4)/i.test(
+    /(gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-4-vision|gpt-4\.5|gpt-5|gpt-6|chatgpt-|kimi-k\d|claude-3|claude-4|claude-sonnet|claude-opus|claude-haiku|gemini|gemma-3|grok-4|grok-2-vision|llama-?4)/i.test(
       haystack
     )
   ) {

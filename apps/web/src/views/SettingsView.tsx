@@ -884,6 +884,9 @@ export function SettingsView({
         })
       ]);
       setForm(saved);
+      window.dispatchEvent(new CustomEvent("saki:default_permission_updated", {
+        detail: { mode: saved.defaultAgentPermissionMode }
+      }));
       setSessionTimeoutMinutes(formatSessionTimeoutMinutes(savedSessionSettings.sessionTimeoutMinutes));
       setRegistrationIdentity(savedSessionSettings.registrationIdentity);
       onAppearanceChange(saved.appearance);

@@ -148,6 +148,9 @@ export function effectiveSakiTerminalSandbox(
   input?: Pick<SakiChatRequest, "terminalSandbox"> | null,
   config?: { allowCrossInstanceEnforcement?: boolean } | null
 ): boolean {
+  if (config?.allowCrossInstanceEnforcement === true) {
+    return false;
+  }
   if (input?.terminalSandbox !== undefined) {
     return Boolean(input.terminalSandbox);
   }

@@ -462,6 +462,16 @@ export function SakiFloatingChat({
   const [mode, setMode] = useState<SakiChatMode>(() => coerceSakiMode("agent", canUseChat, canUseAgent));
   const [permissionMode, setPermissionMode] = useState<SakiAgentPermissionMode>(defaultSakiAgentPermissionMode);
   const defaultPermissionModeRef = useRef(defaultSakiAgentPermissionMode);
+  useEffect(() => {
+    const handleDefaultPermissionUpdated = (event: Event) => {
+      const mode = (event as CustomEvent<{ mode?: SakiAgentPermissionMode }>).detail?.mode;
+      if (!mode) return;
+      defaultPermissionModeRef.current = mode;
+      if (!hasPersistableSakiSpeech(messagesRef.current)) setPermissionMode(mode);
+    };
+    window.addEventListener("saki:default_permission_updated", handleDefaultPermissionUpdated);
+    return () => window.removeEventListener("saki:default_permission_updated", handleDefaultPermissionUpdated);
+  }, []);
   const [terminalSandbox, setTerminalSandbox] = useState<boolean>(() => {
     try {
       return localStorage.getItem("saki:terminal_sandbox") !== "false";

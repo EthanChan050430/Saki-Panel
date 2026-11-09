@@ -1000,6 +1000,16 @@ export function DashboardView({
   const defaultAgentPermissionRef = useRef<SakiAgentPermissionMode>("acceptEdits");
   const permissionSelectedRef = useRef(false);
   useEffect(() => {
+    const handleDefaultPermissionUpdated = (event: Event) => {
+      const mode = (event as CustomEvent<{ mode?: SakiAgentPermissionMode }>).detail?.mode;
+      if (!mode) return;
+      defaultAgentPermissionRef.current = mode;
+      if (!activeSessionId && !permissionSelectedRef.current) setAgentPermission(mode);
+    };
+    window.addEventListener("saki:default_permission_updated", handleDefaultPermissionUpdated);
+    return () => window.removeEventListener("saki:default_permission_updated", handleDefaultPermissionUpdated);
+  }, [activeSessionId]);
+  useEffect(() => {
     if (activeSessionId) return;
     permissionSelectedRef.current = false;
     setAgentPermission(defaultAgentPermissionRef.current);
