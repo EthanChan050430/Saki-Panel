@@ -112,7 +112,52 @@ export function copilotTokenFromConfig(config: SakiConfigResponse, includeActive
   return savedToken;
 }
 
+// The Copilot CLI runs as a separate process (roughly 150-300 MB). Sessions
+// are created per request and disconnected afterwards, so once no request is
+// using the client for a while, stop the process; the next request restarts it.
+const DEFAULT_COPILOT_IDLE_MS = 10 * 60 * 1000;
+let copilotActiveUses = 0;
+let copilotIdleTimer: ReturnType<typeof setTimeout> | null = null;
+
+function copilotIdleMs(): number {
+  const raw = Number(process.env.SAKI_COPILOT_IDLE_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_COPILOT_IDLE_MS;
+}
+
+function clearCopilotIdleTimer(): void {
+  if (copilotIdleTimer) {
+    clearTimeout(copilotIdleTimer);
+    copilotIdleTimer = null;
+  }
+}
+
+function scheduleCopilotIdleRelease(): void {
+  clearCopilotIdleTimer();
+  if (!copilotClient) return;
+  const idleMs = copilotIdleMs();
+  copilotIdleTimer = setTimeout(() => {
+    copilotIdleTimer = null;
+    if (copilotActiveUses > 0 || copilotClientPromise) return;
+    logSakiModelEvent("copilot.client-idle-release", { idleMs });
+    void resetCopilotClient();
+  }, idleMs);
+  copilotIdleTimer.unref?.();
+}
+
+/** Marks the Copilot client as in use for the duration of `fn` so the idle release cannot stop it mid-request. */
+async function withCopilotUse<T>(fn: () => Promise<T>): Promise<T> {
+  copilotActiveUses += 1;
+  clearCopilotIdleTimer();
+  try {
+    return await fn();
+  } finally {
+    copilotActiveUses -= 1;
+    if (copilotActiveUses === 0) scheduleCopilotIdleRelease();
+  }
+}
+
 export async function resetCopilotClient(): Promise<void> {
+  clearCopilotIdleTimer();
   const client = copilotClient;
   copilotClient = null;
   copilotClientPromise = null;
@@ -190,8 +235,10 @@ export function copilotModelOptionFromInfo(model: ModelInfo): SakiModelOption | 
 
 export async function fetchCopilotModelCatalog(config: SakiConfigResponse): Promise<SakiModelOption[]> {
   try {
-    const client = await getCopilotClient(copilotTokenFromConfig(config, true));
-    const models = await client.listModels();
+    const models = await withCopilotUse(async () => {
+      const client = await getCopilotClient(copilotTokenFromConfig(config, true));
+      return client.listModels();
+    });
     return uniqueModels(
       models
         .map(copilotModelOptionFromInfo)
@@ -447,25 +494,27 @@ export async function readCopilotAuthStatus(): Promise<SakiCopilotAuthStatusResp
     // Account metadata is optional; the model endpoint below validates Copilot access.
   }
   try {
-    const client = await getCopilotClient(token);
-    result.available = true;
-    const status = await client.getAuthStatus();
-    if (status.authType) result.authType = status.authType;
-    if (status.host) result.host = status.host;
-    if (status.login) result.login = status.login;
-    if (!status.isAuthenticated) {
-      return { ...result, message: copilotErrorMessage(new Error(status.statusMessage || "Copilot 尚未认证，请重新登录 GitHub。"), token) };
-    }
-    const models = await client.listModels();
-    if (!models.some((model) => copilotModelOptionFromInfo(model))) {
-      return { ...result, message: "Copilot 没有可用模型，请检查 Copilot 许可和模型访问策略。" };
-    }
-    return {
-      ...result,
-      authenticated: true,
-      githubAuthenticated: true,
-      message: "Copilot 模型接口验证通过。"
-    };
+    return await withCopilotUse(async () => {
+      const client = await getCopilotClient(token);
+      result.available = true;
+      const status = await client.getAuthStatus();
+      if (status.authType) result.authType = status.authType;
+      if (status.host) result.host = status.host;
+      if (status.login) result.login = status.login;
+      if (!status.isAuthenticated) {
+        return { ...result, message: copilotErrorMessage(new Error(status.statusMessage || "Copilot 尚未认证，请重新登录 GitHub。"), token) };
+      }
+      const models = await client.listModels();
+      if (!models.some((model) => copilotModelOptionFromInfo(model))) {
+        return { ...result, message: "Copilot 没有可用模型，请检查 Copilot 许可和模型访问策略。" };
+      }
+      return {
+        ...result,
+        authenticated: true,
+        githubAuthenticated: true,
+        message: "Copilot 模型接口验证通过。"
+      };
+    });
   } catch (error) {
     return {
       ...result,
@@ -544,7 +593,7 @@ export async function createCopilotSession(config: SakiConfigResponse, streaming
   return client.createSession(copilotSessionConfig(config, streaming, tools));
 }
 
-export async function callCopilotSdkModel(config: SakiConfigResponse, input: SakiChatRequest, prompt: string): Promise<string> {
+async function callCopilotSdkModelUnleased(config: SakiConfigResponse, input: SakiChatRequest, prompt: string): Promise<string> {
   let session: Awaited<ReturnType<typeof createCopilotSession>> | null = null;
   try {
     session = await createCopilotSession(config, false);
@@ -565,7 +614,7 @@ export async function callCopilotSdkModel(config: SakiConfigResponse, input: Sak
   }
 }
 
-export async function callCopilotSdkModelStream(
+async function callCopilotSdkModelStreamUnleased(
   config: SakiConfigResponse,
   input: SakiChatRequest,
   prompt: string,
@@ -598,7 +647,7 @@ export async function callCopilotSdkModelStream(
   }
 }
 
-export async function callCopilotSdkAgentTurn(
+async function callCopilotSdkAgentTurnUnleased(
   config: SakiConfigResponse,
   input: SakiChatRequest,
   prompt: string,
@@ -617,4 +666,16 @@ export async function callCopilotSdkAgentTurn(
     if (error instanceof RouteError || (error instanceof Error && error.name === "AbortError")) throw error;
     throw new RouteError(copilotErrorMessage(error, copilotTokenFromConfig(config, true)), 502);
   }
+}
+
+export async function callCopilotSdkModel(...args: Parameters<typeof callCopilotSdkModelUnleased>): Promise<string> {
+  return withCopilotUse(() => callCopilotSdkModelUnleased(...args));
+}
+
+export async function callCopilotSdkModelStream(...args: Parameters<typeof callCopilotSdkModelStreamUnleased>): Promise<string> {
+  return withCopilotUse(() => callCopilotSdkModelStreamUnleased(...args));
+}
+
+export async function callCopilotSdkAgentTurn(...args: Parameters<typeof callCopilotSdkAgentTurnUnleased>): Promise<SakiModelToolTurn> {
+  return withCopilotUse(() => callCopilotSdkAgentTurnUnleased(...args));
 }

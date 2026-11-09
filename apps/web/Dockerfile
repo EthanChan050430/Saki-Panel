@@ -11,4 +11,5 @@ RUN npm run build -w @webops/shared && npm run build -w @webops/web
 
 FROM nginx:1.27-alpine
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
-EXPOSE 80
+COPY apps/web/nginx-https.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80 443

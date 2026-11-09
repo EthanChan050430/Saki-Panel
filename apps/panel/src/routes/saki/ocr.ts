@@ -13,6 +13,38 @@ type TesseractWorker = {
 
 let workerPromise: Promise<TesseractWorker> | null = null;
 let ocrQueue: Promise<void> = Promise.resolve();
+let pendingOcrJobs = 0;
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+// The Tesseract worker holds the WASM engine and language data (roughly
+// 150-300 MB). Release it after a quiet period so small servers get the
+// memory back; the next image recreates it on demand.
+const DEFAULT_OCR_IDLE_MS = 5 * 60 * 1000;
+
+function ocrIdleMs(): number {
+  const raw = Number(process.env.SAKI_OCR_IDLE_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_OCR_IDLE_MS;
+}
+
+function clearIdleTimer(): void {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+}
+
+function scheduleIdleRelease(): void {
+  clearIdleTimer();
+  if (!workerPromise) return;
+  const idleMs = ocrIdleMs();
+  idleTimer = setTimeout(() => {
+    idleTimer = null;
+    if (pendingOcrJobs > 0) return;
+    logSakiModelEvent("chat.ocr.worker-idle-release", { idleMs });
+    void terminateSakiOcrWorker();
+  }, idleMs);
+  idleTimer.unref?.();
+}
 
 async function createOcrWorker(): Promise<TesseractWorker> {
   const { createWorker } = await import("tesseract.js");
@@ -27,6 +59,7 @@ async function createOcrWorker(): Promise<TesseractWorker> {
 }
 
 export async function terminateSakiOcrWorker(): Promise<void> {
+  clearIdleTimer();
   const pending = workerPromise;
   workerPromise = null;
   if (!pending) return;
@@ -56,6 +89,8 @@ export async function ocrSakiImageDataUrl(dataUrl: string): Promise<string> {
     const result = await worker.recognize(dataUrl);
     text = (result.data.text || "").replace(/\u00a0/g, " ").trim();
   };
+  pendingOcrJobs += 1;
+  clearIdleTimer();
   ocrQueue = ocrQueue.then(run, run);
   try {
     await ocrQueue;
@@ -64,6 +99,9 @@ export async function ocrSakiImageDataUrl(dataUrl: string): Promise<string> {
       error: error instanceof Error ? error.message : String(error)
     });
     return "";
+  } finally {
+    pendingOcrJobs -= 1;
+    if (pendingOcrJobs === 0) scheduleIdleRelease();
   }
   return text;
 }
