@@ -20,39 +20,6 @@
   position: relative;
 }
 
-@media (max-width: 1100px) {
-  .instance-master-layout {
-    grid-template-columns: minmax(0, 1fr);
-    height: auto;
-    min-height: 0;
-    max-width: 100%;
-    min-width: 0;
-    overflow-x: hidden;
-  }
-
-  .instance-terminal-col {
-    height: auto;
-    min-height: 0;
-    max-width: 100%;
-    min-width: 0;
-  }
-
-  .instance-terminal-box {
-    height: clamp(380px, 52vh, 560px);
-    min-height: 340px;
-    border-radius: 18px;
-    max-width: 100%;
-    min-width: 0;
-  }
-
-  .instance-sidebar-col {
-    height: auto;
-    overflow: visible;
-    max-width: 100%;
-    min-width: 0;
-  }
-}
-
 /* --- Left Column: Terminal Panel --- */
 .instance-terminal-col {
   display: flex;
@@ -81,6 +48,44 @@
   border: 1px solid rgba(255, 255, 255, 0.75);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.95);
   transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Single-column tablet layout. It must come after the base column/box rules:
+   with equal specificity the later rule wins, and the base `height: 100%;
+   min-height: 0` would otherwise collapse the terminal to 0px under an
+   auto-height parent, leaving the instance page blank between 901-1100px. */
+@media (max-width: 1100px) {
+  .instance-master-layout {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+    min-height: 0;
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
+  }
+
+  .instance-terminal-col {
+    height: auto;
+    min-height: 0;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .instance-terminal-box {
+    flex: 0 0 auto;
+    height: clamp(380px, 52vh, 560px);
+    min-height: 340px;
+    border-radius: 18px;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .instance-sidebar-col {
+    height: auto;
+    overflow: visible;
+    max-width: 100%;
+    min-width: 0;
+  }
 }
 
 [data-theme="dark"] .instance-terminal-box {

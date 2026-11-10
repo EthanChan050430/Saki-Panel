@@ -206,7 +206,12 @@
     height: auto;
     min-height: 0;
   }
+  /* The base rule sets flex:1 1 0 for the full-height two-column layout. Under
+     an auto-height column that basis resolves to 0px, and this element's
+     `overflow: hidden auto` then clips the whole workspace: the SSH page
+     rendered blank between 901 and 1100px. Let it size to its content. */
   .ssh-server-workspace .instance-master-layout {
+    flex: 0 0 auto;
     height: auto;
     min-height: 0;
   }

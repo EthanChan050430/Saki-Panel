@@ -94,22 +94,23 @@ export function registerGlobalEventSocket(app: FastifyInstance): void {
       : (typeof queryToken === "string" ? queryToken : "");
 
     // Verify JWT — use fastify's built-in jwt instance if present.
-    const jwt = app.jwt as undefined | { verify: (t: string) => Promise<unknown> };
+    // @fastify/jwt's verify returns the payload synchronously (or throws), it
+    // is not a promise; calling .then() on it rejected every events socket.
+    const jwt = app.jwt as undefined | { verify: (t: string) => unknown };
     if (!rawToken || !jwt) {
       socket.close(1008, "auth required");
       return;
     }
-    jwt.verify(rawToken)
-      .then((payload) => {
-        if (!payload) { socket.close(1008, "invalid token"); return; }
-        const sub = (payload as { sub?: unknown }).sub;
-        const detach = globalEventBus.registerSocket(socket, typeof sub === "string" ? sub : undefined);
-        socket.on("close", detach);
-        socket.on("error", detach);
-        socket.send(JSON.stringify({ type: "HELLO", timestamp: Date.now() }));
-      })
-      .catch(() => {
-        socket.close(1008, "invalid token");
-      });
+    try {
+      const payload = jwt.verify(rawToken);
+      if (!payload) { socket.close(1008, "invalid token"); return; }
+      const sub = (payload as { sub?: unknown }).sub;
+      const detach = globalEventBus.registerSocket(socket, typeof sub === "string" ? sub : undefined);
+      socket.on("close", detach);
+      socket.on("error", detach);
+      socket.send(JSON.stringify({ type: "HELLO", timestamp: Date.now() }));
+    } catch {
+      socket.close(1008, "invalid token");
+    }
   });
 }
