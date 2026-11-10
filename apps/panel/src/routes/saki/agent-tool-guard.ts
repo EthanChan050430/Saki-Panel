@@ -20,12 +20,42 @@ export function agentToolExecutionSignature(tool: string, args: Record<string, u
 const jsonLoad = String.raw`json\.load\(open\(['"][\w./-]+\.json['"]\)\)`;
 const pythonJsonRead = new RegExp(String.raw`^import json\s*;\s*(?:${jsonLoad}(?:\s*;\s*print\(['"][\w -]+['"]\))?|print\(${jsonLoad}(?:\[['"][\w-]+['"]\])?\))\s*;?$`);
 
+const exitStatusPlaceholder = "__SAKI_EXIT_STATUS__";
+
+/**
+ * Models usually run checks as `npm test 2>&1` or `npm test; echo "exit=$?"`.
+ * The literal shell parser rejects both forms, so normalize them first:
+ * merging stderr never changes an exit code, and an echoed `$?` makes the
+ * check's exit code visible in the output (judged by echoedVerificationFailed).
+ */
+function verificationSegments(command: string) {
+  const normalized = command
+    .replace(/(^|[^\S\n])2>&1(?=[\s;&|)]|$)/g, "$1")
+    .replace(/\$\{?\?\}?/g, exitStatusPlaceholder);
+  return literalPosixReadSegments(normalized);
+}
+
+function isExitStatusEcho(words: readonly string[] | undefined): boolean {
+  return words?.[0] === "echo" && words.slice(1).some(word => word.includes(exitStatusPlaceholder));
+}
+
+/** A non-zero status printed by the check's own `echo` means it failed. */
+export function echoedVerificationFailed(observation: string): boolean {
+  for (const match of observation.matchAll(/\b(?:exit|status|rc)(?:[ _-]?code)?\s*[=:]\s*(-?\d+)\b/gi)) {
+    if (Number(match[1]) !== 0) return true;
+  }
+  return false;
+}
+
 export function isAgentVerificationCommand(command: string): boolean {
-  const segments = literalPosixReadSegments(command);
+  const segments = verificationSegments(command);
   if (!segments?.length) return false;
   return segments.some(({ words }, index) => {
-    // A later command must not be able to hide a failing check's exit code.
-    if (segments.slice(index, -1).some(segment => segment.separator !== "&&")) return false;
+    if (isExitStatusEcho(words)) return false;
+    // A later command must not be able to hide a failing check's exit code,
+    // unless the check's own status is echoed right after it.
+    const echoed = segments[index]?.separator === ";" && isExitStatusEcho(segments[index + 1]?.words);
+    if (!echoed && segments.slice(index, -1).some(segment => segment.separator !== "&&")) return false;
     const [raw, ...args] = words;
     let program = raw?.split(/[\\/]/).at(-1)?.toLowerCase().replace(/\.(?:exe|cmd|bat)$/, "");
     if (program === "npx" || program === "bunx") program = args.shift()?.toLowerCase();

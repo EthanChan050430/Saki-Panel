@@ -49,5 +49,10 @@ export function shellCommandSubmission(kind: AgentShellKind, cwd: string, comman
     return `echo. & echo ${marker}:BEGIN\r${wrapped.replace(/\r?\n/g, "\r")}\recho. & echo ${marker}:%ERRORLEVEL%:END\r`;
   }
   const quoted = `'${wrapped.replace(/'/g, "'\\''")}'`;
-  return `printf '\\n%s:BEGIN\\n' '${marker}'; eval ${quoted}; __saki_exit=$?; printf '\\n%s:%s:END\\n' '${marker}' "$__saki_exit"\n`;
+  // `command eval` matters under POSIX sh (dash, BusyBox): a command containing
+  // a syntax error or a non-POSIX expansion such as ${PIPESTATUS[0]} aborts the
+  // whole script with a bare `eval`, so the END marker never prints and the
+  // call hangs until it times out. A command prefix keeps the error contained,
+  // preserves cwd/variables for valid commands, and still returns its status.
+  return `printf '\\n%s:BEGIN\\n' '${marker}'; command eval ${quoted}; __saki_exit=$?; printf '\\n%s:%s:END\\n' '${marker}' "$__saki_exit"\n`;
 }

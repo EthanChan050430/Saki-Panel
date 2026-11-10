@@ -72,7 +72,7 @@ import {
   stuckOutputMessage
 } from "./agent-guard.js";
 import { bootstrapAgentSkills } from "./skills.js";
-import { AgentToolLoopGuard, agentChecklistSignature, agentFileReadRecovery, agentFileReadWindow, agentPythonVerificationTarget, agentToolExecutionSignature, isAgentChecklistTool, isAgentVerificationCommand, turnMessagesHaveFileRange } from "./agent-tool-guard.js";
+import { AgentToolLoopGuard, agentChecklistSignature, agentFileReadRecovery, agentFileReadWindow, agentPythonVerificationTarget, agentToolExecutionSignature, echoedVerificationFailed, isAgentChecklistTool, isAgentVerificationCommand, turnMessagesHaveFileRange } from "./agent-tool-guard.js";
 import { agentBudgetStopMessage, agentContinuationCheckpointLoops, agentRunBudgets } from "./agent-run-policy.js";
 import {
   completedSakiActions,
@@ -1223,7 +1223,8 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
         && isAgentVerificationCommand(String(item.args.command ?? "")));
     });
     if (!verification) return { key: "verification", detail: "The latest edit has not been verified. Run an appropriate diagnostic, build, or targeted test. If verification is unavailable, state the concrete limitation." };
-    if (!verification.ok) return { key: "verification", detail: `The last verification failed: ${verification.observation.slice(0, 1600)}\nRepair the failure and verify again before claiming completion. If blocked, report the specific blocker.` };
+    // A check run with `; echo "exit=$?"` reports its real status in the output.
+    if (!verification.ok || echoedVerificationFailed(verification.observation)) return { key: "verification", detail: `The last verification failed: ${verification.observation.slice(0, 1600)}\nRepair the failure and verify again before claiming completion. If blocked, report the specific blocker.` };
   };
 
   const handleToolResult = async (result: ToolResult, deferPromptRebuild = false): Promise<SakiChatResponse | null> => {
