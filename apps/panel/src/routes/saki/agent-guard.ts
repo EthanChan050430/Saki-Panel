@@ -8,6 +8,9 @@ export const maxIdenticalOutputTurns = 2;
 export const maxDegenerateRetries = 1;
 
 export function agentInvestigationPressure(previous: number, fresh: number, repeated: number): number {
+  // A turn whose calls all failed produced no evidence either way. Failures
+  // have their own consecutive-failure stop; they must not count as looping.
+  if (fresh === 0 && repeated === 0) return previous;
   if (fresh > 0 && repeated === 0) return Math.max(0, previous - 1);
   if (fresh > 0 && repeated <= fresh) return previous;
   const repeatedBatch = fresh === 0 && repeated > 1;

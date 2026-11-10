@@ -724,7 +724,6 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
   let investigationNudged = false;
   let investigationRecoveryAttempted = false;
   let turnRepeatedFileRead: SakiAgentAction | undefined;
-  const toolLoopGuard = new AgentToolLoopGuard(maxIdenticalToolExecutions);
   let latestChecklistAction = [...actions].reverse().find(action => action.ok && action.status === "completed" && normalizedAgentToolName(action.tool) === "managetodos");
   const agentPermissionMode = effectiveSakiAgentPermissionMode(runtime.input);
   const canSuggestWorkspaceEdit = Boolean(runtime.context.instance && runtime.permissions.includes("file.write")
@@ -743,6 +742,13 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
   // the O(n) reduce inside compactAgentTurnMessages when nothing was pushed.
   let lastCompactInputLength = -1;
 
+  const toolLoopGuard = new AgentToolLoopGuard(maxIdenticalToolExecutions);
+  // History rewrites excerpt or summarize tool results. Evidence that is no
+  // longer shown to the model must stop counting as "already known", or every
+  // later re-read is treated as a repeat until the loop gives up.
+  const syncGuardWithVisibleHistory = (): void => toolLoopGuard.syncVisibleEvidence(turnMessages);
+  syncGuardWithVisibleHistory();
+
   const rebuildCurrentPrompt = (): void => {
     if (agentScratchpadEntries.reduce((total, entry) => total + entry.length, 0) > maxAgentScratchpadChars) {
       const rendered = renderAgentScratchpad(agentScratchpadEntries);
@@ -757,6 +763,7 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
       // The array was rewritten; invalidate so the next call re-evaluates.
       lastCompactInputLength = -1;
       turnMessages.splice(0, turnMessages.length, ...compacted);
+      syncGuardWithVisibleHistory();
     }
     runtime.turnMessages = turnMessages;
     currentPrompt = serializeTurnMessagesForPrompt({
@@ -778,6 +785,7 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
     }
     pendingTurnNotes.length = 0;
     rebuildCurrentPrompt();
+    syncGuardWithVisibleHistory();
   };
   const createResumeState = (): SakiAgentResumeState => ({
     input: resume ? { ...runtime.input, message: resume.input.message, attachments: resume.input.attachments ?? [] } : runtime.input,
@@ -1300,6 +1308,8 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
     const targetFile = String(args.path || args.filePath || "");
     const bookkeeping = toolName === "managetodos" || toolName === "plan" || toolName === "reportprogress";
     if (!bookkeeping && action.ok && !madeProgress && (isSakiReadOnlyAgentTool(toolName) || action.terminal)) turnRepeatedObservations += 1;
+    // A call blocked as an exact repeat is still looping, even though it "failed".
+    if (duplicateBlocked) turnRepeatedObservations += 1;
 
     if (!action.ok) {
       if (targetFile && fileEditTools.has(toolName) && !duplicateBlocked && !cacheHit) {
@@ -1322,6 +1332,7 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
       if (targetFile) failedAttemptsByTarget.delete(targetFile);
     }
 
+    if (!action.ok && madeProgress) consecutiveFailedTools = 0;
     if (!action.ok && !duplicateBlocked && !cacheHit) {
       consecutiveFailedTools += 1;
       if (consecutiveFailedTools >= maxConsecutiveFailedTools) {
@@ -1755,7 +1766,7 @@ IMPORTANT: ${sakiFileToolGuidance}\nPrevious output:\n${turn.content.slice(0, 12
           appendAgentScratchpad(`\n[Recover from repeated investigation]: Reuse the results already returned by file and terminal tools. ${canSuggestWorkspaceEdit && editRequested ? "If those results support an edit, make it now and verify it. " : ""}If something essential is missing, use a targeted lookup for the exact missing fact. If there is no safe next action, state the blocker.\n`);
           continue;
         }
-        return finishAgentResponse("stuck_no_progress", stuckNoProgressMessage(fileReadRecoveryAttempted));
+        return finishAgentResponse("stuck_no_progress", stuckNoProgressMessage(fileReadRecoveryAttempted && Boolean(turnRepeatedFileRead)));
       }
       appendAgentScratchpad(
         `\n[No new evidence this turn]: Reuse the previous results. Check a new file, symbol, or line range only to resolve a specific unanswered question. ${canSuggestWorkspaceEdit && editRequested ? "If the evidence is sufficient, take the next authorized edit. " : ""}Continue the next unfinished step or report the concrete blocker.\n`

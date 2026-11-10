@@ -227,6 +227,10 @@ function rememberEvidence<K, V>(items: Map<K, V>, key: K, value: V, limit: numbe
 }
 
 /** Repetition follows real executions and evidence, independently of the read cache. */
+function evidenceDigest(text: string): string {
+  return createHash("sha256").update(text.trim()).digest("base64url").slice(0, 16);
+}
+
 export class AgentToolLoopGuard {
   private lastAttempt: { signature: string; outcome: string; repeats: number; ok: boolean } | undefined;
   private readonly observations = new Map<string, string>();
@@ -250,6 +254,62 @@ export class AgentToolLoopGuard {
     this.terminalText.clear();
   }
 
+  /**
+   * Forget evidence the model can no longer see. Compaction excerpts or
+   * summarizes older tool results, so a fact learned before the rewrite is new
+   * to the model again. Counting it as known makes every legitimate re-read
+   * look like a repeat and drives long tasks into "no new progress".
+   */
+  syncVisibleEvidence(messages: ReadonlyArray<{ role: string; content: string }>): void {
+    const visibleText = new Set<string>();
+    const visibleLines = new Set<string>();
+    // fileReads tracks exact (untrimmed) line digests per window position.
+    const visibleWindowLines = new Set<string>();
+    for (const message of messages) {
+      if (message.role !== "tool") continue;
+      const content = message.content;
+      if (content.startsWith("Cached result unchanged.")) continue;
+      const file = content.includes("... [compacted ") ? undefined : agentFileReadWindow(content);
+      if (file) {
+        for (const [offset, text] of file.lines.entries()) {
+          const digest = evidenceDigest(text);
+          visibleText.add(digest);
+          visibleLines.add(JSON.stringify([evidencePath(file.path), file.start + offset, digest]));
+          visibleWindowLines.add(JSON.stringify([evidencePath(file.path), file.start + offset,
+            createHash("sha256").update(text).digest("base64url").slice(0, 16)]));
+        }
+        continue;
+      }
+      for (const line of content.split(/\r?\n/)) {
+        const text = line.replace(/^(?:\d+[:|\-]\s*)+/, "").trim();
+        if (text) visibleText.add(evidenceDigest(text));
+      }
+    }
+    for (const [key, digest] of [...this.sourceLines]) {
+      const [, file, line] = JSON.parse(key) as [string, string, number];
+      if (!visibleLines.has(JSON.stringify([file, line, digest])) && !visibleText.has(digest)) this.sourceLines.delete(key);
+    }
+    for (const key of [...this.terminalText.keys()]) {
+      const [, digest] = JSON.parse(key) as [string, string];
+      if (!visibleText.has(digest)) this.terminalText.delete(key);
+    }
+    for (const [key, read] of [...this.fileReads]) {
+      const [, file] = JSON.parse(key) as [string, string];
+      for (const [line, digest] of [...read.lines]) {
+        if (!visibleWindowLines.has(JSON.stringify([file, line, digest]))) read.lines.delete(line);
+      }
+      if (!read.lines.size) this.fileReads.delete(key);
+    }
+    // Window/location/outcome memories cannot be matched line by line; the
+    // history rewrite already dropped most of their results.
+    this.fileWindows.clear();
+    this.searchEvidence.clear();
+    for (const key of [...this.observations.keys()]) {
+      if (!key.startsWith("checkpoint:")) this.observations.delete(key);
+    }
+  }
+
+
   invalidateFileReadFreshness(): void {
     for (const read of this.fileReads.values()) read.readAt = 0;
   }
@@ -257,7 +317,7 @@ export class AgentToolLoopGuard {
   private rememberSource(scope: string, text: string, file?: string, line?: number): boolean {
     const content = text.trim();
     if (!content && (file === undefined || line === undefined)) return false;
-    const digest = createHash("sha256").update(content).digest("base64url").slice(0, 16);
+    const digest = evidenceDigest(content);
     const freshText = Boolean(content) && rememberEvidence(this.terminalText, JSON.stringify([scope, digest]), true, 12000);
     if (file === undefined || line === undefined) return freshText;
     return rememberEvidence(this.sourceLines, JSON.stringify([scope, evidencePath(file), line]), digest, 24000);
