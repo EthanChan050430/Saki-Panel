@@ -372,7 +372,7 @@ export function appendAgentToolObservation(messages: SakiAgentTurnMessage[], mes
   messages.push(message);
 }
 
-const internalScratchpadNotePattern = /^(?:\[(?:Compacted execution history|No new evidence this turn|No progress|Repeated investigation|Repeated observation|Recover from repeated (?:file reads|investigation)|Self-Healing (?:Alert|Guidance)|Diagnostics|Completion check|Long task continuation|Output truncated|Loop breaker|Context overflow recovery)\b|Assistant visible note:|System correction:|If the error is caused by missing permission, blocked safety policy, or missing active instance)/;
+const internalScratchpadNotePattern = /^(?:\[(?:Compacted execution history|No new evidence this turn|No progress|Repeated investigation|Repeated observation|Recover from repeated (?:file reads|investigation)|Self-Healing (?:Alert|Guidance)|Diagnostics|Completion check|Long task continuation|Output truncated|Loop breaker|Context overflow recovery|Provider retry)\b|Assistant visible note:|System correction:|If the error is caused by missing permission, blocked safety policy, or missing active instance)/;
 
 function isInternalAgentScratchpadNote(content: string): boolean {
   return internalScratchpadNotePattern.test(content.trim());

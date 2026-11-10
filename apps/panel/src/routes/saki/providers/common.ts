@@ -45,6 +45,18 @@ export function modelOutputWasTruncated(payload: unknown): boolean {
   return reasons.some((reason) => reason === "length" || reason === "max_tokens" || reason === "max_output_tokens");
 }
 
+/**
+ * Safety/content filters (OpenAI-compatible `finish_reason: "content_filter"`,
+ * Anthropic `stop_reason: "refusal"`) end a response with no output. Gateways
+ * that route Claude through the native API map refusals to content_filter.
+ */
+export function modelOutputWasRefused(payload: unknown): boolean {
+  const root = objectValue(payload);
+  const reasons = [root?.stop_reason, root?.done_reason, objectValue(root?.delta)?.stop_reason];
+  for (const choice of Array.isArray(root?.choices) ? root.choices : []) reasons.push(objectValue(choice)?.finish_reason);
+  return reasons.some((reason) => reason === "content_filter" || reason === "refusal" || reason === "safety" || reason === "SAFETY");
+}
+
 export function withTurnUsage(
   turn: SakiModelToolTurn,
   prompt: string,
@@ -62,7 +74,7 @@ export function withTurnUsage(
       "gpt-4",
       includeToolSchemas ? JSON.stringify(openAiToolSchemas()) : undefined
     );
-  return { ...turn, ...(modelUsage ? { modelUsage } : {}), ...(tokens > 0 ? { usageTokens: tokens } : {}), ...(modelOutputWasTruncated(payload) ? { truncated: true } : {}) };
+  return { ...turn, ...(modelUsage ? { modelUsage } : {}), ...(tokens > 0 ? { usageTokens: tokens } : {}), ...(modelOutputWasTruncated(payload) ? { truncated: true } : {}), ...(modelOutputWasRefused(payload) ? { refused: true } : {}) };
 }
 
 export const MAX_RETRIES = 3;

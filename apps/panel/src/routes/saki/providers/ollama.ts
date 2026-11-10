@@ -20,7 +20,7 @@ import { openAiToolSchemas, toolSchemasForRuntime, withAdvertisedSakiToolSchemas
 import { buildDirectMessages, buildDirectSystemPrompt } from "../prompt.js";
 import { buildOllamaAgentMessages, buildPromptFallbackMessages } from "../agent-messages.js";
 import { extractProviderUsage, mergeModelUsage, type ModelUsage } from "../../../tokenizer.js";
-import { modelOutputWasTruncated, streamPromptAgentTurnWithFilteredDelta, withTurnUsage } from "./common.js";
+import { modelOutputWasRefused, modelOutputWasTruncated, streamPromptAgentTurnWithFilteredDelta, withTurnUsage } from "./common.js";
 import { readJsonLineData, requestJsonPayload, requestStreamingPayload } from "./http.js";
 import {
   extractOpenAiChatText,
@@ -180,6 +180,7 @@ export async function callOllamaAgentTurnStream(
   const toolCalls: ParsedToolCall[] = [];
   let reasoningContent: string | undefined;
   let truncated = false;
+  let refused = false;
   const usageHolder: { current: ModelUsage | null } = { current: null };
   await requestStreamingPayload(
     `${baseUrl}/api/chat`,
@@ -201,6 +202,7 @@ export async function callOllamaAgentTurnStream(
       await readJsonLineData(response, (payload) => {
         usageHolder.current = mergeModelUsage(usageHolder.current, extractProviderUsage(payload));
         truncated ||= modelOutputWasTruncated(payload);
+        refused ||= modelOutputWasRefused(payload);
         const chunk = ollamaAgentStreamChunk(payload);
         if (chunk.reasoningContent !== undefined) reasoningContent = (reasoningContent ?? "") + chunk.reasoningContent;
         toolCalls.push(...nativeToolCalls(chunk.toolCalls));
@@ -216,6 +218,7 @@ export async function callOllamaAgentTurnStream(
       content,
       toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content),
       truncated,
+      ...(refused ? { refused: true } : {}),
       forwardedDeltaText: state.emittedLength > 0,
       forwardedDeltaContent: state.raw.slice(0, state.emittedLength),
       ...(reasoningContent !== undefined ? { assistantState: { reasoningContent } } : {})

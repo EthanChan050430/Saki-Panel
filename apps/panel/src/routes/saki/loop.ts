@@ -100,6 +100,8 @@ export function actionStatusLabel(action: SakiAgentAction): string {
 }
 
 const compactToolTextLength = 180;
+/** Context-condensing retries after a provider safety-filter refusal. */
+const maxAgentRefusalRecoveries = 2;
 const workspaceMetadataTools = new Set(["listfiles", "findfiles", "outlinefile", "readsymbol", "findsymbols", "statfile"]);
 
 function toolCallArgsForDisplay(call: ParsedToolCall): Record<string, unknown> {
@@ -707,6 +709,7 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
   runtime.agentSystemPrompt = agentSystemPrompt;
   let invalidReplies = 0;
   let truncatedReplies = 0;
+  let refusedReplies = 0;
   let progressOnlyReplies = 0;
   let degenerateRetries = 0;
   let identicalOutputStreak = 0;
@@ -1055,7 +1058,7 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
     return {
       source: "direct-model",
       message,
-      ...(["model_error", "round_limit", "budget_limit", "incomplete", "invalid_output"].includes(reason) || reason.startsWith("stuck_") ? { retry: { reason: message, ...((runtime.taskId ?? resume?.taskId) ? { taskId: (runtime.taskId ?? resume?.taskId)! } : {}) } } : {}),
+      ...(["model_error", "round_limit", "budget_limit", "incomplete", "invalid_output", "content_filtered"].includes(reason) || reason.startsWith("stuck_") ? { retry: { reason: message, ...((runtime.taskId ?? resume?.taskId) ? { taskId: (runtime.taskId ?? resume?.taskId)! } : {}) } } : {}),
       ...(accumulatedThinking.trim() ? { thinking: accumulatedThinking.trim() } : {}),
       workspace: runtime.context.workspace,
       agentPermissionMode,
@@ -1464,6 +1467,30 @@ ${runtime.config.searchEnabled ? "Web search and public-page browsing are availa
       await persistSteering();
       continue;
     }
+    // Provider safety filters (finish_reason=content_filter / stop_reason=refusal)
+    // return an empty turn. They are deterministic for a given context, so
+    // replaying the same history (as the invalid-output retry does) fails again.
+    // Change the context instead: condense older observations, then retry.
+    if (turn.refused && turn.toolCalls.length === 0 && !stripThinking(stripDsmlWrappers(turn.content)).trim()) {
+      logSakiModelEvent("agent.content_filtered", { attempt: refusedReplies + 1, model: runtime.config.model, messages: turnMessages.length });
+      if (refusedReplies >= maxAgentRefusalRecoveries) {
+        return finishAgentResponse("content_filtered", "模型服务的内容安全过滤拦截了本轮输出（finish_reason=content_filter），已自动压缩上下文重试仍未通过。这通常是上游误判，已保存进度：可直接重试继续，或换一个模型/调整描述后继续。");
+      }
+      refusedReplies += 1;
+      const historyChars = JSON.stringify(turnMessages).length;
+      const budget = refusedReplies === 1
+        ? Math.max(6000, Math.floor(historyChars * 0.6))
+        : Math.max(3000, Math.floor(historyChars * 0.3));
+      const condensed = compactAgentTurnMessages(turnMessages, budget);
+      if (condensed !== turnMessages) turnMessages.splice(0, turnMessages.length, ...condensed);
+      lastCompactInputLength = -1;
+      appendAgentScratchpad("\n[Provider retry]: The previous response came back empty, so older context was condensed. Continue the user's original task from the latest verified results: take the next concrete step with a tool call, or answer in plain text if the task is complete.\n");
+      flushTurnNotes();
+      emitSakiWorkflow(events, { id: randomUUID(), stage: "retry", status: "running",
+        message: "模型服务的内容过滤拦截了本轮输出，正在压缩上下文后重试。" });
+      continue;
+    }
+    refusedReplies = 0;
     if (turn.truncated) {
       if (truncatedReplies++ >= 2) return finishAgentResponse("invalid_output", "模型连续触及输出 token 上限，已阻止本轮不完整的工具调用写入。已保存此前进度，可重试继续。");
       emitSakiWorkflow(events, { id: randomUUID(), stage: "retry", status: "running", message: "模型输出达到 token 上限，正在改用较小补丁或分块写入重试。" });

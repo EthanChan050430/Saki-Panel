@@ -17,7 +17,7 @@ import { buildDirectMessages, buildDirectSystemPrompt } from "../prompt.js";
 import { buildAnthropicAgentMessages, buildPromptFallbackMessages, currentAgentTurnConversation } from "../agent-messages.js";
 import { extractProviderUsage, mergeModelUsage, type ModelUsage } from "../../../tokenizer.js";
 import { anthropicSupportsThinking, anthropicUsesAdaptiveThinking } from "../model-profile.js";
-import { modelOutputWasTruncated, streamPromptAgentTurnWithFilteredDelta, withTurnUsage } from "./common.js";
+import { modelOutputWasRefused, modelOutputWasTruncated, streamPromptAgentTurnWithFilteredDelta, withTurnUsage } from "./common.js";
 import { anthropicAgentCacheOptions } from "./prompt-cache.js";
 import { parseStreamJsonPayload, readServerSentEventData, requestJsonPayload, requestStreamingPayload } from "./http.js";
 import {
@@ -298,6 +298,7 @@ export async function callAnthropicAgentTurnStream(
   const state = createStreamingTextState();
   const toolAccumulator = new AnthropicStreamToolCallAccumulator();
   let truncated = false;
+  let refused = false;
   const thinkingAccumulator = new AnthropicStreamThinkingAccumulator();
   const usageHolder: { current: ModelUsage | null } = { current: null };
   await requestStreamingPayload(
@@ -322,6 +323,7 @@ export async function callAnthropicAgentTurnStream(
         if (!event) return;
         usageHolder.current = mergeModelUsage(usageHolder.current, extractProviderUsage(event));
         truncated ||= modelOutputWasTruncated(event);
+        refused ||= modelOutputWasRefused(event);
         toolAccumulator.ingest(event);
         thinkingAccumulator.ingest(event);
         const chunk = anthropicAgentStreamDelta(event);
@@ -338,6 +340,7 @@ export async function callAnthropicAgentTurnStream(
       content,
       toolCalls: toolCalls.length ? toolCalls : parseToolCallsFromText(content),
       truncated,
+      ...(refused ? { refused: true } : {}),
       forwardedDeltaText: state.emittedLength > 0,
       forwardedDeltaContent: state.raw.slice(0, state.emittedLength),
       ...(thinkingBlocks.length ? { assistantState: { thinkingBlocks } } : {})

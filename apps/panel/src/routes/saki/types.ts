@@ -636,6 +636,8 @@ export interface SakiModelToolTurn {
   content: string;
   toolCalls: ParsedToolCall[];
   truncated?: boolean;
+  /** Provider/gateway safety filter blocked the output (finish_reason=content_filter, stop_reason=refusal). */
+  refused?: boolean;
   forwardedDeltaText?: boolean;
   forwardedDeltaContent?: string;
   usageTokens?: number;
