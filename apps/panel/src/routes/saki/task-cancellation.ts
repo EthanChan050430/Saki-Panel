@@ -6,6 +6,29 @@ import {
 } from "./state.js";
 import { RouteError, type PendingSakiAction } from "./types.js";
 
+const cancelledRequests = new Map<string, number>();
+const cancelledRequestTtlMs = 10 * 60_000;
+const maxCancelledRequests = 4096;
+
+function requestKey(userId: string, requestId: string): string {
+  return JSON.stringify([userId, requestId]);
+}
+
+export function cancelSakiClientRequest(userId: string, requestId: string): void {
+  const key = requestKey(userId, requestId);
+  const now = Date.now();
+  cancelledRequests.delete(key);
+  cancelledRequests.set(key, now + cancelledRequestTtlMs);
+  for (const [previous, expiry] of cancelledRequests) {
+    if (expiry > now && cancelledRequests.size <= maxCancelledRequests) break;
+    cancelledRequests.delete(previous);
+  }
+}
+
+export function isSakiClientRequestCancelled(userId: string, requestId?: string): boolean {
+  return Boolean(requestId && (cancelledRequests.get(requestKey(userId, requestId)) ?? 0) > Date.now());
+}
+
 /** Tasks are in memory, but approvals and conversation references survive restarts. */
 export async function cancelRestoredSakiTask(userId: string, taskId: string): Promise<{ ok: boolean }> {
   await sakiActionsReady;

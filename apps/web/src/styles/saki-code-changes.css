@@ -1099,4 +1099,14 @@
     font-size: 12px;
     max-width: calc(100vw - 32px);
   }
+
+  .saki-file-filter-input {
+    font-size: 16px;
+  }
+}
+
+@media (pointer: coarse) {
+  .saki-file-filter-input {
+    font-size: 16px;
+  }
 }

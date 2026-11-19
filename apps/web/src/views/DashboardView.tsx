@@ -52,6 +52,7 @@ import {
   Trash2,
   Upload,
   Users,
+  Video,
   Wifi,
   XOctagon,
   Zap
@@ -892,9 +893,10 @@ export function DashboardView({
     setStreamingSessions((current) => { const next = new Set(current); next.delete(sessionId); return next; });
     window.dispatchEvent(new CustomEvent("saki:active_task_updated"));
   }, []);
-  const cancelConversationTask = useCallback(async (sessionId: string, taskId: string, run?: DashboardStreamRun) => {
+  const cancelConversationTask = useCallback(async (sessionId: string, taskId: string | undefined, run?: DashboardStreamRun) => {
+    if (!taskId && !run?.clientRequestId) return;
     try {
-      const result = await api.sakiCancelTask(token, taskId);
+      const result = taskId ? await api.sakiCancelTask(token, taskId) : await api.sakiCancelRequest(token, run!.clientRequestId!);
       if (!result.ok) {
         if (run) run.cancelRequested = false;
         if (!run?.detached) void refreshTasks();
@@ -902,7 +904,8 @@ export function DashboardView({
       }
       run?.controller.abort();
       if (!run?.detached) {
-        setTasks((current) => current.map((task) => task.id === taskId ? { ...task, status: "cancelled" } : task));
+        const cancelledTaskId = taskId ?? run?.taskId;
+        if (cancelledTaskId) setTasks((current) => current.map((task) => task.id === cancelledTaskId ? { ...task, status: "cancelled" } : task));
         const currentRun = streamRunsRef.current.get(sessionId);
         if (currentRun && currentRun !== run) return;
         publishSessionMessages(sessionId, (current) => current.map((message) => message.isStreaming ? { ...message, isStreaming: false, isThinking: false, workflowMessage: undefined } : message));
@@ -2129,9 +2132,7 @@ export function DashboardView({
     if (run?.cancelRequested) return;
     if (run) run.cancelRequested = true;
     const taskId = run ? run.taskId : latestTasks.get(sessionId)?.id;
-    if (taskId) { void cancelConversationTask(sessionId, taskId, run); return; }
-    // Before Agent metadata arrives, keep the submission alive long enough to
-    // obtain its ID and deliver this explicit cancellation to that task only.
+    if (taskId || run?.mode === "agent" && run.clientRequestId) { void cancelConversationTask(sessionId, taskId, run); return; }
     if (run?.mode === "chat") {
       run.controller.abort();
       finishStream(sessionId, run);
@@ -2227,16 +2228,17 @@ export function DashboardView({
       const mentionedSkills = resolveSakiMentionedSkills(prompt, skills);
       const mentionedSkillIds = mentionedSkills.map((s) => s.id);
 
+      run.clientRequestId = newClientId();
       const requestPayload: SakiChatRequest = {
         message: prompt,
-        clientRequestId: newClientId(),
+        clientRequestId: run.clientRequestId,
         conversationId: convId,
         userMessageId: userMsgId,
         assistantMessageId: assistantMsgId,
         mode: interactionMode,
         agentPermissionMode: agentPermission,
         instanceId: activeInstanceId, workspaceInstanceIds: selectedWorkspaceIds,
-        terminalSandbox: true,
+        terminalSandbox: agentPermission !== "bypassPermissions",
         model: requestedModel || null,
         provider: requestedProvider || null,
         reasoningEffort,
@@ -2271,7 +2273,6 @@ export function DashboardView({
               run.taskKnownAt = Date.now();
               finalTaskId = event.taskId;
               persistLocal([...sourceMessages, userMsg, { ...assistantMsg, taskId: event.taskId }]);
-              if (run.cancelRequested) { void cancelConversationTask(convId, event.taskId, run); return; }
               if (run.detached) { abortController.abort(); return; }
               window.dispatchEvent(new CustomEvent("saki:active_task_updated"));
               updateMessages((current) => current.map((message) => message.id === assistantMsgId ? { ...message, taskId: event.taskId } : message));
@@ -2387,8 +2388,8 @@ export function DashboardView({
           );
         }
       } finally {
-        if (run.detached) return;
-        if (interactionMode === "agent" && finalTaskId && !streamSettled && !run.cancelRequested) {
+        if (run.detached || (run.cancelRequested && abortController.signal.aborted)) return;
+        if (interactionMode === "agent" && finalTaskId && !streamSettled) {
           finishStream(convId, run);
           return;
         }
@@ -3808,6 +3809,19 @@ export function DashboardView({
                           <button className="dashboard-glass-action-btn" type="button" title="语音指令">
                             <Mic size={14} />
                           </button>
+                          {(canUseAgent || canUseChat) && (
+                            <button
+                              className="dashboard-glass-action-btn"
+                              type="button"
+                              title={isEn ? "Start video call" : "开始视频通话"}
+                              aria-label={isEn ? "Start video call" : "开始视频通话"}
+                              onClick={() => window.dispatchEvent(new CustomEvent("saki:open_call", {
+                                detail: { instanceId: activeInstanceId ?? null, instance: selectedProject ?? null }
+                              }))}
+                            >
+                              <Video size={14} />
+                            </button>
+                          )}
                           {renderComposerButtons()}
                         </div>
                       </div>
@@ -4127,6 +4141,19 @@ export function DashboardView({
                             </div>
                           </div>
                           <div className="dashboard-toolbar-right">
+                            {(canUseAgent || canUseChat) && (
+                              <button
+                                className="dashboard-glass-action-btn"
+                                type="button"
+                                title={isEn ? "Start video call" : "开始视频通话"}
+                                aria-label={isEn ? "Start video call" : "开始视频通话"}
+                                onClick={() => window.dispatchEvent(new CustomEvent("saki:open_call", {
+                                  detail: { instanceId: activeInstanceId ?? null, instance: selectedProject ?? null }
+                                }))}
+                              >
+                                <Video size={14} />
+                              </button>
+                            )}
                             {renderComposerButtons()}
                           </div>
                         </div>

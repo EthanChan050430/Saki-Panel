@@ -677,6 +677,9 @@ export interface SakiAgentRuntime {
   toolProfile?: "full" | "research" | "chat";
   taskId?: string;
   turnMessages?: import("./agent-messages.js").SakiAgentTurnMessage[];
+  priorSession?: SakiSessionAgentMemory;
+  workspaceFileReads?: Map<string, import("./workspace-file-recall.js").SakiWorkspaceFileObservation>;
+  reusedFileReads?: Set<string>;
   agentSystemPrompt?: string;
   externalReadPerformed?: boolean;
   codingPlan?: SakiCodingPlan;
@@ -694,6 +697,9 @@ export interface SakiAgentResumeState {
   toolExecutions: number;
   turnMessages?: import("./agent-messages.js").SakiAgentTurnMessage[];
   readOnlyToolCache?: Array<[string, SakiAgentAction]>;
+  workspaceFileReads?: import("./workspace-file-recall.js").SakiWorkspaceFileObservation[];
+  transcriptKey?: string;
+  uncertainToolSignatures?: string[];
   editRequested?: boolean;
   taskId?: string;
   codingPlan?: SakiCodingPlan;
@@ -1449,10 +1455,6 @@ export function normalizeCommandRelativeCwd(value: string, workingDirectory?: st
   }
   const normalized = value.replace(/\\/g, "/").trim();
   if (!normalized || normalized === ".") return "";
-  const parts = normalized.split("/").filter((part) => part && part !== ".");
-  if (parts.some((part) => part === "..")) {
-    throw new RouteError("runCommand cwd cannot contain '..'.", 400);
-  }
   if (isProbablyAbsoluteRemotePath(normalized) || /^[A-Za-z]:/.test(normalized)) {
     const root = workingDirectory?.trim().replace(/\\/g, "/");
     const windows = Boolean(root && (/^[A-Za-z]:\//.test(root) || root.startsWith("//")));
@@ -1465,7 +1467,9 @@ export function normalizeCommandRelativeCwd(value: string, workingDirectory?: st
     }
     return paths.relative(comparableRoot!, normalized).replace(/\\/g, "/");
   }
-  return parts.join("/");
+  const relative = path.posix.normalize(normalized);
+  if (relative === ".." || relative.startsWith("../") || /^[A-Za-z]:/.test(relative)) throw new RouteError("命令工作目录必须位于当前实例工作目录内。", 400);
+  return relative === "." ? "" : relative.replace(/\/$/, "");
 }
 
 export function joinRemoteWorkingDirectory(root: string, relativeCwd: string): string {

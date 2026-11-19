@@ -90,6 +90,7 @@ import {
   sakiPetToiletFrames,
   sakiPetWalkFrames,
   sakiPetSingingFrames,
+  sakiPetGeneratedAnimFrames,
   sakiSpeakingAssets,
   sakiExpressionAnimFrames,
   sakiExpressionPlayOnce
@@ -495,14 +496,16 @@ export function writeSakiLauncherPosition(position: SakiLauncherPosition) {
 
 export function sakiLauncherSize(element: HTMLElement | null, mode: SakiLauncherSizeMode = "current", scale = 1) {
   const s = Math.max(0.1, Number.isFinite(scale) ? scale : 1);
-  const base =
-    mode === "attached"
-      ? sakiLauncherAttachedSize
-      : mode === "dragging"
-      ? sakiLauncherExpandedSize
-      : (element && element.offsetWidth && element.offsetHeight)
-      ? { width: element.offsetWidth, height: element.offsetHeight }
-      : sakiLauncherExpandedSize;
+  if (mode === "current" && element && element.offsetWidth && element.offsetHeight) {
+    // Stage dimensions already scale via CSS `--saki-pet-scale`, so offsetWidth/Height are visual px.
+    return {
+      width: element.offsetWidth,
+      height: element.offsetHeight,
+      baseWidth: element.offsetWidth / s,
+      baseHeight: element.offsetHeight / s
+    };
+  }
+  const base = mode === "attached" ? sakiLauncherAttachedSize : sakiLauncherExpandedSize;
   return {
     width: Math.round(base.width * s),
     height: Math.round(base.height * s),
@@ -518,34 +521,23 @@ export function clampSakiLauncherPosition(
   scale = 1
 ): SakiLauncherPosition {
   const s = Math.max(0.1, Number.isFinite(scale) ? scale : 1);
-  const { width: visualWidth, height: visualHeight, baseWidth, baseHeight } = sakiLauncherSize(element, mode, s);
+  const { width: visualWidth, height: visualHeight } = sakiLauncherSize(element, mode, s);
   const viewportWidth = globalThis.innerWidth || visualWidth + sakiLauncherEdgePadding * 2;
   const viewportHeight = globalThis.innerHeight || visualHeight + sakiLauncherEdgePadding * 2;
   const sidePadding = mode === "attached" || mode === "dragging" ? 0 : sakiLauncherEdgePadding;
   const minY = mode === "dragging" ? 0 : sakiLauncherEdgePadding;
   const maxYPadding = mode === "dragging" ? 0 : sakiLauncherEdgePadding;
 
-  // Visual position derived from translation (X, Y) and scale with transform-origin: center bottom
-  // visualLeft = X + (baseWidth / 2) * (1 - s)
-  // visualTop  = Y + baseHeight * (1 - s)
-  const visualLeft = position.x + (baseWidth / 2) * (1 - s);
-  const visualTop = position.y + baseHeight * (1 - s);
+  const minX = sidePadding;
+  const maxX = Math.max(minX, viewportWidth - visualWidth - sidePadding);
+  const maxY = Math.max(minY, viewportHeight - visualHeight - maxYPadding);
 
-  const minVisualLeft = sidePadding;
-  const maxVisualLeft = Math.max(minVisualLeft, viewportWidth - visualWidth - sidePadding);
-  const minVisualTop = minY;
-  const maxVisualTop = Math.max(minVisualTop, viewportHeight - visualHeight - maxYPadding);
+  const clampedX = Math.round(Math.min(Math.max(minX, position.x), maxX));
+  const clampedY = Math.round(Math.min(Math.max(minY, position.y), maxY));
 
-  const clampedVisualLeft = Math.min(Math.max(minVisualLeft, visualLeft), maxVisualLeft);
-  const clampedVisualTop = Math.min(Math.max(minVisualTop, visualTop), maxVisualTop);
-
-  // Convert clamped visual position back to translation (X, Y)
-  const clampedX = Math.round(clampedVisualLeft - (baseWidth / 2) * (1 - s));
-  const clampedY = Math.round(clampedVisualTop - baseHeight * (1 - s));
-
-  const attachedWidth = sakiLauncherAttachedSize.width * s;
-  const isLeft = clampedVisualLeft <= sakiLauncherEdgeSnapDistance;
-  const isRight = viewportWidth - (clampedVisualLeft + (mode === "attached" ? attachedWidth : visualWidth)) <= sakiLauncherEdgeSnapDistance;
+  const attachedWidth = Math.round(sakiLauncherAttachedSize.width * s);
+  const isLeft = clampedX <= sakiLauncherEdgeSnapDistance;
+  const isRight = viewportWidth - (clampedX + (mode === "attached" ? attachedWidth : visualWidth)) <= sakiLauncherEdgeSnapDistance;
   const edge = isLeft ? "left" : isRight ? "right" : undefined;
 
   return {
@@ -556,22 +548,19 @@ export function clampSakiLauncherPosition(
 }
 
 export function sakiLauncherEdgeForPosition(position: SakiLauncherPosition, scale = 1): SakiLauncherEdge {
+  if (position.edge === "left" || position.edge === "right") return position.edge;
   const s = Math.max(0.1, Number.isFinite(scale) ? scale : 1);
-  const baseWidth = sakiLauncherExpandedSize.width;
-  const visualLeft = position.x + (baseWidth / 2) * (1 - s);
-  const visualWidth = baseWidth * s;
+  const visualWidth = sakiLauncherExpandedSize.width * s;
   const viewportWidth = globalThis.innerWidth || visualWidth + sakiLauncherEdgePadding * 2;
-  return visualLeft + visualWidth / 2 < viewportWidth / 2 ? "left" : "right";
+  return position.x + visualWidth / 2 < viewportWidth / 2 ? "left" : "right";
 }
 
 export function sakiLauncherSnapEdgeForPosition(position: SakiLauncherPosition, scale = 1): SakiLauncherEdge | null {
   const s = Math.max(0.1, Number.isFinite(scale) ? scale : 1);
-  const baseWidth = sakiLauncherExpandedSize.width;
-  const visualLeft = position.x + (baseWidth / 2) * (1 - s);
-  const visualWidth = baseWidth * s;
+  const visualWidth = sakiLauncherExpandedSize.width * s;
   const viewportWidth = globalThis.innerWidth || visualWidth + sakiLauncherEdgePadding * 2;
-  const rightGap = viewportWidth - (visualLeft + visualWidth);
-  if (visualLeft <= sakiLauncherEdgeSnapDistance) return "left";
+  const rightGap = viewportWidth - (position.x + visualWidth);
+  if (position.x <= sakiLauncherEdgeSnapDistance) return "left";
   if (rightGap <= sakiLauncherEdgeSnapDistance) return "right";
   return null;
 }
@@ -579,18 +568,16 @@ export function sakiLauncherSnapEdgeForPosition(position: SakiLauncherPosition, 
 export function sakiLauncherAttachedEdgeForPosition(position: SakiLauncherPosition, scale = 1): SakiLauncherEdge | null {
   if (position.edge === "left" || position.edge === "right") return position.edge;
   const s = Math.max(0.1, Number.isFinite(scale) ? scale : 1);
-  const baseWidth = sakiLauncherExpandedSize.width;
-  const visualLeft = position.x + (baseWidth / 2) * (1 - s);
-  const visualWidth = baseWidth * s;
-  const attachedWidth = sakiLauncherAttachedSize.width * s;
+  const visualWidth = sakiLauncherExpandedSize.width * s;
+  const attachedWidth = Math.round(sakiLauncherAttachedSize.width * s);
   const viewportWidth = globalThis.innerWidth || attachedWidth + sakiLauncherEdgePadding * 2;
-  const rightEdgeVisualLeft = Math.max(0, viewportWidth - attachedWidth);
-  const rightGap = viewportWidth - (visualLeft + visualWidth);
-  if (visualLeft <= sakiLauncherEdgeSnapDistance) return "left";
+  const rightEdgeLeft = Math.max(0, viewportWidth - attachedWidth);
+  const rightGap = viewportWidth - (position.x + visualWidth);
+  if (position.x <= sakiLauncherEdgeSnapDistance) return "left";
   if (
     rightGap <= sakiLauncherEdgeSnapDistance ||
-    Math.abs(visualLeft - rightEdgeVisualLeft) <= sakiLauncherEdgeSnapDistance ||
-    viewportWidth - visualLeft <= attachedWidth + sakiLauncherEdgeSnapDistance
+    Math.abs(position.x - rightEdgeLeft) <= sakiLauncherEdgeSnapDistance ||
+    viewportWidth - position.x <= attachedWidth + sakiLauncherEdgeSnapDistance
   ) {
     return "right";
   }
@@ -603,21 +590,14 @@ export function snapSakiLauncherPositionToEdge(
   scale = 1
 ): SakiLauncherPosition {
   const s = Math.max(0.1, Number.isFinite(scale) ? scale : 1);
-  const baseHeight = sakiLauncherExpandedSize.height;
-  const attachedBaseWidth = sakiLauncherAttachedSize.width;
-  const attachedWidth = attachedBaseWidth * s;
-  const attachedHeight = sakiLauncherAttachedSize.height * s;
+  const attachedWidth = Math.round(sakiLauncherAttachedSize.width * s);
+  const attachedHeight = Math.round(sakiLauncherAttachedSize.height * s);
   const viewportWidth = globalThis.innerWidth || attachedWidth + sakiLauncherEdgePadding * 2;
   const viewportHeight = globalThis.innerHeight || attachedHeight + sakiLauncherEdgePadding * 2;
-  const visualHeight = baseHeight * s;
-  const maxY = Math.max(sakiLauncherEdgePadding, viewportHeight - visualHeight - sakiLauncherEdgePadding);
+  const maxY = Math.max(sakiLauncherEdgePadding, viewportHeight - attachedHeight - sakiLauncherEdgePadding);
 
-  const visualTop = position.y + baseHeight * (1 - s);
-  const clampedVisualTop = Math.min(Math.max(sakiLauncherEdgePadding, visualTop), maxY);
-  const clampedY = Math.round(clampedVisualTop - baseHeight * (1 - s));
-
-  const visualLeft = edge === "left" ? 0 : Math.max(0, viewportWidth - attachedWidth);
-  const clampedX = Math.round(visualLeft - (attachedBaseWidth / 2) * (1 - s));
+  const clampedY = Math.round(Math.min(Math.max(sakiLauncherEdgePadding, position.y), maxY));
+  const clampedX = edge === "left" ? 0 : Math.max(0, viewportWidth - attachedWidth);
 
   return {
     x: clampedX,
@@ -691,6 +671,7 @@ export function getSakiActivityExpressionSrc(activityMood: SakiActivityMood): st
 }
 
 type SakiPetPoseName =
+  | import("./pet/sakiPetState.js").SakiPetBehavior
   | "idle"
   | "walk"
   | "sit"
@@ -828,33 +809,7 @@ export function SakiCharacterArt({
   dragging?: boolean;
   activityMood?: SakiActivityMood;
   onToiletFinished?: () => void;
-  petPose?:
-    | "idle"
-    | "walk"
-    | "sit"
-    | "lie"
-    | "sleep"
-    | "roll"
-    | "look"
-    | "climb"
-    | "hang"
-    | "fall"
-    | "chase"
-    | "happy"
-    | "eat"
-    | "doctor"
-    | "pickup"
-    | "bath"
-    | "toilet"
-    | "poke"
-    | "yawn"
-    | "shy"
-    | "pout"
-    | "drink"
-    | "blink"
-    | "peek"
-    | "sing"
-    | null;
+  petPose?: import("./pet/sakiPetState.js").SakiPetBehavior | "peek" | "sing" | null;
 }) {
   const skinRevision = useSkinRevision();
   const [idleLauncherSrc, setIdleLauncherSrc] = useState(() => pickSakiAsset(sakiIdleLauncherAssets));
@@ -887,7 +842,7 @@ export function SakiCharacterArt({
     } else if (petPose === "sleep") {
       if (previous !== "sleep") setSleepPhase("enter");
       else setSleepPhase((phase) => phase ?? "enter");
-    } else if (previous === "sleep" && (!petPose || ["idle", "sit", "lie", "yawn"].includes(petPose))) {
+    } else if (previous === "sleep" && (!petPose || (petPose.startsWith("idle") || ["sit", "lie", "yawn", "drink", "play_phone", "read_book", "happy_cheer", "hungry", "dizzy"].includes(petPose)))) {
       setSleepPhase("wake");
     } else if (previous !== petPose) {
       setSleepPhase(null);
@@ -898,7 +853,7 @@ export function SakiCharacterArt({
     } else if (petPose === "sit") {
       if (previous !== "sit") setSitPhase("enter");
       else setSitPhase((phase) => phase ?? "enter");
-    } else if (previous === "sit" && (!petPose || ["idle", "lie", "sleep", "yawn"].includes(petPose))) {
+    } else if (previous === "sit" && (!petPose || (petPose.startsWith("idle") || ["lie", "sleep", "yawn", "drink", "play_phone", "read_book", "happy_cheer", "hungry", "dizzy"].includes(petPose)))) {
       setSitPhase("exit");
     } else if (previous !== petPose) {
       setSitPhase(null);
@@ -980,7 +935,7 @@ export function SakiCharacterArt({
   if (compact) {
     if (dragging) return <SakiPickupAnimation />;
 
-    if (expressionAnim && expressionAnim.length > 1 && !(expressionPlayOnce && cycleFinished)) {
+    if (!edgeAttached && expressionAnim && expressionAnim.length > 1 && !(expressionPlayOnce && cycleFinished)) {
       return (
         <div className={`saki-character-art compact has-cycle ${edgeAttached ? "edge-attached" : ""}`} aria-hidden="true">
           <SakiSpriteCycle
@@ -994,14 +949,16 @@ export function SakiCharacterArt({
       );
     }
 
-    const canWake = !petPose || ["idle", "sit", "lie", "yawn"].includes(petPose);
-    const visibleSleepPhase = petPose === "sleep"
+    const canWake = !edgeAttached && (!petPose || (petPose.startsWith("idle") || ["sit", "lie", "yawn", "drink", "play_phone", "read_book", "happy_cheer", "hungry", "dizzy"].includes(petPose)));
+    const visibleSleepPhase = edgeAttached
+      ? null
+      : petPose === "sleep"
       ? sleepPhase ?? "enter"
       : canWake && (sleepPhase === "wake" || previousPetPose.current === "sleep")
       ? "wake"
       : null;
-    const canFinishSit = !petPose || ["idle", "lie", "sleep", "yawn"].includes(petPose);
-    const visibleSitPhase = visibleSleepPhase === "wake"
+    const canFinishSit = !edgeAttached && (!petPose || (petPose.startsWith("idle") || ["lie", "sleep", "yawn", "drink", "play_phone", "read_book", "happy_cheer", "hungry", "dizzy"].includes(petPose)));
+    const visibleSitPhase = edgeAttached || visibleSleepPhase === "wake"
       ? null
       : petPose === "sit"
       ? sitPhase ?? "enter"
@@ -1067,44 +1024,79 @@ export function SakiCharacterArt({
             alt=""
             draggable={false}
           />
-          <img className="saki-character-image saki-character-image-hover" src={sakiArtAssets.launcherHover} alt="" draggable={false} />
+          <div className="saki-character-image-hover">
+            <SakiSpriteCycle
+              frames={sakiPetGeneratedAnimFrames.hover_wave}
+              mode="loop"
+              intervalMs={145}
+              compact
+              crossfade={false}
+            />
+          </div>
         </div>
       );
     }
 
-    const petCycle =
-      petPose === "walk"
-        ? { frames: sakiPetWalkFrames, mode: "pingpong" as const, ms: 260 }
-        : petPose === "chase"
-        ? { frames: sakiPetRunFrames, mode: "loop" as const, ms: 120 }
-        : petPose === "climb"
-        ? { frames: sakiPetClimbFrames, mode: "pingpong" as const, ms: 280 }
-        : petPose === "lie"
-        ? { frames: sakiPetLieFrames, mode: "pingpong" as const, ms: 220 }
-        : petPose === "roll"
-        ? { frames: sakiPetRollFrames, mode: "once" as const, ms: 95 }
-        : petPose === "poke"
-        ? { frames: sakiPetPokeFrames, mode: "once" as const, ms: 104 }
-        : petPose === "bath"
-        ? { frames: sakiPetBathFrames, mode: "once" as const, ms: 280 }
-        : petPose === "doctor"
-        ? { frames: sakiPetDoctorFrames, mode: "once" as const, ms: 280 }
-        : petPose === "eat"
-        ? { frames: sakiPetEatFrames, mode: "pingpong" as const, ms: 340 }
-        : petPose === "sing"
-        ? { frames: sakiPetSingingFrames, mode: "pingpong" as const, ms: 320 }
-        : null;
+    const cycleTable: Record<
+      string,
+      { frames: readonly string[]; mode: "loop" | "pingpong" | "once"; ms: number; cycleClass?: string; crossfade?: boolean }
+    > = {
+      walk: { frames: sakiPetWalkFrames, mode: "pingpong", ms: 260, crossfade: false },
+      chase: { frames: sakiPetRunFrames, mode: "loop", ms: 120, cycleClass: "run", crossfade: false },
+      climb: { frames: sakiPetClimbFrames, mode: "pingpong", ms: 280 },
+      lie: { frames: sakiPetLieFrames, mode: "pingpong", ms: 220, crossfade: false },
+      roll: { frames: sakiPetRollFrames, mode: "once", ms: 95, crossfade: false },
+      poke: { frames: sakiPetPokeFrames, mode: "once", ms: 104, crossfade: false },
+      bath: { frames: sakiPetBathFrames, mode: "once", ms: 280, crossfade: false },
+      doctor: { frames: sakiPetDoctorFrames, mode: "once", ms: 280 },
+      eat: { frames: sakiPetEatFrames, mode: "pingpong", ms: 340 },
+      sing: { frames: sakiPetSingingFrames, mode: "pingpong", ms: 320 },
+      idle_sway: { frames: sakiPetGeneratedAnimFrames.idle_sway, mode: "loop", ms: 165, cycleClass: "stand", crossfade: false },
+      idle_twirl: { frames: sakiPetGeneratedAnimFrames.idle_twirl, mode: "loop", ms: 170, cycleClass: "stand", crossfade: false },
+      idle_look: { frames: sakiPetGeneratedAnimFrames.idle_look, mode: "loop", ms: 170, cycleClass: "stand", crossfade: false },
+      idle_ribbon: { frames: sakiPetGeneratedAnimFrames.idle_ribbon, mode: "loop", ms: 170, cycleClass: "stand", crossfade: false },
+      idle_stretch: { frames: sakiPetGeneratedAnimFrames.idle_stretch, mode: "loop", ms: 175, cycleClass: "stand", crossfade: false },
+      idle_shy: { frames: sakiPetGeneratedAnimFrames.idle_shy, mode: "loop", ms: 170, cycleClass: "stand", crossfade: false },
+      hover_wave: { frames: sakiPetGeneratedAnimFrames.hover_wave, mode: "loop", ms: 145, cycleClass: "stand", crossfade: false },
+      drink: { frames: sakiPetGeneratedAnimFrames.drink, mode: "loop", ms: 170, cycleClass: "stand", crossfade: false },
+      pout: { frames: sakiPetGeneratedAnimFrames.pout, mode: "loop", ms: 165, cycleClass: "stand", crossfade: false },
+      fall: { frames: sakiPetGeneratedAnimFrames.fall, mode: "loop", ms: 115, cycleClass: "stand", crossfade: false },
+      hang: { frames: sakiPetGeneratedAnimFrames.hang, mode: "loop", ms: 155, cycleClass: "hang", crossfade: false },
+      play_phone: { frames: sakiPetGeneratedAnimFrames.play_phone, mode: "loop", ms: 165, cycleClass: "stand", crossfade: false },
+      read_book: { frames: sakiPetGeneratedAnimFrames.read_book, mode: "loop", ms: 175, cycleClass: "stand", crossfade: false },
+      happy_cheer: { frames: sakiPetGeneratedAnimFrames.happy_cheer, mode: "loop", ms: 150, cycleClass: "stand", crossfade: false },
+      hungry: { frames: sakiPetGeneratedAnimFrames.hungry, mode: "loop", ms: 175, cycleClass: "stand", crossfade: false },
+      dizzy: { frames: sakiPetGeneratedAnimFrames.dizzy, mode: "loop", ms: 145, cycleClass: "stand", crossfade: false },
+      peek: { frames: sakiPetGeneratedAnimFrames.edge_idle, mode: "loop", ms: 185, cycleClass: "edge", crossfade: false },
+      edge_idle: { frames: sakiPetGeneratedAnimFrames.edge_idle, mode: "loop", ms: 185, cycleClass: "edge", crossfade: false },
+      edge_wave: { frames: sakiPetGeneratedAnimFrames.edge_wave, mode: "loop", ms: 150, cycleClass: "edge", crossfade: false },
+      edge_peek: { frames: sakiPetGeneratedAnimFrames.edge_peek, mode: "loop", ms: 175, cycleClass: "edge", crossfade: false },
+      edge_sleepy: { frames: sakiPetGeneratedAnimFrames.edge_sleepy, mode: "loop", ms: 195, cycleClass: "edge", crossfade: false },
+      edge_look: { frames: sakiPetGeneratedAnimFrames.edge_look, mode: "loop", ms: 170, cycleClass: "edge", crossfade: false },
+      edge_snack: { frames: sakiPetGeneratedAnimFrames.edge_snack, mode: "loop", ms: 170, cycleClass: "edge", crossfade: false },
+      edge_poke: { frames: sakiPetGeneratedAnimFrames.edge_poke, mode: "loop", ms: 145, cycleClass: "edge", crossfade: false },
+      edge_climb: { frames: sakiPetGeneratedAnimFrames.edge_climb, mode: "loop", ms: 150, cycleClass: "edge", crossfade: false },
+      edge_feed: { frames: sakiPetGeneratedAnimFrames.edge_feed, mode: "loop", ms: 165, cycleClass: "edge", crossfade: false },
+      edge_bath: { frames: sakiPetGeneratedAnimFrames.edge_bath, mode: "loop", ms: 170, cycleClass: "edge", crossfade: false },
+      edge_pet: { frames: sakiPetGeneratedAnimFrames.edge_pet, mode: "loop", ms: 165, cycleClass: "edge", crossfade: false },
+      edge_sleep: { frames: sakiPetGeneratedAnimFrames.edge_sleep, mode: "loop", ms: 200, cycleClass: "edge", crossfade: false },
+      edge_doctor: { frames: sakiPetGeneratedAnimFrames.edge_doctor, mode: "loop", ms: 175, cycleClass: "edge", crossfade: false },
+      edge_toilet: { frames: sakiPetGeneratedAnimFrames.edge_toilet, mode: "loop", ms: 170, cycleClass: "edge", crossfade: false }
+    };
+
+    const petCycle = petPose ? cycleTable[petPose] ?? null : null;
 
     if (petCycle) {
-      const cycleClass = petPose === "chase" ? "run" : petPose;
+      const cycleClass = petCycle.cycleClass ?? petPose;
       return (
         <div className={`saki-character-art compact is-${cycleClass}-cycle ${edgeAttached ? "edge-attached" : ""}`} aria-hidden="true">
           <SakiSpriteCycle
+            key={petPose ?? cycleClass}
             frames={petCycle.frames}
             mode={petCycle.mode}
             intervalMs={petCycle.ms}
             compact
-            crossfade={petPose !== "walk" && petPose !== "chase" && petPose !== "lie" && petPose !== "roll" && petPose !== "poke" && petPose !== "bath"}
+            crossfade={petCycle.crossfade ?? true}
           />
         </div>
       );
@@ -2830,6 +2822,7 @@ export function SakiToolActionCard({
   defaultExpanded?: boolean | undefined;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const approvalRow = React.useRef<HTMLDivElement>(null);
   if (action.tool.toLowerCase() === "managetodos" && action.todos?.length) return <SakiTodoCard action={action} />;
   if (action.tool.toLowerCase() === "askuser" && action.question) {
     return <SakiAskUserCard action={action} busy={Boolean(actionBusyId)} onAnswer={(answer) => onAnswer(action, answer)} />;
@@ -2857,6 +2850,14 @@ export function SakiToolActionCard({
   useEffect(() => {
     if (!isPending || busy || controlsDisabled || requiresExplicitClick) return;
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.repeat || e.ctrlKey || e.altKey || e.metaKey || !/^[yn]$/i.test(e.key)) return;
+      const row = approvalRow.current;
+      if (!row?.getClientRects().length || !(e.target instanceof Element)) return;
+      const dialog = e.target.closest("dialog");
+      if (row.closest("dialog") !== dialog) return;
+      const pendingRows = Array.from((dialog ?? document).querySelectorAll(".saki-action-row.pending"))
+        .filter((item) => item.getClientRects().length);
+      if (pendingRows.length > 1 && !row.contains(e.target)) return;
       const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase();
       if (targetTag === "input" || targetTag === "textarea" || (e.target as HTMLElement)?.isContentEditable) {
         return;
@@ -2874,7 +2875,7 @@ export function SakiToolActionCard({
   }, [isPending, busy, controlsDisabled, requiresExplicitClick, action, onDecision]);
 
   return (
-    <div className={`saki-action-row ${isPending ? "pending" : ""} ${isFailed ? "failed" : ""}${diffText ? " has-diff" : ""}`}>
+    <div ref={approvalRow} className={`saki-action-row ${isPending ? "pending" : ""} ${isFailed ? "failed" : ""}${diffText ? " has-diff" : ""}`}>
       <div className="saki-action-row-main" role="button" tabIndex={0} aria-expanded={expanded}
         onClick={() => setExpanded(!expanded)} onKeyDown={(event) => {
           if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;

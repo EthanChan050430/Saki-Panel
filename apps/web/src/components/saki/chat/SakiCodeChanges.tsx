@@ -320,8 +320,8 @@ export function SakiCodeChangesDetails({
   summary: InstanceGitChangesSummary | null;
   loading?: boolean | undefined;
   reverting?: boolean | undefined;
-  onRevertAll: () => Promise<void>;
-  onRestoreAll: () => Promise<void>;
+  onRevertAll?: () => Promise<void>;
+  onRestoreAll?: () => Promise<void>;
   onClose?: (() => void) | undefined;
   onOpenPath?: ((path: string, line?: number) => void) | undefined;
   variant?: ("inline" | "drawer") | undefined;
@@ -441,7 +441,7 @@ export function SakiCodeChangesDetails({
         </div>
 
         <div className="saki-code-changes-toolbar-right">
-          {canRestore ? (
+          {canRestore && onRestoreAll ? (
             <button
               type="button"
               className="saki-btn-action saki-btn-restore"
@@ -452,7 +452,7 @@ export function SakiCodeChangesDetails({
               {reverting ? <Loader2 size={13} className="saki-spin" /> : <Redo2 size={13} />}
               <span>恢复撤回的更改</span>
             </button>
-          ) : (
+          ) : !canRestore && onRevertAll ? (
             <button
               type="button"
               className="saki-btn-action saki-btn-revert"
@@ -463,7 +463,7 @@ export function SakiCodeChangesDetails({
               {reverting ? <Loader2 size={13} className="saki-spin" /> : <Undo2 size={13} />}
               <span>撤回全部更改</span>
             </button>
-          )}
+          ) : null}
 
           {onClose && variant !== "drawer" ? (
             <button

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import * as http from "node:http";
 import * as https from "node:https";
 import { pipeline } from "node:stream/promises";
@@ -700,7 +701,8 @@ export function readDaemonInstanceFile(
   instanceId: string,
   workingDirectory: string,
   relativePath: string,
-  options: { startLine?: number; lineCount?: number; outline?: boolean; stat?: boolean } = {}
+  options: { startLine?: number; lineCount?: number; outline?: boolean; stat?: boolean; metadataOnly?: boolean } = {},
+  signal?: AbortSignal
 ) {
   return requestDaemon<InstanceFileContentResponse>(
     node,
@@ -710,8 +712,10 @@ export function readDaemonInstanceFile(
       ...(options.startLine ? { startLine: options.startLine } : {}),
       ...(options.lineCount ? { lineCount: options.lineCount } : {}),
       ...(options.outline ? { outline: 1 } : {}),
-      ...(options.stat ? { stat: 1 } : {})
-    })
+      ...(options.stat ? { stat: 1 } : {}),
+      ...(options.metadataOnly ? { metadataOnly: 1 } : {})
+    }),
+    signal ? { signal } : {}
   );
 }
 
@@ -719,9 +723,10 @@ export function statDaemonInstancePath(
   node: DaemonNodeCredentials,
   instanceId: string,
   workingDirectory: string,
-  relativePath: string
+  relativePath: string,
+  signal?: AbortSignal
 ) {
-  return readDaemonInstanceFile(node, instanceId, workingDirectory, relativePath, { stat: true });
+  return readDaemonInstanceFile(node, instanceId, workingDirectory, relativePath, { stat: true }, signal);
 }
 
 export async function captureDaemonWorkspaceCheckpoint(node: DaemonNodeCredentials, instanceId: string, workingDirectory: string) {
@@ -1090,18 +1095,54 @@ export function sendDaemonShellInput(node: DaemonNodeCredentials, instanceId: st
   });
 }
 
-export function runDaemonShellCommand(
+export async function runDaemonShellCommand(
   node: DaemonNodeCredentials,
   instanceId: string,
   shellId: string,
   input: { command: string; timeoutMs?: number; input?: string; workingDirectory?: string; cwd?: string },
   signal?: AbortSignal
 ) {
-  return requestDaemon<InstanceCommandResponse>(node, `/api/instances/${instanceId}/shells/${shellId}/command`, {
-    method: "POST",
-    body: JSON.stringify(input),
-    ...(signal ? { signal } : {})
-  }, Math.max(10000, (input.timeoutMs ?? 30000) + 5000));
+  return requestCancellableAgentCommand(node, `/api/instances/${instanceId}/shells/${shellId}/command`, input, signal);
+}
+
+export function runDaemonWorkspaceSandboxCommand(
+  node: DaemonNodeCredentials,
+  instanceId: string,
+  input: { command: string; workingDirectory: string; cwd?: string; input?: string; timeoutMs?: number; readOnly?: boolean },
+  signal?: AbortSignal
+): Promise<InstanceCommandResponse> {
+  return requestCancellableAgentCommand(node, `/api/instances/${instanceId}/workspace-sandbox/command`, input, signal, true);
+}
+
+async function requestCancellableAgentCommand(
+  node: DaemonNodeCredentials,
+  endpoint: string,
+  input: { command: string; timeoutMs?: number },
+  signal?: AbortSignal,
+  requiresId = false
+): Promise<InstanceCommandResponse> {
+  signal?.throwIfAborted();
+  const executionId = signal || requiresId ? randomUUID() : undefined;
+  const transport = new AbortController();
+  let abortFallback: ReturnType<typeof setTimeout> | undefined;
+  const abort = () => transport.abort();
+  const cancel = () => {
+    // Let the command return its interrupted status before taking an after
+    // snapshot. Closing the connection remains the fallback on older daemons.
+    abortFallback = setTimeout(abort, 3000);
+    void requestDaemon(node, `${endpoint}/${executionId}/cancel`, { method: "POST" }, 1800).catch(abort);
+  };
+  signal?.addEventListener("abort", cancel, { once: true });
+  try {
+    return await requestDaemon<InstanceCommandResponse>(node, endpoint, {
+      method: "POST",
+      body: JSON.stringify({ ...input, executionId }),
+      signal: transport.signal
+    }, Math.max(10000, (input.timeoutMs ?? 30000) + 5000));
+  } finally {
+    signal?.removeEventListener("abort", cancel);
+    clearTimeout(abortFallback);
+  }
 }
 
 export function discoverDaemonDatabases(node: DaemonNodeCredentials) {

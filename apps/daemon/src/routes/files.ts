@@ -104,6 +104,7 @@ interface FileQuery {
   lineCount?: string;
   outline?: string;
   stat?: string;
+  metadataOnly?: string;
 }
 
 interface FileBody {
@@ -1131,7 +1132,7 @@ export async function registerFileRoutes(app: FastifyInstance): Promise<void> {
       if (!stats.isFile()) {
         throw new Error("Path is not a file or directory");
       }
-      const totalLines = await countFileLines(resolved.target, maxEditableFileBytes);
+      const totalLines = query.metadataOnly === "1" ? undefined : await countFileLines(resolved.target, maxEditableFileBytes);
       return {
         instanceId: id,
         path: resolved.relativePath,

@@ -21,7 +21,6 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   ChevronUp,
   ClipboardList,
@@ -197,7 +196,7 @@ import {
 import { newClientId } from "../../utils/id.js";
 import { MarkdownContent, SakiPathOpenContext } from "../common/MarkdownContent.js";
 import { LiquidGlassContainer } from "../common/LiquidGlass.js";
-import { isSakiPetTouchUi, useSakiPet } from "./pet/sakiPetState.js";
+import { isSakiPetTouchUi, readSakiPetScale, useSakiPet } from "./pet/sakiPetState.js";
 import {
   SakiAttachmentChip,
   SakiCharacterArt,
@@ -255,23 +254,21 @@ import {
   type SakiArtMood,
   type SakiLauncherPosition,
   type SakiPullDragRequest,
-  type SakiVoiceEchoState,
   type StoredSakiConversation
 } from "./SakiComponents.js";
-import { SakiDessertDropGame } from "./SakiDessertDropGame.js";
 import { getFavorabilityLevelInfo as getFavorabilityLevelInfoHelper } from "./sakiChatHelpers.js";
 import { SakiAttachmentModal } from "./SakiAttachmentModal.js";
 import { SakiMentionMenu, type SakiMentionMenuCandidate } from "./SakiMentionMenu.js";
 import { ChatLauncher } from "./chat/ChatLauncher.js";
-import { SakiVideoPane } from "./chat/SakiVideoPane.js";
+import { SakiTaskCall } from "./chat/SakiTaskCall.js";
+import { SakiCallAudio } from "./chat/sakiCallVoice.js";
 import { SakiHistoryDrawer } from "./chat/SakiHistoryDrawer.js";
-import { SakiMessagesList } from "./chat/SakiMessagesList.js";
+import { SakiMessagesList, type SakiMessagesListProps } from "./chat/SakiMessagesList.js";
 import { SakiTodoCard } from "./chat/SakiAgentWidgets.js";
 import { mergeSakiMessageAttachments } from "./chat/SakiChatImages.js";
 import { SakiComposer } from "./chat/SakiComposer.js";
 import { SakiChangedFilesPill, useCodeChanges, filterGitChangesForSession } from "./chat/SakiCodeChanges.js";
 import { SakiChatDropdowns } from "./chat/SakiChatDropdowns.js";
-import { SakiVoiceEcho } from "./sakiVoice.js";
 import {
   clearRememberedSakiTerminalSelection,
   readAllTerminalBufferText,
@@ -414,7 +411,7 @@ export function SakiFloatingChat({
   activeView?: ViewMode;
   onNavigateView?: (view: ViewMode, instanceId?: string) => void;
 }) {
-  const { t, tFormat, language } = usePanelLanguage();
+  const { t, language } = usePanelLanguage();
   const [workspaceSelection, setWorkspaceSelection] = useState<SakiWorkspaceSelection>({ type: "current" });
   const [workspaceDropdownOpen, setWorkspaceDropdownOpen] = useState(false);
   const [availableInstances, setAvailableInstances] = useState<ManagedInstance[]>([]);
@@ -508,19 +505,20 @@ export function SakiFloatingChat({
   const [sakiActivityMood, setSakiActivityMood] = useState<SakiActivityMood>(null);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [launcherPosition, setLauncherPosition] = useState<SakiLauncherPosition>(() => {
+    const initialScale = readSakiPetScale();
     const raw = readSakiLauncherPosition();
     if (raw) {
-      const attached = sakiLauncherAttachedEdgeForPosition(raw, 1);
+      const attached = sakiLauncherAttachedEdgeForPosition(raw, initialScale);
       return attached
-        ? snapSakiLauncherPositionToEdge(raw, attached, 1)
-        : clampSakiLauncherPosition(raw, null, "expanded", 1);
+        ? snapSakiLauncherPositionToEdge(raw, attached, initialScale)
+        : clampSakiLauncherPosition(raw, null, "expanded", initialScale);
     }
     const vw = globalThis.innerWidth || 1200;
     const vh = globalThis.innerHeight || 800;
     return snapSakiLauncherPositionToEdge(
-      { x: vw - sakiLauncherAttachedSize.width, y: Math.max(12, vh - 220) },
+      { x: vw - Math.round(sakiLauncherAttachedSize.width * initialScale), y: Math.max(12, vh - 220) },
       "right",
-      1
+      initialScale
     );
   });
   const [launcherDragging, setLauncherDragging] = useState(false);
@@ -554,12 +552,24 @@ export function SakiFloatingChat({
   ), [token]);
   const [activeConversationId, setActiveConversationId] = useState(() => newClientId());
   const activeConversationIdRef = useRef(activeConversationId);
+  const callScope = JSON.stringify([contextKey, activeConversationId, userId]);
+  const [callSession, setCallSession] = useState<{ scope: string; audio: SakiCallAudio } | null>(null);
+  const [callViewOpen, setCallViewOpen] = useState(false);
+  const callAudio = open && callSession?.scope === callScope && (canUseChat || canUseAgent) ? callSession.audio : null;
+  const callVisible = Boolean(callAudio && callViewOpen);
+  useLayoutEffect(() => {
+    if (!callAudio && callSession) {
+      setCallSession(null);
+      setCallViewOpen(false);
+    }
+  }, [callAudio, callSession]);
+  useEffect(() => () => callSession?.audio.close(), [callSession]);
   const serverFollowUps = useSakiFollowUps(token, activeConversationId);
   const followUpRequestRef = useRef<import("@webops/shared").SakiChatRequest | null>(null);
   const historyLoadingRef = useRef(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyBeforeId, setHistoryBeforeId] = useState<string | null>(null);
-  const historyAnchorRef = useRef<{ id: string; top: number; height: number } | null>(null);
+  const historyAnchorRef = useRef<{ id: string; element: HTMLDivElement; top: number; height: number } | null>(null);
   activeConversationIdRef.current = activeConversationId;
   const actionObserversRef = useRef(new Set<() => void>());
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -651,21 +661,8 @@ export function SakiFloatingChat({
   }, [workspaceDropdownOpen]);
 
   const [listening, setListening] = useState(false);
-  const [sakiEchoState, setSakiEchoState] = useState<SakiVoiceEchoState>("idle");
   const [annotationMode, setAnnotationMode] = useState(false);
-  const [sakiPokeMood, setSakiPokeMood] = useState<SakiActivityMood>(null);
   const [sakiSleepy, setSakiSleepy] = useState(false);
-  const [sakiVideoBubble, setSakiVideoBubble] = useState<string | null>(null);
-  const pokeTimerRef = useRef<number | null>(null);
-  const pokeStreakRef = useRef({ count: 0, lastAt: 0 });
-  const [customRoomBg, setCustomRoomBg] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem("saki_custom_room_bg");
-    } catch {
-      return null;
-    }
-  });
-  const roomBgInputRef = useRef<HTMLInputElement | null>(null);
   const [sakiFavorabilityExp, setSakiFavorabilityExp] = useState<number>(() => {
     if (typeof currentUserFavorability === "number") {
       return Math.max(0, currentUserFavorability);
@@ -683,9 +680,6 @@ export function SakiFloatingChat({
       setSakiFavorabilityExp(Math.max(0, currentUserFavorability));
     }
   }, [currentUserFavorability]);
-  const [favorabilityPop, setFavorabilityPop] = useState<{ id: number; amount: number } | null>(null);
-  const favorabilityPopTimerRef = useRef<number | null>(null);
-
   const [userPoints, setUserPoints] = useState<number>(() => {
     try {
       const saved = localStorage.getItem("saki_user_points");
@@ -730,26 +724,8 @@ export function SakiFloatingChat({
     }
   }, [wakeCount, pullDragRequest, pet.scale]);
 
-  const [feedMenuOpen, setFeedMenuOpen] = useState(false);
-  const [miniGameActive, setMiniGameActive] = useState(false);
-  const [mobileActiveTab, setMobileActiveTab] = useState<"video" | "chat">("video");
-  const [chatPulseAlert, setChatPulseAlert] = useState(false);
-  const prevBusyRef = useRef<boolean>(false);
 
-  interface DraggingFoodState {
-    food: (typeof sakiFoodMenu)[number];
-    startX: number;
-    startY: number;
-    currentX: number;
-    currentY: number;
-    isDragging: boolean;
-  }
-
-  const [draggingFood, setDraggingFood] = useState<DraggingFoodState | null>(null);
-  const [isDragOverSaki, setIsDragOverSaki] = useState(false);
-  const dragFoodRef = useRef<DraggingFoodState | null>(null);
-  const sakiCharacterRef = useRef<HTMLDivElement | null>(null);
-  const videoBubbleRef = useRef<HTMLDivElement | null>(null);
+  const prevBusyRef = useRef(false);
 
   function getFavorabilityLevelInfo(totalExp: number) {
     return getFavorabilityLevelInfoHelper(totalExp, language);
@@ -760,35 +736,15 @@ export function SakiFloatingChat({
       void api.addFavorability(token, amount).catch(() => {});
     }
     setSakiFavorabilityExp((prev) => {
-      const oldLevel = getFavorabilityLevelInfo(prev).level;
       const next = prev + amount;
-      const newLevel = getFavorabilityLevelInfo(next).level;
       onFavorabilityChange?.(next);
       try {
         localStorage.setItem("saki_favorability", String(next));
       } catch {}
 
-      if (newLevel > oldLevel) {
-        setSakiPokeMood("happy");
-        setSakiVideoBubble(tFormat("saki.chat.levelUp", newLevel));
-        if (pokeTimerRef.current) window.clearTimeout(pokeTimerRef.current);
-        pokeTimerRef.current = window.setTimeout(() => {
-          setSakiPokeMood(null);
-          setSakiVideoBubble(null);
-          pokeTimerRef.current = null;
-        }, 4500);
-      }
       return next;
     });
 
-    if (favorabilityPopTimerRef.current !== null) {
-      window.clearTimeout(favorabilityPopTimerRef.current);
-    }
-    setFavorabilityPop({ id: Date.now(), amount });
-    favorabilityPopTimerRef.current = window.setTimeout(() => {
-      setFavorabilityPop(null);
-      favorabilityPopTimerRef.current = null;
-    }, 1800);
   }
 
   function addUserPoints(amount: number) {
@@ -802,21 +758,10 @@ export function SakiFloatingChat({
   }
 
   const isUnlimitedPoints = pointsSummary?.unlimitedPoints ?? false;
-  const currentSakiPointsDisplay = pointsSummary ? (pointsSummary.unlimitedPoints ? "∞" : pointsSummary.points) : userPoints;
   const numericSakiPoints = pointsSummary?.points ?? userPoints;
 
   function handleFeedSaki(food: (typeof sakiFoodMenu)[number]) {
-    if (!isUnlimitedPoints && numericSakiPoints < food.cost) {
-      setSakiPokeMood("pout");
-      setSakiVideoBubble(t("saki.chat.notEnoughPoints"));
-      if (pokeTimerRef.current) window.clearTimeout(pokeTimerRef.current);
-      pokeTimerRef.current = window.setTimeout(() => {
-        setSakiPokeMood(null);
-        setSakiVideoBubble(null);
-        pokeTimerRef.current = null;
-      }, 3000);
-      return;
-    }
+    if (!isUnlimitedPoints && numericSakiPoints < food.cost) return;
 
     if (!isUnlimitedPoints) {
       const nextPts = Math.max(0, numericSakiPoints - food.cost);
@@ -832,105 +777,6 @@ export function SakiFloatingChat({
       }
     }
     addFavorabilityExp(food.favorability);
-    setSakiPokeMood(food.mood);
-    setSakiVideoBubble(food.greeting);
-
-    if (pokeTimerRef.current) window.clearTimeout(pokeTimerRef.current);
-    pokeTimerRef.current = window.setTimeout(() => {
-      setSakiPokeMood(null);
-      setSakiVideoBubble(null);
-      pokeTimerRef.current = null;
-    }, 3800);
-  }
-
-  const startFoodDrag = (e: React.PointerEvent, food: (typeof sakiFoodMenu)[number]) => {
-    if (e.button !== 0 && e.pointerType === "mouse") return;
-    const canAfford = isUnlimitedPoints || numericSakiPoints >= food.cost;
-    if (!canAfford) {
-      handleFeedSaki(food);
-      return;
-    }
-
-    const state: DraggingFoodState = {
-      food,
-      startX: e.clientX,
-      startY: e.clientY,
-      currentX: e.clientX,
-      currentY: e.clientY,
-      isDragging: false
-    };
-    dragFoodRef.current = state;
-    setDraggingFood(state);
-
-    const onMove = (ev: PointerEvent) => {
-      if (!dragFoodRef.current) return;
-      const dist = Math.hypot(ev.clientX - dragFoodRef.current.startX, ev.clientY - dragFoodRef.current.startY);
-      const isDragging = dragFoodRef.current.isDragging || dist > 6;
-
-      let over = false;
-      if (sakiCharacterRef.current) {
-        const rect = sakiCharacterRef.current.getBoundingClientRect();
-        over =
-          ev.clientX >= rect.left - 50 &&
-          ev.clientX <= rect.right + 50 &&
-          ev.clientY >= rect.top - 60 &&
-          ev.clientY <= rect.bottom + 40;
-      }
-
-      dragFoodRef.current = {
-        ...dragFoodRef.current,
-        currentX: ev.clientX,
-        currentY: ev.clientY,
-        isDragging
-      };
-      setDraggingFood({ ...dragFoodRef.current });
-      setIsDragOverSaki(over);
-    };
-
-    const onUp = (ev: PointerEvent) => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-
-      const current = dragFoodRef.current;
-      dragFoodRef.current = null;
-      setDraggingFood(null);
-      setIsDragOverSaki(false);
-
-      if (!current) return;
-
-      let over = false;
-      if (sakiCharacterRef.current) {
-        const rect = sakiCharacterRef.current.getBoundingClientRect();
-        over =
-          ev.clientX >= rect.left - 50 &&
-          ev.clientX <= rect.right + 50 &&
-          ev.clientY >= rect.top - 60 &&
-          ev.clientY <= rect.bottom + 40;
-      }
-
-      if (over && current.isDragging) {
-        handleFeedSaki(current.food);
-      } else if (!current.isDragging) {
-        handleFeedSaki(current.food);
-      }
-    };
-
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
-  };
-
-  function handleMiniGameFinish(score: number, expReward: number) {
-    addFavorabilityExp(expReward);
-    setSakiPokeMood("gaming");
-    setSakiVideoBubble(tFormat("saki.chat.miniGameFinish", score, expReward));
-    if (pokeTimerRef.current) window.clearTimeout(pokeTimerRef.current);
-    pokeTimerRef.current = window.setTimeout(() => {
-      setSakiPokeMood(null);
-      setSakiVideoBubble(null);
-      pokeTimerRef.current = null;
-    }, 4500);
   }
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [reasoningEffort] = useSakiReasoningEffort(currentModelId);
@@ -956,16 +802,13 @@ export function SakiFloatingChat({
   const nativeDialogFocusHandlerRef = useRef<(() => void) | null>(null);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const speechBaseDraftRef = useRef("");
-  const sakiVoiceEchoRef = useRef<SakiVoiceEcho | null>(null);
-  const sakiEchoHintShownRef = useRef(false);
-  const sakiHoldTimerRef = useRef<number | null>(null);
-  const sakiHoldActiveRef = useRef(false);
-  const sakiHoldPointerRef = useRef<number | null>(null);
   const composerNoticeTimerRef = useRef<number | null>(null);
   const sakiStreamAbortRef = useRef<AbortController | null>(null);
   const activeTaskIdRef = useRef<string | null>(null);
   const userStoppedRef = useRef(false);
   const sakiMessagesRef = useRef<HTMLDivElement | null>(null);
+  const callMessagesRef = useRef<HTMLDivElement | null>(null);
+  const visibleMessagesRef = callVisible ? callMessagesRef : sakiMessagesRef;
   const sakiAutoScrollRef = useRef(true);
   const sakiFileDragDepthRef = useRef(0);
   const launcherDragRef = useRef<{
@@ -989,16 +832,9 @@ export function SakiFloatingChat({
     return () => {
       sakiStreamAbortRef.current?.abort();
       recognitionRef.current?.abort();
-      sakiVoiceEchoRef.current?.stop();
       document.body.classList.remove("saki-selection-capture-active");
       if (composerNoticeTimerRef.current !== null) {
         window.clearTimeout(composerNoticeTimerRef.current);
-      }
-      if (pokeTimerRef.current !== null) {
-        window.clearTimeout(pokeTimerRef.current);
-      }
-      if (sakiHoldTimerRef.current !== null) {
-        window.clearTimeout(sakiHoldTimerRef.current);
       }
       if (suppressPanelDismissTimerRef.current !== null) {
         window.clearTimeout(suppressPanelDismissTimerRef.current);
@@ -1013,35 +849,6 @@ export function SakiFloatingChat({
   useEffect(() => {
     annotationModeRef.current = annotationMode;
   }, [annotationMode]);
-
-  useEffect(() => {
-    if (open && !sakiLieMode && !sakiEchoHintShownRef.current) {
-      sakiEchoHintShownRef.current = true;
-      setSakiVideoBubble("点按戳戳我，长按说话我会学你～ ♪");
-      if (pokeTimerRef.current !== null) window.clearTimeout(pokeTimerRef.current);
-      pokeTimerRef.current = window.setTimeout(() => {
-        setSakiVideoBubble(null);
-        pokeTimerRef.current = null;
-      }, 3800);
-    }
-  }, [open, sakiLieMode]);
-
-  useEffect(() => {
-    const keepEngine = open && !sakiLieMode;
-    if (listening || miniGameActive || mobileActiveTab !== "video" || !keepEngine) {
-      if (sakiHoldTimerRef.current !== null) {
-        window.clearTimeout(sakiHoldTimerRef.current);
-        sakiHoldTimerRef.current = null;
-      }
-      sakiHoldActiveRef.current = false;
-      sakiHoldPointerRef.current = null;
-      sakiVoiceEchoRef.current?.cancelHold();
-    }
-    if (keepEngine) return;
-    sakiVoiceEchoRef.current?.stop();
-    sakiVoiceEchoRef.current = null;
-    setSakiEchoState("idle");
-  }, [open, listening, miniGameActive, sakiLieMode, mobileActiveTab]);
 
   const modelRefreshSeq = useRef(0);
   const refreshSakiModels = useCallback(async () => {
@@ -1346,22 +1153,24 @@ export function SakiFloatingChat({
 
   useEffect(() => {
     const element = sakiMessagesRef.current;
-    if (!element || !open) return;
+    if (!element || !open || callVisible) return;
     const shouldFollow = sakiAutoScrollRef.current;
     if (!shouldFollow) return;
     const frame = window.requestAnimationFrame(() => {
       element.scrollTop = element.scrollHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [messages, open, messagesExpanded, fullscreen]);
+  }, [messages, open, messagesExpanded, fullscreen, callVisible]);
 
   useLayoutEffect(() => {
     const anchor = historyAnchorRef.current;
-    const element = sakiMessagesRef.current;
-    if (!anchor || !element || anchor.id !== activeConversationId) return;
-    element.scrollTop = anchor.top + element.scrollHeight - anchor.height;
+    if (!anchor) return;
     historyAnchorRef.current = null;
-  }, [messages, activeConversationId]);
+    const element = visibleMessagesRef.current;
+    if (element === anchor.element && anchor.id === activeConversationId) {
+      element.scrollTop = anchor.top + element.scrollHeight - anchor.height;
+    }
+  }, [messages, activeConversationId, visibleMessagesRef]);
 
   const reconnectSeqRef = useRef(0);
   const taskSnapshotRef = useRef("");
@@ -1378,7 +1187,7 @@ export function SakiFloatingChat({
     const seq = ++reconnectSeqRef.current;
     const checkActiveTask = async () => {
       try {
-        const result = explicitTaskId ? { hasActiveTask: true, task: await api.sakiGetTask(token, explicitTaskId) } : await api.sakiGetActiveTask(token, activeInstance?.id, true);
+        const result = explicitTaskId ? { hasActiveTask: true, task: await api.sakiGetTask(token, explicitTaskId) } : await api.sakiGetActiveTask(token, activeInstance?.id, true, activeConversationIdRef.current);
         if (seq !== reconnectSeqRef.current) return;
         if (!result.hasActiveTask || !result.task || result.task.status === "cancelled") {
           activeTaskIdRef.current = null;
@@ -1714,7 +1523,7 @@ export function SakiFloatingChat({
   function handleSakiMessagesScroll(event: React.UIEvent<HTMLDivElement>) {
     const element = event.currentTarget;
     const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-    sakiAutoScrollRef.current = distanceFromBottom < 96;
+    if (element === sakiMessagesRef.current) sakiAutoScrollRef.current = distanceFromBottom < 96;
     if (element.scrollTop < 120 && historyBeforeId && !historyLoadingRef.current) void loadEarlierMessages();
   }
 
@@ -1724,6 +1533,7 @@ export function SakiFloatingChat({
 
   useEffect(() => {
     function handleGlobalPointerDown(event: PointerEvent) {
+      if (callVisible) return;
       if (annotationMode) return;
       if (suppressPanelDismissRef.current) return;
       if (previewingAttachment) return;
@@ -1752,7 +1562,7 @@ export function SakiFloatingChat({
     return () => {
       document.removeEventListener("pointerdown", handleGlobalPointerDown);
     };
-  }, [annotationMode, open, previewingAttachment]);
+  }, [annotationMode, callVisible, open, previewingAttachment]);
 
   useEffect(() => {
     function clearFileDragState() {
@@ -2054,7 +1864,7 @@ export function SakiFloatingChat({
         const attachedEdge = sakiLauncherAttachedEdgeForPosition(current, pet.scale);
         const nextPosition = attachedEdge
           ? snapSakiLauncherPositionToEdge(current, attachedEdge, pet.scale)
-          : clampSakiLauncherPosition(current, launcherRef.current, "expanded", pet.scale);
+          : clampSakiLauncherPosition(current, null, "expanded", pet.scale);
         if (sameSakiLauncherPosition(current, nextPosition)) return current;
         writeSakiLauncherPosition(nextPosition);
         return nextPosition;
@@ -2120,13 +1930,9 @@ export function SakiFloatingChat({
     highlightLieDropTarget(clientX, clientY);
 
     const stage = petStageRef.current ?? (sizeElement as HTMLElement | null);
-    const desiredVisualLeft = clientX - drag.offsetX;
-    const desiredVisualTop = clientY - drag.offsetY;
     const scale = pet.scale || 1;
-    const baseWidth = sakiLauncherExpandedSize.width;
-    const baseHeight = sakiLauncherExpandedSize.height;
-    const rawX = desiredVisualLeft - (baseWidth / 2) * (1 - scale);
-    const rawY = desiredVisualTop - baseHeight * (1 - scale);
+    const rawX = clientX - drag.offsetX;
+    const rawY = clientY - drag.offsetY;
 
     const livePosition = clampSakiLauncherPosition(
       { x: rawX, y: rawY },
@@ -2173,13 +1979,9 @@ export function SakiFloatingChat({
 
     if (drag.moved) {
       const stage = petStageRef.current ?? (sizeElement as HTMLElement | null);
-      const desiredVisualLeft = clientX - drag.offsetX;
-      const desiredVisualTop = clientY - drag.offsetY;
       const scale = pet.scale || 1;
-      const baseWidth = sakiLauncherExpandedSize.width;
-      const baseHeight = sakiLauncherExpandedSize.height;
-      const rawX = desiredVisualLeft - (baseWidth / 2) * (1 - scale);
-      const rawY = desiredVisualTop - baseHeight * (1 - scale);
+      const rawX = clientX - drag.offsetX;
+      const rawY = clientY - drag.offsetY;
       const dragPosition = clampSakiLauncherPosition(
         { x: rawX, y: rawY },
         stage,
@@ -2280,14 +2082,11 @@ export function SakiFloatingChat({
     const request = pullDragRequest;
     const scale = pet.scale || 1;
     const baseWidth = sakiLauncherExpandedSize.width;
-    const baseHeight = sakiLauncherExpandedSize.height;
     const offsetX = (baseWidth * scale) / 2;
     const offsetY = 20 * scale;
 
-    const desiredVisualLeft = request.clientX - offsetX;
-    const desiredVisualTop = request.clientY - offsetY;
-    const rawX = desiredVisualLeft - (baseWidth / 2) * (1 - scale);
-    const rawY = desiredVisualTop - baseHeight * (1 - scale);
+    const rawX = request.clientX - offsetX;
+    const rawY = request.clientY - offsetY;
 
     const startPosition = clampSakiLauncherPosition(
       { x: rawX, y: rawY },
@@ -2352,6 +2151,70 @@ export function SakiFloatingChat({
       return;
     }
     setOpen(true);
+  }
+
+  function openTaskCall(target?: { instanceId?: string | null; instance?: ManagedInstance | null }) {
+    if (!canUseChat && !canUseAgent) return;
+    recognitionRef.current?.abort();
+    setListening(false);
+    let targetScope = callScope;
+    if (target && typeof target === "object" && "instanceId" in target && !("nativeEvent" in target)) {
+      if (target.instance) {
+        const inst = target.instance;
+        setAvailableInstances((prev) => (prev.some((i) => i.id === inst.id) ? prev : [inst, ...prev]));
+      }
+      const nextSelection: SakiWorkspaceSelection = target.instanceId
+        ? { type: "instance", instanceId: target.instanceId }
+        : { type: "current" };
+      const nextContextKey = getContextKeyForSelection(nextSelection);
+      let nextConversationId = activeConversationIdRef.current;
+      if (nextContextKey !== contextKey && !loading && !activeTaskIdRef.current && !hasPersistableSakiSpeech(messages)) {
+        nextConversationId = newClientId();
+        previousContextKeyRef.current = nextContextKey;
+        restoringContextRef.current = true;
+        setHistoryBeforeId(null);
+        activeConversationIdRef.current = nextConversationId;
+        setActiveConversationId(nextConversationId);
+        const nextInst = target.instance ?? (target.instanceId ? availableInstances.find((i) => i.id === target.instanceId) ?? null : null);
+        const nextLabel = nextInst ? nextInst.name : panelContext.label;
+        setMessages([createSakiWelcomeMessage(getSakiWelcomeMessageText(nextInst, nextLabel))]);
+        setDraft("");
+        setPanelError(null);
+        setContextTitle(null);
+        setContextText(null);
+        setSelectedSkillIds([]);
+        setAttachments([]);
+        setComposerNotice(null);
+        setMode(coerceSakiMode("agent", canUseChat, canUseAgent));
+        setPermissionMode(defaultPermissionModeRef.current);
+      }
+      setWorkspaceSelection(nextSelection);
+      targetScope = JSON.stringify([nextContextKey, nextConversationId, userId]);
+    }
+    const existingAudio = callSession?.scope === targetScope ? callSession.audio : null;
+    const audio = existingAudio ?? new SakiCallAudio();
+    audio.unlock();
+    if (!existingAudio) setCallSession({ scope: targetScope, audio });
+    setOpen(true);
+    setMessagesExpanded(true);
+    setCallViewOpen(true);
+  }
+
+  const openTaskCallRef = useRef(openTaskCall);
+  openTaskCallRef.current = openTaskCall;
+  useEffect(() => {
+    const handleOpenCall = (event: Event) => {
+      const detail = (event as CustomEvent<{ instanceId?: string | null; instance?: ManagedInstance | null }>).detail;
+      openTaskCallRef.current(detail);
+    };
+    window.addEventListener("saki:open_call", handleOpenCall);
+    return () => window.removeEventListener("saki:open_call", handleOpenCall);
+  }, []);
+
+  function endTaskCall() {
+    callAudio?.stop();
+    setCallSession(null);
+    setCallViewOpen(false);
   }
 
   function closeSakiPanel() {
@@ -2463,14 +2326,15 @@ export function SakiFloatingChat({
     if (!historyBeforeId || historyLoadingRef.current || !token) return;
     const id = activeConversationIdRef.current;
     const cursor = historyBeforeId;
+    const scrollRef = visibleMessagesRef;
     historyLoadingRef.current = true;
     setHistoryLoading(true);
     try {
       const page = await api.sakiGetConversation(token, id, { limit: 30, beforeId: cursor });
       if (activeConversationIdRef.current !== id) return;
-      const element = sakiMessagesRef.current;
-      if (element) historyAnchorRef.current = { id, top: element.scrollTop, height: element.scrollHeight };
-      sakiAutoScrollRef.current = false;
+      const element = scrollRef.current;
+      if (element) historyAnchorRef.current = { id, element, top: element.scrollTop, height: element.scrollHeight };
+      if (scrollRef === sakiMessagesRef) sakiAutoScrollRef.current = false;
       setHistoryBeforeId(page.historyBeforeId ?? null);
       const next = storedConversationsRef.current.map(item => item.id === id ? { ...item, historyBeforeId: page.historyBeforeId ?? null } : item);
       storedConversationsRef.current = next;
@@ -2741,7 +2605,7 @@ export function SakiFloatingChat({
       window.dispatchEvent(new CustomEvent("saki:cloud_refresh"));
       if (decision === "approve") {
         try {
-          const latest = await api.sakiGetActiveTask(token, activeInstance?.id, true);
+          const latest = await api.sakiGetActiveTask(token, activeInstance?.id, true, activeConversationIdRef.current);
           if (latest.task && latest.task.status !== "cancelled" && (!latest.task.conversationId || latest.task.conversationId === activeConversationIdRef.current)) {
             await reconnectActiveTask(latest.task.id);
           }
@@ -2791,7 +2655,7 @@ export function SakiFloatingChat({
       if (disposed || checking || sakiStreamAbortRef.current) return;
       checking = true;
       try {
-        const result = await api.sakiGetActiveTask(token, activeInstance?.id, true);
+        const result = await api.sakiGetActiveTask(token, activeInstance?.id, true, activeConversationIdRef.current);
         if (!disposed && result.task?.status === "running" && (!result.task.conversationId || result.task.conversationId === activeConversationIdRef.current)) {
           void reconnectActiveTask(result.task.id);
         }
@@ -3214,13 +3078,6 @@ export function SakiFloatingChat({
       return;
     }
 
-    if (sakiHoldTimerRef.current !== null) {
-      window.clearTimeout(sakiHoldTimerRef.current);
-      sakiHoldTimerRef.current = null;
-    }
-    sakiHoldActiveRef.current = false;
-    sakiVoiceEchoRef.current?.cancelHold();
-
     const Recognition = getSpeechRecognitionConstructor();
     if (!Recognition) {
       showComposerNotice("当前浏览器不支持语音输入。");
@@ -3287,10 +3144,13 @@ export function SakiFloatingChat({
 
   function stopSakiGeneration() {
     userStoppedRef.current = true;
-    lastRunCompletedRef.current = followUpQueueRef.current.length > 0;
+    lastRunCompletedRef.current = false;
     const currentTaskId = activeTaskIdRef.current;
-    if (currentTaskId && token) {
-      void api.sakiCancelTask(token, currentTaskId).catch(() => {});
+    const request = followUpRequestRef.current;
+    if (token && (currentTaskId || loadingRef.current && request?.mode === "agent" && request.clientRequestId)) {
+      const cancellation = currentTaskId ? api.sakiCancelTask(token, currentTaskId) : api.sakiCancelRequest(token, request!.clientRequestId!);
+      void cancellation.catch(error => showComposerNotice(error instanceof Error ? error.message : "无法确认任务已停止。"))
+        .finally(() => window.dispatchEvent(new CustomEvent("saki:active_task_updated")));
       activeTaskIdRef.current = null;
     }
     const controller = sakiStreamAbortRef.current;
@@ -3443,7 +3303,12 @@ export function SakiFloatingChat({
     if (!turn) return;
     if (turn.assistant.retry) {
       setDismissedRetryId(assistantMessageId);
-      await submitRef.current?.(undefined, { message: "继续", mode: "agent", ...(turn.assistant.retry.taskId ? { resumeTaskId: turn.assistant.retry.taskId } : {}) });
+      await submitRef.current?.(undefined, {
+        message: "继续",
+        mode: "agent",
+        ...(callVisible ? { callTurn: true } : {}),
+        ...(turn.assistant.retry.taskId ? { resumeTaskId: turn.assistant.retry.taskId } : {})
+      });
       return;
     }
     setActionBusyId(`retry:${assistantMessageId}`);
@@ -3645,7 +3510,10 @@ export function SakiFloatingChat({
     sakiAutoScrollRef.current = true;
     const requestPanelError = override?.panelError ?? panelError;
     const requestContextTitle = override?.contextTitle ?? contextTitle;
-    const requestContextText = override?.contextText ?? contextText;
+    const panelContextText = override?.contextText ?? contextText;
+    const requestContextText = override?.callTurn
+      ? [panelContextText, "The user is on a live task call. Reply in the user’s language with short, speakable sentences. Report task results and blockers concisely. Use the normal approval and task question tools when a decision is needed."].filter(Boolean).join("\n\n")
+      : panelContextText;
     const historySource = override?.replaceHistory ?? messages;
 
     const userMessage: LocalSakiMessage = {
@@ -3669,8 +3537,10 @@ export function SakiFloatingChat({
     const nextMessages = [...historySource, userMessage, assistantMessage];
     setMessages(nextMessages);
     saveConversationStateDirectly(nextMessages);
-    setDraft("");
-    setAttachments([]);
+    if (!override?.callTurn) {
+      setDraft("");
+      setAttachments([]);
+    }
     setComposerNotice(null);
     setSakiActivityMood("working");
     setLoading(true);
@@ -3740,6 +3610,7 @@ export function SakiFloatingChat({
       }, sakiStreamIdleFallbackMs);
     };
     const applyFinalResponse = (response: SakiChatResponse) => {
+      if (userStoppedRef.current || followUpRequestRef.current !== request) return;
       streamCompleted = true;
       lastRunCompletedRef.current = true;
       activeTaskIdRef.current = null;
@@ -3814,7 +3685,7 @@ export function SakiFloatingChat({
     armStreamIdleTimer();
 
     const applyStreamEvent = (streamEvent: SakiChatStreamEvent) => {
-        if (sakiStreamAbortRef.current?.signal.aborted) return;
+        if (userStoppedRef.current || followUpRequestRef.current !== request || sakiStreamAbortRef.current?.signal.aborted) return;
         armStreamIdleTimer();
         if (streamEvent.type === "snapshot") {
           const response = streamEvent.response;
@@ -4058,6 +3929,7 @@ export function SakiFloatingChat({
       });
     } finally {
       clearStreamIdleTimer();
+      if (followUpRequestRef.current !== request) return;
       const current = sakiStreamAbortRef.current;
       if (!current || current.signal.aborted || streamCompleted) {
         sakiStreamAbortRef.current = null;
@@ -4114,24 +3986,12 @@ export function SakiFloatingChat({
   const isAgentBusy = Boolean(loading || hasStreamingAssistant);
   useEffect(() => {
     if (prevBusyRef.current && !isAgentBusy) {
+      if (!open) {
+        pet.startBehavior(launcherEdgeAttached ? "edge_wave" : "happy_cheer", 4800);
+      }
       if (sakiActivityMood && isSakiWorkMood(sakiActivityMood)) {
         const doneMoods: NonNullable<SakiActivityMood>[] = ["happy", "OK", "wink"];
         setSakiActivityMood(doneMoods[Math.floor(Math.random() * doneMoods.length)] ?? "happy");
-      }
-      if (mobileActiveTab === "video") {
-        setChatPulseAlert(true);
-        const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant" && stripDsmlMarkup(m.content).trim());
-        if (lastAssistant && lastAssistant.content) {
-          const bubbleText = stripDsmlMarkup(lastAssistant.content).trim();
-          if (bubbleText) {
-            setSakiVideoBubble(bubbleText);
-            if (pokeTimerRef.current) window.clearTimeout(pokeTimerRef.current);
-            pokeTimerRef.current = window.setTimeout(() => {
-              setSakiVideoBubble(null);
-              pokeTimerRef.current = null;
-            }, 15000);
-          }
-        }
       }
       const nextJob = followUpQueueRef.current[0];
       if (nextJob && lastRunCompletedRef.current) {
@@ -4145,7 +4005,7 @@ export function SakiFloatingChat({
       }
     }
     prevBusyRef.current = isAgentBusy;
-  }, [isAgentBusy, mobileActiveTab, messages, sakiActivityMood]);
+  }, [isAgentBusy, launcherEdgeAttached, open, pet, sakiActivityMood]);
 
   const [showCodeChangesDetails, setShowCodeChangesDetails] = useState(false);
   const {
@@ -4171,13 +4031,13 @@ export function SakiFloatingChat({
   }, []);
 
   useEffect(() => {
-    if (showCodeChangesDetails && sakiMessagesRef.current) {
+    if (showCodeChangesDetails && visibleMessagesRef.current) {
       setTimeout(() => {
-        const el = sakiMessagesRef.current?.querySelector(".saki-code-changes-inline-container");
+        const el = visibleMessagesRef.current?.querySelector(".saki-code-changes-inline-container");
         el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }, 50);
     }
-  }, [showCodeChangesDetails]);
+  }, [showCodeChangesDetails, visibleMessagesRef]);
 
   useEffect(() => {
     const handleActiveTaskUpdated = () => {
@@ -4198,11 +4058,6 @@ export function SakiFloatingChat({
     };
   }, [token, activeInstance?.id]);
 
-  useEffect(() => {
-    if (mobileActiveTab === "chat") {
-      setChatPulseAlert(false);
-    }
-  }, [mobileActiveTab]);
   const launcherEdge = launcherAttachedEdge ?? sakiLauncherEdgeForPosition(launcherPosition, pet.scale);
   const launcherStyle: React.CSSProperties = {
     left: 0,
@@ -4213,159 +4068,6 @@ export function SakiFloatingChat({
     ["--saki-y" as string]: `${launcherPosition.y}px`,
     ...(launcherDragging ? {} : { transform: `translate(${launcherPosition.x}px, ${launcherPosition.y}px)` })
   };
-
-  const sakiGreetings = useMemo(() => [
-    t("saki.chat.greeting.1"),
-    t("saki.chat.greeting.2"),
-    t("saki.chat.greeting.3"),
-    t("saki.chat.greeting.4"),
-    t("saki.chat.greeting.5")
-  ], [t]);
-
-  function handleSakiPoke() {
-    if (pokeTimerRef.current !== null) {
-      window.clearTimeout(pokeTimerRef.current);
-    }
-    const now = Date.now();
-    const streak = pokeStreakRef.current;
-    if (now - streak.lastAt > 1400) streak.count = 0;
-    streak.count += 1;
-    streak.lastAt = now;
-
-    if (streak.count >= 6) {
-      streak.count = 0;
-      const eggLines = [
-        t("saki.chat.egg.1"),
-        t("saki.chat.egg.2"),
-        t("saki.chat.egg.3"),
-        t("saki.chat.egg.4")
-      ];
-      const line = eggLines[Math.floor(Math.random() * eggLines.length)] ?? t("saki.chat.egg.3");
-      setSakiPokeMood("middlefinger");
-      setSakiVideoBubble(line);
-      pokeTimerRef.current = window.setTimeout(() => {
-        setSakiPokeMood(null);
-        setSakiVideoBubble(null);
-        pokeTimerRef.current = null;
-      }, 4800);
-      return;
-    }
-
-    const moods: NonNullable<SakiActivityMood>[] = ["wink", "happy", "OK", "surprised"];
-    const randomMood: SakiActivityMood = moods[Math.floor(Math.random() * moods.length)] ?? "happy";
-    const defaultGreeting = t("saki.chat.greeting.1");
-    const randomGreeting: string = sakiGreetings[Math.floor(Math.random() * sakiGreetings.length)] ?? defaultGreeting;
-    setSakiPokeMood(randomMood);
-    setSakiVideoBubble(randomGreeting);
-    pokeTimerRef.current = window.setTimeout(() => {
-      setSakiPokeMood(null);
-      setSakiVideoBubble(null);
-      pokeTimerRef.current = null;
-    }, 3500);
-  }
-
-  function canHoldSakiToTalk() {
-    return !listening && !miniGameActive && !draggingFood && mobileActiveTab === "video";
-  }
-
-  function ensureSakiVoiceEcho() {
-    if (!sakiVoiceEchoRef.current) {
-      sakiVoiceEchoRef.current = new SakiVoiceEcho({
-        onStateChange: setSakiEchoState
-      });
-    }
-    return sakiVoiceEchoRef.current;
-  }
-
-  function handleSakiCharacterPointerDown(event: React.PointerEvent<HTMLDivElement>) {
-    if (event.button !== 0 && event.pointerType === "mouse") return;
-    if (draggingFood || miniGameActive) return;
-    event.preventDefault();
-    sakiHoldPointerRef.current = event.pointerId;
-    sakiHoldActiveRef.current = false;
-    try {
-      event.currentTarget.setPointerCapture(event.pointerId);
-    } catch {}
-    if (!canHoldSakiToTalk()) return;
-    if (sakiHoldTimerRef.current !== null) window.clearTimeout(sakiHoldTimerRef.current);
-    sakiHoldTimerRef.current = window.setTimeout(() => {
-      sakiHoldTimerRef.current = null;
-      void startSakiHoldRecord();
-    }, 300);
-  }
-
-  async function startSakiHoldRecord() {
-    if (!canHoldSakiToTalk() || sakiHoldPointerRef.current === null) return;
-    sakiHoldActiveRef.current = true;
-    if (pokeTimerRef.current !== null) {
-      window.clearTimeout(pokeTimerRef.current);
-      pokeTimerRef.current = null;
-    }
-    setSakiPokeMood(null);
-    setSakiVideoBubble(null);
-    setSakiEchoState("hearing");
-    const echo = ensureSakiVoiceEcho();
-    const ok = await echo.beginHold();
-    if (!sakiHoldActiveRef.current) {
-      echo.cancelHold();
-      return;
-    }
-    if (!ok) {
-      sakiHoldActiveRef.current = false;
-      setSakiEchoState("idle");
-      setSakiVideoBubble(null);
-      showComposerNotice("无法使用麦克风，Saki 没法学你说话。");
-    }
-  }
-
-  function handleSakiCharacterPointerUp(event: React.PointerEvent<HTMLDivElement>) {
-    if (sakiHoldPointerRef.current !== null && event.pointerId !== sakiHoldPointerRef.current) return;
-    finishSakiCharacterPointer(true);
-  }
-
-  function handleSakiCharacterPointerCancel(event: React.PointerEvent<HTMLDivElement>) {
-    if (sakiHoldPointerRef.current !== null && event.pointerId !== sakiHoldPointerRef.current) return;
-    finishSakiCharacterPointer(false);
-  }
-
-  function finishSakiCharacterPointer(allowPoke: boolean) {
-    if (sakiHoldTimerRef.current !== null) {
-      window.clearTimeout(sakiHoldTimerRef.current);
-      sakiHoldTimerRef.current = null;
-    }
-    const wasHold = sakiHoldActiveRef.current;
-    sakiHoldActiveRef.current = false;
-    sakiHoldPointerRef.current = null;
-    if (wasHold) {
-      sakiVoiceEchoRef.current?.endHold();
-      return;
-    }
-    if (allowPoke && !miniGameActive && !draggingFood) handleSakiPoke();
-  }
-
-  function handleCustomRoomBgUpload(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const dataUrl = e.target?.result as string;
-      if (dataUrl) {
-        setCustomRoomBg(dataUrl);
-        try {
-          localStorage.setItem("saki_custom_room_bg", dataUrl);
-        } catch {}
-      }
-    };
-    reader.readAsDataURL(file);
-    event.currentTarget.value = "";
-  }
-
-  const isSakiListening = listening || sakiEchoState === "hearing";
-  const echoActivityMood: SakiActivityMood = isSakiListening
-    ? "hearing"
-    : sakiEchoState === "speaking"
-      ? "speaking"
-      : null;
 
   useEffect(() => {
     if (!isAgentBusy && isSakiWorkMood(sakiActivityMood)) {
@@ -4386,11 +4088,7 @@ export function SakiFloatingChat({
       pet.widget !== null ||
       loading ||
       sakiActivityMood ||
-      sakiPokeMood ||
-      listening ||
-      sakiEchoState !== "idle" ||
-      miniGameActive ||
-      draggingFood
+      listening
     ) {
       setSakiSleepy(false);
       return;
@@ -4404,11 +4102,7 @@ export function SakiFloatingChat({
     pet.widget,
     loading,
     sakiActivityMood,
-    sakiPokeMood,
-    listening,
-    sakiEchoState,
-    miniGameActive,
-    draggingFood
+    listening
   ]);
 
   // Once sleepy nods off, gently settle back to normal idle after 20 seconds instead of looping forever
@@ -4419,47 +4113,105 @@ export function SakiFloatingChat({
   }, [sakiSleepy]);
 
   const effectiveWorkMood = isAgentBusy ? sakiActivityMood : (isSakiWorkMood(sakiActivityMood) ? null : sakiActivityMood);
-  const effectiveActivityMood = pet.music.playing
-    ? "singing"
-    : echoActivityMood ?? sakiPokeMood ?? effectiveWorkMood ?? (sakiSleepy ? "sleepy" : null);
-
-  const activeStreamingAssistant = [...messages].reverse().find((message) => message.role === "assistant" && message.streaming);
-  const activeStreamingContent = stripDsmlMarkup(activeStreamingAssistant?.content ?? "").trim();
-  const activeStreamingThinking = activeStreamingAssistant?.thinking?.trim();
-  const isStreamingReply = Boolean(activeStreamingAssistant && activeStreamingContent);
-
-  const videoBubbleText = sakiVideoBubble
-    ? sakiVideoBubble
-    : (activeStreamingAssistant && activeStreamingContent)
-    ? activeStreamingContent
-    : (activeStreamingAssistant && activeStreamingThinking)
-    ? t("saki.chat.thinking")
-    : loading && !hasStreamingAssistant
-    ? t("saki.chat.thinking")
-    : hasStreamingAssistant
-    ? t("saki.chat.replying")
-    : isAgentBusy && sakiActivityMood === "working"
-    ? t("saki.chat.working")
-    : isAgentBusy && sakiActivityMood === "reading"
-    ? t("saki.chat.reading")
-    : isAgentBusy && sakiActivityMood === "checkfiles"
-    ? t("saki.chat.checkfiles")
-    : listening
-    ? t("saki.chat.dictating")
-    : sakiEchoState === "hearing"
-    ? t("saki.chat.echoRelease")
-    : sakiEchoState === "speaking"
-    ? t("saki.chat.echoSpeaking")
-    : null;
-
-  useEffect(() => {
-    if (!videoBubbleRef.current) return;
-    if (isStreamingReply) {
-      videoBubbleRef.current.scrollTop = videoBubbleRef.current.scrollHeight;
-    } else {
-      videoBubbleRef.current.scrollTop = 0;
+  const effectiveActivityMood = pet.music.playing ? "singing" : effectiveWorkMood ?? (sakiSleepy ? "sleepy" : null);
+  const callReply = useMemo(() => {
+    if (!latestAssistant || latestAssistant.id === "saki-welcome") return null;
+    const delta = latestAssistant.timeline?.flatMap((entry) => entry.kind === "text" && entry.source === "delta" ? [entry.content] : []).join("\n\n");
+    const text = latestAssistant.streaming ? delta || latestAssistant.content : latestAssistant.content;
+    return { id: latestAssistant.id, text: stripDsmlMarkup(text), complete: !latestAssistant.streaming };
+  }, [latestAssistant]);
+  const callDecisionAction = useMemo(() => {
+    if (!callVisible) return;
+    const seen = new Set<string>();
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index];
+      if (message?.role !== "assistant" || message.rollbackJournal) continue;
+      for (const action of message.actions ?? []) {
+        if (seen.has(action.id)) continue;
+        seen.add(action.id);
+        if (action.status === "pending_approval" || action.status === "pending_input") return action;
+      }
     }
-  }, [videoBubbleText, isStreamingReply]);
+  }, [messages, callVisible]);
+  const callBusy = isAgentBusy || historyLoading || actionBusyId !== null
+    || (mode === "agent" && serverFollowUps.items.some((item) => item.status !== "paused"));
+  const callLanguageIsChinese = language.startsWith("zh");
+  const callLabel = callLanguageIsChinese ? (callAudio ? "返回视频通话" : "开始视频通话") : (callAudio ? "Return to video call" : "Start video call");
+
+  const messageListProps: SakiMessagesListProps = {
+    conversationId: activeConversationId,
+    historyLoading,
+    hasEarlierMessages: Boolean(historyBeforeId),
+    onLoadEarlierMessages: () => void loadEarlierMessages(),
+    mode,
+    messagesRef: sakiMessagesRef,
+    onScroll: handleSakiMessagesScroll,
+    messages,
+    loading,
+    hasStreamingAssistant,
+    avatar: sakiArtAssets.avatar,
+    thinkingGif: sakiArtAssets.thinkingGif,
+    actionBusyId,
+    copiedUserMessageId,
+    copiedAssistantMessageId,
+    dismissedRetryId,
+    onDismissRetry: setDismissedRetryId,
+    onRollbackUserTurn: rollbackUserTurn,
+    onCopyUserMessage: copyUserMessage,
+    onCopyAssistantMessage: copyAssistantMessage,
+    onRetryAssistantTurn: retryAssistantTurn,
+    onDeleteAssistantTurn: deleteAssistantTurn,
+    onDecideAction: decideAction,
+    onAnswerQuestion: answerQuestion,
+    onOpenPath: onOpenWorkspaceFile ? openWorkspacePath : undefined,
+    onRollbackAllFileActions: rollbackAllFileActions,
+    onPreviewAttachment: setPreviewingAttachment,
+    token,
+    changesSummary: gitChangesSummary,
+    showCodeChangesDetails,
+    revertingChanges,
+    changesLoading: gitChangesLoading,
+    onToggleCodeChangesDetails: handleToggleCodeChangesDetails,
+    onCloseCodeChangesDetails: () => setShowCodeChangesDetails(false),
+    onRevertAllChanges: handleRevertAllChanges,
+    onRestoreAllChanges: handleRestoreAllChanges
+  };
+  const openCallWorkspacePath = onOpenWorkspaceFile ? (path: string, line?: number) => {
+    if (activeInstance) setCallViewOpen(false);
+    openWorkspacePath(path, line);
+  } : undefined;
+  const taskProgress = latestTodo ? <div className="saki-agent-progress-dock"><SakiTodoCard action={latestTodo} /></div> : null;
+  const attachmentPreview = previewingAttachment ? (
+    <SakiAttachmentModal
+      attachment={previewingAttachment.attachment}
+      editable={previewingAttachment.editable}
+      inline={callVisible}
+      onClose={() => {
+        setPreviewingAttachment(null);
+        if (!callVisible) keepComposerVisible(true);
+      }}
+      onSave={(updated) => {
+        setAttachments((current) =>
+          current.map((item) =>
+            (item.id ?? item.name) === (updated.id ?? updated.name) ? updated : item
+          )
+        );
+        setPreviewingAttachment(null);
+        if (!callVisible) keepComposerVisible(true);
+      }}
+      onRemove={() => {
+        setAttachments((current) =>
+          current.filter(
+            (item) =>
+              (item.id ?? item.name) !==
+              (previewingAttachment.attachment.id ?? previewingAttachment.attachment.name)
+          )
+        );
+        setPreviewingAttachment(null);
+        if (!callVisible) keepComposerVisible(true);
+      }}
+    />
+  ) : null;
 
   return (
     <>
@@ -4477,7 +4229,7 @@ export function SakiFloatingChat({
         artMood={artMood}
         activityMood={effectiveActivityMood}
         isBusy={isAgentBusy}
-        activeTask={isAgentBusy ? { message: videoBubbleText || undefined } : null}
+        activeTask={isAgentBusy ? { message: callReply?.text || undefined } : null}
         onSendPrompt={(prompt) => {
           setOpen(true);
           void submit(undefined, { message: prompt, attachments: [] });
@@ -4520,7 +4272,8 @@ export function SakiFloatingChat({
 
       <section
         ref={panelRef}
-        className={`saki-panel ${messagesExpanded ? "expanded" : "collapsed"} ${fullscreen ? "fullscreen" : ""} ${sakiFileHoverActive ? "drop-ready" : ""} ${open ? "visible" : "hidden"} mobile-tab-${mobileActiveTab}`}
+        className={`saki-panel ${messagesExpanded ? "expanded" : "collapsed"} ${fullscreen ? "fullscreen" : ""} ${sakiFileHoverActive ? "drop-ready" : ""} ${open ? "visible" : "hidden"} mobile-tab-chat`}
+        hidden={callVisible}
         aria-label="Saki Copilot"
         onDragEnter={handleSakiFileDragEnter}
         onDragOver={handleSakiFileDragOver}
@@ -4573,59 +4326,9 @@ export function SakiFloatingChat({
 
         <div className="saki-messages-container">
 
-          <SakiVideoPane
-            mobileActiveTab={mobileActiveTab}
-            setMobileActiveTab={setMobileActiveTab}
-            customRoomBg={customRoomBg}
-            setCustomRoomBg={setCustomRoomBg}
-            roomBgInputRef={roomBgInputRef}
-            handleCustomRoomBgUpload={handleCustomRoomBgUpload}
-            miniGameActive={miniGameActive}
-            setMiniGameActive={setMiniGameActive}
-            setSakiPokeMood={setSakiPokeMood}
-            handleMiniGameFinish={handleMiniGameFinish}
-            chatPulseAlert={chatPulseAlert}
-            setChatPulseAlert={setChatPulseAlert}
-            sakiFavorabilityExp={sakiFavorabilityExp}
-            favorabilityPop={favorabilityPop}
-            language={language}
-            closeSakiPanel={closeSakiPanel}
-            sakiCharacterRef={sakiCharacterRef}
-            artMood={artMood}
-            effectiveActivityMood={effectiveActivityMood}
-            isDragOverSaki={isDragOverSaki}
-            sakiEchoState={sakiEchoState}
-            isSakiListening={isSakiListening}
-            handleSakiCharacterPointerDown={handleSakiCharacterPointerDown}
-            handleSakiCharacterPointerUp={handleSakiCharacterPointerUp}
-            handleSakiCharacterPointerCancel={handleSakiCharacterPointerCancel}
-            handleSakiPoke={handleSakiPoke}
-            draggingFood={draggingFood}
-            videoBubbleText={videoBubbleText}
-            isStreamingReply={isStreamingReply}
-            videoBubbleRef={videoBubbleRef}
-            feedMenuOpen={feedMenuOpen}
-            setFeedMenuOpen={setFeedMenuOpen}
-            isUnlimitedPoints={isUnlimitedPoints}
-            numericSakiPoints={numericSakiPoints}
-            startFoodDrag={startFoodDrag}
-            listening={listening}
-            toggleSpeechInput={toggleSpeechInput}
-          />
-
-          <div className={`saki-messages-inner ${mobileActiveTab === "chat" ? "mobile-show" : "mobile-hide"}`}>
+          <div className="saki-messages-inner">
             <div className={`saki-header ${workspaceDropdownOpen ? "workspace-open" : ""}`}>
               <div className="saki-header-left">
-                <button
-                  type="button"
-                  className="saki-mobile-back-video-btn"
-                  title="前往 Saki 陪伴"
-                  aria-label="前往陪伴"
-                  onClick={() => setMobileActiveTab("video")}
-                >
-                  <ChevronLeft size={14} />
-                  <span>陪伴</span>
-                </button>
                 <div className="saki-workspace-selector-container" ref={dropdownRef}>
                   <button
                     type="button"
@@ -4896,45 +4599,8 @@ export function SakiFloatingChat({
             </div>
           ) : null}
 
-          <SakiMessagesList
-            conversationId={activeConversationId}
-            historyLoading={historyLoading}
-            hasEarlierMessages={Boolean(historyBeforeId)}
-            onLoadEarlierMessages={() => void loadEarlierMessages()}
-            mode={mode}
-            messagesRef={sakiMessagesRef}
-            onScroll={handleSakiMessagesScroll}
-            messages={messages}
-            loading={loading}
-            hasStreamingAssistant={hasStreamingAssistant}
-            avatar={sakiArtAssets.avatar}
-            thinkingGif={sakiArtAssets.thinkingGif}
-            actionBusyId={actionBusyId}
-            copiedUserMessageId={copiedUserMessageId}
-            copiedAssistantMessageId={copiedAssistantMessageId}
-            dismissedRetryId={dismissedRetryId}
-            onDismissRetry={(id) => setDismissedRetryId(id)}
-            onRollbackUserTurn={rollbackUserTurn}
-            onCopyUserMessage={copyUserMessage}
-            onCopyAssistantMessage={copyAssistantMessage}
-            onRetryAssistantTurn={retryAssistantTurn}
-            onDeleteAssistantTurn={deleteAssistantTurn}
-            onDecideAction={decideAction}
-            onAnswerQuestion={answerQuestion}
-            onOpenPath={onOpenWorkspaceFile ? openWorkspacePath : undefined}
-            onRollbackAllFileActions={rollbackAllFileActions}
-            onPreviewAttachment={(preview) => setPreviewingAttachment(preview)}
-            token={token}
-            changesSummary={gitChangesSummary}
-            showCodeChangesDetails={showCodeChangesDetails}
-            revertingChanges={revertingChanges}
-            changesLoading={gitChangesLoading}
-            onToggleCodeChangesDetails={handleToggleCodeChangesDetails}
-            onCloseCodeChangesDetails={() => setShowCodeChangesDetails(false)}
-            onRevertAllChanges={handleRevertAllChanges}
-            onRestoreAllChanges={handleRestoreAllChanges}
-          />
-          {latestTodo ? <div className="saki-agent-progress-dock"><SakiTodoCard action={latestTodo} /></div> : null}
+          {!callVisible ? <SakiMessagesList {...messageListProps} /> : null}
+          {taskProgress}
           {isAgentBusy && gitChangesSummary && (gitChangesSummary.filesCount > 0 || gitChangesSummary.canRestore) ? (
             <div className="saki-docked-changes-pill-wrap">
               <SakiChangedFilesPill
@@ -4948,6 +4614,9 @@ export function SakiFloatingChat({
 
       <SakiComposer
         onSubmit={submit}
+        onOpenCall={openTaskCall}
+        callActive={Boolean(callAudio)}
+        callLabel={callLabel}
         imageInputRef={imageInputRef}
         attachmentInputRef={attachmentInputRef}
         onAddFiles={addFilesToComposer}
@@ -5028,36 +4697,7 @@ export function SakiFloatingChat({
         hasActiveInstance={Boolean(activeInstance)}
         token={token}
       />
-    {previewingAttachment ? (
-        <SakiAttachmentModal
-          attachment={previewingAttachment.attachment}
-          editable={previewingAttachment.editable}
-          onClose={() => {
-            setPreviewingAttachment(null);
-            keepComposerVisible(true);
-          }}
-          onSave={(updated) => {
-            setAttachments((current) =>
-              current.map((item) =>
-                (item.id ?? item.name) === (updated.id ?? updated.name) ? updated : item
-              )
-            );
-            setPreviewingAttachment(null);
-            keepComposerVisible(true);
-          }}
-          onRemove={() => {
-            setAttachments((current) =>
-              current.filter(
-                (item) =>
-                  (item.id ?? item.name) !==
-                  (previewingAttachment.attachment.id ?? previewingAttachment.attachment.name)
-              )
-            );
-            setPreviewingAttachment(null);
-            keepComposerVisible(true);
-          }}
-        />
-      ) : null}
+        {callVisible ? null : attachmentPreview}
         </SakiPathOpenContext.Provider>
     </section>
     <SakiChatDropdowns
@@ -5092,6 +4732,27 @@ export function SakiFloatingChat({
         void selectModel(modelId);
       }}
     />
+    {callAudio ? (
+      <SakiPathOpenContext.Provider value={openCallWorkspacePath}>
+        <SakiTaskCall visible={callVisible} audio={callAudio} token={token} workspace={baseContextLabel} workspaceId={activeInstance?.id} workspaces={availableInstances} language={language}
+          conversation={{ ...messageListProps, messagesRef: callMessagesRef, onOpenPath: openCallWorkspacePath }}
+          taskProgress={taskProgress} taskNotice={composerNotice} attachmentPreview={callVisible ? attachmentPreview : null}
+          modelId={currentModelId} modelName={currentModelName || parseSakiModelSelection(currentModelId).model}
+          models={availableModels} modelPointsMultipliers={modelPointsMultipliers} onSelectModel={(modelId) => { void selectModel(modelId); }}
+          busy={callBusy} decisionAction={callDecisionAction} reply={callReply}
+          onEnd={endTaskCall} onOpenConversation={() => setCallViewOpen(false)}
+          onOpenArtifact={onOpenWorkspaceFile ? (path, workspaceId) => {
+            setCallViewOpen(false);
+            onOpenWorkspaceFile(path, undefined, workspaceId);
+          } : undefined}
+          onChooseWorkspace={mode === "agent" && !activeInstance ? () => {
+            setCallViewOpen(false);
+            setWorkspaceDropdownOpen(true);
+            void loadInstances();
+          } : undefined}
+          onSend={(message, frame) => submitRef.current(undefined, { message, attachments: frame ? [frame] : [], callTurn: true })} />
+      </SakiPathOpenContext.Provider>
+    ) : null}
     </>
   );
 }

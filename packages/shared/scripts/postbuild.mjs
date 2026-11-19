@@ -44,3 +44,4 @@ safeCopy(path.join(typesDir, "git.d.ts"), path.join(distDir, "git.d.ts"));
 safeCopy(path.join(typesDir, "database-security.d.ts"), path.join(distDir, "database-security.d.ts"));
 safeCopy(path.join(typesDir, "terminal.d.ts"), path.join(distDir, "terminal.d.ts"));
 safeCopy(path.join(typesDir, "saki-reasoning.d.ts"), path.join(distDir, "saki-reasoning.d.ts"));
+safeCopy(path.join(typesDir, "saki-call-voice.d.ts"), path.join(distDir, "saki-call-voice.d.ts"));

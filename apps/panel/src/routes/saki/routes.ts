@@ -25,6 +25,7 @@ import {
   rollbackSakiTask
 } from "./approval.js";
 import { ensureSakiModulesReady } from "./bootstrap.js";
+import { registerSakiCallVoiceRoutes } from "./call-voice.js";
 import {
   auditSakiChatResponse,
   callConfiguredModel,
@@ -67,7 +68,7 @@ import {
 import { prisma } from "../../db.js";
 import { createSakiAgentEvents, startSakiEventStream } from "./stream.js";
 import { connectSakiTaskStream } from "./task-stream.js";
-import { cancelRestoredSakiTask } from "./task-cancellation.js";
+import { cancelRestoredSakiTask, cancelSakiClientRequest, isSakiClientRequestCancelled } from "./task-cancellation.js";
 import { registerSakiFollowUpRoutes } from "./follow-up-routes.js";
 import { readSakiModelPreference, resolveSakiUserModel, saveSakiModelPreference } from "./model-preferences.js";
 import { assertSakiSessionAccess, assertSakiTaskAccess, hasSakiProjectAccess, sakiProjectPermissions } from "./session-access.js";
@@ -75,17 +76,23 @@ import { withSakiWorkspaceMutation } from "./workspace-mutation.js";
 import { createSakiTerminal } from "./terminals.js";
 import { assertSakiWorkspaceBinding, bindSakiWorkspace } from "./workspace-binding.js";
 import { runTrackedSakiTask, trackedSakiTaskEvents } from "./task-runner.js";
-import { saveClientSakiConversation, sakiMemoryConversationId, sakiMemoryTurnExists, withSakiConversationLock } from "./conversations.js";
+import { recoverSakiToolJournal, removeSakiToolJournals } from "./tool-journal.js";
+import { cancelAgentJobsForTask, hasRunningAgentJobs } from "./agent-jobs.js";
+import { removeSakiWorkspaceReadIndex } from "./workspace-recall-index.js";
+import { saveClientSakiConversation, sakiMemoryTurnExists, withSakiConversationLock } from "./conversations.js";
 import { conversationEditHistory, conversationMetadata, importConversationHistory, iterateConversationMessages, readMessageAt, selectConversationPage, streamConversationJson } from "./conversation-store.js";
 import { conversationMarkdownFileName, conversationMarkdownHeader, conversationMarkdownMessage, snapshotConversationForExport } from "./conversation-export.js";
 import {
   cancelActiveSakiTask,
   activeSakiTasks,
-  assertSakiTaskContextAvailable,
+  assertSakiConversationAvailable,
   cancelAllRunningSakiTasks,
   cancelRunningSakiTasksForContext,
   clearFinishedSakiTasks,
   createActiveSakiTask,
+  clearSessionAgentMemory,
+  completedSakiActions,
+  sakiResumeConversationId,
   deleteSakiTask,
   enqueueSakiTaskSteer,
   emitActiveSakiTaskEvent,
@@ -96,7 +103,6 @@ import {
   getLatestSakiTask,
   listSakiActiveTasks,
   pendingSakiActions,
-  formatSessionFollowUpContext,
   getSessionAgentMemory,
   sessionAgentMemoriesReady,
   sessionAgentMemories,
@@ -115,6 +121,7 @@ import {
   sakiUsePermissions,
   trimString,
   withRequestedSakiModel,
+  withAgentAbortSignal,
   type SakiActiveTaskEvent,
   type SakiAgentResumeState,
   type SakiAgentRunEvents
@@ -151,11 +158,14 @@ async function startSakiTaskUnlocked(request: FastifyRequest, prepared: Awaited<
     return previous;
   }
   const instanceId = context.workspace?.instanceId ?? null;
-  let memory = getSessionAgentMemory(request.user.sub, instanceId);
   const continuation = Boolean(modelInput.resumeTaskId) || isSakiContinuationMessage(modelInput.message) || modelInput.agentIntent === "compact";
   const targetConversationId = modelInput.conversationId ?? (modelInput.resumeTaskId ? `task-${modelInput.resumeTaskId}` : undefined);
-  if (memory && (!targetConversationId || sakiMemoryConversationId(memory) !== targetConversationId
-    || !await sakiMemoryTurnExists(memory))) memory = null;
+  let memory = targetConversationId ? getSessionAgentMemory(request.user.sub, targetConversationId) : null;
+  if (continuation && targetConversationId && (!modelInput.resumeTaskId || !memory || memory.resumeState.taskId === modelInput.resumeTaskId)) {
+    const recovered = await recoverSakiToolJournal(request.user.sub, targetConversationId, completedSakiActions, modelInput.resumeTaskId);
+    if (recovered && (!memory || recovered.updatedAt > memory.updatedAt)) memory = recovered;
+  }
+  if (memory && !await sakiMemoryTurnExists(memory)) memory = null;
   if (memory && !matchesScope(memory.resumeState.input)) {
     if (continuation) throw new RouteError("工作区选择已改变，请描述一个新任务。", 409);
     memory = null;
@@ -182,7 +192,7 @@ async function startSakiTaskUnlocked(request: FastifyRequest, prepared: Awaited<
     const { userMessageId: _u, assistantMessageId: _a, clientRequestId: _c, resumeTaskId: _r, ...resumeInput } = resume.input;
     return { ...resumeInput, ...effectiveModelInput, message: resume.input.message, attachments: resume.input.attachments ?? [] };
   })()
-    : memory ? { ...effectiveModelInput, contextText: [effectiveModelInput.contextText, formatSessionFollowUpContext(memory)].filter(Boolean).join("\n\n") } : effectiveModelInput;
+    : effectiveModelInput;
   // No await between this second deduplication check and claiming the context.
   const concurrent = findSakiTaskByRequest(request.user.sub, modelInput.clientRequestId);
   if (concurrent) {
@@ -190,13 +200,14 @@ async function startSakiTaskUnlocked(request: FastifyRequest, prepared: Awaited<
     return concurrent;
   }
   if (admission && !await admission()) throw new RouteError("队列已暂停，消息已保留。", 409);
-  assertSakiTaskContextAvailable(request.user.sub, instanceId, undefined, context.instances?.map(instance => instance.id));
+  if (isSakiClientRequestCancelled(request.user.sub, modelInput.clientRequestId)) throw new RouteError("该请求已取消。", 409);
+  assertSakiConversationAvailable(request.user.sub, targetConversationId);
   const abortController = new AbortController();
   const task = createActiveSakiTask(randomUUID(), request.user.sub, instanceId, effectiveModelInput, abortController);
   if (context.instance) task.workspaceBinding = bindSakiWorkspace(context.instance);
   if (context.instances) task.workspaceBindings = context.instances.map(bindSakiWorkspace);
   void runTrackedSakiTask(task, async () => {
-    const response = await runSakiAgent({ request, input, context, skills, userId: request.user.sub, permissions: request.user.permissions, config, abortController, taskId: task.id }, trackedSakiTaskEvents(task.id), resume, executeSakiAgentTool);
+    const response = await runSakiAgent({ request, input, context, skills, userId: request.user.sub, permissions: request.user.permissions, config, abortController, taskId: task.id, ...(memory && !resume ? { priorSession: memory } : {}) }, trackedSakiTaskEvents(task.id), resume, executeSakiAgentTool);
     try { await auditSakiChatResponse(request, prepared, response); }
     catch (error) { console.warn("[Saki] Task audit failed:", error instanceof Error ? error.message : String(error)); }
     return response;
@@ -211,6 +222,7 @@ async function acceptQueryBearer(request: FastifyRequest, _reply: FastifyReply):
 }
 
 export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
+  registerSakiCallVoiceRoutes(app);
   ensureSakiModulesReady();
   const followUps = await registerSakiFollowUpRoutes(app, startSakiTaskInvocation);
   const stopTaskMaintenance = startSakiTaskMaintenance();
@@ -610,7 +622,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
         let accumulatedThinking = "";
         let chatTokensUsed = 0;
         try {
-          const streamed = await callConfiguredModelStream(
+          const streamed = await withAgentAbortSignal(taskAbortController.signal, () => callConfiguredModelStream(
             modelInput,
             context,
             skills,
@@ -622,11 +634,12 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
               accumulatedThinking += text;
               events.thinking(text);
             }
-          );
+          ));
           replyText = streamed.text;
           chatTokensUsed = streamed.tokensUsed;
         } catch (streamError) {
-          const fallbackChat = await callConfiguredModel(modelInput, context, skills);
+          if (taskAbortController.signal.aborted) return;
+          const fallbackChat = await withAgentAbortSignal(taskAbortController.signal, () => callConfiguredModel(modelInput, context, skills));
           replyText = fallbackChat.text;
           chatTokensUsed = fallbackChat.tokensUsed;
           if (!streamedAnyText) {
@@ -658,6 +671,7 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
       await auditSakiChatResponse(request, prepared, response);
       stream.send("done", { response });
     } catch (error) {
+      if (taskAbortController.signal.aborted) return;
       const reason = error instanceof Error ? error.message : "Saki request failed";
       const fallback = directLocalFallback(modelInput, context, skills, reason);
       await auditSakiChatResponse(request, prepared, fallback, "FAILURE", reason);
@@ -680,8 +694,14 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/saki/active-task", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
-    const query = request.query as { instanceId?: string; includeFinished?: string };
-    const task = query.includeFinished === "1" ? getLatestSakiTask(request.user.sub, query.instanceId ?? null) : getActiveSakiTask(request.user.sub, query.instanceId ?? null);
+    const query = request.query as { instanceId?: string; includeFinished?: string; conversationId?: string };
+    const task = query.conversationId
+      ? [...activeSakiTasks.values()].filter(task => task.userId === request.user.sub
+        && (task.input.conversationId ?? `task-${task.id}`) === query.conversationId
+        && (query.includeFinished === "1" || task.status === "running"))
+        .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))[0]
+      : query.includeFinished === "1" ? getLatestSakiTask(request.user.sub, query.instanceId ?? null)
+        : getActiveSakiTask(request.user.sub, query.instanceId ?? null);
     if (!task) {
       return { hasActiveTask: false };
     }
@@ -709,21 +729,30 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     connectSakiTaskStream(task, request, reply, () => assertSakiTaskAccess(request.user.sub, task));
   });
 
+  const cancelLiveTask = (request: FastifyRequest, task: NonNullable<ReturnType<typeof getActiveSakiTaskById>>) => {
+    if (task.userId !== request.user.sub) throw new RouteError("Task not found.", 404);
+    const stoppedJobs = cancelAgentJobsForTask(request.user.sub, task.id);
+    const cancelled = cancelActiveSakiTask(task.id);
+    const conversationId = task.input.conversationId ?? `task-${task.id}`;
+    void followUps.pause(request.user.sub, conversationId).then(() => {
+      for (const queued of activeSakiTasks.values()) if (queued.id !== task.id && queued.userId === request.user.sub && queued.input.conversationId === conversationId
+        && queued.input.clientRequestId?.startsWith("queue-") && queued.status === "running") cancelActiveSakiTask(queued.id);
+    }).catch(err => request.log.error({ err, taskId: task.id }, "Could not pause Saki follow-ups"));
+    return { ok: cancelled || stoppedJobs > 0 || task.status === "cancelled" };
+  };
+
   app.post("/api/saki/tasks/:taskId/cancel", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
     const { taskId } = request.params as { taskId: string };
     const task = getActiveSakiTaskById(taskId);
-    if (task?.userId === request.user.sub) {
-      const conversationId = task.input.conversationId ?? `task-${task.id}`;
-      await followUps.pause(request.user.sub, conversationId);
-      for (const queued of activeSakiTasks.values()) if (queued.id !== taskId && queued.userId === request.user.sub && queued.input.conversationId === conversationId
-        && queued.input.clientRequestId?.startsWith("queue-") && queued.status === "running") cancelActiveSakiTask(queued.id);
-    }
-    if (!task) return cancelRestoredSakiTask(request.user.sub, taskId);
-    if (task.userId !== request.user.sub) {
-      throw new RouteError("Task not found.", 404);
-    }
-    const cancelled = cancelActiveSakiTask(taskId);
-    return { ok: cancelled };
+    return task ? cancelLiveTask(request, task) : cancelRestoredSakiTask(request.user.sub, taskId);
+  });
+
+  app.post("/api/saki/requests/:requestId/cancel", { preHandler: requireAnyPermission(sakiUsePermissions) }, async request => {
+    const { requestId } = request.params as { requestId: string };
+    if (!/^[a-zA-Z0-9_-]{1,200}$/.test(requestId)) throw new RouteError("Invalid request ID.", 400);
+    cancelSakiClientRequest(request.user.sub, requestId);
+    const task = findSakiTaskByRequest(request.user.sub, requestId);
+    return task ? cancelLiveTask(request, task) : { ok: true };
   });
 
   app.post("/api/saki/tasks/:taskId/steer", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
@@ -746,8 +775,9 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post("/api/saki/tasks/cancel-all", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
-    await followUps.pause(request.user.sub);
+    cancelAgentJobsForTask(request.user.sub);
     const cancelledCount = cancelAllRunningSakiTasks(request.user.sub);
+    await followUps.pause(request.user.sub);
     await writeAuditLog({
       request,
       userId: request.user.sub,
@@ -1000,8 +1030,21 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
       }
       for await (const value of page ? selected(page.positions) : iterateConversationMessages(id)) {
         const message = value as { streaming?: boolean; taskId?: string } | null;
-        yield message?.streaming && message.taskId && activeSakiTasks.get(message.taskId)?.status !== "running"
-          ? { ...message, streaming: false, isStreaming: false } : value;
+        if (!message?.streaming || !message.taskId || activeSakiTasks.get(message.taskId)?.status === "running") {
+          yield value;
+          continue;
+        }
+        const task = activeSakiTasks.get(message.taskId);
+        let retry = task?.response?.retry;
+        if (!task) {
+          await Promise.all([sakiActionsReady, sessionAgentMemoriesReady]);
+          const snapshot = getSessionAgentMemory(request.user.sub, id);
+          const journal = await recoverSakiToolJournal(request.user.sub, id, completedSakiActions, message.taskId);
+          if ((snapshot?.resumeState.taskId === message.taskId || journal) && (!snapshot || snapshot.resumeState.taskId === message.taskId)) {
+            retry = { taskId: message.taskId, reason: "服务中断，已保留可恢复的执行记录。" };
+          }
+        }
+        yield { ...message, streaming: false, isStreaming: false, ...(retry ? { retry } : {}) };
       }
     }
     return reply.type("application/json").send(Readable.from(streamConversationJson({
@@ -1023,17 +1066,27 @@ export async function registerSakiRoutes(app: FastifyInstance): Promise<void> {
     await withSakiConversationLock(id, async () => {
       const liveTask = [...activeSakiTasks.values()].some((task) => task.userId === request.user.sub && (task.input.conversationId ?? `task-${task.id}`) === id && (task.status === "running" || task.status === "pending_approval" || task.status === "pending_input" || task.execution || task.decisionInFlight || task.pendingHistorySync));
       const pendingDecision = [...pendingSakiActions.values()].some((pending) => pending.userId === request.user.sub && pending.resume && (pending.resume.input.conversationId ?? `task-${pending.resume.taskId}`) === id);
-      if (liveTask || pendingDecision) throw new RouteError("请先停止或处理该对话的任务，再删除记录。", 409);
+      if (liveTask || pendingDecision || hasRunningAgentJobs(request.user.sub, id)) throw new RouteError("请先停止或处理该对话的任务，再删除记录。", 409);
       await prisma.sakiConversation.deleteMany({ where: { id, userId: request.user.sub } });
+      await sessionAgentMemoriesReady;
+      clearSessionAgentMemory(request.user.sub, id);
+      await removeSakiToolJournals(request.user.sub, id);
+      await removeSakiWorkspaceReadIndex(request.user.sub, id).catch(error => request.log.warn({ err: error }, "Could not clear Saki recall index"));
     });
     return { ok: true };
   });
 
   app.delete("/api/saki/conversations", { preHandler: requireAnyPermission(sakiUsePermissions) }, async (request) => {
-    if ([...activeSakiTasks.values()].some((task) => task.userId === request.user.sub && (task.status === "running" || task.status === "pending_approval" || task.status === "pending_input" || task.execution || task.decisionInFlight || task.pendingHistorySync)) || [...pendingSakiActions.values()].some((pending) => pending.userId === request.user.sub && pending.resume)) throw new RouteError("请先停止、处理或完成同步中的任务，再清空记录。", 409);
-    await prisma.sakiConversation.deleteMany({
-      where: { userId: request.user.sub }
-    });
+    if (hasRunningAgentJobs(request.user.sub) || [...activeSakiTasks.values()].some((task) => task.userId === request.user.sub && (task.status === "running" || task.status === "pending_approval" || task.status === "pending_input" || task.execution || task.decisionInFlight || task.pendingHistorySync)) || [...pendingSakiActions.values()].some((pending) => pending.userId === request.user.sub && pending.resume)) throw new RouteError("请先停止、处理或完成同步中的任务，再清空记录。", 409);
+    const conversations = await prisma.sakiConversation.findMany({ where: { userId: request.user.sub }, select: { id: true } });
+    await prisma.sakiConversation.deleteMany({ where: { userId: request.user.sub } });
+    await Promise.all(conversations.map(({ id }) => removeSakiToolJournals(request.user.sub, id)));
+    await removeSakiWorkspaceReadIndex(request.user.sub).catch(error => request.log.warn({ err: error }, "Could not clear Saki recall index"));
+    await sessionAgentMemoriesReady;
+    for (const memory of sessionAgentMemories.values()) {
+      const id = sakiResumeConversationId(memory.resumeState);
+      if (id && memory.userId === request.user.sub) clearSessionAgentMemory(memory.userId, id);
+    }
     return { ok: true };
   });
 }

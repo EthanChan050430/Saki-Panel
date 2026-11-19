@@ -158,7 +158,7 @@ export const WIKI_CHAPTERS_EN: WikiChapter[] = [
         description: "Saki is not a sidebar item. She stays on screen.",
         bullets: [
           "Click lying Saki on the top bar, or the floating character, to open chat.",
-          "Default is collapsed: companion room on the left, input at the bottom, messages as a mini preview. Expand chat above the input to see the full thread.",
+          "The collapsed view shows the input and a conversation preview. Use the arrow to expand the full thread or the video button to start a task call.",
           "Maximize in the header goes fullscreen. Click again to Exit fullscreen.",
           "Close input closes the panel; Saki becomes a draggable character. Drag her back to the top bar to lie down again.",
           "Near the left or right edge she docks and shrinks.",
@@ -212,7 +212,7 @@ export const WIKI_CHAPTERS_EN: WikiChapter[] = [
       {
         id: "wiki-saki-history",
         title: "2.4 History, copy, rewind, retry",
-        description: "Header buttons usually: Go to companion, History, Points & Usage, Maximize, New chat, Close.",
+        description: "Header buttons usually: History, Points & Usage, Maximize, New chat, Close.",
         bullets: [
           "History opens a drawer: New chat, pick an old thread, or delete one. Empty: No history yet.",
           "Your messages: Copy, or Rewind (return to this line and undo later edits).",
@@ -242,116 +242,42 @@ export const WIKI_CHAPTERS_EN: WikiChapter[] = [
   },
   {
     id: "wiki-saki-companion",
-    title: "3. Companion room, affection, feeding, mini-game",
-    shortTitle: "Affection",
+    title: "3. Task video calls",
+    shortTitle: "Task video calls",
     category: "saki",
-    categoryLabel: "Saki AI assistant",
-    iconName: "Heart",
-    badge: "Companion",
-    summary: "The left side of Saki is her room. Poke her, feed treats, decorate, or play the dessert game to raise affection.",
+    categoryLabel: "Saki AI Assistant",
+    iconName: "MessageSquare",
+    summary: "Talk with Saki in the selected workspace, give instructions aloud, and hear task results.",
     keywords: [
-      "affection",
-      "feed",
-      "daifuku",
-      "boba",
-      "bento",
-      "dessert",
-      "mini-game",
-      "poke",
-      "voice echo",
-      "decorate",
-      "companion"
+      "video call",
+      "microphone",
+      "task",
+      "camera",
+      "screen sharing",
+      "voice model"
     ],
     subsections: [
       {
         id: "wiki-saki-room",
-        title: "3.1 What's in the room",
-        description: "Left of chat (on phones, the Companion tab) is Saki's room.",
+        title: "3.1 Start a call",
         bullets: [
-          "Paintbrush: Decorate room (custom background). After a custom image, Restore default room appears.",
-          "Heart: affection level. Hover for title, EXP, and a bar. On gain the heart pops and +N EXP floats up.",
-          "Tap Saki to poke; hold to let her mimic your voice. Tooltip: Tap to poke, hold to speak.",
-          "Bottom: mic, gamepad, utensils (feed), hang up. Phones also get Switch to chat.",
-          "Phones have Companion / Chat island pills. When she finishes speaking, Chat shows a breathing light."
-        ],
-        mockupKey: "saki-companion"
-      },
-      {
-        id: "wiki-saki-favorability",
-        title: "3.2 Affection levels",
-        description: "Affection follows your account. On level-up she says she reached a new level. At max: Max affection level reached!",
-        table: {
-          headers: ["Level", "Title", "EXP range"],
-          rows: [
-            ["Lv.1", "Acquaintance", "0 – 100"],
-            ["Lv.2", "Rapport", "100 – 250"],
-            ["Lv.3", "Intimate", "250 – 500"],
-            ["Lv.4", "Best Friends", "500 – 900"],
-            ["Lv.5", "Kindred Spirits", "900 – 1400"],
-            ["Lv.6", "Incomparable", "1400 – 2000"],
-            ["Lv.7", "Galaxy Vow", "2000 – 3000"],
-            ["Lv.8", "Eternal Bond", "3000 – 5000 (max)"]
-          ]
-        },
-        bullets: [
-          "Hover the heart for Affection Lv.x · title, current EXP, and EXP to next level.",
-          "About 50 seconds idle and she gets sleepy."
+          "Select the video button next to the Saki input. The first call starts automatically after the browser downloads and verifies the 132 MiB voice model.",
+          "Mainland China IPs use a GitHub mirror. Other locations try GitHub Releases first. Subsequent calls can reuse the model cached in the browser."
         ]
-      },
-      {
-        id: "wiki-saki-feed",
-        title: "3.3 Feeding: spend points for affection",
-        description: "Utensils button: Feed Saki (spend points on treats). Drag onto her or tap.",
-        table: {
-          headers: ["Treat", "Cost", "Affection", "She says"],
-          rows: [
-            ["Strawberry Daifuku", "1 pt", "+10", "Nom nom～ The soft strawberry daifuku is so delicious!"],
-            ["Boba Pearl Milk Tea", "2 pts", "+25", "A sip of sweet pearl milk tea fills me with energy!"],
-            ["Kitty Heart Bento", "5 pts", "+60", "Is this cute kitty bento made specially for me?!"]
-          ]
-        },
-        callout: {
-          type: "note",
-          title: "Not enough points",
-          text: "Treats grey out. She asks you to chat more to earn points. Unlimited accounts are not blocked."
-        }
       },
       {
         id: "wiki-saki-poke-voice",
-        title: "3.4 Poke and voice echo",
-        description: "First visit: Tap to poke me, hold to speak and I'll copy you ♪",
+        title: "3.2 Work by voice",
         bullets: [
-          "Short tap: a random greeting.",
-          "About 6 taps within 1.4 seconds: a tsundere easter egg.",
-          "Hold over ~0.3s: voice echo. Bubbles say she will copy you after you release.",
-          "No mic: Saki cannot copy your voice without a microphone.",
-          "Echo engine is in Settings → Features: lightweight DSP (recommended) or on-device WebGPU AI."
+          "The browser sends the transcript to the current conversation when you finish speaking. Saki displays captions and reads replies aloud.",
+          "Select the microphone while Saki is speaking to interrupt. Select the voice label to switch between the Saki model and browser speech synthesis.",
+          "On mobile, select View tasks to review approvals, answer questions, or check progress."
         ]
       },
       {
-        id: "wiki-saki-game",
-        title: "3.5 Mini-game: Star Dream Dessert Drop",
-        description: "Gamepad: Star Dream Dessert Drop (mini-game for affection). Move the basket, catch sweets, avoid bugs.",
-        bullets: [
-          "30 seconds. Header: countdown and score. Mute or Exit game.",
-          "Combo 2+ shows COMBO; combo 5 enters FEVER 2X (dessert scores double).",
-          "Catch ratings: NICE! / GREAT! / PERFECT! / FEVER!; bugs are MISS! and break combo.",
-          "End screen: Challenge complete! with score, affection EXP, max combo. Claim reward and finish.",
-          "Affection reward = score × 0.35, minimum 15.",
-          "Ranks: ≥1000 SSS, ≥600 S, ≥300 A, otherwise B."
-        ],
-        table: {
-          headers: ["Item", "Score"],
-          rows: [
-            ["Wish star", "+30"],
-            ["Strawberry daifuku", "+25"],
-            ["Pearl milk tea", "+25"],
-            ["Donut", "+20"],
-            ["Macaron", "+15"],
-            ["Naughty bug", "−15 (breaks combo)"]
-          ]
-        },
-        mockupKey: "saki-game"
+        id: "wiki-saki-call-frame",
+        title: "3.3 Attach a picture",
+        description: "Enable the camera or screen sharing, then select Attach a frame to the next message. Saki receives a still frame with the next instruction."
       }
     ]
   },
@@ -1026,7 +952,6 @@ export const WIKI_CHAPTERS_EN: WikiChapter[] = [
         bullets: [
           "Web search and page extract: Saki may look up docs.",
           "Model Context Protocol (MCP): extra tools.",
-          "Saki voice-echo engine: hold Saki in the companion room. Lightweight DSP enhance (recommended/default) or On-device WebGPU / WASM AI. Footer shows whether WebGPU was found; if not, AI mode falls back to DSP."
         ],
         mockupKey: "settings-nav"
       },

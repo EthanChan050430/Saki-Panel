@@ -17,6 +17,13 @@ export function isSakiPetTouchUi(): boolean {
 export type SakiPetSkinId = "saki";
 export type SakiPetBehavior =
   | "idle"
+  | "idle_sway"
+  | "idle_twirl"
+  | "idle_look"
+  | "idle_ribbon"
+  | "idle_stretch"
+  | "idle_shy"
+  | "hover_wave"
   | "walk"
   | "sit"
   | "lie"
@@ -28,6 +35,7 @@ export type SakiPetBehavior =
   | "fall"
   | "chase"
   | "happy"
+  | "happy_cheer"
   | "eat"
   | "doctor"
   | "toilet"
@@ -38,7 +46,137 @@ export type SakiPetBehavior =
   | "shy"
   | "pout"
   | "drink"
-  | "blink";
+  | "blink"
+  | "play_phone"
+  | "read_book"
+  | "hungry"
+  | "dizzy"
+  | "edge_idle"
+  | "edge_wave"
+  | "edge_peek"
+  | "edge_sleepy"
+  | "edge_look"
+  | "edge_snack"
+  | "edge_poke"
+  | "edge_climb"
+  | "edge_feed"
+  | "edge_bath"
+  | "edge_pet"
+  | "edge_sleep"
+  | "edge_doctor"
+  | "edge_toilet";
+
+export const SAKI_STANDING_IDLE_BEHAVIORS: readonly SakiPetBehavior[] = [
+  "idle",
+  "idle_sway",
+  "idle_twirl",
+  "idle_look",
+  "idle_ribbon",
+  "idle_stretch",
+  "idle_shy"
+];
+
+export const SAKI_EDGE_BEHAVIORS: readonly SakiPetBehavior[] = [
+  "edge_idle",
+  "edge_wave",
+  "edge_peek",
+  "edge_sleepy",
+  "edge_look",
+  "edge_snack",
+  "edge_climb"
+];
+
+export function isSakiEdgeBehavior(behavior: SakiPetBehavior): boolean {
+  return behavior.startsWith("edge_");
+}
+
+function pickWeightedBehavior(
+  candidates: readonly { behavior: SakiPetBehavior; weight: number; minMs: number; maxMs: number }[],
+  avoid?: SakiPetBehavior
+): { behavior: SakiPetBehavior; durationMs: number } {
+  const pool = candidates.filter((item) => item.behavior !== avoid);
+  const active = pool.length > 0 ? pool : candidates;
+  const total = active.reduce((sum, item) => sum + item.weight, 0);
+  let roll = Math.random() * total;
+  for (const item of active) {
+    roll -= item.weight;
+    if (roll <= 0) {
+      return {
+        behavior: item.behavior,
+        durationMs: Math.round(item.minMs + Math.random() * (item.maxMs - item.minMs))
+      };
+    }
+  }
+  const fallback = active[0]!;
+  return { behavior: fallback.behavior, durationMs: fallback.minMs };
+}
+
+function pickAutonomousEdgeBehavior(
+  current: SakiPetBehavior,
+  hunger: number
+): { behavior: SakiPetBehavior; durationMs: number } {
+  const hour = new Date().getHours();
+  const isLate = hour >= 22 || hour < 6;
+  return pickWeightedBehavior(
+    [
+      { behavior: "edge_idle", weight: 22, minMs: 5000, maxMs: 9000 },
+      { behavior: "edge_wave", weight: 14, minMs: 4200, maxMs: 6500 },
+      { behavior: "edge_peek", weight: 18, minMs: 4800, maxMs: 7500 },
+      { behavior: "edge_look", weight: 15, minMs: 4500, maxMs: 7000 },
+      { behavior: "edge_snack", weight: hunger < 45 ? 24 : 14, minMs: 5200, maxMs: 8000 },
+      { behavior: "edge_sleepy", weight: isLate ? 28 : 12, minMs: 6500, maxMs: 11000 },
+      { behavior: "edge_climb", weight: 11, minMs: 3600, maxMs: 5400 }
+    ],
+    current
+  );
+}
+
+function pickAutonomousStandingBehavior(
+  current: SakiPetBehavior,
+  stats: SakiPetStats,
+  pomodoro: SakiPetPomodoro
+): { behavior: SakiPetBehavior; durationMs: number } {
+  const hour = new Date().getHours();
+  const isLate = hour >= 23 || hour < 6;
+  if (stats.health < 28 && Math.random() < 0.45) {
+    return { behavior: "dizzy", durationMs: 5200 };
+  }
+  if (stats.hunger < 22 && Math.random() < 0.5) {
+    return { behavior: Math.random() < 0.6 ? "hungry" : "sit", durationMs: 6400 };
+  }
+  if (pomodoro.running && pomodoro.mode === "focus") {
+    return pickWeightedBehavior(
+      [
+        { behavior: "read_book", weight: 38, minMs: 8000, maxMs: 14000 },
+        { behavior: "sit", weight: 24, minMs: 9000, maxMs: 14000 },
+        { behavior: "idle_twirl", weight: 14, minMs: 6000, maxMs: 9000 },
+        { behavior: "idle_ribbon", weight: 12, minMs: 6000, maxMs: 9000 },
+        { behavior: "drink", weight: 12, minMs: 5500, maxMs: 8000 }
+      ],
+      current
+    );
+  }
+  return pickWeightedBehavior(
+    [
+      { behavior: "idle", weight: 14, minMs: 7000, maxMs: 12000 },
+      { behavior: "idle_sway", weight: 14, minMs: 5500, maxMs: 9000 },
+      { behavior: "idle_twirl", weight: 13, minMs: 5500, maxMs: 9000 },
+      { behavior: "idle_look", weight: 10, minMs: 5000, maxMs: 8000 },
+      { behavior: "idle_ribbon", weight: 11, minMs: 5000, maxMs: 8000 },
+      { behavior: "idle_stretch", weight: isLate ? 16 : 10, minMs: 4800, maxMs: 7200 },
+      { behavior: "idle_shy", weight: 10, minMs: 5200, maxMs: 8000 },
+      { behavior: "drink", weight: 11, minMs: 5500, maxMs: 8500 },
+      { behavior: "play_phone", weight: 12, minMs: 6500, maxMs: 11000 },
+      { behavior: "read_book", weight: 11, minMs: 6500, maxMs: 11000 },
+      { behavior: "happy_cheer", weight: stats.mood >= 70 ? 12 : 6, minMs: 4200, maxMs: 6200 },
+      { behavior: "walk", weight: 11, minMs: 3600, maxMs: 6200 },
+      { behavior: "sit", weight: 15, minMs: 8000, maxMs: 13000 },
+      { behavior: "lie", weight: 10, minMs: 8000, maxMs: 13000 },
+      { behavior: "sleep", weight: isLate ? 26 : 8, minMs: 11000, maxMs: 17000 }
+    ],
+    current
+  );
+}
 export type SakiPetGroup = "none" | "companion" | "tools";
 export type SakiPetWidget =
   | null
@@ -523,7 +661,8 @@ export function useSakiPet({
 
   const commitPosition = useCallback(
     (next: SakiLauncherPosition, persistPos = false) => {
-      const clamped = clampSakiLauncherPosition(next, null, "expanded", scale);
+      const mode = next.edge === "left" || next.edge === "right" ? "attached" : "expanded";
+      const clamped = clampSakiLauncherPosition(next, null, mode, scale);
       livePosRef.current = clamped;
       applyStageStyle(clamped);
       if (persistPos) {
@@ -537,102 +676,210 @@ export function useSakiPet({
   const pickTarget = useCallback((): SakiLauncherPosition => {
     const vw = globalThis.innerWidth || 1200;
     const vh = globalThis.innerHeight || 800;
+    const maxW = Math.round(86 * scale) + 32;
+    const maxH = Math.round(118 * scale) + 48;
     return {
-      x: 24 + Math.random() * Math.max(40, vw - 140),
-      y: 72 + Math.random() * Math.max(40, vh - 220)
+      x: 24 + Math.random() * Math.max(40, vw - maxW),
+      y: 72 + Math.random() * Math.max(40, vh - maxH)
     };
-  }, []);
+  }, [scale]);
 
   const startBehavior = useCallback(
     (next: SakiPetBehavior, durationMs?: number) => {
       setBehavior(next);
       const now = Date.now();
+      if (next === "walk") {
+        const cur = currentPosition();
+        const vw = globalThis.innerWidth || 1200;
+        const delta = (Math.random() < 0.5 ? -1 : 1) * (64 + Math.random() * 92);
+        const targetX = Math.max(12, Math.min(vw - Math.round(86 * scale) - 16, cur.x + delta));
+        walkTargetRef.current = { x: targetX, y: cur.y };
+        setFacing(targetX < cur.x ? "left" : "right");
+      } else if (next === "edge_climb") {
+        const cur = currentPosition();
+        const vh = globalThis.innerHeight || 800;
+        const deltaY = (Math.random() < 0.5 ? -1 : 1) * (48 + Math.random() * 68);
+        const targetY = Math.max(24, Math.min(vh - Math.round(92 * scale) - 24, cur.y + deltaY));
+        walkTargetRef.current = { x: cur.x, y: targetY };
+      } else {
+        walkTargetRef.current = null;
+      }
+
       if (next === "roll") {
         behaviorUntilRef.current = now + 2200;
-      } else if (next === "climb") {
-        behaviorUntilRef.current = now + (durationMs ?? 2400);
+      } else if (next === "climb" || next === "edge_climb") {
+        behaviorUntilRef.current = now + (durationMs ?? 3600);
+      } else if (next === "fall") {
+        behaviorUntilRef.current = now + (durationMs ?? 1100);
       } else {
         behaviorUntilRef.current = now + (durationMs ?? (next === "sleep" ? 16000 : next === "sit" ? 10000 : 7000));
       }
     },
-    [commitPosition, currentPosition, pickTarget, setPosition]
+    [currentPosition]
   );
 
   const wakeUp = useCallback(() => {
-    if (behavior !== "sleep") return;
-    startBehavior("idle", 18000);
+    if (behavior === "sleep") {
+      startBehavior("idle", 12000);
+    } else if (behavior === "edge_sleep") {
+      startBehavior("edge_idle", 8000);
+    }
   }, [behavior, startBehavior]);
 
   const finishToilet = useCallback(() => {
-    if (behavior !== "toilet") return;
-    startBehavior("idle", 14000);
+    if (behavior === "toilet") {
+      startBehavior("idle", 12000);
+    } else if (behavior === "edge_toilet") {
+      startBehavior("edge_idle", 8000);
+    }
   }, [behavior, startBehavior]);
+
+  // Immediately align behavior when snapping to or detaching from screen edges
+  useEffect(() => {
+    if (dragging) return;
+    if (edgeAttached && !isSakiEdgeBehavior(behavior)) {
+      startBehavior("edge_idle", 6500);
+    } else if (!edgeAttached && isSakiEdgeBehavior(behavior)) {
+      startBehavior("idle", 9000);
+    }
+  }, [behavior, dragging, edgeAttached, startBehavior]);
+
+  // Smooth drag-release top-edge hang -> fall physics
+  const prevDraggingRef = useRef(dragging);
+  useEffect(() => {
+    const wasDragging = prevDraggingRef.current;
+    prevDraggingRef.current = dragging;
+    if (wasDragging && !dragging && enabled && !edgeAttached) {
+      const pos = currentPosition();
+      if (pos.y <= 82) {
+        startBehavior("hang", 3200);
+      }
+    }
+  }, [currentPosition, dragging, edgeAttached, enabled, startBehavior]);
+
+  // Smooth horizontal walk & vertical edge-climb stepper
+  useEffect(() => {
+    if (!enabled || dragging || paused) return;
+    if (behavior !== "walk" && behavior !== "edge_climb") return;
+    const target = walkTargetRef.current;
+    if (!target) return;
+
+    let rafId = 0;
+    let lastTs = performance.now();
+    const speedPxPerSec = behavior === "walk" ? 48 : 34;
+
+    const step = (now: number) => {
+      const dt = Math.min(0.05, Math.max(0.001, (now - lastTs) / 1000));
+      lastTs = now;
+      const cur = currentPosition();
+      const dx = target.x - cur.x;
+      const dy = target.y - cur.y;
+      const dist = Math.hypot(dx, dy);
+      const edgePatch = cur.edge !== undefined ? { edge: cur.edge } : {};
+      if (dist <= 2) {
+        commitPosition({ x: target.x, y: target.y, ...edgePatch }, true);
+        return;
+      }
+      const stepDist = Math.min(dist, speedPxPerSec * dt);
+      const nextPos: SakiLauncherPosition = {
+        x: cur.x + (dx / dist) * stepDist,
+        y: cur.y + (dy / dist) * stepDist,
+        ...edgePatch
+      };
+      commitPosition(nextPos, false);
+      rafId = window.requestAnimationFrame(step);
+    };
+
+    rafId = window.requestAnimationFrame(step);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      const latest = livePosRef.current;
+      if (latest) commitPosition(latest, true);
+    };
+  }, [behavior, commitPosition, currentPosition, dragging, enabled, paused]);
 
   useEffect(() => {
     if (!enabled || chatOpen) return;
     let timer: number | null = null;
     const fire = () => {
       timer = null;
-      if (dragging || paused || edgeAttached) {
+      if (dragging || paused) {
         // Keep waiting while behavior is suspended; re-check shortly.
         timer = window.setTimeout(fire, 500);
         return;
       }
       if (Date.now() >= behaviorUntilRef.current) {
-        if (behavior === "toilet") {
-          startBehavior("idle", 14000);
+        if (edgeAttached) {
+          const picked = pickAutonomousEdgeBehavior(behavior, stats.hunger);
+          startBehavior(picked.behavior, picked.durationMs);
+        } else if (behavior === "hang") {
+          const cur = currentPosition();
+          commitPosition({ ...cur, y: cur.y + 52 }, true);
+          startBehavior("fall", 1050);
+        } else if (behavior === "toilet" || behavior === "fall") {
+          startBehavior("idle", 10000);
         } else {
-          const hour = new Date().getHours();
-          const roll = Math.random();
-          if (stats.hunger < 22 && roll < 0.45) startBehavior(Math.random() < 0.5 ? "sit" : "sleep");
-          else if ((hour >= 23 || hour < 6) && roll < 0.5) startBehavior("sleep");
-          else if (roll < 0.28) startBehavior("sit");
-          else if (roll < 0.4) startBehavior("lie");
-          else if (roll < 0.52) startBehavior("sleep");
-          else if (roll < 0.62) startBehavior("yawn", 2800);
-          else startBehavior("idle", 14000);
+          const picked = pickAutonomousStandingBehavior(behavior, stats, pomodoro);
+          startBehavior(picked.behavior, picked.durationMs);
         }
       }
-      timer = window.setTimeout(fire, Math.max(0, behaviorUntilRef.current - Date.now()));
+      timer = window.setTimeout(fire, Math.max(400, behaviorUntilRef.current - Date.now()));
     };
-    timer = window.setTimeout(fire, Math.max(0, behaviorUntilRef.current - Date.now()));
+    timer = window.setTimeout(fire, Math.max(400, behaviorUntilRef.current - Date.now()));
     return () => {
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [behavior, chatOpen, dragging, edgeAttached, enabled, paused, startBehavior, stats.hunger]);
+  }, [
+    behavior,
+    chatOpen,
+    commitPosition,
+    currentPosition,
+    dragging,
+    edgeAttached,
+    enabled,
+    paused,
+    pomodoro,
+    startBehavior,
+    stats
+  ]);
 
   const applyCare = useCallback(
     (kind: "feed" | "pet" | "sleep" | "bath" | "doctor" | "toilet" | "play", amount = 0) => {
       if (kind === "feed") {
         patchStats({ hunger: stats.hunger + Math.max(12, amount), mood: stats.mood + 8, health: stats.health + 2 });
-        startBehavior("eat", 5600);
+        startBehavior(edgeAttached ? "edge_feed" : Math.random() < 0.35 ? "drink" : "eat", 5800);
         playFx("sparkle");
       } else if (kind === "pet") {
         patchStats({ mood: stats.mood + 10, health: stats.health + 1 });
         playFx("hearts");
-        startBehavior("poke", 2500);
+        if (edgeAttached) {
+          startBehavior(Math.random() < 0.72 ? "edge_pet" : "edge_poke", 3600);
+        } else {
+          const roll = Math.random();
+          startBehavior(roll < 0.55 ? "poke" : roll < 0.8 ? "happy_cheer" : "idle_shy", 3400);
+        }
       } else if (kind === "sleep") {
         patchStats({ mood: stats.mood + 18, hunger: stats.hunger - 4, health: stats.health + 6 });
-        startBehavior("sleep", 18000);
+        startBehavior(edgeAttached ? "edge_sleep" : "sleep", edgeAttached ? 14000 : 18000);
         playFx("zzz", 4000);
       } else if (kind === "bath") {
         patchStats({ health: stats.health + 22, mood: stats.mood + 10 });
         playFx("soap", 3200);
-        startBehavior("bath", 6400);
+        startBehavior(edgeAttached ? "edge_bath" : "bath", 6400);
       } else if (kind === "doctor") {
         patchStats({ health: 100, mood: stats.mood + 6 });
         playFx("sparkle");
-        startBehavior("doctor", 5600);
+        startBehavior(edgeAttached ? "edge_doctor" : "doctor", 5600);
       } else if (kind === "toilet") {
         patchStats({ mood: stats.mood + 4, health: stats.health + 2 });
-        startBehavior("toilet", 30000);
+        startBehavior(edgeAttached ? "edge_toilet" : "toilet", edgeAttached ? 6400 : 30000);
       } else {
         patchStats({ mood: stats.mood + 12 });
-        startBehavior("roll", 2200);
+        startBehavior(edgeAttached ? "edge_wave" : Math.random() < 0.5 ? "happy_cheer" : "roll", 3600);
         playFx("hearts");
       }
     },
-    [patchStats, playFx, startBehavior, stats.health, stats.hunger, stats.mood]
+    [edgeAttached, patchStats, playFx, startBehavior, stats.health, stats.hunger, stats.mood]
   );
 
   const addTodo = useCallback((text: string) => {

@@ -9,12 +9,11 @@
   right: auto;
   bottom: auto;
   z-index: 120;
-  width: 86px;
-  height: 118px;
+  width: calc(86px * var(--saki-pet-scale, 1));
+  height: calc(118px * var(--saki-pet-scale, 1));
   overflow: visible;
   touch-action: none;
   transform-origin: center bottom;
-  scale: var(--saki-pet-scale, 1);
   --saki-face: 1;
   --saki-look: 0deg;
   --saki-x: 0px;
@@ -23,14 +22,17 @@
 }
 
 .saki-pet-stage.is-touch {
-  width: 96px;
-  height: 128px;
+  width: calc(96px * var(--saki-pet-scale, 1));
+  height: calc(128px * var(--saki-pet-scale, 1));
 }
 
 .saki-pet-stage.hiding {
   opacity: 0;
-  scale: calc(var(--saki-pet-scale, 1) * 0.9);
   pointer-events: none;
+}
+
+.saki-pet-stage.hiding .saki-launcher {
+  transform: scale(0.9);
 }
 
 /* Reappear only after the composer has collapsed into its line and vanished */
@@ -50,8 +52,8 @@
 }
 
 .saki-pet-stage.edge-attached {
-  width: 58px;
-  height: 92px;
+  width: calc(58px * var(--saki-pet-scale, 1));
+  height: calc(92px * var(--saki-pet-scale, 1));
   overflow: visible;
 }
 
@@ -63,14 +65,25 @@
   transform-origin: center bottom;
 }
 
-.saki-pet-stage.edge-right .saki-character-image-edge {
+.saki-pet-stage.edge-right .saki-character-image-edge,
+.saki-pet-stage.edge-right .saki-character-art.is-edge-cycle {
   transform: scaleX(-1);
   transform-origin: center center;
 }
 
-.saki-pet-stage.edge-left .saki-character-image-edge {
+.saki-pet-stage.edge-left .saki-character-image-edge,
+.saki-pet-stage.edge-left .saki-character-art.is-edge-cycle {
   transform: none;
   transform-origin: center center;
+}
+
+.saki-pet-stage .saki-character-art.is-edge-cycle {
+  --saki-frame-scale: 1;
+  --saki-frame-offset: 0px;
+}
+
+.saki-pet-stage .saki-character-art.is-edge-cycle .saki-sprite-layer {
+  object-position: left center;
 }
 
 .saki-pet-stage.edge-right .saki-pet-chrome,
@@ -161,18 +174,38 @@
   height: 48px;
 }
 
+.saki-pet-stage.edge-right .saki-pet-wake-button {
+  left: -6px;
+  right: auto;
+}
+
 .saki-pet-stage .saki-character-art.compact {
   transform: none;
   transform-origin: center bottom;
 }
 
 .saki-pet-stage .saki-character-art.is-idle-cycle,
+.saki-pet-stage .saki-character-art.is-stand-cycle,
+.saki-pet-stage .saki-character-art.is-hang-cycle,
 .saki-pet-stage .saki-character-art.is-bath-cycle,
 .saki-pet-stage .saki-character-art.is-poke-cycle,
 .saki-pet-stage .saki-character-art.is-pickup-cycle,
 .saki-pet-stage .saki-character-art.is-sit-cycle {
   --saki-frame-scale: 1.13;
   --saki-frame-offset: 7px;
+}
+
+.saki-pet-stage .saki-character-art.is-hang-cycle {
+  --saki-frame-offset: -4px;
+}
+
+.saki-character-art.is-idle-cycle .saki-character-image-hover {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) var(--ease-smooth);
 }
 
 .saki-pet-stage .saki-character-art.is-run-cycle {
@@ -194,11 +227,11 @@
 
 .saki-pet-stage .saki-character-art.compact .saki-sprite-cycle,
 .saki-pet-stage .saki-character-art.is-idle-cycle .saki-character-image-idle-blink {
-  transform: translateY(var(--saki-frame-offset, 0px)) scale(var(--saki-frame-scale, 1));
+  transform: translateY(calc(var(--saki-frame-offset, 0px) * var(--saki-pet-scale, 1))) scale(var(--saki-frame-scale, 1));
   transform-origin: center bottom;
 }
 
-.saki-character-art.is-idle-cycle .saki-sprite-cycle {
+.saki-character-art.is-idle-cycle > .saki-sprite-cycle {
   transition: opacity var(--duration-fast) var(--ease-smooth);
 }
 
@@ -211,12 +244,14 @@
   opacity: 1;
 }
 
-.saki-launcher:hover .saki-character-art.is-idle-cycle .saki-sprite-cycle,
-.saki-launcher:hover .saki-character-art.is-idle-cycle .saki-character-image-idle-blink {
+.saki-launcher:hover .saki-character-art.is-idle-cycle:has(> .saki-character-image-hover) > .saki-sprite-cycle,
+.saki-launcher:hover .saki-character-art.is-idle-cycle:has(> .saki-character-image-hover) .saki-character-image-idle-blink {
   opacity: 0;
 }
 
 .saki-pet-stage.pet-walk .saki-character-art.compact {
+  transform: scaleX(var(--saki-face, 1));
+  transform-origin: center bottom;
   animation: saki-pet-bob 0.42s ease-in-out infinite;
 }
 
@@ -233,11 +268,11 @@
 
 .saki-pet-stage .saki-character-art.is-run-cycle .saki-sprite-layer {
   aspect-ratio: 720 / 1280;
-  translate: -50% 14px;
+  translate: -50% calc(14px * var(--saki-pet-scale, 1));
 }
 
 .saki-pet-stage .saki-character-art.is-lie-cycle .saki-sprite-layer {
-  translate: 0 14px;
+  translate: 0 calc(14px * var(--saki-pet-scale, 1));
 }
 
 .saki-pet-stage .saki-character-art.is-roll-cycle .saki-sprite-layer {

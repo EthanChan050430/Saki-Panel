@@ -1,5 +1,13 @@
+import path from "node:path";
 import { grepDaemonInstanceFiles, readDaemonInstanceFile, statDaemonInstancePath } from "../../daemon-client.js";
 import { RouteError, splitEditableLines, type InstanceWithNode } from "./types.js";
+
+export function resolveSshInstancePath(instance: InstanceWithNode, relativePath: string): string {
+  const wd = instance.workingDirectory?.trim() || "/";
+  const rel = relativePath.trim();
+  if (!rel || rel === ".") return wd;
+  return path.posix.isAbsolute(rel) ? path.posix.normalize(rel) : path.posix.join(wd, rel);
+}
 
 /** Keep the generated pattern within the Daemon's regex safety rules. */
 export function agentSymbolDefinitionPattern(symbol: string, declarations: string): string {

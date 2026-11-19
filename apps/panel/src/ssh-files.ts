@@ -160,6 +160,9 @@ export async function readSshFile(
     const sftp = await sftpSession(client);
     const { resolved, relativePath } = await resolveSftpBasePath(sftp, filePath);
 
+    const mtime = await new Promise<number | undefined>(resolve => {
+      sftp.stat(resolved, (error, stat) => resolve(error ? undefined : stat.mtime));
+    });
     const buffer = await new Promise<Buffer>((resolve, reject) => {
       sftp.readFile(resolved, (err, data) => {
         if (err) {
@@ -188,7 +191,7 @@ export async function readSshFile(
       content,
       encoding: "utf8",
       size: buffer.length,
-      modifiedAt: new Date().toISOString(),
+      modifiedAt: mtime ? new Date(mtime * 1000).toISOString() : "",
       totalLines
     };
   } finally {

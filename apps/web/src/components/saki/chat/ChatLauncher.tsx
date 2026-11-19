@@ -4,7 +4,7 @@ import { SakiCharacterArt, type SakiActivityMood, type SakiArtMood } from "../Sa
 import { SakiCapsuleHUD, type SakiCapsuleTaskInfo } from "../SakiCapsuleHUD.js";
 import { SakiDesktopPet } from "../pet/SakiDesktopPet.js";
 import { SakiPetDesktopBits } from "../pet/SakiPetWidgets.js";
-import { isSakiPetTouchUi, type SakiPetController } from "../pet/sakiPetState.js";
+import { isSakiEdgeBehavior, isSakiPetTouchUi, type SakiPetController } from "../pet/sakiPetState.js";
 import { panelT } from "../../../i18n/translations.js";
 
 function usePetTouchUi() {
@@ -134,7 +134,13 @@ export function ChatLauncher({
   const petPose = launcherDragging
     ? null
     : launcherEdgeAttached
-    ? "peek"
+    ? !isSakiEdgeBehavior(pet.behavior)
+      ? pet.hovered
+        ? "edge_wave"
+        : "edge_idle"
+      : pet.hovered && (pet.behavior === "edge_idle" || pet.behavior === "edge_peek" || pet.behavior === "edge_look")
+      ? "edge_wave"
+      : pet.behavior
     : pet.music.playing
     ? "sing"
     : pet.behavior === "idle"
@@ -205,7 +211,7 @@ export function ChatLauncher({
           onIntimacy={onIntimacy}
         />
       )}
-      {!open && !launcherDragging && !launcherEdgeAttached && !pet.music.playing && pet.behavior === "sleep" ? (
+      {!open && !launcherDragging && !pet.music.playing && (pet.behavior === "sleep" || pet.behavior === "edge_sleep") ? (
         <button
           className="saki-pet-wake-button"
           type="button"

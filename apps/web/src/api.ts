@@ -212,6 +212,10 @@ function resolveApiBase(): string {
 
 const API_BASE = resolveApiBase();
 
+export function panelApiUrl(path: string): string {
+  return new URL(path, API_BASE).href;
+}
+
 function sakiBrowserDebugEnabled(): boolean {
   try {
     const configured = window.localStorage.getItem("saki.debug");
@@ -1978,10 +1982,11 @@ export const api = {
   sakiChatStream(token: string, input: SakiChatRequest, onEvent: (event: SakiChatStreamEvent) => void, signal?: AbortSignal) {
     return requestSakiChatStream(token, input, onEvent, signal);
   },
-  sakiGetActiveTask(token: string, instanceId?: string | null, includeFinished = false) {
+  sakiGetActiveTask(token: string, instanceId?: string | null, includeFinished = false, conversationId?: string) {
     const params = new URLSearchParams();
     if (instanceId) params.set("instanceId", instanceId);
     if (includeFinished) params.set("includeFinished", "1");
+    if (conversationId) params.set("conversationId", conversationId);
     const query = params.size ? `?${params}` : "";
     return requestJson<{ hasActiveTask: boolean; task?: SakiActiveTaskSummary }>(
       `/api/saki/active-task${query}`,
@@ -2001,6 +2006,9 @@ export const api = {
   },
   sakiStreamTaskReconnect(token: string, taskId: string, onEvent: (event: SakiChatStreamEvent) => void, signal?: AbortSignal) {
     return requestSakiTaskReconnectStream(token, taskId, onEvent, signal);
+  },
+  sakiCancelRequest(token: string, requestId: string) {
+    return requestJson<{ ok: boolean }>(`/api/saki/requests/${encodeURIComponent(requestId)}/cancel`, { method: "POST" }, token);
   },
   sakiCancelTask(token: string, taskId: string) {
     return requestJson<{ ok: boolean }>(

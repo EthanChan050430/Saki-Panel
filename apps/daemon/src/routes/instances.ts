@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { InstanceCommandRequest, InstanceLogsResponse, InstanceType } from "@webops/shared";
 import { authenticatePanelRequest } from "../daemon-auth.js";
 import { instanceManager, type DaemonInstanceSpec } from "../instance-manager.js";
+import { runWorkspaceSandbox } from "../agent-workspace-sandbox.js";
 import { applyInstanceClash, fetchClashSubscription, stopInstanceClash, summarizeClashProxies } from "../clash-core.js";
 
 function parseSpec(body: unknown): DaemonInstanceSpec {
@@ -24,6 +25,8 @@ function parseSpec(body: unknown): DaemonInstanceSpec {
 }
 
 export async function registerInstanceRoutes(app: FastifyInstance): Promise<void> {
+  const runningShellCommands = new Map<string, AbortController>();
+  const sandboxCommands = new Map<string, AbortController>();
   app.post("/api/instances/:id/start", { preHandler: authenticatePanelRequest }, async (request) => {
     const spec = parseSpec(request.body);
     instanceManager.registerSpec(spec);
@@ -56,7 +59,7 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     return instanceManager.writeInput(id, body.data, { logInput: body.echo !== false });
   });
 
-  app.post("/api/instances/:id/command", { preHandler: authenticatePanelRequest }, async (request) => {
+  app.post("/api/instances/:id/command", { preHandler: authenticatePanelRequest }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as Partial<InstanceCommandRequest>;
     const command = typeof body.command === "string" ? body.command.trim() : "";
@@ -73,14 +76,48 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     const onClose = () => {
       if (!finished) abort.abort();
     };
-    request.raw.on("close", onClose);
+    reply.raw.once("close", onClose);
+    if (reply.raw.destroyed) abort.abort();
     options.signal = abort.signal;
     try {
       return await instanceManager.runCommand(id, command, options);
     } finally {
       finished = true;
-      request.raw.off("close", onClose);
+      reply.raw.off("close", onClose);
     }
+  });
+
+  app.post("/api/instances/:id/workspace-sandbox/command", { preHandler: authenticatePanelRequest }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as Record<string, unknown> | undefined;
+    if (typeof body?.command !== "string" || typeof body.workingDirectory !== "string" || typeof body.executionId !== "string"
+      || !/^[a-f0-9-]{36}$/.test(body.executionId)) return reply.code(400).send({ message: "Invalid sandbox command request." });
+    const key = JSON.stringify([id, body.executionId]);
+    if (sandboxCommands.has(key)) return reply.code(409).send({ message: "Command is already running." });
+    const controller = new AbortController();
+    const close = () => controller.abort();
+    sandboxCommands.set(key, controller);
+    reply.raw.once("close", close);
+    if (reply.raw.destroyed) close();
+    try {
+      return await runWorkspaceSandbox({
+        command: body.command, workingDirectory: body.workingDirectory, readOnly: body.readOnly === true,
+        ...(typeof body.cwd === "string" ? { cwd: body.cwd } : {}),
+        ...(typeof body.timeoutMs === "number" ? { timeoutMs: body.timeoutMs } : {}),
+        ...(typeof body.input === "string" ? { input: body.input } : {})
+      }, controller.signal);
+    } finally {
+      sandboxCommands.delete(key);
+      reply.raw.off("close", close);
+    }
+  });
+
+  app.post("/api/instances/:id/workspace-sandbox/command/:executionId/cancel", { preHandler: authenticatePanelRequest }, async (request, reply) => {
+    const { id, executionId } = request.params as { id: string; executionId: string };
+    const active = sandboxCommands.get(JSON.stringify([id, executionId]));
+    if (!active) return reply.code(404).send({ message: "Sandbox command is no longer active." });
+    active.abort();
+    return { ok: true };
   });
 
   app.get("/api/instances/:id/logs", { preHandler: authenticatePanelRequest }, async (request) => {
@@ -147,9 +184,9 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     return { ok: true };
   });
 
-  app.post("/api/instances/:id/shells/:sid/command", { preHandler: authenticatePanelRequest }, async (request) => {
+  app.post("/api/instances/:id/shells/:sid/command", { preHandler: authenticatePanelRequest }, async (request, reply) => {
     const { id, sid } = request.params as { id: string; sid: string };
-    const body = request.body as { command?: string; timeoutMs?: number; input?: string; workingDirectory?: string; cwd?: string };
+    const body = request.body as { command?: string; timeoutMs?: number; input?: string; workingDirectory?: string; cwd?: string; executionId?: string };
     const command = typeof body.command === "string" ? body.command.trim() : "";
     if (!command) {
       throw new Error("command is required");
@@ -159,7 +196,12 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
     const onClose = () => {
       if (!finished) abort.abort();
     };
-    request.raw.on("close", onClose);
+    const executionId = typeof body.executionId === "string" && /^[a-f0-9-]{36}$/.test(body.executionId) ? body.executionId : undefined;
+    const key = executionId ? JSON.stringify([id, sid, executionId]) : undefined;
+    if (key && runningShellCommands.has(key)) return reply.code(409).send({ message: "Command is already running" });
+    if (key) runningShellCommands.set(key, abort);
+    reply.raw.once("close", onClose);
+    if (reply.raw.destroyed) abort.abort();
     try {
       return await instanceManager.runShellCommand(id, sid, command, {
         ...(typeof body.timeoutMs === "number" ? { timeoutMs: body.timeoutMs } : {}),
@@ -170,8 +212,17 @@ export async function registerInstanceRoutes(app: FastifyInstance): Promise<void
       });
     } finally {
       finished = true;
-      request.raw.off("close", onClose);
+      reply.raw.off("close", onClose);
+      if (key) runningShellCommands.delete(key);
     }
+  });
+
+  app.post("/api/instances/:id/shells/:sid/command/:executionId/cancel", { preHandler: authenticatePanelRequest }, async (request, reply) => {
+    const { id, sid, executionId } = request.params as { id: string; sid: string; executionId: string };
+    const running = runningShellCommands.get(JSON.stringify([id, sid, executionId]));
+    if (!running) return reply.code(404).send({ message: "Command is no longer active" });
+    running.abort();
+    return { ok: true };
   });
 
   app.post("/api/instances/:id/proxy/subscription", { preHandler: authenticatePanelRequest }, async (request) => {

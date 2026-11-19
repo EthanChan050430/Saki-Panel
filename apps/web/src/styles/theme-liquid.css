@@ -6158,6 +6158,35 @@
   color: #94a3b8;
 }
 
+[data-theme="dark"] .saki-chat-image-gallery-stage .saki-chat-generated-image {
+  background: rgba(15, 23, 42, 0.72);
+}
+
+[data-theme="dark"] .saki-chat-image-gallery-thumbs {
+  scrollbar-color: rgba(148, 163, 184, 0.32) transparent;
+}
+
+[data-theme="dark"] .saki-chat-image-gallery-thumbs::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.32);
+}
+
+[data-theme="dark"] .saki-chat-image-thumb:hover {
+  border-color: rgba(255, 117, 172, 0.5);
+}
+
+[data-theme="dark"] .saki-chat-image-thumb:focus-visible {
+  outline-color: rgba(255, 117, 172, 0.65);
+}
+
+[data-theme="dark"] .saki-chat-image-thumb.is-active {
+  border-color: var(--sidebar-accent, #ff75ac);
+}
+
+[data-theme="dark"] .saki-chat-image-thumb-inner {
+  background: rgba(30, 41, 59, 0.8);
+  color: #94a3b8;
+}
+
 [data-theme="dark"] .saki-attachment-icon {
   color: var(--sidebar-accent) !important;
   background: rgba(255, 117, 172, 0.12) !important;

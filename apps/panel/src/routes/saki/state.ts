@@ -25,6 +25,14 @@ const maxSessionAgentMemories = 200;
 const sessionsDir = path.join(panelPaths.dataDir, "saki-sessions");
 const sessionWrites = new Map<string, Promise<void>>();
 
+function sessionAgentMemoryKey(userId: string, conversationId: string): string {
+  return JSON.stringify([userId, conversationId]);
+}
+
+export function sakiResumeConversationId(resume: SakiSessionAgentMemory["resumeState"]): string | undefined {
+  return resume.input.conversationId ?? (resume.taskId ? `task-${resume.taskId}` : undefined);
+}
+
 function sessionMemoryPath(key: string): string {
   return path.join(sessionsDir, `${createHash("sha256").update(key).digest("hex")}.json`);
 }
@@ -42,7 +50,9 @@ export async function loadSessionAgentMemoriesFromDisk(): Promise<void> {
         await fs.rm(file, { force: true });
         continue;
       }
-      const key = sessionWorkingFilesKey(memory.userId, memory.instanceId);
+      const conversationId = sakiResumeConversationId(memory.resumeState);
+      if (!conversationId) continue;
+      const key = sessionAgentMemoryKey(memory.userId, conversationId);
       if ((sessionAgentMemories.get(key)?.updatedAt ?? 0) < memory.updatedAt) sessionAgentMemories.set(key, memory);
     } catch {
       // A damaged session must not prevent other sessions or the panel loading.
@@ -58,8 +68,10 @@ export const sessionAgentMemoriesReady = loadSessionAgentMemoriesFromDisk().catc
 
 export async function persistSessionAgentMemory(memory: SakiSessionAgentMemory): Promise<void> {
   await sessionAgentMemoriesReady;
+  const conversationId = sakiResumeConversationId(memory.resumeState);
+  if (!conversationId) return;
   saveSessionAgentMemory(memory);
-  const key = sessionWorkingFilesKey(memory.userId, memory.instanceId);
+  const key = sessionAgentMemoryKey(memory.userId, conversationId);
   const destination = sessionMemoryPath(key);
   // Capture now: later turns can mutate their arrays while this write waits.
   const serialized = JSON.stringify({ ...memory, updatedAt: Date.now() });
@@ -123,12 +135,17 @@ async function loadCompletedSakiActionsFromDisk(): Promise<void> {
   } catch {}
 }
 
-export async function savePendingSakiAction(pending: PendingSakiAction): Promise<void> {
+export async function savePendingSakiAction(pending: PendingSakiAction, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
   pendingSakiActions.set(pending.id, pending);
   try {
     await fs.mkdir(pendingActionsDir, { recursive: true });
     await fs.writeFile(path.join(pendingActionsDir, `${pending.id}.json`), JSON.stringify(pending, null, 2), "utf8");
   } catch {}
+  if (signal?.aborted) {
+    await removePendingSakiAction(pending.id);
+    signal.throwIfAborted();
+  }
 }
 
 export async function removePendingSakiAction(id: string): Promise<void> {
@@ -286,7 +303,9 @@ export function getRecentWorkingFiles(userId: string, instanceId: string | null)
 }
 
 export function saveSessionAgentMemory(memory: SakiSessionAgentMemory): void {
-  const key = sessionWorkingFilesKey(memory.userId, memory.instanceId);
+  const conversationId = sakiResumeConversationId(memory.resumeState);
+  if (!conversationId) return;
+  const key = sessionAgentMemoryKey(memory.userId, conversationId);
   const now = Date.now();
   sessionAgentMemories.delete(key);
   sessionAgentMemories.set(key, {
@@ -307,18 +326,8 @@ export function saveSessionAgentMemory(memory: SakiSessionAgentMemory): void {
   }
 }
 
-export function formatSessionFollowUpContext(memory: SakiSessionAgentMemory): string {
-  const lines = [
-    "[Prior Agent session — reuse paths and line numbers, do not re-scan unless needed]",
-    `Last goal: ${memory.lastGoal}`,
-    memory.lastSummary ? `Last summary: ${memory.lastSummary.slice(0, 1200)}` : null,
-    memory.workingFiles.length ? `Working files:\n${memory.workingFiles.map((file) => `- ${file}`).join("\n")}` : null
-  ].filter(Boolean);
-  return lines.join("\n");
-}
-
-export function getSessionAgentMemory(userId: string, instanceId: string | null): SakiSessionAgentMemory | null {
-  const key = sessionWorkingFilesKey(userId, instanceId);
+export function getSessionAgentMemory(userId: string, conversationId: string): SakiSessionAgentMemory | null {
+  const key = sessionAgentMemoryKey(userId, conversationId);
   const memory = sessionAgentMemories.get(key);
   if (!memory) return null;
   if (Date.now() - memory.updatedAt > sessionMemoryTtlMs) {
@@ -328,11 +337,17 @@ export function getSessionAgentMemory(userId: string, instanceId: string | null)
   return memory;
 }
 
-export function clearSessionAgentMemory(userId: string, instanceId: string | null): void {
-  const key = sessionWorkingFilesKey(userId, instanceId);
+export function clearSessionAgentMemory(userId: string, conversationId: string): void {
+  const key = sessionAgentMemoryKey(userId, conversationId);
+  const memory = sessionAgentMemories.get(key);
   sessionAgentMemories.delete(key);
-  sessionWorkingFilesMaps.delete(key);
-  const operation = (sessionWrites.get(key) ?? Promise.resolve()).catch(() => {}).then(() => fs.rm(sessionMemoryPath(key), { force: true }));
+  const operation = (sessionWrites.get(key) ?? Promise.resolve()).catch(() => {}).then(async () => {
+    await fs.rm(sessionMemoryPath(key), { force: true });
+    if (!memory) return;
+    const legacyPath = sessionMemoryPath(sessionWorkingFilesKey(userId, memory.instanceId));
+    const legacy = await fs.readFile(legacyPath, "utf8").then(data => JSON.parse(data) as SakiSessionAgentMemory).catch(() => null);
+    if (legacy?.userId === userId && sakiResumeConversationId(legacy.resumeState) === conversationId) await fs.rm(legacyPath, { force: true });
+  });
   sessionWrites.set(key, operation);
   void operation.catch(() => {}).finally(() => {
     if (sessionWrites.get(key) === operation) sessionWrites.delete(key);
@@ -450,14 +465,14 @@ export function findSakiTaskByRequest(userId: string, clientRequestId?: string):
   return [...activeSakiTasks.values()].find((task) => task.userId === userId && task.input.clientRequestId === clientRequestId) ?? null;
 }
 
-export function assertSakiTaskContextAvailable(userId: string, instanceId: string | null, exceptTaskId?: string, workspaceIds: readonly string[] = []): void {
-  const selected = new Set([...(instanceId ? [instanceId] : []), ...workspaceIds]);
-  const conflict = [...activeSakiTasks.values()].find((task) => {
-    if (task.id === exceptTaskId || !(task.status === "running" || task.status === "pending_input" || task.execution || task.decisionInFlight)) return false;
-    const taskWorkspaces = [task.instanceId, ...(task.input.workspaceInstanceIds ?? [])].filter((id): id is string => Boolean(id));
-    return selected.size ? taskWorkspaces.some(id => selected.has(id)) : !taskWorkspaces.length && task.userId === userId;
-  });
-  if (conflict) throw new RouteError("此工作区已有正在执行或等待回答的任务，请先连接、处理或停止该任务。", 409);
+export function assertSakiConversationAvailable(userId: string, conversationId?: string, exceptTaskId?: string): void {
+  if (!conversationId) return;
+  const conflict = [...activeSakiTasks.values()].some(task => task.userId === userId && task.id !== exceptTaskId
+    && (task.input.conversationId ?? `task-${task.id}`) === conversationId
+    && (isSakiTaskUnfinished(task) || task.execution || task.decisionInFlight));
+  const waiting = [...pendingSakiActions.values()].some(action => action.userId === userId && action.resume
+    && action.resume.taskId !== exceptTaskId && sakiResumeConversationId(action.resume) === conversationId);
+  if (conflict || waiting) throw new RouteError("此对话已有任务正在执行或等待处理。可以在同一工作区的新对话中启动其他任务。", 409);
 }
 
 export function getLatestSakiTask(userId: string, instanceId: string | null): SakiActiveTask | null {
@@ -468,7 +483,7 @@ export function getLatestSakiTask(userId: string, instanceId: string | null): Sa
 export function restartActiveSakiTask(taskId: string, abortController: AbortController): boolean {
   const task = activeSakiTasks.get(taskId);
   if (!task || task.status === "cancelled" || task.status === "running") return false;
-  assertSakiTaskContextAvailable(task.userId, task.instanceId, task.id, task.input.workspaceInstanceIds);
+  assertSakiConversationAvailable(task.userId, task.input.conversationId ?? `task-${task.id}`, task.id);
   task.status = "running";
   task.runVersion = (task.runVersion ?? 1) + 1;
   task.acceptingSteers = true;
@@ -490,6 +505,11 @@ export function emitActiveSakiTaskEvent(
   const task = activeSakiTasks.get(taskId);
   if (!task) return;
   task.updatedAt = new Date().toISOString();
+  if (task.status === "cancelled" && type !== "error") {
+    // Preserve already-dispatched operations for history and undo.
+    if (type === "action") task.eventsBuffer.push({ id: randomUUID(), type, payload, ts: Date.now() });
+    return;
+  }
   // Coalesce consecutive text-stream events in the replay buffer. A long answer
   // produces hundreds of delta/thinking frames; without merging they would push
   // earlier frames past the cap and a reconnecting client would lose content.
@@ -562,6 +582,7 @@ export function cancelActiveSakiTask(taskId: string): boolean {
   const task = activeSakiTasks.get(taskId);
   if (!task || !isSakiTaskUnfinished(task)) return false;
   task.status = "cancelled";
+  task.acceptingSteers = false;
   task.updatedAt = new Date().toISOString();
   task.abortController?.abort();
   for (const [id, pending] of pendingSakiActions) {

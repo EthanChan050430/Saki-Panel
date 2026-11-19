@@ -111,6 +111,12 @@ docker compose -f docker-compose.ghcr.yml up -d
 
 SSH 凭据加密保存在面板的 `data/panel/ssh-nodes` 中，备份时需保留其中的加密密钥。每次重新连接都会校验已保存的主机指纹。关闭终端会结束该 SSH shell；删除节点会关闭活动终端并移除保存的凭据。若曾创建托管实例，远程运行组件及其工作目录保留，并在需要实例管理连接时按需恢复。
 
+### Linux 节点的 Agent 命令隔离
+
+在受管 Linux 节点安装 Bubblewrap，并在 **Daemon 进程**的环境中设置 `DAEMON_AGENT_SANDBOX=1` 和 `DAEMON_AGENT_SANDBOX_ROOTS`。后者填写允许授权的项目父目录，多个绝对路径用 `:` 分隔。父目录应由管理员控制。可用 `DAEMON_AGENT_SANDBOX_BIN` 指定 Bubblewrap 的绝对路径，默认是 `/usr/bin/bwrap`。
+
+普通账号需要已选工作区的文件读取与终端权限。具备文件写入和删除权限时，终端可写当前项目。隔离进程中的项目路径是 `/workspace`，临时目录是 `/tmp`，网络和交互终端独立于宿主机。Daemon 未启用隔离、平台不支持或 Bubblewrap 无法启动时，命令会被拒绝。
+
 ## Saki 如何协助排障
 
 ![Saki Panel 5.0 实例控制台、实时日志、资源指标与 Saki 输入框](.github/assets/demo-v5-terminal-zh.png)

@@ -33,13 +33,6 @@ import { panelT, type PanelLanguage, type PanelTextKey } from "../i18n/index.js"
 import { defaultSakiRequestTimeoutMs } from "../constants.js";
 import { normalizePanelAppearance } from "../utils/appearance.js";
 import { appearanceMediaFileToDataUrl } from "../components/common/AccountAvatar.js";
-import {
-  checkWebGPUSupport,
-  getSakiVoiceEchoEngine,
-  setSakiVoiceEchoEngine,
-  type SakiVoiceEchoEngineType,
-  type WebGPUDetectionResult
-} from "../components/saki/sakiVoiceEngine.js";
 import { PageErrorToast, PageNoticeToast } from "../components/common/CommonUI.js";
 import {
   antigravityModeOf,
@@ -141,18 +134,6 @@ export function SettingsView({
   const [newMultiplierModel, setNewMultiplierModel] = useState("");
   const [newMultiplierValue, setNewMultiplierValue] = useState("1.0");
   const [customModelMode, setCustomModelMode] = useState(false);
-  const [voiceEchoEngine, setVoiceEchoEngineState] = useState<SakiVoiceEchoEngineType>(() => getSakiVoiceEchoEngine());
-  const [webGpuInfo, setWebGpuInfo] = useState<WebGPUDetectionResult | null>(null);
-
-  useEffect(() => {
-    void checkWebGPUSupport().then(setWebGpuInfo);
-  }, []);
-
-  const handleVoiceEchoEngineChange = (next: SakiVoiceEchoEngineType) => {
-    setVoiceEchoEngineState(next);
-    setSakiVoiceEchoEngine(next);
-  };
-
   const defaultKnownModels = useMemo(
     () => [
       { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash (最新推荐/快速)" },
@@ -1069,9 +1050,6 @@ export function SettingsView({
                   onAllowCrossInstanceEnforcementChange={(enabled) =>
                     setForm((current) => ({ ...current, allowCrossInstanceEnforcement: enabled }))
                   }
-                  voiceEchoEngine={voiceEchoEngine}
-                  onVoiceEchoEngineChange={handleVoiceEchoEngineChange}
-                  webGpuInfo={webGpuInfo}
                   t={t}
                 />
 

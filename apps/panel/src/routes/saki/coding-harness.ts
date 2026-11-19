@@ -23,7 +23,7 @@ const codingTools = new Set([
   "applyPatch", "writeFile", "runCommand",
   "gitStatus", "gitDiff",
   "searchSkills", "readSkill",
-  "manageTodos", "askUser", "spawnTask", "reportProgress", "respond"
+  "manageTodos", "askUser", "spawnTask", "listAgentJobs", "getAgentJob", "stopAgentJob", "reportProgress", "respond"
 ]);
 const reviewTools = new Set([
   "requestExternalAccess",
@@ -320,14 +320,16 @@ export function sandboxCapability(nodeOs?: string | null): SandboxCapability {
   return { enabled, binary, note };
 }
 
-export function wrapCommandForSandbox(command: string, workspaceDir: string, nodeOs?: string | null): { command: string; wrapped: boolean } {
+export function wrapCommandForSandbox(command: string, workspaceDir: string, nodeOs?: string | null, cwd = workspaceDir, writableRoots = [workspaceDir]): { command: string; wrapped: boolean } {
   const capability = sandboxCapability(nodeOs);
   const trimmed = command.trim();
   if (!capability.enabled || !trimmed) return { command, wrapped: false };
   const quote = (value: string) => value.replace(/'/g, `'\\''`);
+  const mounts = [...new Set(writableRoots)].sort((a, b) => a.length - b.length)
+    .map(root => `--bind '${quote(root)}' '${quote(root)}'`).join(" ");
   return {
     wrapped: true,
-    command: `${capability.binary} --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --unshare-pid --unshare-ipc --die-with-parent --bind '${quote(workspaceDir)}' '${quote(workspaceDir)}' --chdir '${quote(workspaceDir)}' -- sh -c '${quote(trimmed)}'`
+    command: `${capability.binary} --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --unshare-pid --unshare-ipc --die-with-parent ${mounts} --chdir '${quote(cwd)}' -- sh -c '${quote(trimmed)}'`
   };
 }
 

@@ -1914,6 +1914,7 @@ export interface SakiExternalFileSnapshot {
 }
 
 export interface SakiAgentAction {
+  workspaceFile?: { instanceId: string; path: string };
   workflowId?: string;
   id: string;
   tool: string;
@@ -3201,4 +3202,5 @@ export interface ActivateOperationPackResponse {
 
 export * from "./git.js";
 export * from "./saki-reasoning.js";
+export * from "./saki-call-voice.js";
 export * from "./database-security.js";

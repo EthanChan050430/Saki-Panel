@@ -529,12 +529,12 @@ function subscribeToShell(
   };
 }
 
-function closeShellSession(sessionId: string): void {
+function closeShellSession(sessionId: string, kill = true): void {
   const session = shellSessions.get(sessionId);
   if (!session) return;
-  try {
-    session.pty.kill();
-  } catch {}
+  if (kill) {
+    try { session.pty.kill(); } catch {}
+  }
   try {
     session.dataSubscription.dispose();
   } catch {}
@@ -683,13 +683,13 @@ function runTaskkill(pid: number, force: boolean): Promise<void> {
 }
 
 async function signalProcessTree(
-  child: RuntimeChild,
+  child: Pick<ProcessRuntimeChild, "type" | "process"> | Pick<PtyRuntimeChild, "type" | "pty">,
   signal: NodeJS.Signals,
   force: boolean,
   onError: (message: string) => void
 ): Promise<void> {
   if (child.type === "pty") {
-    const pid = runtimeChildPid(child);
+    const pid = child.pty.pid;
     if (process.platform === "win32" && pid) {
       try {
         await runTaskkill(pid, force);
@@ -1322,10 +1322,11 @@ export class InstanceManager {
     if (session.instanceId !== instanceId) {
       throw new Error("That terminal does not belong to this instance.");
     }
-    const timeoutMs = Math.max(1000, Math.min(Math.floor(options.timeoutMs ?? 30000), 120000));
+    const timeoutMs = Math.max(1000, Math.min(Math.floor(options.timeoutMs ?? 30000), 900000));
     const cwd = resolveShellCommandCwd(daemonPaths.workspaceDir, options.workingDirectory ?? session.cwd, options.cwd);
 
     return enqueueShellTask(session, async () => {
+      options.signal?.throwIfAborted();
       if (session.outputBufferChars === 0 && !session.exited) {
         await new Promise<void>((resolve) => {
           let settled = false;
@@ -1334,12 +1335,15 @@ export class InstanceManager {
             settled = true;
             clearTimeout(timer);
             session.dataListeners.delete(onReady);
+            options.signal?.removeEventListener("abort", onReady);
             resolve();
           };
           const timer = setTimeout(onReady, 2500);
           session.dataListeners.add(onReady);
+          options.signal?.addEventListener("abort", onReady, { once: true });
         });
       }
+      options.signal?.throwIfAborted();
       return new Promise<InstanceCommandResponse>((resolve, reject) => {
       if (session.exited) {
         reject(new Error("Independent terminal closed before the command started."));
@@ -1401,8 +1405,13 @@ export class InstanceManager {
       const onAbort = () => {
         aborted = true;
         interrupt();
-        setTimeout(() => {
+        setTimeout(async () => {
+          if (settled) return;
           const parsed = parseShellMarker(captured, marker);
+          if (!parsed && /^saki(?:-\d+)?$/i.test(session.label ?? "")) {
+            await signalProcessTree({ type: "pty", pty: session.pty }, "SIGKILL", true, message => console.warn(message));
+            closeShellSession(sessionId, false);
+          }
           finish(parsed?.exitCode ?? null, "ABORTED", parsed?.stdout ?? stripTerminalText(captured).trim());
         }, 400);
       };
@@ -1458,6 +1467,7 @@ export class InstanceManager {
     const cwd = await resolveWorkingDirectory(options.workingDirectory || runtime.cwd || ".");
     const timeoutMs = Math.max(1000, Math.min(Math.floor(options.timeoutMs ?? 30000), 120000));
     await fs.mkdir(cwd, { recursive: true });
+    options.signal?.throwIfAborted();
     const logToInstance = options.logToInstance !== false;
 
     if (logToInstance) {

@@ -957,7 +957,7 @@
     justify-content: space-between;
   }
 
-  /* Left: only mic visible */
+  /* Voice controls */
   .saki-input-actions {
     flex: 0 0 auto;
     gap: 2px;
@@ -990,11 +990,7 @@
     color: #e2e8f0 !important;
   }
 
-  /* Hide ALL action buttons except mic */
-  .saki-input-actions .icon-button:nth-child(2), /* annotation */
-  .saki-input-actions .icon-button:nth-child(3), /* image */
-  .saki-input-actions .icon-button:nth-child(4), /* file */
-  .saki-input-actions .icon-button:nth-child(5) /* screenshot */ {
+  .saki-input-actions .saki-annotation-btn {
     display: none !important;
   }
 

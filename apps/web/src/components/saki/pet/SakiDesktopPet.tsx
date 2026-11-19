@@ -10,7 +10,6 @@ import {
   MessageSquare,
   Moon,
   PawPrint,
-  Sparkles,
   Stethoscope,
   StickyNote,
   Timer,
@@ -197,43 +196,6 @@ export function SakiDesktopPet({
           pet.applyCare("toilet");
           onIntimacy?.(2);
           pet.showBubble(t("saki.pet.toiletBubble"));
-        }
-      },
-      {
-        id: "pose",
-        label: `姿态: ${
-          pet.behavior === "sit"
-            ? t("saki.pet.poseSit")
-            : pet.behavior === "lie"
-            ? t("saki.pet.poseLie")
-            : pet.behavior === "roll"
-            ? t("saki.pet.poseRoll")
-            : t("saki.pet.poseStand")
-        }`,
-        icon: <Sparkles size={16} />,
-        color: "#ec4899",
-        onClick: () => {
-          const nextPose =
-            pet.behavior === "idle"
-              ? "sit"
-              : pet.behavior === "sit"
-              ? "lie"
-              : pet.behavior === "lie"
-              ? "roll"
-              : "idle";
-          pet.startBehavior(nextPose, nextPose === "roll" ? 2200 : 14000);
-          pet.showBubble(
-            translateDomText(
-              nextPose === "sit"
-                ? "🪑 Saki 乖乖坐好啦～"
-                : nextPose === "lie"
-                ? "🛌 Saki 想要躺平休息～"
-                : nextPose === "roll"
-                ? "🌀 Saki 开心地打了个滚！"
-                : "✨ Saki 站起来啦！",
-              language || "zh-CN"
-            )
-          );
         }
       }
     ],

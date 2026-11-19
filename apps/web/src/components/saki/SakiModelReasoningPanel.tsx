@@ -21,9 +21,41 @@ export function SakiModelPicker(props: Omit<SakiModelReasoningPanelProps, "effor
   return <SakiModelReasoningPanel {...props} effort={effort} onEffortChange={onEffortChange} />;
 }
 
+type SakiModelListProps = Pick<SakiModelReasoningPanelProps, "models" | "currentModelId" | "onSelectModel" | "modelPointsMultipliers"> & {
+  language?: string;
+};
+
+export function SakiModelList({ models, currentModelId, onSelectModel, modelPointsMultipliers, language = "zh" }: SakiModelListProps) {
+  const [query, setQuery] = useState("");
+  const zh = language.startsWith("zh");
+  const search = zh ? "搜索模型" : "Search models";
+  const filtered = models.filter((model) => `${model.label} ${model.name} ${model.id} ${model.provider}`.toLowerCase().includes(query.trim().toLowerCase()));
+
+  return <>
+    <label className="saki-reasoning-search"><Search size={14} aria-hidden="true" /><input className="saki-reasoning-search-input"
+      autoFocus={typeof window !== "undefined" && !window.matchMedia("(pointer: coarse)").matches}
+      value={query} onChange={(event) => setQuery(event.target.value)} placeholder={search} aria-label={search} /></label>
+    <div className="saki-reasoning-models" role="listbox" aria-label={zh ? "可用模型" : "Available models"}>
+      {filtered.map((model) => {
+        const active = sakiModelMatchesSelection(model, currentModelId);
+        const multiplier = resolveSakiModelPointsMultiplier(modelPointsMultipliers, model);
+        return <button type="button" role="option" aria-selected={active} key={sakiModelSelectionKey(model)} className={active ? "is-selected" : ""}
+          onClick={() => onSelectModel(sakiModelSelectionKey(model))}>
+          <span className="saki-reasoning-model-name">{model.label || model.name || model.id}<small>{model.provider || model.vendor || model.id}</small></span>
+          {model.supportsVision ? <ScanEye size={13} aria-label={zh ? "支持视觉" : "Supports vision"} /> : null}
+          {modelPointsMultipliers ? <small>{multiplier === 0 ? (zh ? "免费" : "Free") : formatSakiModelMultiplier(multiplier)}</small> : null}
+          {active ? <Check size={14} aria-hidden="true" /> : null}
+        </button>;
+      })}
+      {filtered.length === 0 ? <p>{models.length
+        ? (zh ? "未找到匹配模型" : "No matching models")
+        : (zh ? "暂无可用模型" : "No models available")}</p> : null}
+    </div>
+  </>;
+}
+
 export function SakiModelReasoningPanel({ models, currentModelId, currentModelName, effort, onEffortChange, onSelectModel, modelPointsMultipliers }: SakiModelReasoningPanelProps) {
   const [choosingModel, setChoosingModel] = useState(false);
-  const [query, setQuery] = useState("");
   const id = useId();
   const selection = parseSakiModelSelection(currentModelId);
   const selected = models.find((model) => sakiModelMatchesSelection(model, currentModelId));
@@ -34,7 +66,6 @@ export function SakiModelReasoningPanel({ models, currentModelId, currentModelNa
   const percent = profile.levels.length > 1 ? index / (profile.levels.length - 1) * 100 : 0;
   const ultra = value !== "auto" && index === profile.levels.length - 1;
   const label = ultra ? "Ultra" : sakiReasoningEffortLabel(value);
-  const filtered = models.filter((model) => `${model.label} ${model.name} ${model.id} ${model.provider}`.toLowerCase().includes(query.toLowerCase()));
 
   return <div className={`saki-reasoning-panel ${choosingModel ? "is-choosing-model" : ""} ${ultra ? "is-ultra" : ""}`}>
     {choosingModel ? <>
@@ -42,21 +73,8 @@ export function SakiModelReasoningPanel({ models, currentModelId, currentModelNa
         <button type="button" onClick={() => setChoosingModel(false)} aria-label="返回推理强度"><ChevronLeft size={16} /></button>
         <span>选择模型</span>
       </div>
-      <label className="saki-reasoning-search"><Search size={14} /><input className="saki-reasoning-search-input" autoFocus={typeof window !== "undefined" && !window.matchMedia("(pointer: coarse)").matches} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索模型…" aria-label="搜索模型" /></label>
-      <div className="saki-reasoning-models" role="listbox" aria-label="可用模型">
-        {filtered.map((model) => {
-          const active = sakiModelMatchesSelection(model, currentModelId);
-          const multiplier = resolveSakiModelPointsMultiplier(modelPointsMultipliers, model);
-          return <button type="button" role="option" aria-selected={active} key={sakiModelSelectionKey(model)} className={active ? "is-selected" : ""}
-            onClick={() => { onSelectModel(sakiModelSelectionKey(model)); setChoosingModel(false); setQuery(""); }}>
-            <span className="saki-reasoning-model-name">{model.label || model.name || model.id}<small>{model.provider || model.vendor || model.id}</small></span>
-            {model.supportsVision ? <ScanEye size={13} aria-label="支持视觉" /> : null}
-            {modelPointsMultipliers ? <small>{multiplier === 0 ? "免费" : formatSakiModelMultiplier(multiplier)}</small> : null}
-            {active ? <Check size={14} /> : null}
-          </button>;
-        })}
-        {filtered.length === 0 ? <p>{models.length ? "未找到匹配模型" : "暂无可用模型"}</p> : null}
-      </div>
+      <SakiModelList models={models} currentModelId={currentModelId} modelPointsMultipliers={modelPointsMultipliers}
+        onSelectModel={(modelId) => { onSelectModel(modelId); setChoosingModel(false); }} />
     </> : <>
       <div className="saki-reasoning-heading">
         <Zap size={17} className="saki-reasoning-bolt" aria-hidden="true" />

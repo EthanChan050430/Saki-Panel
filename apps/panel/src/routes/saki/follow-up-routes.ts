@@ -29,8 +29,7 @@ export async function registerSakiFollowUpRoutes(app: FastifyInstance,
   const inspect = async (userId: string, item: SakiQueuedFollowUp): Promise<FollowUpReadiness> => {
     const current = conversationTask(userId, item.conversationId);
     if (current?.status === "running") return { state: item.intent === "steer" && current.acceptingSteers !== false ? "ready" : "wait" };
-    if ([...activeSakiTasks.values()].some(task => task.userId === userId && task.instanceId === (item.input.instanceId ?? null)
-      && (task.execution || task.decisionInFlight || ["running", "pending_input", "pending_approval"].includes(task.status)))) return { state: "wait" };
+    if (current && (current.execution || current.decisionInFlight || ["pending_input", "pending_approval"].includes(current.status))) return { state: "wait" };
     const anchor = item.afterTaskId ? activeSakiTasks.get(item.afterTaskId) : findSakiTaskByRequest(userId, item.afterRequestId);
     if (anchor) {
       if (anchor.userId !== userId || anchor.input.conversationId !== item.conversationId) throw new RouteError("队列不属于当前任务。", 403);

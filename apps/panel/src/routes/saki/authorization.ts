@@ -7,7 +7,7 @@ import type { ParsedToolCall, SakiAgentRuntime } from "./types.js";
 import { effectiveSakiTerminalSandbox, requireUserPermission, RouteError, stringArg } from "./types.js";
 import { assertSakiSessionAccess, assertSakiSelectedWorkspaces, sakiProjectPermissions } from "./session-access.js";
 import { selectedWorkspaceTarget } from "./selected-workspaces.js";
-import { requiredSakiToolPermissions, sakiHostExecutionTools, sakiToolPermissions } from "./resource-policy.js";
+import { requiredSakiToolPermissions, sakiHostExecutionTools, sakiToolPermissions, sakiIsolatedCommandTools, supportsSakiWorkspaceIsolation } from "./resource-policy.js";
 
 export async function authorizeSakiTool(runtime: SakiAgentRuntime, call: ParsedToolCall, args: Record<string, unknown>): Promise<SakiAgentRuntime> {
   const mode = runtime.toolProfile === "chat" ? "chat" : "agent";
@@ -57,7 +57,8 @@ export async function authorizeSakiTool(runtime: SakiAgentRuntime, call: ParsedT
     if (!instances && restrictToContext && context && task.instanceId !== context.id) throw new RouteError("只能操作当前项目的任务。", 403);
   }
   if (!instances && target && context && restrictToContext && target.id !== context.id) throw new RouteError("禁止跨项目访问；读取已授权的外部项目文件请使用 requestExternalAccess。", 403);
-  if (!user.isSuperAdmin && sakiHostExecutionTools.has(lower)) throw new RouteError("HOST_EXECUTION_REQUIRES_ISOLATION: 非超级管理员不能通过 Agent 在未配置操作系统沙箱的宿主机执行代码或输入终端。文件工具仍可在已授权项目内使用。", 403);
+  const isolatedCommand = sakiIsolatedCommandTools.has(lower) && target && supportsSakiWorkspaceIsolation(target.node.os);
+  if (!user.isSuperAdmin && sakiHostExecutionTools.has(lower) && !isolatedCommand) throw new RouteError("HOST_EXECUTION_REQUIRES_ISOLATION: 非超级管理员不能通过 Agent 在未配置操作系统沙箱的宿主机执行代码或输入终端。文件工具仍可在已授权项目内使用。", 403);
   if (lower === "updateinstancesettings" && !user.isSuperAdmin && ["workingDirectory", "startCommand", "stopCommand"].some((key) => key in args)) throw new RouteError("Only global administrators can change instance execution paths or commands.", 403);
   let scoped = permissions;
   if (target) {
@@ -67,5 +68,6 @@ export async function authorizeSakiTool(runtime: SakiAgentRuntime, call: ParsedT
     for (const permission of required) requireUserPermission(scoped, permission);
   }
   for (const permission of required) requireUserPermission(scoped, permission);
+  if (!user.isSuperAdmin && isolatedCommand) requireUserPermission(scoped, "file.read");
   return { ...runtime, permissions: scoped, context: { ...selectedContext, access: { isSuperAdmin: user.isSuperAdmin, permissions: scoped } } };
 }

@@ -18,6 +18,12 @@ export const sakiToolPermissions: Record<string, PermissionCode> = {
 };
 
 // Until there is OS process isolation, text filtering cannot confine these tools.
+export const sakiIsolatedCommandTools = new Set(["runcommand", "diagnosecode"]);
+
+export function supportsSakiWorkspaceIsolation(os?: string | null): boolean {
+  return /^linux(?:\\b|_)/i.test(os ?? "");
+}
+
 export const sakiHostExecutionTools = new Set(["runcommand", "runinshell", "sendinput", "sendcommand", "sendshellinput", "createshell", "closeshell", "diagnosecode", "getenvironmentinfo", "gitstatus", "gitdiff", "instanceaction", "runtask", "createscheduledtask", "updatescheduledtask", "runservercommand", "listmcptools", "callmcptool"]);
 const readsBeforeMutation = new Set(["replaceinfile", "editlines", "applypatch", "batchedit", "uploadbase64", "archivepaths", "extractarchive"]);
 

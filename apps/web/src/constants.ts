@@ -525,6 +525,49 @@ export let sakiPetEatFrames: readonly string[] = [
   sakiArtAssets.petEatF6
 ];
 
+function numberedPetFrames(name: string, count: number): readonly string[] {
+  return Array.from({ length: count }, (_, i) => `/assets/pet/${name}/${name}_f${i + 1}.webp`);
+}
+
+export const SAKI_PET_GENERATED_FRAME_COUNTS = {
+  idle_sway: 18,
+  idle_twirl: 18,
+  idle_look: 18,
+  idle_ribbon: 18,
+  idle_stretch: 20,
+  idle_shy: 18,
+  hover_wave: 16,
+  drink: 18,
+  pout: 18,
+  fall: 16,
+  hang: 18,
+  play_phone: 18,
+  read_book: 18,
+  happy_cheer: 18,
+  hungry: 18,
+  dizzy: 16,
+  edge_idle: 18,
+  edge_wave: 18,
+  edge_peek: 18,
+  edge_sleepy: 20,
+  edge_look: 18,
+  edge_snack: 18,
+  edge_poke: 16,
+  edge_climb: 16,
+  edge_feed: 18,
+  edge_bath: 18,
+  edge_pet: 18,
+  edge_sleep: 20,
+  edge_doctor: 18,
+  edge_toilet: 18
+} as const;
+
+export type SakiPetGeneratedAnimKey = keyof typeof SAKI_PET_GENERATED_FRAME_COUNTS;
+
+export const sakiPetGeneratedAnimFrames: Record<SakiPetGeneratedAnimKey, readonly string[]> = Object.fromEntries(
+  Object.entries(SAKI_PET_GENERATED_FRAME_COUNTS).map(([name, count]) => [name, numberedPetFrames(name, count)])
+) as unknown as Record<SakiPetGeneratedAnimKey, readonly string[]>;
+
 function expressionAnimFrames(name: string): readonly string[] {
   return [1, 2, 3, 4, 5, 6].map((i) => `/assets/expression/anim/${name}_f${i}.webp`);
 }
@@ -616,6 +659,9 @@ const defaultExpressionImages = { ...expressionImages };
 const defaultExpressionAnimFrames: Record<string, readonly string[]> = Object.fromEntries(
   Object.entries(sakiExpressionAnimFrames).map(([key, frames]) => [key, [...frames]])
 );
+const defaultPetGeneratedAnimFrames: Record<SakiPetGeneratedAnimKey, readonly string[]> = Object.fromEntries(
+  Object.entries(sakiPetGeneratedAnimFrames).map(([key, frames]) => [key, [...frames]])
+) as unknown as Record<SakiPetGeneratedAnimKey, readonly string[]>;
 
 let skinRevision = 0;
 const skinChangeListeners = new Set<() => void>();
@@ -714,6 +760,9 @@ export function applySkinAssetOverrides(
   for (const [key, frames] of Object.entries(defaultExpressionAnimFrames)) {
     sakiExpressionAnimFrames[key] = frames.map((original) => pathRemap?.(original) || original);
   }
+  for (const [key, frames] of Object.entries(defaultPetGeneratedAnimFrames)) {
+    sakiPetGeneratedAnimFrames[key as SakiPetGeneratedAnimKey] = frames.map((original) => pathRemap?.(original) || original);
+  }
 
   publishSkinChange();
 }
@@ -723,6 +772,9 @@ export function resetSkinAssetOverrides() {
   Object.assign(expressionImages, defaultExpressionImages);
   for (const [key, frames] of Object.entries(defaultExpressionAnimFrames)) {
     sakiExpressionAnimFrames[key] = [...frames];
+  }
+  for (const [key, frames] of Object.entries(defaultPetGeneratedAnimFrames)) {
+    sakiPetGeneratedAnimFrames[key as SakiPetGeneratedAnimKey] = [...frames];
   }
   publishSkinChange();
 }

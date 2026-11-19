@@ -8,7 +8,6 @@ import { imageAttachments, trimString } from "./types.js";
 import type { DirectChatMessage, DirectProviderMessage } from "./prompt.js";
 import { buildDirectMessages, buildDirectSystemPrompt, buildStaticAgentSystemPrompt } from "./prompt.js";
 import { sakiModelProfile, xmlToolFormatReminder } from "./model-profile.js";
-import { progressPrefaceFromMessages } from "./coding-harness.js";
 import { advertisedSakiToolSchemas } from "./tools.js";
 import {
   withAnthropicImageInputs,
@@ -378,145 +377,120 @@ function isInternalAgentScratchpadNote(content: string): boolean {
   return internalScratchpadNotePattern.test(content.trim());
 }
 
-export function compactAgentTurnMessages(messages: SakiAgentTurnMessage[], maxChars = 60000): SakiAgentTurnMessage[] {
-  const sizeOf = (message: SakiAgentTurnMessage) => message.content.length
+export function agentHistorySize(messages: readonly SakiAgentTurnMessage[]): number {
+  return messages.reduce((size, message) => size + message.content.length
     + (message.images?.length ?? 0) * 2000
     + (message.toolCalls ? JSON.stringify(message.toolCalls).length : 0)
-    + (message.assistantState ? JSON.stringify(message.assistantState).length : 0);
-  const initialFirstSize = messages.length ? sizeOf(messages[0]!) : 0;
-  const budgetChars = maxChars >= 60000 && initialFirstSize > 2000
-    ? maxChars + Math.min(initialFirstSize, 40000)
-    : maxChars;
-  if (messages.reduce((sum, message) => sum + sizeOf(message), 0) <= budgetChars) return messages;
-  // Leave headroom so a small new observation does not rewrite the cached
-  // history again on every turn. Protected messages can exceed this target.
-  const targetChars = Math.floor(budgetChars * 0.75);
-  const observations = new Map(messages.filter((message) => message.role === "tool" && !message.toolResultReference)
-    .map((message) => [message.toolCallId, message.content]));
-  messages = messages.map((message) => {
-    if (!message.toolResultReference) return message;
-    const { toolResultReference, ...rest } = message;
-    return { ...rest, content: observations.get(toolResultReference)
-      ?? "Previous cached observation is no longer available. Read again with refresh=true if needed." };
-  });
-  const excerpt = (content: string, limit: number) => {
-    if (content.length <= limit) return content;
-    const marker = `\n... [compacted ${content.length - limit} chars; middle omitted] ...\n`;
-    const available = Math.max(0, limit - marker.length);
-    const head = Math.ceil(available * 0.65);
-    return content.slice(0, head) + marker + content.slice(-(available - head));
-  };
-  const assistantTurnsAfter = new Array<number>(messages.length).fill(0);
-  let seenAssistants = 0;
-  for (let index = messages.length - 1; index >= 0; index--) {
-    assistantTurnsAfter[index] = seenAssistants;
-    if (messages[index]?.role === "assistant") seenAssistants += 1;
-  }
-  const compacted = messages.map((message, index) => {
-    if (message.role !== "tool" || message.content.length < 800 || message.name?.toLowerCase() === "askuser") return message;
-    const turnsAfter = assistantTurnsAfter[index] ?? 0;
-    const limit = turnsAfter === 0 ? 28000 : turnsAfter <= 2 ? (budgetChars >= 30000 ? 16000 : 2500) : turnsAfter <= 4 ? 2500 : 600;
-    if (message.content.length <= limit) return message;
-    return {
-      ...message,
-      content: excerpt(message.content, limit)
-    };
-  });
-  if (compacted.reduce((sum, message) => sum + sizeOf(message), 0) <= targetChars || compacted.length < 2) return compacted;
+    + (message.assistantState ? JSON.stringify(message.assistantState).length : 0), 0);
+}
 
-  // Summarize only complete protocol groups, including large historical write
-  // arguments/reasoning. Keep the original goal and any unconfirmed calls.
-  const first = compacted[0]!;
-  const groups: Array<{ messages: SakiAgentTurnMessage[]; size: number; keep: boolean }> = [];
-  for (let index = 1; index < compacted.length; index++) {
-    const message = compacted[index]!;
-    if (message.role !== "tool" || !groups.length) groups.push({ messages: [], size: 0, keep: true });
-    const group = groups.at(-1)!;
-    group.messages.push(message);
-    group.size += sizeOf(message);
+export function hasOpenAgentToolCalls(messages: readonly SakiAgentTurnMessage[]): boolean {
+  const pending = new Set<string>();
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]!;
+    if (message.role === "tool" && message.toolCallId) pending.add(message.toolCallId);
+    if (message.role === "assistant") return Boolean(message.toolCalls?.some(call => !call.id || !pending.has(call.id)));
+    if (message.role === "user") break;
   }
-  const summaries: string[] = [];
-  const firstSize = sizeOf(first);
-  const progressPreface = progressPrefaceFromMessages(messages, messages.find((message) => message.role === "user")?.content ?? "");
-  const memoryBudget = Math.max(400, Math.min(8000, Math.floor(budgetChars / 3), budgetChars - firstSize - progressPreface.length - 300));
-  const summary = (): SakiAgentTurnMessage => ({ role: "user", content: `[Compacted execution history — continue from verified results]\n${progressPreface}\n${summaries.slice(-20).join("\n").slice(-memoryBudget)}` });
-  const remember = (text: string) => {
-    summaries.push(text);
-    if (summaries.length > 20) summaries.shift();
-  };
-  let remainingSize = firstSize + groups.reduce((sum, group) => sum + group.size, 0);
-  let lastAssistant = -1;
-  for (let index = 0; index < groups.length; index++) {
-    const group = groups[index]!;
-    const message = group.messages[0]!;
-    if (message.role === "assistant") lastAssistant = index;
-    if (group.messages.length === 1 && message.role === "user" && message.content.startsWith("[Compacted execution history")) {
-      remember(message.content.replace(/^\[Compacted execution history[^\n]*\n/, "").slice(-memoryBudget));
-      group.keep = false;
-      remainingSize -= group.size;
-    }
-  }
-  for (let cursor = 0; cursor < groups.length; cursor++) {
-    if (remainingSize + (summaries.length ? summary().content.length : 0) <= targetChars) break;
-    if (cursor === lastAssistant) continue;
-    const group = groups[cursor]!;
-    if (!group.keep) continue;
-    const lead = group.messages[0];
-    if (group.messages.length === 1 && lead?.role === "user" && cursor < lastAssistant && isInternalAgentScratchpadNote(lead.content)) {
-      group.keep = false;
-      remainingSize -= group.size;
+  return false;
+}
+
+function agentHistoryExcerpt(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const marker = "\n[… earlier content omitted …]\n";
+  if (limit <= marker.length) return text.slice(0, limit);
+  const head = Math.ceil((limit - marker.length) * 0.6);
+  return text.slice(0, head) + marker + text.slice(-(limit - marker.length - head));
+}
+
+export function compactAgentTurnMessages(messages: SakiAgentTurnMessage[], maxChars = 60000): SakiAgentTurnMessage[] {
+  const budget = Math.max(0, Math.floor(maxChars));
+  if (agentHistorySize(messages) <= budget) return messages;
+  if (!budget) return [];
+  const observations = new Map(messages.filter(message => message.role === "tool" && !message.toolResultReference)
+    .map(message => [message.toolCallId, message.content]));
+  const groups: SakiAgentTurnMessage[][] = [];
+  for (const message of messages) {
+    if (message.role !== "tool") {
+      groups.push([message]);
       continue;
     }
-    if (lead?.role !== "assistant" || group.messages.some((message) => message.name?.toLowerCase() === "askuser")) continue;
-    const calls = lead.toolCalls ?? [];
-    const confirmed = new Set(group.messages.filter((message) => message.role === "tool").map((message) => message.toolCallId));
-    if (calls.some((call) => !call.id || !confirmed.has(call.id))) continue;
-    if (budgetChars >= 30000 && lastAssistant > cursor && lastAssistant - cursor <= 2) {
-      let saved = 0;
-      group.messages = group.messages.map((message) => {
-        if (message.role !== "tool" || message.content.length <= 4500 || message.name?.toLowerCase() === "askuser") return message;
-        const shortened = excerpt(message.content, 4500);
-        saved += message.content.length - shortened.length;
-        return { ...message, content: shortened };
-      });
-      if (saved > 0) {
-        group.size -= saved;
-        remainingSize -= saved;
-        if (remainingSize + (summaries.length ? summary().content.length : 0) <= targetChars) break;
-      }
-    }
-    group.keep = false;
-    remainingSize -= group.size;
-    for (const message of group.messages) {
-      if (message.role === "assistant") {
-        for (const call of message.toolCalls ?? []) {
-          if (isAgentChecklistTool(call.name)) continue;
-          const args = Array.isArray(call.args) ? {} : call.args;
-          const target = Object.fromEntries(Object.entries(args).filter(([key]) => /path|query|command|symbol|instanceId/i.test(key)));
-          remember(`${call.name} ${JSON.stringify(target).slice(0, 500)}`);
-        }
-        if (message.content.trim()) remember(`Assistant: ${excerpt(message.content, 400)}`);
-      } else if (!(message.role === "tool" && message.name && isAgentChecklistTool(message.name))) {
-        remember(`${message.role === "tool" ? `Result ${message.name ?? "tool"}` : "User note"}: ${excerpt(message.content, 800)}`);
-      }
-    }
+    const assistant = groups.at(-1)?.[0];
+    if (assistant?.role !== "assistant" || !assistant.toolCalls?.some(call => call.id && call.id === message.toolCallId)) continue;
+    const { toolResultReference, ...raw } = message;
+    groups.at(-1)!.push(toolResultReference ? {
+      ...raw, content: observations.get(toolResultReference) ?? "[Earlier tool observation omitted.]"
+    } : message);
   }
-  const result = [first, ...(summaries.length ? [summary()] : []), ...groups.filter((group) => group.keep).flatMap((group) => group.messages)];
-  if (result.reduce((sum, message) => sum + sizeOf(message), 0) <= budgetChars) return result;
 
-  // Keep the current tool-call group valid and share the remaining budget
-  // across its results. Omitted ranges remain available for targeted re-read.
-  let lastAssistantIndex = -1;
-  for (let index = 0; index < result.length; index++) {
-    if (result[index]?.role === "assistant") lastAssistantIndex = index;
+  const userTurns = groups.filter(group => group[0]!.role === "user" && !isInternalAgentScratchpadNote(group[0]!.content));
+  const originalGoal = userTurns[0];
+  const currentGoal = userTurns.at(-1);
+  const compactedGoal = (group: SakiAgentTurnMessage[], limit: number): SakiAgentTurnMessage => {
+    const { content, images } = group[0]!;
+    const keptImages = images?.slice(-Math.floor(Math.max(0, limit - 1000) / 2000)).slice(-2) ?? [];
+    const keep = Math.floor(Math.max(0, limit - 1000) / 2000) ? keptImages : [];
+    return { role: "user", content: agentHistoryExcerpt(content, Math.max(0, limit - keep.length * 2000)),
+      ...(keep.length ? { images: keep } : {}) };
+  };
+
+  // Reserve space for the active request and oldest goal. Context between them
+  // can be summarized, including earlier user turns. Full chat history stays saved.
+  const protectedMessages = new Map<SakiAgentTurnMessage[], SakiAgentTurnMessage>();
+  if (currentGoal) protectedMessages.set(currentGoal, compactedGoal(currentGoal, Math.floor(budget * 0.6)));
+  if (originalGoal && originalGoal !== currentGoal) {
+    protectedMessages.set(originalGoal, compactedGoal(originalGoal, Math.floor(budget * 0.15)));
   }
-  const candidates = result.slice(lastAssistantIndex + 1).filter(message => message.role === "tool"
-    && message.name?.toLowerCase() !== "askuser" && message.content.length > 400);
-  if (!candidates.length) return result;
-  const candidateChars = candidates.reduce((sum, message) => sum + message.content.length, 0);
-  const fixedChars = result.reduce((sum, message) => sum + sizeOf(message), 0) - candidateChars;
-  const perResult = Math.max(400, Math.floor((budgetChars - fixedChars) / candidates.length));
-  const candidateSet = new Set(candidates);
-  return result.map(message => candidateSet.has(message) && message.content.length > perResult
-    ? { ...message, content: excerpt(message.content, perResult) } : message);
+  const summaryLimit = Math.min(7500, Math.floor(budget * 0.2));
+  let remaining = budget - summaryLimit - agentHistorySize([...protectedMessages.values()]);
+  const keepGroups = new Set<SakiAgentTurnMessage[]>();
+  const preserveTailStart = Math.max(0, groups.length - 20);
+  for (let index = groups.length - 1; index >= preserveTailStart; index--) {
+    const group = groups[index]!;
+    if (protectedMessages.has(group)) continue;
+    const lead = group[0]!;
+    if (lead.role === "user" && /^\[Compacted execution history/.test(lead.content)) continue;
+    const ids = new Set(group.slice(1).map(message => message.toolCallId));
+    if (lead.toolCalls?.some(call => !call.id || !ids.has(call.id))) continue;
+    const size = agentHistorySize(group);
+    if (size > remaining) continue;
+    keepGroups.add(group);
+    remaining -= size;
+  }
+
+  const summaryLines: string[] = [];
+  for (const group of groups) {
+    if (keepGroups.has(group) || protectedMessages.has(group)) continue;
+    for (const message of group) {
+      if (message.role === "tool") {
+        if (!message.name || !isAgentChecklistTool(message.name)) summaryLines.push(`Result ${message.name ?? "tool"}: ${agentHistoryExcerpt(message.content, 420)}`);
+        continue;
+      }
+      if (message.role === "user" && isInternalAgentScratchpadNote(message.content)) {
+        if (message.content.startsWith("[Compacted execution history")) summaryLines.push(message.content.split("\n").slice(1).join("\n"));
+        continue;
+      }
+      if (message.content.trim()) summaryLines.push(`${message.role === "user" ? "Earlier user request" : "Assistant"}: ${agentHistoryExcerpt(message.content, 600)}`);
+      for (const call of message.toolCalls ?? []) {
+        if (isAgentChecklistTool(call.name)) continue;
+        const args = Array.isArray(call.args) ? {} : call.args;
+        const paths = Object.fromEntries(Object.entries(args ?? {}).filter(([key]) => /path|query|command|symbol|instanceId/i.test(key)));
+        summaryLines.push(`${call.name} ${agentHistoryExcerpt(JSON.stringify(paths), 300)}`);
+      }
+    }
+  }
+
+  const summary = summaryLines.length && summaryLimit > 150 ? {
+    role: "user" as const,
+    content: agentHistoryExcerpt(`[Compacted execution history — continue from verified results]\n${summaryLines.join("\n").slice(-summaryLimit)}`, summaryLimit)
+  } : undefined;
+  const result: SakiAgentTurnMessage[] = [];
+  for (const group of groups) {
+    const goal = protectedMessages.get(group);
+    if (goal) result.push(goal);
+    else if (keepGroups.has(group)) result.push(...group);
+    if (group === originalGoal && summary) result.push(summary);
+  }
+  if (!originalGoal && summary) result.unshift(summary);
+  return result;
 }

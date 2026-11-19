@@ -110,6 +110,7 @@ export interface LocalSakiMessage extends SakiChatMessage {
 
 export interface SakiSubmitOverride {
   message?: string;
+  callTurn?: boolean;
   resumeTaskId?: string;
   panelError?: string | null;
   contextTitle?: string | null;

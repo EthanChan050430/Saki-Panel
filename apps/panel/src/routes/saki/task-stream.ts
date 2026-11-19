@@ -51,6 +51,12 @@ export function connectSakiTaskStream(task: SakiActiveTask, request: FastifyRequ
   };
   const subscriber = (event: SakiActiveTaskEvent) => {
     if (closed) return;
+    if (event.type === "error" && task.status === "cancelled") {
+      closed = true;
+      queued.length = 0;
+      send(event);
+      return;
+    }
     if (!validateAccess) { send(event); return; }
     queued.push(event);
     void drain();

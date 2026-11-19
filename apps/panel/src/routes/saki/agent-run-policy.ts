@@ -12,6 +12,10 @@ function configuredBudget(name: string): number {
 export const maxAgentLoops = 0;
 export const agentContinuationCheckpointLoops = 100;
 
+export function agentContextWindowTokens(): number {
+  return configuredBudget("SAKI_AGENT_CONTEXT_WINDOW_TOKENS") || 32000;
+}
+
 export function agentRunBudgets(requestedMaxLoops?: number) {
   const requested = requestedMaxLoops !== undefined && Number.isFinite(requestedMaxLoops)
     ? Math.max(1, Math.floor(requestedMaxLoops)) : 0;

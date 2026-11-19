@@ -1,0 +1,941 @@
+.saki-panel[hidden] {
+  display: none !important;
+}
+
+html:has(.saki-task-call-dialog[open]) {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.saki-task-call-dialog {
+  position: fixed;
+  inset: var(--saki-call-top, 0px) 0 auto;
+  width: 100%;
+  height: var(--saki-call-height, 100vh);
+  height: var(--saki-call-height, 100dvh);
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  color: var(--text-dark);
+  background: transparent;
+  color-scheme: light;
+}
+
+[data-theme="dark"] .saki-task-call-dialog {
+  color-scheme: dark;
+}
+
+.saki-task-call-dialog::backdrop {
+  background: rgba(18, 18, 28, .45);
+}
+
+.saki-task-call {
+  --call-room: url("/assets/saki-call/room-day.webp");
+  --call-canvas: #c6b7ac;
+  --call-mic-live: #18764a;
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding: max(clamp(12px, 2.4vw, 28px), env(safe-area-inset-top))
+    max(clamp(12px, 3vw, 42px), env(safe-area-inset-right))
+    max(clamp(12px, 2.6vw, 30px), env(safe-area-inset-bottom))
+    max(clamp(12px, 3vw, 42px), env(safe-area-inset-left));
+  overflow: hidden;
+  color: var(--text-dark);
+  background: var(--call-canvas);
+}
+
+[data-theme="dark"] .saki-task-call {
+  --call-room: url("/assets/saki-call/room-night.webp");
+  --call-canvas: #302635;
+  --call-mic-live: #8ce4b2;
+}
+
+.saki-task-call-scene {
+  position: absolute;
+  inset: 0 0 auto;
+  height: var(--saki-call-scene-height, 100%);
+  z-index: -1;
+  display: grid;
+  place-items: center;
+  background: var(--call-room) center 48% / cover no-repeat;
+}
+
+.saki-task-call-scene::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgb(33 24 40 / 12%), transparent 20% 66%, rgb(33 24 40 / 28%));
+}
+
+.saki-task-call-header,
+.saki-task-call-header-actions,
+.saki-task-call-input,
+.saki-task-call-controls {
+  display: flex;
+  align-items: center;
+}
+
+.saki-task-call-header {
+  position: relative;
+  z-index: 2;
+  justify-content: space-between;
+  gap: 8px;
+  width: min(100%, 88rem);
+  margin-inline: auto;
+  pointer-events: none;
+}
+
+.saki-task-call-header > * {
+  pointer-events: auto;
+}
+
+.saki-task-call-captions,
+.saki-task-call-avatar-status,
+.saki-task-call-task-sidebar {
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  box-shadow: var(--glass-shadow);
+  -webkit-backdrop-filter: blur(22px) saturate(145%);
+  backdrop-filter: blur(22px) saturate(145%);
+}
+
+.saki-task-call-model {
+  position: relative;
+  min-width: 0;
+}
+
+.saki-task-call-identity-glass {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.saki-task-call-actions-glass {
+  flex-shrink: 0;
+}
+
+.saki-task-call-identity {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px 15px;
+  background: transparent;
+}
+
+.saki-task-call-identity small,
+.saki-task-call-identity strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saki-task-call-identity .saki-task-call-model-toggle {
+  justify-self: start;
+  max-width: 100%;
+  min-height: 0;
+  min-width: 0;
+  margin-inline: -4px;
+  padding: 1px 4px;
+  border: 0;
+  background: transparent;
+}
+
+.saki-task-call-model-toggle svg {
+  flex-shrink: 0;
+}
+
+.saki-task-call-identity strong {
+  color: var(--text-dark);
+  font-size: .87rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.saki-task-call-model-picker.saki-reasoning-panel {
+  position: absolute;
+  inset-block-start: calc(100% + 8px);
+  inset-inline-start: 0;
+  max-height: calc(var(--saki-call-height, 100dvh) - 90px);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+
+.saki-task-call small:where(:not(.saki-messages *, .saki-agent-progress-dock *)) {
+  color: var(--sidebar-text);
+  font-size: .75rem;
+  line-height: 1.35;
+}
+
+.saki-task-call-header-actions {
+  flex-shrink: 0;
+  gap: 4px;
+  padding: 4px;
+  background: transparent;
+}
+
+.saki-task-call-header-actions .saki-task-call-voice {
+  width: 36px;
+  padding: 0;
+}
+
+.saki-task-call-header-actions .saki-task-call-voice-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  color: var(--sidebar-text);
+}
+
+.saki-task-call-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-height: 0;
+  isolation: isolate;
+  pointer-events: none;
+}
+
+.saki-task-call-stage > * {
+  pointer-events: auto;
+}
+
+.saki-task-call-avatar {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  color-scheme: dark;
+  background: transparent;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(clamp(16px, 3vh, 32px));
+  transition: opacity var(--duration-normal) var(--ease-smooth);
+}
+
+.saki-task-call-avatar[data-ready="true"] {
+  opacity: 1;
+}
+
+.saki-task-call-avatar-interaction {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+}
+
+.saki-task-call-avatar-interaction[data-over-avatar] {
+  cursor: pointer;
+}
+
+.saki-task-call-avatar-status {
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border-radius: var(--radius-card);
+  color: var(--text-dark);
+  font-size: .82rem;
+}
+
+.saki-task-call-preview {
+  position: absolute;
+  top: 4px;
+  right: 0;
+  visibility: hidden;
+  width: min(28%, 280px);
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  background: var(--surface-bg-strong);
+  box-shadow: var(--glass-shadow);
+}
+
+.saki-task-call-preview.has-preview {
+  visibility: visible;
+}
+
+.saki-task-call-preview[data-source="camera"][data-orientation="portrait"] {
+  width: min(26vw, 132px);
+  aspect-ratio: 3 / 4;
+}
+
+.saki-task-call-preview > video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.saki-task-call-preview[data-source="camera"] > video {
+  object-fit: cover;
+}
+
+.saki-task-call-preview[data-mirror="true"] > video {
+  transform: scaleX(-1);
+}
+
+.saki-task-call-preview .saki-task-call-flip-camera {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #fff;
+  background: rgba(15, 23, 42, 0.58);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.saki-task-call-preview .saki-task-call-flip-camera:enabled:hover {
+  background: rgba(15, 23, 42, 0.78);
+}
+
+.saki-task-call-captions {
+  position: absolute;
+  inset: auto 8px 4px;
+  width: fit-content;
+  max-width: min(calc(100% - 16px), 43rem);
+  max-height: min(32%, 7rem);
+  min-width: min(15rem, 100%);
+  margin-inline: auto;
+  padding: 10px 15px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  border-radius: var(--radius-card);
+  background: var(--surface-bg-medium);
+  font-size: .84rem;
+  line-height: 1.5;
+}
+
+.saki-task-call-captions p {
+  margin: 0;
+}
+
+.saki-task-call-captions > p + * {
+  margin-top: 4px;
+}
+
+.saki-task-call-decision {
+  position: absolute;
+  z-index: 1;
+  inset-inline-end: 0;
+  align-self: center;
+  width: min(46%, 38rem);
+  max-height: 100%;
+  padding: 6px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  background: var(--surface-bg-strong);
+  box-shadow: var(--glass-shadow);
+  animation: saki-call-decision-in .24s ease-out both;
+}
+
+.saki-task-call-decision .saki-agent-widget {
+  margin: 0;
+}
+
+.saki-task-call-decision-title {
+  margin: 6px 6px 10px;
+  color: var(--text-dark);
+  font-size: .9rem;
+  font-weight: 700;
+}
+
+.saki-call-presentation-heading,
+.saki-call-artifact-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.saki-call-presentation-heading {
+  justify-content: space-between;
+  padding: 2px 4px;
+}
+
+.saki-call-artifact-actions {
+  flex-wrap: wrap;
+}
+
+.saki-call-results {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  padding: 6px;
+}
+
+.saki-call-results :is(.saki-call-artifact-name, p[role="status"], p[role="alert"]) {
+  margin: 0;
+}
+
+.saki-call-artifact-select {
+  width: 100%;
+  padding: 6px;
+  color: var(--text-dark);
+  background: var(--input-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-control);
+}
+
+.saki-call-artifact-page {
+  width: 100%;
+  height: min(42dvh, 24rem);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: white;
+}
+
+.saki-call-artifact-table,
+.saki-call-artifact-text {
+  overflow: auto;
+}
+
+.saki-call-artifact-table table {
+  border-collapse: collapse;
+}
+
+.saki-call-artifact-table td {
+  padding: 5px 8px;
+  border: 1px solid var(--glass-border);
+  white-space: pre-wrap;
+}
+
+.saki-call-code-review.saki-code-changes-details.inline {
+  width: 100%;
+  margin: 0;
+}
+
+.saki-call-code-review .saki-code-changes-body {
+  grid-template-columns: minmax(6rem, 34%) minmax(0, 1fr);
+}
+
+.saki-call-code-review .saki-code-changes-body.is-sidebar-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.saki-call-code-review .saki-code-changes-sidebar {
+  width: 100%;
+}
+
+.saki-call-code-review .saki-diff-header-bar {
+  flex-wrap: wrap;
+}
+
+[data-decision-side="left"] .saki-task-call-decision {
+  inset-inline: 0 auto;
+}
+
+[data-decision-side="right"] .saki-task-call-captions {
+  inset-inline-end: 52%;
+}
+
+[data-decision-side="left"] .saki-task-call-captions {
+  inset-inline-start: 52%;
+}
+
+[data-decision-side="left"] > .saki-task-call-preview.has-preview {
+  width: min(16%, 160px);
+}
+
+[data-decision-side="bottom"] > .saki-task-call-preview.has-preview {
+  width: min(24vw, 124px);
+}
+
+[data-decision-side="bottom"] > .saki-task-call-preview.has-preview[data-source="camera"][data-orientation="portrait"] {
+  width: min(22vw, 96px);
+}
+
+[data-decision-side="bottom"] .saki-task-call-decision {
+  inset: auto 0 0;
+  width: min(100%, 36rem);
+  max-height: 62%;
+  margin-inline: auto;
+}
+
+[data-decision-side="bottom"] .saki-task-call-captions {
+  visibility: hidden;
+}
+
+[data-decision-side="bottom"] .saki-task-call-decision textarea {
+  font-size: 16px;
+}
+
+@keyframes saki-call-decision-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.saki-task-call-task-sidebar {
+  position: absolute;
+  z-index: 1;
+  inset-block: 0;
+  inset-inline-end: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(34rem, 48vw);
+  padding: 10px;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--surface-bg-strong);
+}
+
+.saki-task-call-task-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-inline-start: 4px;
+}
+
+.saki-task-call-task-heading h2 {
+  margin: 0;
+  color: var(--text-dark);
+  font-size: .9rem;
+}
+
+.saki-task-call-task-heading .saki-task-call-task-close {
+  padding: 0;
+}
+
+.saki-task-call-task-sidebar > .saki-messages {
+  min-height: 0;
+  border-radius: var(--radius-control);
+  overscroll-behavior: contain;
+}
+
+.saki-task-call-task-summary {
+  min-height: 0;
+  max-height: 28%;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.saki-task-call-task-summary > summary {
+  padding: 4px;
+  color: var(--text-dark);
+  font-size: .8rem;
+  cursor: pointer;
+}
+
+.saki-task-call-task-scroll {
+  margin-top: 4px;
+}
+
+.saki-task-call-task-note {
+  margin: 4px;
+  color: var(--sidebar-text);
+  font-size: .8rem;
+  overflow-wrap: anywhere;
+}
+
+.saki-task-call-task-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.saki-task-call-task-list li {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-control);
+  background: var(--glass-bg);
+  overflow-wrap: anywhere;
+}
+
+.saki-task-call-task-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+  flex-wrap: wrap;
+}
+
+.saki-task-call-task-meta > span {
+  padding: 2px 7px;
+  border-radius: var(--radius-chip);
+  color: var(--text-dark);
+  background: var(--primary-light);
+  font-size: .72rem;
+  font-weight: 600;
+}
+
+.saki-task-call-task-meta > span[data-status="running"] {
+  color: var(--call-mic-live);
+  background: var(--surface-bg-faint);
+}
+
+.saki-task-call-task-message {
+  margin: 0;
+  color: var(--text-dark);
+  font-size: .84rem;
+  line-height: 1.45;
+}
+
+.saki-task-call-task-conversation {
+  align-self: flex-end;
+}
+
+.saki-task-call button:where(:not(.saki-task-call-model-picker *, .saki-messages *, .saki-task-call-decision *, .saki-attachment-modal-overlay *, .saki-attachment-lightbox-overlay *)) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex-shrink: 0;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 4px 10px;
+  border: 1px solid var(--btn-ghost-border);
+  border-radius: var(--radius-chip);
+  color: var(--btn-ghost-text);
+  background: var(--btn-ghost-bg);
+  font: inherit;
+  font-size: .78rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.saki-task-call button:enabled:hover:where(:not(.saki-task-call-model-picker *, .saki-messages *, .saki-task-call-decision *, .saki-attachment-modal-overlay *, .saki-attachment-lightbox-overlay *)) {
+  background: var(--btn-ghost-hover);
+}
+
+.saki-task-call button:disabled {
+  opacity: .48;
+  cursor: default;
+}
+
+.saki-task-call button:focus-visible,
+.saki-task-call input:focus-visible {
+  outline: 2px solid var(--sidebar-accent);
+  outline-offset: 2px;
+}
+
+.saki-task-call :where(.saki-task-call-header, .saki-task-call-footer) button:is([aria-pressed="true"], [aria-expanded="true"], [data-pending="true"]) {
+  border-color: var(--tag-border);
+  background: linear-gradient(var(--primary-light), var(--primary-light)), var(--btn-ghost-bg);
+}
+
+.saki-task-call-footer {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  width: min(100%, 26rem);
+  margin-inline: auto;
+}
+
+.saki-task-call-footer[data-text-open="true"] {
+  width: min(100%, 44rem);
+}
+
+.saki-task-call-dock {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  background: transparent;
+}
+
+.saki-task-call-setup,
+.saki-task-call-voice-progress,
+.saki-task-call-error {
+  grid-column: 1 / -1;
+}
+
+.saki-task-call-setup p,
+.saki-task-call-error {
+  margin: 0;
+  font-size: .77rem;
+  line-height: 1.45;
+}
+
+.saki-task-call-setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.saki-task-call-voice-progress {
+  display: grid;
+  gap: 5px;
+  padding: 5px 9px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-control-sm);
+  background: var(--surface-bg-faint);
+  font-size: .75rem;
+  line-height: 1.35;
+}
+
+.saki-task-call-voice-progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.saki-task-call-voice-progress-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saki-task-call-voice-progress button {
+  min-width: 0;
+  min-height: 28px;
+  padding: 2px 10px;
+  font-size: .74rem;
+}
+
+.saki-task-call-voice-progress progress {
+  display: block;
+  width: 100%;
+  height: 5px;
+  accent-color: var(--sidebar-accent);
+}
+
+.saki-task-call-error {
+  padding: 5px 9px;
+  border: 1px solid var(--inline-error-border);
+  border-radius: var(--radius-control-sm);
+  color: var(--inline-error-text);
+  background: var(--inline-error-bg);
+}
+
+.saki-task-call-setup button {
+  margin-top: 6px;
+  margin-inline-end: 6px;
+}
+
+.saki-task-call-setup progress {
+  display: block;
+  width: 100%;
+  height: 7px;
+  margin-block: 6px;
+  accent-color: var(--sidebar-accent);
+}
+
+.saki-task-call-input {
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+}
+
+.saki-task-call-input input {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  padding: 0 13px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-chip);
+  color: var(--text-dark);
+  background: var(--input-bg);
+  font: inherit;
+  font-size: .85rem;
+}
+
+.saki-task-call-input input::placeholder {
+  color: var(--sidebar-text);
+}
+
+.saki-task-call-input button[type="submit"] {
+  width: 40px;
+  min-height: 40px;
+  padding: 0;
+  border-color: var(--tag-border);
+  color: #341727;
+  background: var(--primary);
+}
+
+.saki-task-call-input button[type="submit"]:enabled:hover {
+  background: var(--primary-hover);
+}
+
+.saki-task-call-controls {
+  grid-column: 1 / -1;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+@media (min-width: 769px) {
+  .saki-task-call-footer[data-text-open="true"] .saki-task-call-controls {
+    grid-column: 2;
+  }
+}
+
+.saki-task-call-controls button {
+  width: 38px;
+  min-height: 38px;
+  padding: 0;
+}
+
+.saki-task-call-controls .saki-task-call-mic[data-listening="true"] {
+  border-color: var(--call-mic-live);
+  color: var(--call-mic-live);
+  background: color-mix(in srgb, var(--call-mic-live) 14%, var(--btn-ghost-bg));
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--call-mic-live) 45%, transparent);
+  animation: saki-call-mic-pulse 1.8s ease-out infinite;
+}
+
+@keyframes saki-call-mic-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--call-mic-live) 45%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--call-mic-live) 0%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--call-mic-live) 0%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .saki-task-call-controls .saki-task-call-mic[data-listening="true"],
+  .saki-task-call-decision {
+    animation: none;
+  }
+}
+
+.saki-task-call-controls .saki-task-call-end {
+  width: 48px;
+  margin-inline-start: 3px;
+  border-color: var(--inline-error-border);
+  color: var(--inline-error-text);
+  background: linear-gradient(var(--inline-error-bg), var(--inline-error-bg)), var(--btn-ghost-bg);
+}
+
+.saki-task-call-controls .saki-task-call-end:hover {
+  background: var(--inline-error-bg);
+}
+
+@media (max-width: 768px) {
+  .saki-task-call-task-sidebar {
+    width: min(34rem, 100%);
+  }
+
+  .saki-task-call-preview {
+    width: min(31%, 180px);
+  }
+
+  .saki-task-call-preview[data-source="camera"][data-orientation="portrait"] {
+    width: min(27vw, 120px);
+  }
+
+  .saki-task-call-dock {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+    padding-inline: 9px;
+  }
+
+  .saki-task-call-controls {
+    gap: 4px;
+  }
+}
+
+@media (max-width: 768px), (pointer: coarse), (max-height: 500px) {
+  .saki-task-call-input input,
+  .saki-task-call-decision textarea,
+  .saki-task-call-decision input {
+    font-size: 16px;
+  }
+
+  .saki-task-call-identity {
+    padding-block: 5px;
+  }
+
+  .saki-task-call-identity .saki-task-call-model-toggle {
+    min-height: 30px;
+  }
+}
+
+@media (max-width: 480px) {
+  .saki-task-call-header-actions .saki-task-call-tasks {
+    width: 36px;
+    padding: 0;
+  }
+
+  .saki-task-call-header-actions .saki-task-call-tasks span {
+    display: none;
+  }
+
+  .saki-task-call-identity {
+    padding-inline: 12px 10px;
+  }
+}
+
+@media (max-height: 500px) and (orientation: landscape) {
+  .saki-task-call {
+    gap: 4px;
+    padding-block: max(6px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-bottom));
+  }
+
+  .saki-task-call-identity {
+    padding: 4px 12px;
+    gap: 0;
+  }
+
+  .saki-task-call-identity small {
+    display: none;
+  }
+
+  .saki-task-call-dock {
+    gap: 5px 10px;
+    padding: 6px 10px;
+  }
+
+  .saki-task-call-captions {
+    max-height: min(36%, 4.5rem);
+    padding: 7px 12px;
+  }
+
+  .saki-task-call-model-picker.saki-reasoning-panel {
+    max-height: calc(var(--saki-call-height, 100dvh) - 62px);
+  }
+}
+
+@media (max-width: 350px) {
+  .saki-task-call-identity {
+    padding-inline: 10px 8px;
+  }
+
+  .saki-task-call-controls {
+    gap: 3px;
+  }
+
+  .saki-task-call-controls button {
+    min-width: 34px;
+    width: 34px;
+    min-height: 36px;
+  }
+
+  .saki-task-call-controls .saki-task-call-end {
+    width: 42px;
+    margin-inline-start: 2px;
+  }
+}

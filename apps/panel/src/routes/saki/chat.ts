@@ -403,6 +403,7 @@ export async function prepareSakiChatInvocation(
     config
   );
 
+  const permissionMode = normalizeSakiAgentPermissionMode(body.agentPermissionMode ?? config.defaultAgentPermissionMode);
   const input: SakiChatRequest = {
     message: slash.message,
     ...Object.fromEntries(["clientRequestId", "conversationId", "userMessageId", "assistantMessageId"].flatMap((key) => {
@@ -422,9 +423,9 @@ export async function prepareSakiChatInvocation(
     contextText: [trimContextText(body.contextText), editorContextText].filter(Boolean).join("\n\n") || null,
     auditSearch: trimString(body.auditSearch) || null,
     mode,
-    agentPermissionMode: normalizeSakiAgentPermissionMode(body.agentPermissionMode ?? config.defaultAgentPermissionMode),
+    agentPermissionMode: permissionMode,
     reasoningEffort: config.reasoningEffort ?? "auto",
-    terminalSandbox: body.terminalSandbox !== false,
+    terminalSandbox: typeof body.terminalSandbox === "boolean" ? body.terminalSandbox : mode !== "agent" || permissionMode !== "bypassPermissions",
     selectedSkillIds: Array.isArray(body.selectedSkillIds) ? body.selectedSkillIds.map(trimString).filter(Boolean) : [],
     attachments,
     model: config.model, provider: config.provider,

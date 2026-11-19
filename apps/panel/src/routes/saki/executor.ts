@@ -14,6 +14,11 @@ import { writeAuditLog } from "../../audit.js";
 import { classifyCommandRisk, findDangerousCommandReason, isPosixCommandPlatform } from "../../security.js";
 import { commandCheckpointWorkspaces, commandWorkspaceEscape, commandWorkspaceScope, referencedCommandWorkspaces } from "./command-workspaces.js";
 import { classifyWorkspaceCommand, guardedWorkspaceRead } from "./guarded-workspace-read.js";
+import { resolveSshInstancePath } from "./file-window.js";
+import { reuseWorkspaceFileObservation, saveWorkspaceFileObservation } from "./workspace-file-recall.js";
+import { beginAgentJob, getAgentJob, listAgentJobs, stopAgentJob } from "./agent-jobs.js";
+import { appendSakiToolEvent } from "./tool-journal.js";
+import { agentToolExecutionSignature } from "./agent-tool-guard.js";
 import { instanceAccessInclude, listVisibleInstances, loadInstanceAccessProfile, loadVisibleInstance } from "../../instance-access.js";
 import type { DaemonInstanceSpec } from "../../daemon-client.js";
 import {
@@ -39,6 +44,7 @@ import {
   restartDaemonInstance,
   runDaemonInstanceCommand,
   runDaemonShellCommand,
+  runDaemonWorkspaceSandboxCommand,
   sendDaemonInstanceInput,
   sendDaemonShellInput,
   startDaemonInstance,
@@ -72,7 +78,7 @@ import {
   savePendingSakiAction
 } from "./state.js";
 import type { InstanceWithNode, ParsedToolCall, PendingSakiAction, SakiAgentResumeState, SakiAgentRuntime, SakiCheckpoint, SakiSkillDocument, SakiSkillSummary } from "./types.js";
-import { currentAgentAbortSignal, effectiveSakiAgentPermissionMode } from "./types.js";
+import { currentAgentAbortSignal, effectiveSakiAgentPermissionMode, withAgentAbortSignal } from "./types.js";
 import { assertImplementWritePaths, editedPathsFromTool, fetchLoopbackHealth, filesFromPlanText, formatDiagnosticObservation, reviewIntentBlocksTool, subagentRole, subagentRolePrompt, wrapCommandForSandbox } from "./coding-harness.js";
 import { readWatchPolicy } from "../../watch/policy.js";
 import { callMcpToolForAgent, listMcpToolsForAgent } from "./mcp-agent-tools.js";
@@ -118,6 +124,7 @@ import {
   buildInstanceSettingsPatch,
   instanceSettingsSnapshot,
   shouldRequestSakiApproval,
+  requestsCommandEscalation,
   normalizedAgentToolName,
   sakiCommandToolNames,
   toolArgs
@@ -234,6 +241,7 @@ function daemonSpecFromInstance(instance: InstanceWithNode): DaemonInstanceSpec 
 }
 
 const agentShellLabelPrefix = "saki";
+const busyAgentShells = new Set<string>();
 
 function isAgentShellLabel(label?: string | null): boolean {
   return (label ?? "").trim().toLowerCase().startsWith(agentShellLabelPrefix);
@@ -255,7 +263,7 @@ function nextAgentShellLabel(existing: Array<{ label?: string | undefined }>): s
 async function runAgentIndependentCommand(
   instance: InstanceWithNode,
   args: Record<string, unknown>,
-  options: { requireShellId?: boolean } = {}
+  options: { requireShellId?: boolean; background?: boolean } = {}
 ) {
   const command = stringArg(args, "command");
   if (!command) throw new RouteError("runCommand requires a command.", 400);
@@ -264,9 +272,12 @@ async function runAgentIndependentCommand(
   if (options.requireShellId && !requestedShellId) {
     throw new RouteError("runInShell requires shellId. Call listShells or createShell first.", 400);
   }
-  const timeoutMs = numericArg(args.timeoutMs, 30000, 1000, 120000);
+  const timeoutMs = numericArg(args.timeoutMs, options.background ? 300000 : 30000, 1000, options.background ? 900000 : 120000);
   const input = optionalCommandInputArg(args);
+  const signal = currentAgentAbortSignal();
+  signal?.throwIfAborted();
   const listed = await listDaemonInstanceShells(instance.node, instance.id);
+  signal?.throwIfAborted();
   const shells = listed.shells ?? listed.sessions.map((id) => ({ id, label: undefined as string | undefined, createdAt: 0, kind: undefined }));
   let shellId = requestedShellId;
   let label: string | undefined;
@@ -275,7 +286,7 @@ async function runAgentIndependentCommand(
     if (!match) throw new RouteError("That independent terminal is not open. Call listShells or createShell.", 400);
     label = match.label;
   } else {
-    const agentShells = shells.filter((item) => isAgentShellLabel(item.label));
+    const agentShells = shells.filter((item) => isAgentShellLabel(item.label) && !busyAgentShells.has(item.id));
     const reused = agentShells.at(-1);
     if (reused) {
       shellId = reused.id;
@@ -291,20 +302,18 @@ async function runAgentIndependentCommand(
       label = created.label;
     }
   }
-  const runResult = await runDaemonShellCommand(
-    instance.node,
-    instance.id,
-    shellId,
-    {
-      command,
-      workingDirectory: instance.workingDirectory,
-      cwd,
-      timeoutMs,
+  if (busyAgentShells.has(shellId)) throw new RouteError("该终端正在执行另一条命令，请选择空闲终端或省略 shellId。", 409);
+  busyAgentShells.add(shellId);
+  try {
+    signal?.throwIfAborted();
+    const runResult = await runDaemonShellCommand(instance.node, instance.id, shellId, {
+      command, workingDirectory: instance.workingDirectory, cwd, timeoutMs,
       ...(input ? { input } : {})
-    },
-    currentAgentAbortSignal()
-  );
-  return { runResult, shellId, label: label ?? runResult.label, inputProvided: Boolean(input) };
+    }, signal);
+    return { runResult, shellId, label: label ?? runResult.label, inputProvided: Boolean(input) };
+  } finally {
+    busyAgentShells.delete(shellId);
+  }
 }
 
 function activeInstance(runtime: SakiAgentRuntime): InstanceWithNode {
@@ -607,14 +616,6 @@ async function resolveAgentServerNode(runtime: SakiAgentRuntime, args: Record<st
   });
   if (!firstNode) throw new RouteError("暂无可用服务器或集群节点。", 404);
   return firstNode;
-}
-
-export function resolveSshInstancePath(instance: InstanceWithNode, relativePath: string): string {
-  const wd = instance.workingDirectory?.trim() || "/";
-  const rel = (relativePath || "").trim();
-  if (!rel || rel === ".") return wd;
-  if (path.posix.isAbsolute(rel)) return path.posix.normalize(rel);
-  return path.posix.join(wd, rel);
 }
 
 async function readInstanceImage(runtime: SakiAgentRuntime, instance: InstanceWithNode, rawPath: string, maxBytes = maxWorkspaceImageBytes): Promise<SakiInputAttachment> {
@@ -952,7 +953,7 @@ async function buildApproval(runtime: SakiAgentRuntime, call: ParsedToolCall): P
     risk = "critical";
     preview = `${instance.name}:${relativePath}`;
     rollbackAvailable = true;
-  } else if (toolName === "runcommand" || toolName === "runinshell") {
+  } else if (toolName === "runcommand" || toolName === "runinshell" || toolName === "diagnosecode") {
     requireUserPermission(runtime.permissions, "terminal.input");
     const instance = await resolveAgentInstance(runtime, args);
     const commandRisk = classifyWorkspaceCommand(stringArg(args, "command"), instance.workingDirectory, isPosixCommandPlatform(instance.node.os), commandCwdArg(args));
@@ -963,9 +964,12 @@ async function buildApproval(runtime: SakiAgentRuntime, call: ParsedToolCall): P
       throw new RouteError("runInShell requires shellId. Call listShells or createShell first.", 400);
     }
     const hasInput = Boolean(optionalCommandInputArg(args));
-    reason = hasInput ? "Command includes stdin that can change execution behavior and requires approval." : commandRisk.reason;
-    risk = hasInput && commandRisk.risk === "low" ? "medium" : commandRisk.risk;
+    const escalation = requestsCommandEscalation(toolName, args);
+    reason = escalation ? "This exact command requests execution beyond the workspace sandbox. Changes outside attached workspaces cannot be rolled back here."
+      : hasInput ? "Command includes stdin that can change execution behavior and requires approval." : commandRisk.reason;
+    risk = escalation ? "high" : hasInput && commandRisk.risk === "low" ? "medium" : commandRisk.risk;
     preview = [
+      escalation ? `理由：${redactSensitiveText(stringArg(args, "justification"))}` : null,
       cwd ? `cwd: ${cwd}` : null,
       stringArg(args, "shellId") ? `shellId: ${stringArg(args, "shellId")}` : "shell: reuse-or-create independent tab",
       `command: ${stringArg(args, "command")}`,
@@ -1033,9 +1037,9 @@ async function buildApproval(runtime: SakiAgentRuntime, call: ParsedToolCall): P
 async function createPendingApprovalAction(
   runtime: SakiAgentRuntime,
   call: ParsedToolCall,
+  id: string,
   resume?: SakiAgentResumeState
 ): Promise<SakiAgentAction> {
-  const id = call.id || actionId();
   const args = normalizeToolArgs(call.name.toLowerCase(), call);
   const bindings = new Map<string, ReturnType<typeof bindSakiWorkspace>>();
   for (const instance of runtime.context.instances ?? []) bindings.set(instance.id, bindSakiWorkspace(instance));
@@ -1076,7 +1080,7 @@ async function createPendingApprovalAction(
     ...(runtime.maxLoops ? { maxLoops: runtime.maxLoops } : {}),
     ...(runtime.systemPromptOverride ? { systemPromptOverride: runtime.systemPromptOverride } : {})
   };
-  await savePendingSakiAction(pending);
+  await savePendingSakiAction(pending, runtime.abortController?.signal);
   return {
     id,
     tool: call.name,
@@ -1092,6 +1096,7 @@ async function createPendingApprovalAction(
 async function createPendingQuestionAction(
   runtime: SakiAgentRuntime,
   call: ParsedToolCall,
+  id: string,
   resume?: SakiAgentResumeState
 ): Promise<SakiAgentAction> {
   const args = toolArgs(call);
@@ -1108,7 +1113,6 @@ async function createPendingQuestionAction(
   }
   const options = [...new Set((Array.isArray(inputOptions) ? inputOptions as string[] : []).map((item) => item.trim()).filter(Boolean))];
   if (options.some((item) => item.length > 120)) throw new RouteError("askUser options must be at most 120 characters.", 400);
-  const id = call.id || actionId();
   const createdAt = new Date().toISOString();
   await savePendingSakiAction({
     id, call: { ...call, name: "askUser", args: { question: text, options } }, userId: runtime.userId, contextInstanceId: runtime.context.instance?.id ?? null, createdAt,
@@ -1118,7 +1122,7 @@ async function createPendingQuestionAction(
     ...(runtime.kind ? { kind: runtime.kind } : {}),
     ...(runtime.maxLoops ? { maxLoops: runtime.maxLoops } : {}),
     ...(runtime.systemPromptOverride ? { systemPromptOverride: runtime.systemPromptOverride } : {})
-  });
+  }, runtime.abortController?.signal);
   return { id, tool: "askUser", args: { question: text, options }, observation: "Waiting for user input.", ok: false, status: "pending_input", question: { text, options }, createdAt };
 }
 
@@ -1208,8 +1212,13 @@ function normalizeToolArgs(toolName: string, call: ParsedToolCall): Record<strin
 export async function executeSakiAgentTool(
   runtime: SakiAgentRuntime,
   call: ParsedToolCall,
-  options: { approved?: boolean; actionId?: string; pendingResume?: SakiAgentResumeState; externalRead?: PreparedExternalRead; mutationLocked?: boolean } = {}
+  options: { approved?: boolean; actionId?: string; pendingResume?: SakiAgentResumeState; externalRead?: PreparedExternalRead; mutationLocked?: boolean; backgroundWorker?: boolean } = {}
 ): Promise<SakiAgentAction> {
+  const signal = runtime.abortController?.signal;
+  if (signal && currentAgentAbortSignal() !== signal) {
+    return withAgentAbortSignal(signal, () => executeSakiAgentTool(runtime, call, options));
+  }
+  signal?.throwIfAborted();
   const reviewToolName = normalizedAgentToolName(call.name);
   if (reviewIntentBlocksTool(runtime, reviewToolName)) {
     return {
@@ -1222,15 +1231,23 @@ export async function executeSakiAgentTool(
       createdAt: new Date().toISOString()
     };
   }
-  if (!options.mutationLocked && /^(writefile|replaceinfile|editlines|batchedit|applypatch|uploadbase64|deletepath|renamepath|mkdir|generateimage|archivepaths|extractarchive|runcommand|runinshell|diagnosecode|sendshellinput)$/.test(normalizedAgentToolName(call.name))) {
+  const background = (reviewToolName === "runcommand" || reviewToolName === "spawntask")
+    && booleanArg(toolArgs(call), "background", false);
+  if (!background && !options.mutationLocked && /^(writefile|replaceinfile|editlines|batchedit|applypatch|uploadbase64|deletepath|renamepath|mkdir|generateimage|archivepaths|extractarchive|runcommand|runinshell|diagnosecode|sendshellinput)$/.test(normalizedAgentToolName(call.name))) {
     const args = toolArgs(call);
     const selected = runtime.context.instances ? selectedWorkspaceTarget(runtime.context, stringArg(args, "instanceId") || stringArg(args, "instance") || stringArg(args, "id")) : null;
     const target = selected ?? runtime.context.instance;
-    const ids = target && sakiCommandToolNames.has(normalizedAgentToolName(call.name))
-      ? commandWorkspaceScope(runtime.context, target).map(instance => instance.id)
-      : [target?.id ?? String(args.instanceId ?? "global")];
-    return withSakiWorkspaceMutations(ids,
-      () => executeSakiAgentTool(runtime, call, { ...options, mutationLocked: true }));
+    const isCommand = sakiCommandToolNames.has(reviewToolName);
+    const command = stringArg(args, "command");
+    const readOnlyCommand = isCommand && target && command && !optionalCommandInputArg(args)
+      && classifyWorkspaceCommand(command, target.workingDirectory, isPosixCommandPlatform(target.node.os), commandCwdArg(args)).readOnly;
+    if (!readOnlyCommand) {
+      const ids = target && isCommand
+        ? commandWorkspaceScope(runtime.context, target).map(instance => instance.id)
+        : [target?.id ?? String(args.instanceId ?? "global")];
+      return withSakiWorkspaceMutations(ids,
+        () => executeSakiAgentTool(runtime, call, { ...options, mutationLocked: true }), signal);
+    }
   }
   const initiatingRuntime = runtime;
   const tool = call.name.trim();
@@ -1256,6 +1273,7 @@ export async function executeSakiAgentTool(
 
     try {
       runtime = await authorizeSakiTool(runtime, call, args);
+      signal?.throwIfAborted();
       if (runtime.subagentRole === "implement") {
         assertImplementWritePaths(toolName, filesFromPlanText(runtime.codingPlan?.text ?? ""), editedPathsFromTool(toolName, args));
       }
@@ -1268,11 +1286,22 @@ export async function executeSakiAgentTool(
         }
       }
       assertSakiPermissionModeAllowsTool(runtime, toolName, args);
-      if (sakiCommandToolNames.has(toolName) && toolName !== "runservercommand" && isAgentSandboxEnabled(runtime)) {
+      const escalation = requestsCommandEscalation(toolName, args);
+      const sandbox = isAgentSandboxEnabled(runtime);
+      const delegatedSandbox = runtime.context.access?.isSuperAdmin === false;
+      if (escalation) {
+        const reason = stringArg(args, "justification");
+        if (runtime.context.access?.isSuperAdmin !== true || runtime.kind === "watch" || runtime.subagentRole
+          || effectiveSakiAgentPermissionMode(runtime.input) === "plan") throw new RouteError("当前任务无法申请扩大终端权限。", 403);
+        if (!reason || reason.length > 500) throw new RouteError("请说明扩大终端权限的具体用途，最多 500 字符。", 400);
+      }
+      if (sakiCommandToolNames.has(toolName) && toolName !== "runservercommand" && sandbox && !escalation && !delegatedSandbox) {
         const target = await resolveAgentInstance(runtime, args);
         const escape = commandWorkspaceEscape(runtime.context, target, stringArg(args, "command"));
         if (escape && !guardedWorkspaceRead(stringArg(args, "command"), target.workingDirectory, isPosixCommandPlatform(target.node.os), commandCwdArg(args))) {
-          throw new RouteError(`终端命令包含已选同节点工作区以外的路径（${escape}）。执行工作区：${target.name}（${target.workingDirectory}）。请先添加该目录所属工作区；外部文件仅可申请单次读取审批。`, 403);
+          const retry = toolName === "runcommand" || toolName === "runinshell"
+            ? "如果这条命令确实需要外部路径，可提交同一命令并填写 sandboxPermissions=require_escalated 和 justification，等待用户单次批准。" : "";
+          throw new RouteError(`终端命令包含已选同节点工作区以外的路径（${escape}）。执行工作区：${target.name}（${target.workingDirectory}）。${retry}`, 403);
         }
       }
       assertToolProfileAllowsTool(runtime, toolName);
@@ -1283,18 +1312,72 @@ export async function executeSakiAgentTool(
       if (normalizedAgentToolName(toolName) === "askuser") {
         if (runtime.subagentRole) throw new RouteError("Sub-agents cannot request input directly. Return the question to the parent agent.", 400);
         if (options.approved) throw new RouteError("Answer askUser through the answer endpoint.", 400);
-        const pending = await createPendingQuestionAction(runtime, { ...call, id: currentActionId }, options.pendingResume);
+        const pending = await createPendingQuestionAction(runtime, call, currentActionId, options.pendingResume);
         await auditAgentTool(runtime, pending);
         return pending;
       }
       if (!options.approved && shouldRequestSakiApproval(runtime, toolName, args)) {
         if (runtime.subagentRole) throw new RouteError("This action requires approval. Return it to the parent agent to request approval.", 403);
-        const pending = await createPendingApprovalAction(runtime, { ...call, id: currentActionId }, options.pendingResume);
+        const pending = await createPendingApprovalAction(runtime, call, currentActionId, options.pendingResume);
         await auditAgentTool(runtime, pending);
         return pending;
       }
 
-      if (toolName === "requestexternalaccess") {
+      if (background) {
+        if (runtime.kind === "watch" || runtime.subagentRole || effectiveSakiAgentPermissionMode(runtime.input) === "plan") {
+          throw new RouteError("Background work requires a normal Agent conversation.", 403);
+        }
+        if (toolName === "spawntask" && subagentRole(args.role) === "implement") {
+          throw new RouteError("Use a foreground implement worker so file edits can be verified before the parent continues.", 400);
+        }
+        if (toolName === "runcommand" && (stringArg(args, "shellId") || optionalCommandInputArg(args))) {
+          throw new RouteError("Background commands use an independent terminal and cannot accept interactive stdin.", 400);
+        }
+        const childArgs = { ...args };
+        delete childArgs.background;
+        const workerActionId = actionId();
+        const childCall: ParsedToolCall = { name: call.name, args: childArgs };
+        const resume = options.pendingResume;
+        const owner = runtime;
+        const id = beginAgentJob(owner, childCall, async controller => {
+          const taskId = owner.taskId!;
+          const conversationId = owner.input.conversationId ?? `task-${taskId}`;
+          if (resume && toolName === "runcommand") {
+            await appendSakiToolEvent(owner.userId, conversationId, taskId, {
+              type: "started", time: Date.now(), actionId: workerActionId, toolCallId: `job-${workerActionId}`, tool: call.name,
+              signature: agentToolExecutionSignature(toolName, childArgs, owner.context.instance?.id ?? null),
+              readOnly: false, resume
+            });
+          }
+          const action = await executeSakiAgentTool({ ...owner, abortController: controller }, childCall,
+            { ...options, actionId: workerActionId, mutationLocked: false, backgroundWorker: true });
+          if (resume && toolName === "runcommand") {
+            await appendSakiToolEvent(owner.userId, conversationId, taskId,
+              { type: "settled", time: Date.now(), actionId: workerActionId, action });
+          }
+          return action;
+        });
+        observation = `Background job started: ${id}. Continue independent work. Use getAgentJob({ jobId: "${id}" }) to read its status and result.`;
+      } else if (toolName === "listagentjobs") {
+        observation = listAgentJobs(runtime).map(job => `${job.id} ${job.call.name} ${job.status}`).join("\n") || "No background jobs for this conversation.";
+      } else if (toolName === "getagentjob" || toolName === "stopagentjob") {
+        const job = getAgentJob(runtime, stringArg(args, "jobId"));
+        if (toolName === "stopagentjob") stopAgentJob(job);
+        else await authorizeSakiTool(initiatingRuntime, job.call, toolArgs(job.call));
+        observation = `Background job ${job.id}: ${job.status}.`;
+        if (toolName === "getagentjob" && job.result) {
+          observation += `\n${job.result.observation}`;
+          ok = job.result.ok;
+          const ownerTask = runtime.taskId!;
+          if (!job.reportedTasks.has(ownerTask)) {
+            delegatedActions = [...(job.result.delegatedActions ?? []), job.result];
+            job.reportedTasks.add(ownerTask);
+          }
+        } else if (toolName === "getagentjob" && job.failure) {
+          observation += `\n${job.failure}`;
+          ok = false;
+        }
+      } else if (toolName === "requestexternalaccess") {
         if (!options.approved) throw new RouteError("External file reads require explicit approval.", 403);
         const file = await executeExternalRead(runtime, args, options.externalRead);
         initiatingRuntime.externalReadPerformed = true;
@@ -1363,7 +1446,8 @@ export async function executeSakiAgentTool(
           const settings = await readSettings(node.id);
           const { client } = await connect(settings);
           try {
-            const output = await execSsh(client, submittedCommand, timeoutMs);
+            signal?.throwIfAborted();
+            const output = await execSsh(client, submittedCommand, timeoutMs, signal);
             observation = output || "(Command completed with no output)";
           } finally {
             client.end();
@@ -1448,13 +1532,19 @@ export async function executeSakiAgentTool(
             Number.isFinite(requestedLineCount) && requestedLineCount > maxAgentReadFileLineCount;
           const lineCount = numericArg(args.lineCount, defaultAgentReadFileLineCount, 1, maxAgentReadFileLineCount);
           recordWorkingFileAccess(runtime.userId, instance.id, relativePath);
-          if (instance.node?.protocol === "ssh" || instance.id.startsWith("node:")) {
-            const targetPath = resolveSshInstancePath(instance, relativePath);
-            const file = await readSshFile(instance.nodeId, targetPath, { startLine, lineCount });
-            observation = renderAgentFileWindow(relativePath, { content: file.content, size: file.size, ...(file.totalLines !== undefined ? { totalLines: file.totalLines } : {}) }, startLine);
+          const cached = args.refresh === true ? undefined
+            : await reuseWorkspaceFileObservation(runtime, instance, relativePath, startLine, lineCount);
+          signal?.throwIfAborted();
+          if (cached) {
+            observation = cached.observation;
+            saveWorkspaceFileObservation(runtime, instance, relativePath, startLine, lineCount, cached, observation);
+            runtime.reusedFileReads?.add(currentActionId);
           } else {
-            const file = await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath, { startLine, lineCount });
+            const file = instance.node?.protocol === "ssh" || instance.id.startsWith("node:")
+              ? await readSshFile(instance.nodeId, resolveSshInstancePath(instance, relativePath), { startLine, lineCount })
+              : await readDaemonInstanceFile(instance.node, instance.id, instance.workingDirectory, relativePath, { startLine, lineCount }, signal);
             observation = renderAgentFileWindow(relativePath, file, startLine);
+            saveWorkspaceFileObservation(runtime, instance, relativePath, startLine, lineCount, file, observation);
           }
           if (lineCountCapped) observation += `\nRequested lineCount=${requestedLineCount} was capped to ${maxAgentReadFileLineCount}; continue at the line shown above.`;
         }
@@ -1776,15 +1866,10 @@ export async function executeSakiAgentTool(
         const command = stringArg(args, "command");
         if (!command) throw new RouteError("runCommand requires a command.", 400);
         const posix = isPosixCommandPlatform(instance.node.os);
-        const guarded = guardedWorkspaceRead(command, instance.workingDirectory, posix, commandCwdArg(args));
+        const guarded = sandbox && !escalation && !delegatedSandbox
+          ? guardedWorkspaceRead(command, instance.workingDirectory, posix, commandCwdArg(args)) : null;
         const commandRisk = guarded?.risk ?? classifyCommandRisk(command, instance.workingDirectory, posix);
         if (commandRisk.risk === "critical") throw new RouteError(commandRisk.reason, 400);
-        if (!guarded && isAgentSandboxEnabled(runtime)) {
-          const escapeToken = commandWorkspaceEscape(runtime.context, instance, command);
-          if (escapeToken) {
-            throw new RouteError(`沙箱安全拦截：终端命令包含越界目录或路径（${escapeToken}），当前实例工作目录为 ${instance.workingDirectory}，已阻止访问工作区外部文件。`, 403);
-          }
-        }
         const checkpointEnabled = ["file.read", "file.write", "file.delete"].every((code) => runtime.permissions.includes(code as PermissionCode));
         const readOnlyCommand = commandRisk.readOnly && !optionalCommandInputArg(args);
         const checkpointWarnings: string[] = [];
@@ -1803,20 +1888,42 @@ export async function executeSakiAgentTool(
           }
         }
         let execArgs = guarded ? { ...args, command: guarded.command } : args;
-        if (toolName === "runcommand" || toolName === "runinshell") {
-          const wrapped = wrapCommandForSandbox(guarded?.command ?? command, instance.workingDirectory, instance.node.os);
+        if (sandbox && !escalation && !delegatedSandbox) {
+          const cwd = joinRemoteWorkingDirectory(instance.workingDirectory, normalizeCommandRelativeCwd(commandCwdArg(args), instance.workingDirectory));
+          const wrapped = wrapCommandForSandbox(guarded?.command ?? command, instance.workingDirectory, instance.node.os,
+            cwd, affectedWorkspaces.map(workspace => workspace.workingDirectory));
           if (wrapped.wrapped) execArgs = { ...execArgs, command: wrapped.command };
         }
         try {
-          const { runResult, inputProvided, shellId, label } = await runAgentIndependentCommand(instance, execArgs, {
-            requireShellId: toolName === "runinshell"
-          });
-          actionTerminal = { instanceId: instance.id, shellId, ...(label ? { label } : {}) };
+          signal?.throwIfAborted();
+          const input = optionalCommandInputArg(args);
+          let runResult;
+          let inputProvided = Boolean(input);
+          if (delegatedSandbox) {
+            if (stringArg(args, "shellId") || stringArg(args, "sessionId")) {
+              throw new RouteError("隔离命令使用独立进程。请省略 shellId。", 400);
+            }
+            runResult = await runDaemonWorkspaceSandboxCommand(instance.node, instance.id, {
+              command,
+              workingDirectory: instance.workingDirectory,
+              cwd: normalizeCommandRelativeCwd(commandCwdArg(args), instance.workingDirectory),
+              timeoutMs: numericArg(args.timeoutMs, options.backgroundWorker ? 300000 : 30000, 1000, options.backgroundWorker ? 900000 : 120000),
+              readOnly: effectiveSakiAgentPermissionMode(runtime.input) === "plan" || !runtime.permissions.includes("file.write") || !runtime.permissions.includes("file.delete") || readOnlyCommand,
+              ...(input ? { input } : {})
+            }, signal);
+          } else {
+            const shell = await runAgentIndependentCommand(instance, execArgs, {
+              requireShellId: toolName === "runinshell", background: options.backgroundWorker === true
+            });
+            runResult = shell.runResult;
+            inputProvided = shell.inputProvided;
+            actionTerminal = { instanceId: instance.id, shellId: shell.shellId, ...(shell.label ? { label: shell.label } : {}) };
+          }
           if (runResult.signal === "ABORTED" || currentAgentAbortSignal()?.aborted) {
             ok = false;
             observation = "Command aborted because the task was cancelled.";
           } else {
-            observation = formatRunCommandObservation({ ...runResult, shellId, ...(label ? { label } : {}) }, inputProvided);
+            observation = formatRunCommandObservation(runResult, inputProvided);
             if (runResult.exitCode !== 0 || runResult.signal) {
               ok = false;
             }
@@ -2439,7 +2546,7 @@ export async function executeSakiAgentTool(
           workingDirectory: instance.workingDirectory,
           timeoutMs: 15000,
           logToInstance: false
-        });
+        }, signal);
         if (runResult.exitCode === 0) {
           observation = `Git Status:\n${runResult.stdout?.trim() || "Working tree clean"}`;
         } else {
@@ -2456,7 +2563,7 @@ export async function executeSakiAgentTool(
           workingDirectory: instance.workingDirectory,
           timeoutMs: 20000,
           logToInstance: false
-        });
+        }, signal);
         if (runResult.exitCode === 0) {
           const diffText = runResult.stdout?.trim();
           observation = diffText ? truncateText(diffText, 10000) : "No git diff (no changes detected).";
@@ -2477,7 +2584,7 @@ export async function executeSakiAgentTool(
             workingDirectory: instance.workingDirectory,
             timeoutMs: 8000,
             logToInstance: false
-          });
+          }, signal);
           observation = [
             "Environment & Runtime Detection:",
             `Node OS: ${instance.node.os || "unknown"} (${instance.node.arch || "unknown"})`,
@@ -2631,6 +2738,8 @@ export async function executeSakiAgentTool(
       ...(actionAttachments?.length ? { attachments: actionAttachments } : {}),
       ...(delegatedActions?.length ? { delegatedActions } : {}),
       ...(actionTerminal ? { terminal: actionTerminal } : {}),
+      ...(ok && checkpoint?.type === "file" && ["writefile", "uploadbase64", "generateimage"].includes(toolName)
+        ? { workspaceFile: { instanceId: checkpoint.instanceId, path: checkpoint.path } } : {}),
       createdAt: startedAt
     };
     await saveCompletedSakiAction(action);
@@ -2724,7 +2833,7 @@ export async function loadWorkspaceGitSummary(runtime: SakiAgentRuntime): Promis
       workingDirectory: instance.workingDirectory,
       timeoutMs: 8000,
       logToInstance: false
-    });
+    }, runtime.abortController?.signal);
     const text = [runResult.stdout, runResult.stderr].filter(Boolean).join("\n").trim();
     if (!text || /not a git repository/i.test(text)) return "";
     return text.slice(0, 1200);

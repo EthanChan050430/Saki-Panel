@@ -16,6 +16,7 @@ import {
   Square,
   TextQuote,
   Upload,
+  Video,
   Wrench,
   X,
   XOctagon,
@@ -105,6 +106,9 @@ export interface SakiComposerProps {
   // Toolbar actions
   listening: boolean;
   onToggleSpeechInput: () => void;
+  onOpenCall: () => void;
+  callActive: boolean;
+  callLabel: string;
   annotationMode: boolean;
   onToggleSelectionAnnotation: () => void;
   composerBusy: "image" | "file" | "screenshot" | null;
@@ -180,6 +184,9 @@ export const SakiComposer = React.memo(function SakiComposer({
   composerNotice,
   listening,
   onToggleSpeechInput,
+  onOpenCall,
+  callActive,
+  callLabel,
   annotationMode,
   onToggleSelectionAnnotation,
   composerBusy,
@@ -587,13 +594,17 @@ export const SakiComposer = React.memo(function SakiComposer({
           {/* Modern Bottom Toolbar Dock */}
           <div className="saki-input-toolbar saki-composer-dock">
             <div className="saki-input-actions saki-composer-actions-left">
-              <button
+              {!callActive ? <button
                 className={`icon-button mini saki-mic-btn ${listening ? "active is-listening" : ""}`}
                 type="button"
                 title={listening ? "停止语音输入" : "语音输入"}
                 onClick={onToggleSpeechInput}
               >
                 <Mic size={15} />
+              </button> : null}
+              <button className={`icon-button mini saki-open-call-btn ${callActive ? "active" : ""}`} type="button"
+                aria-label={callLabel} title={callLabel} aria-pressed={callActive} onClick={onOpenCall}>
+                <Video size={16} />
               </button>
               <button
                 className={`icon-button mini saki-annotation-btn ${annotationMode ? "active" : ""}`}

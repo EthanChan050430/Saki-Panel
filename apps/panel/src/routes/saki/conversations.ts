@@ -3,18 +3,13 @@ import { RouteError, type SakiActiveTask } from "./types.js";
 import type { SakiChatResponse, SakiTimelineEvent } from "@webops/shared";
 import { sakiWorkspaceContextKey } from "@webops/shared";
 import { conversationMetadata, importConversationHistory, readMessageAt, storedMessage } from "./conversation-store.js";
-import { activeSakiTasks, clearSessionAgentMemory, getSessionAgentMemory, isSakiTaskUnfinished, pendingSakiActions, removeActiveSakiTask, sakiActionsReady, sessionAgentMemoriesReady } from "./state.js";
+import { activeSakiTasks, clearSessionAgentMemory, getSessionAgentMemory, isSakiTaskUnfinished, pendingSakiActions, removeActiveSakiTask, sakiActionsReady, sakiResumeConversationId, sessionAgentMemoriesReady } from "./state.js";
 import type { SakiSessionAgentMemory } from "./types.js";
 
 const writes = new Map<string, Promise<unknown>>();
 
-export function sakiMemoryConversationId(memory: SakiSessionAgentMemory): string | undefined {
-  const { input, taskId } = memory.resumeState;
-  return input.conversationId ?? (taskId ? `task-${taskId}` : undefined);
-}
-
 export async function sakiMemoryTurnExists(memory: SakiSessionAgentMemory): Promise<boolean> {
-  const conversationId = sakiMemoryConversationId(memory);
+  const conversationId = sakiResumeConversationId(memory.resumeState);
   const taskId = memory.resumeState.taskId;
   if (!conversationId || !taskId) return false;
   const { userMessageId, assistantMessageId } = memory.resumeState.input;
@@ -141,11 +136,11 @@ export async function saveClientSakiConversation(userId: string, id: string, bod
         }
       }
       await sessionAgentMemoriesReady;
-      const memory = getSessionAgentMemory(userId, existing.instanceId);
-      if (memory && sakiMemoryConversationId(memory) === id) {
+      const memory = getSessionAgentMemory(userId, id);
+      if (memory) {
         try {
-          if (!await sakiMemoryTurnExists(memory) && getSessionAgentMemory(userId, existing.instanceId) === memory) {
-            clearSessionAgentMemory(userId, existing.instanceId);
+          if (!await sakiMemoryTurnExists(memory) && getSessionAgentMemory(userId, id) === memory) {
+            clearSessionAgentMemory(userId, id);
           }
         } catch (error) {
           console.warn("[Saki] Could not discard a stale conversation resume record:", error instanceof Error ? error.message : String(error));

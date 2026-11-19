@@ -4,7 +4,7 @@ import { classifyCommandRisk, findDangerousCommandReason, isPosixCommandPlatform
 import { narrowCodingAdvertisedNames } from "./coding-harness.js";
 import { classifyWorkspaceCommand } from "./guarded-workspace-read.js";
 import { prefersStableAgentTools, sakiModelProfile } from "./model-profile.js";
-import { requiredSakiToolPermissions, sakiHostExecutionTools } from "./resource-policy.js";
+import { requiredSakiToolPermissions, sakiHostExecutionTools, sakiIsolatedCommandTools, supportsSakiWorkspaceIsolation } from "./resource-policy.js";
 import { parseWorkspacePatch } from "./patch.js";
 import { selectedWorkspaceTarget } from "./selected-workspaces.js";
 import type { InstanceWithNode, JsonSchema, ParsedToolCall, SakiAgentRuntime, SakiToolSchema } from "./types.js";
@@ -25,6 +25,10 @@ import {
 const instanceLookupSchema = { type: "string", description: "Instance id or name. Omit to use the active instance." };
 const relativePathSchema = { type: "string", description: "Path relative to the selected instance working directory." };
 const commandCwdSchema = { type: "string", description: "Omit or use . for the selected instance root. Accepts a relative subdirectory or an absolute path inside that exact workspace; absolute paths are converted to relative paths." };
+const commandEscalationSchema = {
+  sandboxPermissions: { type: "string", enum: ["require_escalated"], description: "After a workspace path denial, request one-time user approval to run this exact command outside the workspace restriction." },
+  justification: { type: "string", maxLength: 500, description: "Required with sandboxPermissions. State the needed external path and why it is needed." }
+};
 const visibleToolNoteSchema = {
   type: "string",
   description: "Optional short user-visible status. No hidden chain-of-thought."
@@ -63,14 +67,14 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "uploadBase64", description: "Upload a base64 file.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, contentBase64: { type: "string" } }, ["path", "contentBase64"]) },
   { name: "archivePaths", description: "Zip workspace paths. Prefer this over shell zip.", parameters: objectSchema({ instanceId: instanceLookupSchema, paths: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 200, description: "Relative paths to compress." }, outputPath: { type: "string", description: "Optional output .zip path." } }, ["paths"]), aliases: ["archive", "compressPaths", "zipPaths"] },
   { name: "extractArchive", description: "Extract zip/rar/7z. Prefer this over shell unzip.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, outputPath: { type: "string", description: "Optional output directory." }, conflictPolicy: { type: "string", enum: ["overwrite", "skip"] } }, ["path"]), aliases: ["extract", "unzipArchive", "decompressArchive"] },
-  { name: "runCommand", description: "Default way to run a shell command: opens or reuses an independent terminal tab. Omit shellId to reuse the last Saki tab (or create one). Pass shellId to run in a specific tab. Do not use this for the live instance process on the main console. Prefer instanceAction for managed instance start/stop/restart rather than port/PID lookup, process killing and terminal startup.", parameters: objectSchema({ instanceId: instanceLookupSchema, command: { type: "string" }, shellId: { type: "string" }, cwd: commandCwdSchema, workingDirectory: commandCwdSchema, timeoutMs: { type: "integer", minimum: 1000, maximum: 120000 }, input: { type: "string" }, stdin: { type: "string" } }, ["command"]), aliases: ["executeCommand", "terminal", "shell", "run_command", "bash", "bashTool", "cmd", "exec"] },
+  { name: "runCommand", description: "Default way to run a shell command: opens or reuses an independent terminal tab. Omit shellId to reuse an idle Saki tab or create one. Pass shellId to run in a specific tab. Do not use this for the live instance process on the main console. Prefer instanceAction for managed instance start/stop/restart rather than port/PID lookup, process killing and terminal startup.", parameters: objectSchema({ instanceId: instanceLookupSchema, command: { type: "string" }, shellId: { type: "string" }, cwd: commandCwdSchema, workingDirectory: commandCwdSchema, ...commandEscalationSchema, timeoutMs: { type: "integer", minimum: 1000, maximum: 900000 }, background: { type: "boolean", description: "Return a job ID immediately for a long-running command. Inspect using getAgentJob." }, input: { type: "string" }, stdin: { type: "string" } }, ["command"]), aliases: ["executeCommand", "terminal", "shell", "run_command", "bash", "bashTool", "cmd", "exec"] },
   { name: "sendInput", description: "Type into the live instance process on the main console (app prompts, game/server stdin). Use only when that running process needs input. For ordinary shell work use runCommand or createShell.", parameters: objectSchema({ instanceId: instanceLookupSchema, text: { type: "string" }, pressEnter: { type: "boolean" }, echo: { type: "boolean" } }, ["text"]), aliases: ["typeConsole", "consoleInput", "terminalInput", "sendStdin"] },
   { name: "sendCommand", description: "Send a line to the live instance process on the main console. Use only when that running process must receive a command. Prefer runCommand/createShell for ordinary shell work.", parameters: objectSchema({ instanceId: instanceLookupSchema, command: { type: "string" } }, ["command"]) },
   { name: "listShells", description: "List independent terminal tabs (not the main instance console).", parameters: objectSchema({ instanceId: instanceLookupSchema }) },
   { name: "createShell", description: "Open another independent terminal tab. Returns shellId. Use this to run commands in parallel. Cannot target the main console.", parameters: objectSchema({ instanceId: instanceLookupSchema, workingDirectory: commandCwdSchema, label: { type: "string" } }) },
   { name: "closeShell", description: "Close an independent terminal tab by shellId. Cannot close the main instance console.", parameters: objectSchema({ instanceId: instanceLookupSchema, shellId: { type: "string" } }, ["shellId"]), aliases: ["deleteShell", "killShell"] },
   { name: "sendShellInput", description: "Raw keystrokes to an independent terminal tab. Prefer runInShell for full commands.", parameters: objectSchema({ instanceId: instanceLookupSchema, shellId: { type: "string" }, text: { type: "string" }, pressEnter: { type: "boolean" } }, ["shellId", "text"]) },
-  { name: "runInShell", description: "Run a command in a specific independent terminal tab by shellId. Never the main console.", parameters: objectSchema({ instanceId: instanceLookupSchema, shellId: { type: "string" }, command: { type: "string" }, cwd: commandCwdSchema, workingDirectory: commandCwdSchema, timeoutMs: { type: "integer", minimum: 1000, maximum: 120000 } }, ["shellId", "command"]) },
+  { name: "runInShell", description: "Run a command in a specific independent terminal tab by shellId. Never the main console.", parameters: objectSchema({ instanceId: instanceLookupSchema, shellId: { type: "string" }, command: { type: "string" }, cwd: commandCwdSchema, workingDirectory: commandCwdSchema, ...commandEscalationSchema, timeoutMs: { type: "integer", minimum: 1000, maximum: 120000 } }, ["shellId", "command"]) },
   { name: "instanceAction", description: "Preferred panel API for managed instance start/stop/restart/kill, using its configured commands and daemon supervision. Use start for stopped/crashed instances and restart for running instances; prefer stop before kill. Omit instanceId for the active instance. Prefer this over port/PID lookup, killing processes or launching the app in a terminal. Check instanceLogs and describeInstance afterwards. Account permissions and the current approval mode apply.", parameters: objectSchema({ instanceId: instanceLookupSchema, action: { type: "string", enum: ["start", "stop", "restart", "kill"] } }, ["action"]) },
   { name: "updateInstanceSettings", description: "Update instance settings after approval.", parameters: objectSchema({ instanceId: instanceLookupSchema, name: { type: "string" }, workingDirectory: { type: "string" }, startCommand: { type: "string" }, stopCommand: { type: ["string", "null"] }, description: { type: ["string", "null"] }, autoStart: { type: "boolean" }, restartPolicy: { type: "string", enum: ["never", "on_failure", "always", "fixed_interval"] }, restartMaxRetries: { type: "integer", minimum: 0, maximum: 99 } }), aliases: ["setInstanceSettings", "updateInstance"] },
   { name: "searchAudit", description: "Search audit logs.", parameters: objectSchema({ query: { type: "string" } }, ["query"]) },
@@ -99,7 +103,10 @@ export const sakiToolSchemas: SakiToolSchema[] = [
   { name: "diagnoseCode", description: "Fast syntax/typecheck. Call after edits before respond. Never uses npm test.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema, command: { type: "string" } }), aliases: ["diagnostics", "checkTypes", "typecheck", "lintCode", "diagnose_code", "lint"] },
   { name: "manageTodos", description: "Optionally record a short task checklist. Submit the complete Markdown list using - [ ] for pending, - [-] for the current step, and - [x] for confirmed completion. Update only when the work or plan changes. An unchanged checklist is not progress, and a blocked step remains unfinished.", parameters: objectSchema({ todos: { type: "string" } }, ["todos"]), aliases: ["setTodos", "todos", "updateTodos", "manage_todos", "todoTool", "taskList"] },
   { name: "askUser", description: "Ask the user when essential information is missing or conflicting: unclear goal or success criteria, ambiguous target instance/file, missing user-only requirements, or materially different outcomes without an authorized default. Inspect available context first; do not guess the missing decision or perform dependent changes. Ask one focused question in the user's language, with 2-4 distinct choices when useful (omit choices for free text). This opens a question card and pauses until an answer or skip. Use this tool instead of ending with a plain-text clarification question. Routine reversible implementation choices and facts you can inspect do not need a question.", parameters: objectSchema({ question: { type: "string", maxLength: 500 }, options: { type: "array", maxItems: 4, items: { type: "string", maxLength: 120 } } }, ["question"]), aliases: ["requestUserInput", "askQuestion", "ask_user", "request_user_input"] },
-  { name: "spawnTask", description: "Spawn one explore, implement, or review sub-agent. explore and review are read-only. implement may edit only files named in the parent plan. Do not use this for a single-file edit.", parameters: objectSchema({ instanceId: instanceLookupSchema, task: { type: "string" }, role: { type: "string", enum: ["explore", "implement", "review"] }, maxSteps: { type: "integer", minimum: 1, maximum: 10 } }, ["task"]), aliases: ["subAgent", "delegate", "runSubTask"] },
+  { name: "listAgentJobs", description: "List work that was started in the background in this conversation and workspace.", parameters: objectSchema({}) },
+  { name: "getAgentJob", description: "Read the status and retained result of a background command or worker by job ID.", parameters: objectSchema({ jobId: { type: "string" } }, ["jobId"]) },
+  { name: "stopAgentJob", description: "Stop a background job owned by this conversation and workspace.", parameters: objectSchema({ jobId: { type: "string" } }, ["jobId"]) },
+  { name: "spawnTask", description: "Spawn one explore, implement, or review sub-agent. explore and review are read-only. implement may edit only files named in the parent plan. Do not use this for a single-file edit.", parameters: objectSchema({ instanceId: instanceLookupSchema, task: { type: "string" }, role: { type: "string", enum: ["explore", "implement", "review"] }, maxSteps: { type: "integer", minimum: 1, maximum: 10 }, background: { type: "boolean", description: "Run an explore or review worker asynchronously and return a job ID." } }, ["task"]), aliases: ["subAgent", "delegate", "runSubTask"] },
   { name: "batchEdit", description: "Apply several editLines/replaceInFile operations in one step. Use when changing more than one region or file. Checkpointed.", parameters: objectSchema({ instanceId: instanceLookupSchema, edits: { type: "array", items: { type: "object", properties: { path: relativePathSchema, startLine: { type: "integer", minimum: 1 }, endLine: { type: "integer", minimum: 0 }, replacement: { type: "string" }, oldText: { type: "string" }, newText: { type: "string" } }, required: ["path"] } } }, ["edits"]), aliases: ["batch_edit", "multiFileEdit", "batch_patch"] },
   { name: "applyPatch", description: "Apply a unified diff or multi-file block patch with context-only @@ hunks. Use for targeted or multi-file edits. Re-read current contents after a conflict before retrying.", parameters: objectSchema({ instanceId: instanceLookupSchema, patch: { type: "string", description: "Unified diff (---/+++ / @@) or *** Begin Patch format." } }, ["patch"]), aliases: ["apply_patch", "applyDiff", "applyPatches", "patchFiles", "patch"] },
   { name: "statFile", description: "Metadata only: exists, size, line count, mtime. Use this instead of reading a file just to see how large it is.", parameters: objectSchema({ instanceId: instanceLookupSchema, path: relativePathSchema }, ["path"]), aliases: ["fileInfo", "stat_file", "file_info", "inspectPath", "stat"] },
@@ -209,6 +216,9 @@ const sakiCoreToolNames = [
   "writeFile",
   "batchEdit",
   "runCommand",
+  "listAgentJobs",
+  "getAgentJob",
+  "stopAgentJob",
   "createShell",
   "closeShell",
   "diagnoseCode",
@@ -314,7 +324,8 @@ export function toolSchemasForRuntime(runtime: SakiAgentRuntime): SakiToolSchema
     const access = runtime.context.access;
     if (!access) return true;
     const name = normalizedAgentToolName(schema.name);
-    if (!access.isSuperAdmin && sakiHostExecutionTools.has(name)) return false;
+    if (!access.isSuperAdmin && sakiHostExecutionTools.has(name)
+      && !(sakiIsolatedCommandTools.has(name) && supportsSakiWorkspaceIsolation(runtime.context.instance?.node.os))) return false;
     if (name === "instanceaction") return (["instance.start", "instance.stop", "instance.restart", "instance.kill"] as const).some((permission) => access.permissions.includes(permission));
     const required = requiredSakiToolPermissions(name);
     const properties = schema.parameters.properties as Record<string, unknown> | undefined;
@@ -456,6 +467,9 @@ function capAdvertisedToolSchemas(schemas: SakiToolSchema[], maxTools: ReturnTyp
     "writeFile",
     "diagnoseCode",
     "runCommand",
+    "listAgentJobs",
+    "getAgentJob",
+    "stopAgentJob",
     "createShell",
     "closeShell",
     "manageTodos",
@@ -475,7 +489,7 @@ function capAdvertisedToolSchemas(schemas: SakiToolSchema[], maxTools: ReturnTyp
     // Small models must still see the managed lifecycle route and web tools.
     const priority = new Map([
       "askUser", "instanceAction", "describeInstance", "instanceLogs", "searchWeb", "browse", "generateImage", "generateVideo",
-      "readFile", "searchFiles", "applyPatch", "writeFile", "runCommand", "diagnoseCode", "gitStatus", "gitDiff", "manageTodos", "findFiles"
+      "readFile", "searchFiles", "applyPatch", "writeFile", "runCommand", "getAgentJob", "stopAgentJob", "listAgentJobs", "diagnoseCode", "gitStatus", "gitDiff", "manageTodos", "findFiles"
     ].map((name, index) => [name, index]));
     return kept.sort((a, b) => (priority.get(a.name) ?? priority.size) - (priority.get(b.name) ?? priority.size))
       .slice(0, maxTools.maxAdvertisedTools);
@@ -1211,6 +1225,8 @@ export const sakiReadOnlyToolNames = new Set([
   "searchaudit",
   "listtasks",
   "listshells",
+  "listagentjobs",
+  "getagentjob",
   "plan",
   "taskruns",
   "searchweb",
@@ -1272,6 +1288,7 @@ export const sakiAutoAcceptedFileToolNames = new Set([
 
 export const sakiPlanBlockedToolNames = new Set([
   ...sakiAutoAcceptedFileToolNames,
+  "stopagentjob",
   "generatevideo",
   "deletepath",
   "sendinput",
@@ -1478,11 +1495,15 @@ export function isApprovalTool(toolName: string, args: Record<string, unknown>):
   return false;
 }
 
+export function requestsCommandEscalation(tool: string, args: Record<string, unknown>): boolean {
+  return (tool === "runcommand" || tool === "runinshell") && args.sandboxPermissions === "require_escalated";
+}
+
 export function shouldRequestSakiApproval(runtime: SakiAgentRuntime, toolName: string, args: Record<string, unknown>): boolean {
   const lower = normalizedAgentToolName(toolName);
   const permissionMode = effectiveSakiAgentPermissionMode(runtime.input);
 
-  if (lower === "requestexternalaccess") return true;
+  if (lower === "requestexternalaccess" || requestsCommandEscalation(lower, args)) return true;
   if (lower === "diagnosecode" && !stringArg(args, "command")) return false;
   if (runtime.externalReadPerformed && ["searchweb", "browse", "crawl", "researchweb", "generateimage", "generatevideo"].includes(lower)) return true;
 

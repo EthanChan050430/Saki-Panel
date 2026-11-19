@@ -29,6 +29,7 @@ import { formatBytes } from "../../utils/path.js";
 export interface SakiAttachmentModalProps {
   attachment: SakiInputAttachment;
   editable: boolean;
+  inline?: boolean;
   onClose: () => void;
   onSave?: (updated: SakiInputAttachment) => void;
   onRemove?: () => void;
@@ -73,6 +74,7 @@ const LINE_WIDTHS = [
 export function SakiAttachmentModal({
   attachment,
   editable,
+  inline = false,
   onClose,
   onSave,
   onRemove
@@ -116,6 +118,8 @@ export function SakiAttachmentModal({
   const imgRef = useRef<HTMLImageElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const annotCanvasRef = useRef<HTMLCanvasElement>(null);
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
 
   useEffect(() => {
     setCurrentDataUrl(attachment.dataUrl || "");
@@ -144,7 +148,7 @@ export function SakiAttachmentModal({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [mode, onClose]);
 
-  // Mouse wheel zoom on viewport
+  // Mouse wheel & two-finger pinch zoom on viewport
   useEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
@@ -156,8 +160,43 @@ export function SakiAttachmentModal({
       setZoom((z) => Math.max(0.2, Math.min(3, Math.round((z + delta) * 100) / 100)));
     }
 
+    let pinchStartDistance = 0;
+    let pinchStartZoom = 1;
+    const touchDistance = (touches: TouchList) => {
+      const a = touches[0];
+      const b = touches[1];
+      if (!a || !b) return 0;
+      return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    };
+    function onTouchStart(e: TouchEvent) {
+      if (mode !== "view" || e.touches.length !== 2) return;
+      pinchStartDistance = touchDistance(e.touches);
+      pinchStartZoom = zoomRef.current;
+    }
+    function onTouchMove(e: TouchEvent) {
+      if (mode !== "view" || e.touches.length !== 2 || pinchStartDistance <= 0) return;
+      const dist = touchDistance(e.touches);
+      if (dist <= 0) return;
+      e.preventDefault();
+      const next = Math.max(0.2, Math.min(3, Math.round(pinchStartZoom * (dist / pinchStartDistance) * 100) / 100));
+      setZoom(next);
+    }
+    function onTouchEnd(e: TouchEvent) {
+      if (e.touches.length < 2) pinchStartDistance = 0;
+    }
+
     el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd, { passive: true });
+    el.addEventListener("touchcancel", onTouchEnd, { passive: true });
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+      el.removeEventListener("touchcancel", onTouchEnd);
+    };
   }, [mode]);
 
   function handleImageLoad(e: React.SyntheticEvent<HTMLImageElement>) {
@@ -1061,5 +1100,6 @@ export function SakiAttachmentModal({
     </div>
   );
 
+  if (inline) return modalNode;
   return typeof document !== "undefined" ? createPortal(modalNode, document.body) : null;
 }

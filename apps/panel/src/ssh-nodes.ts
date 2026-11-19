@@ -123,20 +123,37 @@ export async function connect(input: ConnectSshNodeRequest, onClient?: (client: 
 
 export function shellQuote(value: string): string { return `'${value.replace(/'/g, `'\\''`)}'`; }
 
-export function execSsh(client: Client, command: string, timeoutMs = 30000): Promise<string> {
+export function execSsh(client: Client, command: string, timeoutMs = 30000, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { client.destroy(); reject(new Error("远程操作超时，请检查服务器网络和 npm 镜像配置")); }, timeoutMs);
+    if (signal?.aborted) { reject(signal.reason); return; }
+    let settled = false;
+    const finish = (error: Error | undefined, output = "") => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      if (error) reject(error);
+      else resolve(output);
+    };
+    const onAbort = () => {
+      finish(new Error("SSH command was cancelled."));
+      client.destroy();
+    };
+    const timer = setTimeout(() => {
+      finish(new Error("远程操作超时，请检查服务器网络和 npm 镜像配置"));
+      client.destroy();
+    }, timeoutMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
     client.exec(command, (error, stream) => {
-      if (error) { clearTimeout(timer); reject(error); return; }
+      if (error) { finish(error); return; }
       let output = "";
       let stderr = "";
       stream.on("data", (chunk: Buffer) => { output = (output + chunk).slice(-16000); });
       stream.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk).slice(-16000); });
-      stream.on("error", (error: Error) => { clearTimeout(timer); reject(error); });
+      stream.on("error", finish);
       stream.on("close", (code: number | null) => {
-        clearTimeout(timer);
-        if (code !== 0) reject(new Error((stderr || output || "远程命令失败").slice(-2000)));
-        else resolve(output.trim());
+        if (code !== 0) finish(new Error((stderr || output || "远程命令失败").slice(-2000)));
+        else finish(undefined, output.trim());
       });
     });
   });

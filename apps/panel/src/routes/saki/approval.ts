@@ -7,7 +7,7 @@ import { ensureToolCallId } from "./agent-messages.js";
 import { assertCheckpointRollbackAccess, auditAgentTool, executeSakiAgentTool, rollbackCheckpoint } from "./executor.js";
 import {
   cancelActiveSakiTask,
-  assertSakiTaskContextAvailable,
+  assertSakiConversationAvailable,
   createActiveSakiTask,
   completedSakiActions,
   emitActiveSakiTaskEvent,
@@ -28,7 +28,9 @@ import {
 import { withPendingSakiActionDecision } from "./decision-lock.js";
 import { syncSakiTaskResult } from "./conversations.js";
 import { trackedSakiTaskEvents } from "./task-runner.js";
-import { toolArgs } from "./tools.js";
+import { normalizedAgentToolName, toolArgs } from "./tools.js";
+import { appendSakiToolEvent, readApprovedSakiToolOutcome } from "./tool-journal.js";
+import { agentToolExecutionSignature } from "./agent-tool-guard.js";
 import type { PendingSakiAction, SakiAgentResumeState, SakiAgentRuntime, SakiCheckpoint } from "./types.js";
 import { effectiveSakiAgentPermissionMode, RouteError, withRequestedSakiModel } from "./types.js";
 import { readEffectiveSakiConfig } from "./config.js";
@@ -94,7 +96,7 @@ async function withTrackedActionDecision(pending: PendingSakiAction, userId: str
   if (!taskId) return work();
   let task = getActiveSakiTaskById(taskId);
   if (task && (task.userId !== userId || task.status === "cancelled" || task.status === "running")) throw new RouteError("Task was cancelled or is already running.", 409);
-  assertSakiTaskContextAvailable(userId, pending.contextInstanceId, taskId, pending.resume?.workspaceBindings?.map(binding => binding.instanceId));
+  assertSakiConversationAvailable(userId, pending.resume?.input.conversationId ?? `task-${taskId}`, taskId);
   const controller = new AbortController();
   if (task) restartActiveSakiTask(taskId, controller);
   else task = createActiveSakiTask(taskId, userId, pending.contextInstanceId, pending.resume!.input, controller);
@@ -238,8 +240,23 @@ async function executeApprovedSakiActionUnlocked(
   const runtime = await runtimeForSakiActionDecision(user, pending, request);
   // The executor saves its result before auditing. A failed audit/HTTP response
   // must not turn a later approval retry into a second mutation.
-  const confirmed = completedSakiActions.get(id);
-  const action = confirmed ?? await executeSakiAgentTool(runtime, pending.call, { approved: true, actionId: id, ...(pending.externalRead ? { externalRead: pending.externalRead } : {}) });
+  const checkpoint = pending.resume;
+  const jobTaskId = checkpoint?.taskId;
+  const conversationId = checkpoint?.input.conversationId ?? `task-${jobTaskId}`;
+  const journalOutcome = jobTaskId ? await readApprovedSakiToolOutcome(user.id, conversationId, jobTaskId, id) : undefined;
+  const confirmed = completedSakiActions.get(id) ?? journalOutcome?.action;
+  if (!confirmed && journalOutcome?.interrupted) throw new RouteError("上次批准后的执行结果未确认。请先检查工作区，避免重复执行。", 409);
+  if (!confirmed && checkpoint && jobTaskId) {
+    await appendSakiToolEvent(user.id, conversationId, jobTaskId, {
+      type: "started", time: Date.now(), actionId: id, toolCallId: pending.call.id ?? id, tool: pending.call.name,
+      signature: agentToolExecutionSignature(normalizedAgentToolName(pending.call.name), toolArgs(pending.call), runtime.context.instance?.id ?? null),
+      readOnly: false, approved: true, resume: checkpoint
+    });
+  }
+  const action = confirmed ?? await executeSakiAgentTool(runtime, pending.call, { approved: true, actionId: id,
+    ...(checkpoint ? { pendingResume: checkpoint } : {}), ...(pending.externalRead ? { externalRead: pending.externalRead } : {}) });
+  if (!confirmed && jobTaskId) await appendSakiToolEvent(user.id, conversationId, jobTaskId,
+    { type: "settled", time: Date.now(), actionId: id, action });
   if (confirmed) await auditAgentTool(runtime, confirmed);
   await persistDecisionResult(pending, action, runtime);
   await removePendingSakiAction(id);
